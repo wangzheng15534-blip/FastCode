@@ -880,12 +880,13 @@ FastCode is released under the MIT License. See [LICENSE](LICENSE) for details.
 
 If FastCode saves you tokens and time, consider giving us a star! ⭐
 
-
-
-
-
 <div align="center">
 
 **Built with ❤️ for developers who value efficiency**
 
 </div>
+
+<p align="center">
+  <em> Thanks for visiting ✨ FastCode!</em><br><br>
+  <img src="https://visitor-badge.laobi.icu/badge?page_id=HKUDS.FastCode&style=for-the-badge&color=00d4ff" alt="Views">
+</p>

@@ -127,7 +127,7 @@ def _apply_forced_env_excludes(fc) -> None:
         logger.info(f"Added forced ignore patterns: {added}")
 
 
-def _ensure_repos_ready(repos: List[str], ctx=None) -> List[str]:
+def _ensure_repos_ready(repos: List[str], allow_incremental: bool = True, ctx=None) -> List[str]:
     """
     For each repo source string:
       - If already indexed → skip
@@ -144,9 +144,22 @@ def _ensure_repos_ready(repos: List[str], ctx=None) -> List[str]:
         resolved_is_url = fc._infer_is_url(source)
         name = _repo_name_from_source(source, resolved_is_url)
 
-        # Already indexed – nothing to do
+        # Already indexed
         if _is_repo_indexed(name):
-            logger.info(f"Repo '{name}' already indexed, skipping.")
+            # Try incremental update for local repos
+            if not resolved_is_url and allow_incremental:
+                abs_path = os.path.abspath(source)
+                if os.path.isdir(abs_path):
+                    try:
+                        result = fc.incremental_reindex(name, repo_path=abs_path)
+                        if result and result.get("changes", 0) > 0:
+                            logger.info(f"Incremental update for '{name}': {result}")
+                            # Force reload since on-disk data changed
+                            fc.repo_indexed = False
+                            fc.loaded_repositories.clear()
+                    except Exception as e:
+                        logger.warning(f"Incremental reindex failed for '{name}': {e}")
+            logger.info(f"Repo '{name}' ready.")
             ready_names.append(name)
             continue
 
@@ -171,6 +184,14 @@ def _ensure_repos_ready(repos: List[str], ctx=None) -> List[str]:
         ready_names.append(name)
 
     return ready_names
+
+
+def _ensure_loaded(fc, ready_names: List[str]) -> bool:
+    """Ensure repos are loaded into memory (vectors + BM25 + graphs)."""
+    if not fc.repo_indexed or set(ready_names) != set(fc.loaded_repositories.keys()):
+        logger.info(f"Loading repos into memory: {ready_names}")
+        return fc._load_multi_repo_cache(repo_names=ready_names)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -225,11 +246,8 @@ def code_qa(
         return "Error: None of the specified repositories could be loaded or indexed."
 
     # 2. Load indexed repos into memory (multi-repo merge)
-    if not fc.repo_indexed or set(ready_names) != set(fc.loaded_repositories.keys()):
-        logger.info(f"Loading repos into memory: {ready_names}")
-        success = fc._load_multi_repo_cache(repo_names=ready_names)
-        if not success:
-            return "Error: Failed to load repository indexes."
+    if not _ensure_loaded(fc, ready_names):
+        return "Error: Failed to load repository indexes."
 
     # 3. Session management
     sid = session_id or str(uuid.uuid4())[:8]
@@ -399,6 +417,323 @@ def delete_repo_metadata(repo_name: str) -> str:
     for fname in deleted_files:
         lines.append(f"  - {fname}")
     return "\n".join(lines)
+
+
+@mcp.tool()
+def search_symbol(
+    symbol_name: str,
+    repos: list[str],
+    symbol_type: str | None = None,
+) -> str:
+    """Search for a symbol (function, class, method) by name across repositories.
+
+    Finds definitions matching the given name with case-insensitive search.
+    Results are ranked: exact match > prefix match > contains match (top 20).
+
+    Args:
+        symbol_name: Name of the symbol to search for (e.g. "FastCode", "query").
+        repos: List of repository sources (URLs or local paths).
+        symbol_type: Optional filter: "function", "class", "file", or "documentation".
+
+    Returns:
+        Matching definitions with file path, line range, and signature.
+    """
+    fc = _get_fastcode()
+    ready_names = _ensure_repos_ready(repos, allow_incremental=False)
+    if not ready_names:
+        return "Error: None of the specified repositories could be loaded."
+    if not _ensure_loaded(fc, ready_names):
+        return "Error: Failed to load repository indexes."
+
+    query_lower = symbol_name.lower()
+    exact, prefix, contains = [], [], []
+
+    for meta in fc.vector_store.metadata:
+        name = meta.get("name", "")
+        elem_type = meta.get("type", "")
+        if elem_type == "repository_overview":
+            continue
+        if symbol_type and elem_type != symbol_type:
+            continue
+
+        name_lower = name.lower()
+        if name_lower == query_lower:
+            exact.append(meta)
+        elif name_lower.startswith(query_lower):
+            prefix.append(meta)
+        elif query_lower in name_lower:
+            contains.append(meta)
+
+    ranked = (exact + prefix + contains)[:20]
+    if not ranked:
+        return f"No symbols matching '{symbol_name}' found."
+
+    lines = [f"Found {len(ranked)} result(s) for '{symbol_name}':"]
+    for meta in ranked:
+        name = meta.get("name", "")
+        etype = meta.get("type", "")
+        repo = meta.get("repo_name", "")
+        rel_path = meta.get("relative_path", "")
+        start = meta.get("start_line", "")
+        end = meta.get("end_line", "")
+        sig = meta.get("signature", "")
+        loc = f"L{start}-L{end}" if start and end else ""
+        line = f"  - [{etype}] {name}"
+        if sig:
+            line += f"  |  {sig}"
+        line += f"\n    {repo}/{rel_path}:{loc}" if repo else f"\n    {rel_path}:{loc}"
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def get_repo_structure(repo_name: str) -> str:
+    """Get the high-level structure and summary of an indexed repository.
+
+    Returns the repository summary, directory tree, and language statistics.
+    Does not require loading the full index into memory.
+
+    Args:
+        repo_name: Name of an indexed repository (see list_indexed_repos).
+
+    Returns:
+        Repository summary, directory structure, and language breakdown.
+    """
+    fc = _get_fastcode()
+    if not _is_repo_indexed(repo_name):
+        return f"Repository '{repo_name}' is not indexed. Use code_qa or reindex_repo first."
+
+    overviews = fc.vector_store.load_repo_overviews()
+    overview = overviews.get(repo_name)
+    if not overview:
+        return f"No overview found for repository '{repo_name}'. It may need re-indexing."
+
+    metadata = overview.get("metadata", {})
+    summary = metadata.get("summary", "No summary available.")
+    structure_text = metadata.get("structure_text", "")
+    file_structure = metadata.get("file_structure", {})
+    languages = file_structure.get("languages", {})
+
+    parts = [f"Repository: {repo_name}", ""]
+    parts.append(f"Summary:\n{summary}")
+
+    if languages:
+        parts.append("\nLanguages:")
+        for lang, count in sorted(languages.items(), key=lambda x: -x[1]):
+            parts.append(f"  - {lang}: {count} files")
+
+    if structure_text:
+        parts.append(f"\nDirectory Structure:\n{structure_text}")
+
+    return "\n".join(parts)
+
+
+@mcp.tool()
+def get_file_summary(file_path: str, repos: list[str]) -> str:
+    """Get the structure summary of a specific file (classes, functions, imports).
+
+    Args:
+        file_path: Path to the file (e.g. "fastcode/main.py").
+                   Flexible matching: endswith or contains.
+        repos: List of repository sources to search in.
+
+    Returns:
+        File structure: classes (with methods), top-level functions, and import count.
+    """
+    fc = _get_fastcode()
+    ready_names = _ensure_repos_ready(repos, allow_incremental=False)
+    if not ready_names:
+        return "Error: None of the specified repositories could be loaded."
+    if not _ensure_loaded(fc, ready_names):
+        return "Error: Failed to load repository indexes."
+
+    # Find matching elements by relative_path
+    matching = []
+    for meta in fc.vector_store.metadata:
+        rel = meta.get("relative_path", "")
+        if meta.get("type") == "repository_overview":
+            continue
+        if rel.endswith(file_path) or file_path in rel:
+            matching.append(meta)
+
+    if not matching:
+        return f"No elements found for file path '{file_path}'."
+
+    files = [m for m in matching if m.get("type") == "file"]
+    classes = [m for m in matching if m.get("type") == "class"]
+    functions = [m for m in matching if m.get("type") == "function"]
+
+    file_meta = files[0] if files else matching[0]
+    actual_path = file_meta.get("relative_path", file_path)
+    repo = file_meta.get("repo_name", "")
+
+    parts = [f"File: {repo}/{actual_path}" if repo else f"File: {actual_path}"]
+
+    if files:
+        fm = files[0]
+        parts.append(f"Language: {fm.get('language', '?')}")
+        mi = fm.get("metadata", {})
+        parts.append(f"Lines: {mi.get('total_lines', '?')} (code: {mi.get('code_lines', '?')})")
+        num_imports = mi.get("num_imports", 0)
+        if num_imports:
+            parts.append(f"Imports: {num_imports}")
+
+    if classes:
+        parts.append(f"\nClasses ({len(classes)}):")
+        for c in classes:
+            sig = c.get("signature", c.get("name", ""))
+            mi = c.get("metadata", {})
+            methods = mi.get("methods", [])
+            loc = f"L{c.get('start_line', '')}-L{c.get('end_line', '')}"
+            parts.append(f"  - {sig} ({loc})")
+            for m in methods:
+                parts.append(f"      .{m}")
+
+    if functions:
+        top_level = [f for f in functions if not f.get("metadata", {}).get("class_name")]
+        if top_level:
+            parts.append(f"\nFunctions ({len(top_level)}):")
+            for fn in top_level:
+                sig = fn.get("signature", fn.get("name", ""))
+                loc = f"L{fn.get('start_line', '')}-L{fn.get('end_line', '')}"
+                parts.append(f"  - {sig} ({loc})")
+
+    return "\n".join(parts)
+
+
+def _walk_call_chain(gb, element_id: str, direction: str, hops_left: int,
+                     parts: list, indent: int = 2, visited: set = None):
+    """Recursively walk the call chain and format output."""
+    if visited is None:
+        visited = {element_id}
+
+    neighbors = (gb.get_callers(element_id) if direction == "callers"
+                 else gb.get_callees(element_id))
+
+    if not neighbors:
+        parts.append(f"{'  ' * indent}(none)")
+        return
+
+    for nid in neighbors:
+        if nid in visited:
+            continue
+        visited.add(nid)
+        elem = gb.element_by_id.get(nid)
+        if elem:
+            loc = f"{elem.relative_path}:L{elem.start_line}" if elem.relative_path else ""
+            parts.append(f"{'  ' * indent}- {elem.name} [{loc}]")
+            if hops_left > 1:
+                _walk_call_chain(gb, nid, direction, hops_left - 1, parts, indent + 1, visited)
+
+
+@mcp.tool()
+def get_call_chain(
+    symbol_name: str,
+    repos: list[str],
+    direction: str = "both",
+    max_hops: int = 2,
+) -> str:
+    """Trace the call chain for a function or method.
+
+    Shows who calls this symbol (callers) and/or what it calls (callees),
+    up to max_hops levels deep.
+
+    Args:
+        symbol_name: Name of the function/method to trace.
+        repos: List of repository sources.
+        direction: "callers", "callees", or "both" (default: "both").
+        max_hops: Maximum depth of the call chain (default: 2, max: 5).
+
+    Returns:
+        Formatted call chain showing callers and/or callees.
+    """
+    fc = _get_fastcode()
+    ready_names = _ensure_repos_ready(repos, allow_incremental=False)
+    if not ready_names:
+        return "Error: None of the specified repositories could be loaded."
+    if not _ensure_loaded(fc, ready_names):
+        return "Error: Failed to load repository indexes."
+
+    max_hops = min(max_hops, 5)
+    gb = fc.graph_builder
+    name_lower = symbol_name.lower()
+    target_id, target_elem = None, None
+
+    # Exact match via element_by_name
+    elem = gb.element_by_name.get(symbol_name)
+    if elem:
+        target_elem, target_id = elem, elem.id
+
+    # Fallback: case-insensitive search
+    if not target_id:
+        for eid, elem in gb.element_by_id.items():
+            if elem.name.lower() == name_lower:
+                target_elem, target_id = elem, eid
+                break
+
+    # Fallback: partial match
+    if not target_id:
+        for eid, elem in gb.element_by_id.items():
+            if name_lower in elem.name.lower():
+                target_elem, target_id = elem, eid
+                break
+
+    if not target_id:
+        return f"Symbol '{symbol_name}' not found in call graph."
+
+    parts = [
+        f"Call chain for '{target_elem.name}' ({target_elem.type})"
+        f" at {target_elem.relative_path}:L{target_elem.start_line}"
+    ]
+
+    if direction in ("callers", "both"):
+        parts.append("\n  Callers (who calls this):")
+        _walk_call_chain(gb, target_id, "callers", max_hops, parts, indent=2)
+
+    if direction in ("callees", "both"):
+        parts.append("\n  Callees (what this calls):")
+        _walk_call_chain(gb, target_id, "callees", max_hops, parts, indent=2)
+
+    return "\n".join(parts)
+
+
+@mcp.tool()
+def reindex_repo(repo_source: str) -> str:
+    """Force a full re-index of a repository.
+
+    Clones (if URL) or loads (if local path) the repository and rebuilds
+    all indexes from scratch.
+
+    Args:
+        repo_source: Repository URL or local filesystem path.
+
+    Returns:
+        Confirmation with element count.
+    """
+    fc = _get_fastcode()
+    _apply_forced_env_excludes(fc)
+
+    resolved_is_url = fc._infer_is_url(repo_source)
+    name = _repo_name_from_source(repo_source, resolved_is_url)
+    logger.info(f"Force re-indexing '{name}' from {repo_source}")
+
+    if resolved_is_url:
+        fc.load_repository(repo_source, is_url=True)
+    else:
+        abs_path = os.path.abspath(repo_source)
+        if not os.path.isdir(abs_path):
+            return f"Error: Local path does not exist: {abs_path}"
+        fc.load_repository(abs_path, is_url=False)
+
+    fc.index_repository(force=True)
+    count = fc.vector_store.get_count()
+
+    # Reset in-memory state so next _ensure_loaded does a clean load
+    fc.repo_indexed = False
+    fc.loaded_repositories.clear()
+
+    return f"Successfully re-indexed '{name}': {count} elements indexed."
 
 
 # ---------------------------------------------------------------------------

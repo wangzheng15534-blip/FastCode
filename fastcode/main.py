@@ -5,7 +5,9 @@ Main FastCode Class - Orchestrate all components
 import os
 import pickle
 import logging
+import json
 import re
+from datetime import datetime
 from urllib.parse import urlparse
 from typing import Optional, Dict, Any, List, Callable
 import numpy as np
@@ -283,6 +285,7 @@ class FastCode:
                 # Save BM25 and graph data
                 self.retriever.save_bm25(repo_name)
                 self.graph_builder.save(repo_name)
+                self._save_file_manifest(repo_name, self._build_file_manifest(elements, self.loader.repo_path))
             else:
                 self.logger.info("Skipping on-disk persistence (ephemeral/evaluation mode)")
 
@@ -1163,9 +1166,8 @@ class FastCode:
             
             self.logger.info(f"Found {len(repos_to_load)} repository indexes: {', '.join(repos_to_load)}")
             
-            # Initialize vector store if needed
-            if self.vector_store.dimension is None:
-                self.vector_store.initialize(self.embedder.embedding_dim)
+            # Always reinitialize for clean merge
+            self.vector_store.initialize(self.embedder.embedding_dim)
             
             # Load each repository index and merge them
             for repo_name in repos_to_load:
@@ -1272,6 +1274,305 @@ class FastCode:
             self.logger.error(traceback.format_exc())
             return False
     
+    # ------------------------------------------------------------------
+    # Incremental indexing
+    # ------------------------------------------------------------------
+
+    def _build_file_manifest(self, elements, repo_root) -> dict:
+        """Build a file manifest mapping files to their mtime/size and element IDs."""
+        manifest = {
+            "repo_name": self.repo_info.get("name", ""),
+            "created_at": datetime.now().isoformat(),
+            "files": {},
+        }
+
+        for elem in elements:
+            rel_path = elem.relative_path
+            if rel_path not in manifest["files"]:
+                abs_path = os.path.join(repo_root, rel_path)
+                try:
+                    stat = os.stat(abs_path)
+                    manifest["files"][rel_path] = {
+                        "mtime": stat.st_mtime,
+                        "size": stat.st_size,
+                        "element_ids": [],
+                    }
+                except OSError:
+                    manifest["files"][rel_path] = {
+                        "mtime": 0.0,
+                        "size": 0,
+                        "element_ids": [],
+                    }
+            manifest["files"][rel_path]["element_ids"].append(elem.id)
+
+        return manifest
+
+    def _save_file_manifest(self, repo_name, manifest) -> None:
+        """Save file manifest to disk as JSON."""
+        manifest_path = os.path.join(
+            self.vector_store.persist_dir, f"{repo_name}_manifest.json"
+        )
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+        self.logger.info(f"Saved file manifest: {manifest_path}")
+
+    def _load_file_manifest(self, repo_name):
+        """Load file manifest from disk. Returns None if missing."""
+        manifest_path = os.path.join(
+            self.vector_store.persist_dir, f"{repo_name}_manifest.json"
+        )
+        if not os.path.exists(manifest_path):
+            return None
+        try:
+            with open(manifest_path, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            self.logger.warning(f"Failed to load manifest for '{repo_name}': {e}")
+            return None
+
+    def _load_existing_metadata(self, repo_name: str) -> list:
+        """Load existing vector store metadata for a repo directly from disk."""
+        meta_path = os.path.join(
+            self.vector_store.persist_dir, f"{repo_name}_metadata.pkl"
+        )
+        if not os.path.exists(meta_path):
+            return []
+        try:
+            with open(meta_path, "rb") as f:
+                data = pickle.load(f)
+            return data.get("metadata", [])
+        except Exception as e:
+            self.logger.warning(f"Failed to load metadata for '{repo_name}': {e}")
+            return []
+
+    def _detect_file_changes(self, repo_name, current_files):
+        """Compare current files against saved manifest to detect changes.
+
+        Returns dict with added/modified/deleted/unchanged lists, or None
+        if no manifest exists.
+        """
+        manifest = self._load_file_manifest(repo_name)
+        if manifest is None:
+            return None
+
+        manifest_files = manifest.get("files", {})
+
+        # Build lookup of current files with stat info
+        current_lookup = {}
+        for file_info in current_files:
+            rel_path = file_info["relative_path"]
+            abs_path = file_info["path"]
+            try:
+                stat = os.stat(abs_path)
+                current_lookup[rel_path] = {
+                    "mtime": stat.st_mtime,
+                    "size": stat.st_size,
+                    "file_info": file_info,
+                }
+            except OSError:
+                continue
+
+        added, modified, deleted, unchanged = [], [], [], []
+
+        for rel_path, info in current_lookup.items():
+            if rel_path not in manifest_files:
+                added.append(rel_path)
+            else:
+                saved = manifest_files[rel_path]
+                if info["mtime"] != saved["mtime"] or info["size"] != saved["size"]:
+                    modified.append(rel_path)
+                else:
+                    unchanged.append(rel_path)
+
+        for rel_path in manifest_files:
+            if rel_path not in current_lookup:
+                deleted.append(rel_path)
+
+        return {
+            "added": added,
+            "modified": modified,
+            "deleted": deleted,
+            "unchanged": unchanged,
+            "manifest": manifest,
+            "current_lookup": current_lookup,
+        }
+
+    def _collect_unchanged_elements(self, manifest, unchanged_files, existing_metadata) -> tuple:
+        """Collect element dicts and IDs for unchanged files from existing metadata."""
+        unchanged_element_ids = set()
+        for rel_path in unchanged_files:
+            file_entry = manifest.get("files", {}).get(rel_path, {})
+            for elem_id in file_entry.get("element_ids", []):
+                unchanged_element_ids.add(elem_id)
+
+        unchanged_elements = [
+            meta for meta in existing_metadata
+            if meta.get("id") in unchanged_element_ids
+        ]
+
+        return unchanged_elements, list(unchanged_element_ids)
+
+    def incremental_reindex(self, repo_name: str, repo_path: str = None) -> dict:
+        """Perform incremental reindexing: only re-embed changed files.
+
+        Unchanged files reuse their existing embeddings. FAISS, BM25, and
+        graphs are rebuilt from the combined element set (fast, since no
+        model inference is needed for unchanged elements).
+
+        Args:
+            repo_name: Canonical repository name.
+            repo_path: Local filesystem path to the repository.
+
+        Returns:
+            Dict with status and change summary.
+        """
+        self.logger.info(f"Starting incremental reindex for '{repo_name}'")
+
+        # 1. Load manifest (skip if missing)
+        manifest = self._load_file_manifest(repo_name)
+        if manifest is None:
+            self.logger.info(f"No manifest for '{repo_name}', skipping incremental")
+            return {"status": "no_manifest", "changes": 0}
+
+        # 2. Set up loader for this repo
+        if not repo_path or not os.path.isdir(repo_path):
+            self.logger.warning(f"Invalid repo path for '{repo_name}': {repo_path}")
+            return {"status": "path_not_found", "changes": 0}
+
+        self.loader.load_from_path(repo_path)
+        self.config["repo_root"] = repo_path
+
+        # 3. Scan current files and detect changes
+        current_files = self.loader.scan_files()
+        changes = self._detect_file_changes(repo_name, current_files)
+        if changes is None:
+            return {"status": "no_manifest", "changes": 0}
+
+        added = changes["added"]
+        modified = changes["modified"]
+        deleted = changes["deleted"]
+        unchanged = changes["unchanged"]
+        total_changes = len(added) + len(modified) + len(deleted)
+
+        self.logger.info(
+            f"Changes: +{len(added)} ~{len(modified)} -{len(deleted)} ={len(unchanged)}"
+        )
+
+        if total_changes == 0:
+            return {"status": "no_changes", "changes": 0}
+
+        # 4. Load existing metadata from disk
+        existing_metadata = self._load_existing_metadata(repo_name)
+        if not existing_metadata:
+            self.logger.warning(f"No existing metadata for '{repo_name}'")
+            return {"status": "no_metadata", "changes": 0}
+
+        # 5. Collect unchanged elements (with pre-computed embeddings)
+        unchanged_elements, _ = self._collect_unchanged_elements(
+            changes["manifest"], unchanged, existing_metadata
+        )
+        self.logger.info(
+            f"Preserved {len(unchanged_elements)} elements from {len(unchanged)} unchanged files"
+        )
+
+        # 6. Parse & embed changed files
+        changed_file_infos = []
+        for rp in added + modified:
+            lookup = changes["current_lookup"].get(rp)
+            if lookup and lookup.get("file_info"):
+                changed_file_infos.append(lookup["file_info"])
+
+        new_elements = []
+        if changed_file_infos:
+            repo_url = self.loaded_repositories.get(repo_name, {}).get("url")
+            new_elements = self.indexer.index_files(
+                changed_file_infos, repo_name, repo_url
+            )
+            self.logger.info(
+                f"Indexed {len(new_elements)} elements from {len(changed_file_infos)} changed files"
+            )
+
+        # 7. Combine: convert unchanged metadata dicts → CodeElement objects
+        all_elements = []
+        for meta in unchanged_elements:
+            try:
+                all_elements.append(CodeElement(
+                    id=meta.get("id", ""),
+                    type=meta.get("type", ""),
+                    name=meta.get("name", ""),
+                    file_path=meta.get("file_path", ""),
+                    relative_path=meta.get("relative_path", ""),
+                    language=meta.get("language", ""),
+                    start_line=meta.get("start_line", 0),
+                    end_line=meta.get("end_line", 0),
+                    code=meta.get("code", ""),
+                    signature=meta.get("signature"),
+                    docstring=meta.get("docstring"),
+                    summary=meta.get("summary"),
+                    metadata=meta.get("metadata", {}),
+                    repo_name=meta.get("repo_name"),
+                    repo_url=meta.get("repo_url"),
+                ))
+            except Exception as e:
+                self.logger.warning(f"Failed to reconstruct element: {e}")
+        all_elements.extend(new_elements)
+        self.logger.info(f"Total elements after merge: {len(all_elements)}")
+
+        # 8. Rebuild FAISS (temporary store — main instance untouched)
+        temp_store = VectorStore(self.config)
+        temp_store.initialize(self.embedder.embedding_dim)
+
+        vectors, metadata_list = [], []
+        for elem in all_elements:
+            embedding = elem.metadata.get("embedding")
+            if embedding is not None:
+                vectors.append(embedding)
+                metadata_list.append(elem.to_dict())
+
+        if vectors:
+            temp_store.add_vectors(np.array(vectors), metadata_list)
+
+        # 9. Rebuild BM25 (temporary retriever)
+        temp_retriever = HybridRetriever(
+            self.config, temp_store, self.embedder,
+            CodeGraphBuilder(self.config), repo_root=repo_path,
+        )
+        temp_retriever.index_for_bm25(all_elements)
+
+        # 10. Rebuild graphs (temporary builder)
+        temp_graph = CodeGraphBuilder(self.config)
+        module_resolver, symbol_resolver = None, None
+        try:
+            gib = GlobalIndexBuilder(self.config)
+            gib.build_maps(all_elements, repo_path)
+            module_resolver = ModuleResolver(gib)
+            symbol_resolver = SymbolResolver(gib, module_resolver)
+        except Exception as e:
+            self.logger.warning(f"Resolver init failed during incremental reindex: {e}")
+
+        temp_graph.build_graphs(all_elements, module_resolver, symbol_resolver)
+
+        # 11. Save all artifacts
+        if self._should_persist_indexes():
+            temp_store.save(repo_name)
+            temp_retriever.save_bm25(repo_name)
+            temp_graph.save(repo_name)
+            new_manifest = self._build_file_manifest(all_elements, repo_path)
+            self._save_file_manifest(repo_name, new_manifest)
+            self.logger.info(f"Saved all artifacts for '{repo_name}'")
+
+        return {
+            "status": "success",
+            "changes": total_changes,
+            "added_files": len(added),
+            "modified_files": len(modified),
+            "deleted_files": len(deleted),
+            "unchanged_files": len(unchanged),
+            "total_elements": len(all_elements),
+            "new_elements": len(new_elements),
+            "preserved_elements": len(unchanged_elements),
+        }
+
     def cleanup(self):
         """Cleanup resources"""
         self.loader.cleanup()

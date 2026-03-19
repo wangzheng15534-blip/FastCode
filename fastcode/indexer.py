@@ -138,8 +138,53 @@ class CodeIndexer:
         self.logger.info(f"✓ Repository indexing completed for {repo_name or 'Unknown'}: {len(self.elements)} elements indexed with embeddings")
         
         return self.elements
-    
-    def _index_file(self, file_info: Dict[str, Any], content: str, 
+
+    def index_files(self, file_infos: List[Dict], repo_name: str,
+                    repo_url: str = None) -> List[CodeElement]:
+        """Index specific files only (for incremental reindexing).
+
+        Reuses existing _index_file() and embedding pipeline.
+        Skips repo overview generation (already exists for this repo).
+
+        Args:
+            file_infos: List of file info dicts from loader.scan_files()
+            repo_name: Repository name for element IDs
+            repo_url: Optional repository URL
+
+        Returns:
+            List of CodeElement objects with embeddings
+        """
+        self.current_repo_name = repo_name
+        self.current_repo_url = repo_url
+        self.elements = []
+
+        for file_info in file_infos:
+            file_path = file_info["path"]
+
+            content = self.loader.read_file_content(file_path)
+            if content is None:
+                continue
+
+            parse_result = self.parser.parse_file(file_path, content)
+            if parse_result is None:
+                continue
+
+            self._index_file(file_info, content, parse_result)
+
+        self.logger.info(f"Parsed {len(self.elements)} elements from {len(file_infos)} changed files")
+
+        # Generate embeddings for new elements only
+        if self.elements:
+            element_dicts = [elem.to_dict() for elem in self.elements]
+            elements_with_embeddings = self.embedder.embed_code_elements(element_dicts)
+
+            for elem, elem_dict in zip(self.elements, elements_with_embeddings):
+                elem.metadata["embedding"] = elem_dict.get("embedding")
+                elem.metadata["embedding_text"] = elem_dict.get("embedding_text")
+
+        return self.elements
+
+    def _index_file(self, file_info: Dict[str, Any], content: str,
                     parse_result: FileParseResult):
         """Index a single file at multiple levels"""
         file_path = file_info["path"]

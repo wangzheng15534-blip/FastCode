@@ -213,9 +213,9 @@ class FastCode:
             # Index code elements with repository information
             elements = self.indexer.index_repository(repo_name=repo_name, repo_url=repo_url)
             
-            # Initialize vector store if not already done
-            if self.vector_store.dimension is None:
-                self.vector_store.initialize(self.embedder.embedding_dim)
+            # Single-repository indexing should always build a fresh in-memory
+            # index so saved artifacts never mix metadata from prior repos.
+            self.vector_store.initialize(self.embedder.embedding_dim)
             
             # Add embeddings to vector store
             vectors = []
@@ -267,9 +267,14 @@ class FastCode:
                 self.module_resolver = None
                 self.symbol_resolver = None
 
-            # Build code graphs with resolvers
-            # This will now use the initialized resolvers to build precise graphs
-            self.graph_builder.build_graphs(elements, self.module_resolver, self.symbol_resolver)
+            # Build code graphs with a fresh builder so per-repo saves never
+            # retain nodes or edges from a previous repository.
+            fresh_graph_builder = CodeGraphBuilder(self.config)
+            fresh_graph_builder.build_graphs(
+                elements, self.module_resolver, self.symbol_resolver
+            )
+            self.graph_builder = fresh_graph_builder
+            self.retriever.graph_builder = self.graph_builder
             
             # Index for BM25
             self.retriever.index_for_bm25(elements)
@@ -674,38 +679,46 @@ class FastCode:
             # Try to load vector store
             if self.vector_store.load(cache_name):
                 self.logger.info(f"Loaded vector store from cache for {cache_name}")
-                
+
                 # Load BM25 index
                 bm25_loaded = self.retriever.load_bm25(cache_name)
                 if not bm25_loaded:
                     self.logger.warning("Failed to load BM25 index, will need to rebuild")
-                
+
                 # Build separate repo overview BM25 index
                 self.retriever.build_repo_overview_bm25()
-                
-                # Load graph data
-                graph_loaded = self.graph_builder.load(cache_name)
+
+                # Load graph data into a fresh builder so stale state is never reused.
+                fresh_graph_builder = CodeGraphBuilder(self.config)
+                graph_loaded = fresh_graph_builder.load(cache_name)
                 if not graph_loaded:
                     self.logger.warning("Failed to load graph data, will need to rebuild")
-                
+
                 # If BM25 or graph failed to load, reconstruct from metadata
                 if not bm25_loaded or not graph_loaded:
                     self.logger.info("Reconstructing missing components from metadata...")
-                    elements = self._reconstruct_elements_from_metadata()
-                    
+                    elements = (
+                        self.retriever.full_bm25_elements
+                        if bm25_loaded and self.retriever.full_bm25_elements
+                        else self._reconstruct_elements_from_metadata()
+                    )
+
                     if elements:
                         if not bm25_loaded:
                             self.retriever.index_for_bm25(elements)
                             self.logger.info(f"Rebuilt BM25 index with {len(elements)} elements")
-                        
+
                         if not graph_loaded:
                             # Note: Rebuilding graph from metadata is a fallback.
                             # Precise linking might be limited if repo_root context is lost.
-                            self.graph_builder.build_graphs(elements)
+                            fresh_graph_builder.build_graphs(elements)
+                            graph_loaded = True
                             self.logger.info("Rebuilt code graph (fallback mode)")
                     else:
                         self.logger.warning("No elements reconstructed from metadata")
-                
+
+                self.graph_builder = fresh_graph_builder
+                self.retriever.graph_builder = self.graph_builder
                 self.logger.info("Cache loaded successfully")
                 self._log_statistics()
                 return True
@@ -1039,6 +1052,10 @@ class FastCode:
 
                     temp_graph_builder.build_graphs(elements, temp_module_resolver, temp_symbol_resolver)
                     temp_graph_builder.save(repo_name)
+                    self._save_file_manifest(
+                        repo_name,
+                        self._build_file_manifest(elements, self.loader.repo_path),
+                    )
                     self.logger.info(f"Saved graph data for {repo_name}")
                     
                     successfully_indexed.append(repo_name)
@@ -1138,6 +1155,25 @@ class FastCode:
         Returns:
             True if successful, False otherwise
         """
+        def invalidate_in_memory_state() -> None:
+            self.loaded_repositories = {}
+            self.repo_indexed = False
+            self.repo_loaded = False
+            self.multi_repo_mode = False
+
+            retriever = getattr(self, "retriever", None)
+            if retriever is not None:
+                if hasattr(retriever, "current_loaded_repos"):
+                    retriever.current_loaded_repos = None
+                if hasattr(retriever, "filtered_vector_store"):
+                    retriever.filtered_vector_store = None
+                if hasattr(retriever, "filtered_bm25"):
+                    retriever.filtered_bm25 = None
+                if hasattr(retriever, "filtered_bm25_corpus"):
+                    retriever.filtered_bm25_corpus = []
+                if hasattr(retriever, "filtered_bm25_elements"):
+                    retriever.filtered_bm25_elements = []
+
         try:
             # Discover available repository indexes
             persist_dir = self.vector_store.persist_dir
@@ -1153,6 +1189,7 @@ class FastCode:
             
             if not available_repos:
                 self.logger.error("No repository indexes found")
+                invalidate_in_memory_state()
                 return False
             
             # Filter repositories if specific ones are requested
@@ -1160,6 +1197,14 @@ class FastCode:
                 repos_to_load = [r for r in available_repos if r in repo_names]
                 if not repos_to_load:
                     self.logger.error(f"None of the requested repositories found: {repo_names}")
+                    invalidate_in_memory_state()
+                    return False
+                missing_repos = sorted(set(repo_names) - set(repos_to_load))
+                if missing_repos:
+                    self.logger.error(
+                        f"Requested repositories are missing from cache: {', '.join(missing_repos)}"
+                    )
+                    invalidate_in_memory_state()
                     return False
             else:
                 repos_to_load = available_repos
@@ -1167,10 +1212,19 @@ class FastCode:
             self.logger.info(f"Found {len(repos_to_load)} repository indexes: {', '.join(repos_to_load)}")
             
             # Always reinitialize for clean merge
+            previously_loaded = dict(self.loaded_repositories)
             self.vector_store.initialize(self.embedder.embedding_dim)
+            # The previous in-memory state is no longer valid once the merged
+            # vector store is rebuilt. Clear it up front so partial reload
+            # failures cannot leave stale repos marked as loaded.
+            self.loaded_repositories = {}
+            self.repo_indexed = False
+            self.repo_loaded = False
+            self.multi_repo_mode = False
+            if hasattr(self.retriever, "current_loaded_repos"):
+                self.retriever.current_loaded_repos = None
             
             # Load each repository index and merge them
-            previously_loaded = self.loaded_repositories
             successfully_loaded = []
             for repo_name in repos_to_load:
                 self.logger.info(f"Loading index for {repo_name}...")
@@ -1185,10 +1239,19 @@ class FastCode:
                 except Exception as e:
                     self.logger.error(f"Error loading {repo_name}: {e}")
                     continue
-            
+
+            if repo_names and set(successfully_loaded) != set(repos_to_load):
+                missing_repos = sorted(set(repos_to_load) - set(successfully_loaded))
+                self.logger.error(
+                    f"Failed to load all requested repositories: {', '.join(missing_repos)}"
+                )
+                invalidate_in_memory_state()
+                return False
+
             # Check if we successfully loaded any repositories
             if self.vector_store.get_count() == 0:
                 self.logger.error("Failed to load any repository indexes")
+                invalidate_in_memory_state()
                 return False
             
             # Register only the repositories that are actually present in memory.
@@ -1206,11 +1269,14 @@ class FastCode:
             # Try to load BM25 and graph data from saved files
             # For multi-repo, we merge BM25 data from all loaded repositories
             self.logger.info("Loading BM25 and graph data...")
-            
+
             all_bm25_elements = []
             all_bm25_corpus = []
+            bm25_cache_complete = True
+            fresh_graph_builder = CodeGraphBuilder(self.config)
             graphs_loaded = False
-            
+            graph_cache_complete = True
+
             for repo_name in successfully_loaded:
                 # Try loading BM25 for each repo
                 bm25_path = os.path.join(self.retriever.persist_dir, f"{repo_name}_bm25.pkl")
@@ -1227,41 +1293,63 @@ class FastCode:
                         self.logger.info(f"Loaded BM25 data for {repo_name}")
                     except Exception as e:
                         self.logger.warning(f"Failed to load BM25 data for {repo_name}: {e}")
+                        bm25_cache_complete = False
+                else:
+                    self.logger.warning(f"BM25 data not found for {repo_name}")
+                    bm25_cache_complete = False
                 
                 # Load graph data (merge into main graph)
                 if not graphs_loaded:
                     # Load the first repository's graph as base
-                    if self.graph_builder.load(repo_name):
+                    if fresh_graph_builder.load(repo_name):
                         graphs_loaded = True
                         self.logger.info(f"Loaded graph data from {repo_name} as base")
+                    else:
+                        graph_cache_complete = False
                 else:
                     # Merge additional repository graphs
-                    if self.graph_builder.merge_from_file(repo_name):
+                    if fresh_graph_builder.merge_from_file(repo_name):
                         self.logger.info(f"Merged graph data from {repo_name}")
                     else:
                         self.logger.warning(f"Failed to merge graph data from {repo_name}")
-                    # TODO: Merge additional repository graphs if needed
+                        graph_cache_complete = False
+
             # Rebuild FULL BM25 index with merged data (for repository selection)
-            if all_bm25_elements and all_bm25_corpus:
+            if all_bm25_elements and all_bm25_corpus and bm25_cache_complete:
                 self.retriever.full_bm25_elements = all_bm25_elements
                 self.retriever.full_bm25_corpus = all_bm25_corpus
                 self.retriever.full_bm25 = BM25Okapi(all_bm25_corpus)
                 self.logger.info(f"Rebuilt full BM25 index with {len(all_bm25_elements)} merged elements")
             else:
                 # Fallback: reconstruct from metadata
-                self.logger.info("No BM25 data found, reconstructing from metadata...")
+                if bm25_cache_complete:
+                    self.logger.info("No BM25 data found, reconstructing from metadata...")
+                else:
+                    self.logger.info("BM25 cache incomplete, reconstructing from metadata...")
                 elements = self._reconstruct_elements_from_metadata()
-                
+
                 if elements:
                     self.retriever.index_for_bm25(elements)
                     self.logger.info(f"Rebuilt BM25 index with {len(elements)} elements")
-                    
-                    if not graphs_loaded:
-                        self.graph_builder.build_graphs(elements)
-                        self.logger.info("Rebuilt code graph")
                 else:
                     self.logger.warning("No elements reconstructed from metadata")
-            
+
+            if not graphs_loaded or not graph_cache_complete:
+                elements = (
+                    self.retriever.full_bm25_elements
+                    if self.retriever.full_bm25_elements
+                    else self._reconstruct_elements_from_metadata()
+                )
+                if elements:
+                    fresh_graph_builder = CodeGraphBuilder(self.config)
+                    fresh_graph_builder.build_graphs(elements)
+                    graphs_loaded = True
+                    self.logger.info("Rebuilt code graph")
+                else:
+                    self.logger.warning("No elements available to rebuild graph data")
+
+            self.graph_builder = fresh_graph_builder
+            self.retriever.graph_builder = self.graph_builder
             # Build separate BM25 index for repository overviews
             self.retriever.build_repo_overview_bm25()
             self.logger.info("Built separate BM25 index for repository overviews")
@@ -1277,6 +1365,7 @@ class FastCode:
             self.logger.error(f"Failed to load multi-repo cache: {e}")
             import traceback
             self.logger.error(traceback.format_exc())
+            invalidate_in_memory_state()
             return False
     
     # ------------------------------------------------------------------

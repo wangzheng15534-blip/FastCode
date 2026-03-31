@@ -20,18 +20,10 @@ def _doc_id(snapshot_id: str, rel_path: str) -> str:
 
 
 def _ast_symbol_id(snapshot_id: str, elem: CodeElement) -> str:
-    local = ":".join(
-        [
-            snapshot_id,
-            elem.language or "",
-            elem.relative_path or "",
-            elem.type or "",
-            elem.name or "",
-            str(elem.start_line or 0),
-            str(elem.end_line or 0),
-        ]
+    return (
+        f"ast:{snapshot_id}:{elem.language or 'unknown'}:{elem.relative_path or ''}:"
+        f"{elem.type or 'unknown'}:{elem.name or 'unknown'}:{int(elem.start_line or 0)}:{int(elem.end_line or 0)}"
     )
-    return f"ast:{hashlib.md5(local.encode('utf-8')).hexdigest()[:24]}"
 
 
 def build_ir_from_ast(
@@ -48,6 +40,9 @@ def build_ir_from_ast(
     symbols: List[IRSymbol] = []
     occurrences: List[IROccurrence] = []
     edges: List[IREdge] = []
+    doc_by_rel_path = {}
+    class_symbols = {}
+    symbols_by_name = {}
 
     for elem in elements:
         elem_meta = elem.metadata or {}
@@ -61,6 +56,7 @@ def build_ir_from_ast(
                 content_hash=None,
                 source_set={"ast"},
             )
+            doc_by_rel_path[rel_path] = doc_id
         else:
             documents[doc_id].source_set.add("ast")
 
@@ -85,9 +81,18 @@ def build_ir_from_ast(
             end_col=0,
             source_priority=10,
             source_set={"ast"},
-            metadata={"ast_element_id": elem.id, **elem_meta},
+            metadata={
+                "ast_element_id": elem.id,
+                "source": "ast",
+                "confidence": "fallback",
+                "extractor": "fastcode.adapters.ast_to_ir",
+                **elem_meta,
+            },
         )
         symbols.append(symbol)
+        symbols_by_name.setdefault(elem.name, []).append(symbol_id)
+        if elem.type == "class":
+            class_symbols[(rel_path, elem.name)] = symbol_id
 
         occ_id = _hash_id("occ", f"{symbol_id}:{doc_id}:{elem.start_line}:{elem.end_line}")
         occurrences.append(
@@ -115,9 +120,78 @@ def build_ir_from_ast(
                 source="ast",
                 confidence="resolved",
                 doc_id=doc_id,
-                metadata={},
+                metadata={"extractor": "fastcode.adapters.ast_to_ir", "source": "ast"},
             )
         )
+
+    # Build import/inheritance edges from AST metadata.
+    for elem in elements:
+        elem_meta = elem.metadata or {}
+        rel_path = elem.relative_path or elem.file_path
+        doc_id = doc_by_rel_path.get(rel_path)
+        if not doc_id:
+            continue
+
+        if elem.type == "file":
+            imports = elem_meta.get("imports", []) or []
+            for imp in imports:
+                module = (imp or {}).get("module")
+                if not module:
+                    continue
+                module_path = module.replace(".", "/")
+                target_doc_id = None
+                for known_path, known_doc_id in doc_by_rel_path.items():
+                    if known_path.endswith(f"{module_path}.py") or f"/{module_path}/" in known_path:
+                        target_doc_id = known_doc_id
+                        break
+                if not target_doc_id or target_doc_id == doc_id:
+                    continue
+                edge_id = _hash_id("edge", f"import:{doc_id}:{target_doc_id}:{module}")
+                edges.append(
+                    IREdge(
+                        edge_id=edge_id,
+                        src_id=doc_id,
+                        dst_id=target_doc_id,
+                        edge_type="import",
+                        source="ast",
+                        confidence="heuristic",
+                        doc_id=doc_id,
+                        metadata={
+                            "module": module,
+                            "extractor": "fastcode.adapters.ast_to_ir",
+                            "source": "ast",
+                        },
+                    )
+                )
+
+        if elem.type == "class":
+            src_symbol_id = class_symbols.get((rel_path, elem.name))
+            if not src_symbol_id:
+                continue
+            for base in elem_meta.get("bases", []) or []:
+                target_symbol_id = class_symbols.get((rel_path, base))
+                if not target_symbol_id:
+                    candidates = symbols_by_name.get(base, [])
+                    target_symbol_id = candidates[0] if candidates else None
+                if not target_symbol_id or target_symbol_id == src_symbol_id:
+                    continue
+                edge_id = _hash_id("edge", f"inherit:{src_symbol_id}:{target_symbol_id}:{base}")
+                edges.append(
+                    IREdge(
+                        edge_id=edge_id,
+                        src_id=src_symbol_id,
+                        dst_id=target_symbol_id,
+                        edge_type="inherit",
+                        source="ast",
+                        confidence="heuristic",
+                        doc_id=doc_id,
+                        metadata={
+                            "base": base,
+                            "extractor": "fastcode.adapters.ast_to_ir",
+                            "source": "ast",
+                        },
+                    )
+                )
 
     return IRSnapshot(
         repo_name=repo_name,

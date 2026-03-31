@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any, Dict, List
 
-from ..semantic_ir import IRDocument, IROccurrence, IRSnapshot, IRSymbol
+from ..semantic_ir import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
 
 
 def _hid(prefix: str, payload: str) -> str:
@@ -44,6 +44,9 @@ def build_ir_from_scip(
     documents: List[IRDocument] = []
     symbols: List[IRSymbol] = []
     occurrences: List[IROccurrence] = []
+    edges: List[IREdge] = []
+    indexer_name = scip_index.get("indexer_name")
+    indexer_version = scip_index.get("indexer_version")
 
     for doc in scip_index.get("documents", []):
         path = doc.get("path", "")
@@ -63,7 +66,7 @@ def build_ir_from_scip(
             if not ext_symbol:
                 continue
             r = sym.get("range", [None, None, None, None])
-            symbol_id = f"scip:{ext_symbol}"
+            symbol_id = f"scip:{snapshot_id}:{ext_symbol}"
             symbols.append(
                 IRSymbol(
                     symbol_id=symbol_id,
@@ -80,7 +83,28 @@ def build_ir_from_scip(
                     end_col=r[3],
                     source_priority=100,
                     source_set={"scip"},
-                    metadata={"scip": True},
+                    metadata={
+                        "scip": True,
+                        "source": "scip",
+                        "confidence": "precise",
+                        "indexer_name": indexer_name,
+                        "indexer_version": indexer_version,
+                    },
+                )
+            )
+            edges.append(
+                IREdge(
+                    edge_id=_hid("edge", f"contain:{doc_id}:{symbol_id}"),
+                    src_id=doc_id,
+                    dst_id=symbol_id,
+                    edge_type="contain",
+                    source="scip",
+                    confidence="precise",
+                    doc_id=doc_id,
+                    metadata={
+                        "indexer_name": indexer_name,
+                        "indexer_version": indexer_version,
+                    },
                 )
             )
 
@@ -90,11 +114,12 @@ def build_ir_from_scip(
                 continue
             r = occ.get("range", [0, 0, 0, 0])
             role = occ.get("role", "reference")
+            symbol_id = f"scip:{snapshot_id}:{ext_symbol}"
             occ_id = _hid("occ", f"{snapshot_id}:{doc_id}:{ext_symbol}:{role}:{r}")
             occurrences.append(
                 IROccurrence(
                     occurrence_id=occ_id,
-                    symbol_id=f"scip:{ext_symbol}",
+                    symbol_id=symbol_id,
                     doc_id=doc_id,
                     role=role,
                     start_line=int(r[0] or 0),
@@ -102,9 +127,32 @@ def build_ir_from_scip(
                     end_line=int(r[2] or 0),
                     end_col=int(r[3] or 0),
                     source="scip",
-                    metadata={},
+                    metadata={
+                        "source": "scip",
+                        "confidence": "precise",
+                        "indexer_name": indexer_name,
+                        "indexer_version": indexer_version,
+                    },
                 )
             )
+            if role in {"reference", "definition", "implementation", "type_definition"}:
+                edges.append(
+                    IREdge(
+                        edge_id=_hid("edge", f"ref:{doc_id}:{symbol_id}:{occ_id}"),
+                        src_id=doc_id,
+                        dst_id=symbol_id,
+                        edge_type="ref",
+                        source="scip",
+                        confidence="precise",
+                        doc_id=doc_id,
+                        metadata={
+                            "role": role,
+                            "occurrence_id": occ_id,
+                            "indexer_name": indexer_name,
+                            "indexer_version": indexer_version,
+                        },
+                    )
+                )
 
     return IRSnapshot(
         repo_name=repo_name,
@@ -115,7 +163,6 @@ def build_ir_from_scip(
         documents=documents,
         symbols=symbols,
         occurrences=occurrences,
-        edges=[],
+        edges=edges,
         metadata={"source_modes": ["scip"]},
     )
-

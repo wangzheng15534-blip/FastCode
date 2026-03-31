@@ -1,0 +1,324 @@
+"""
+PostgreSQL retrieval store using pgvector + FTS, with graceful fallback.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import math
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
+
+from .db_runtime import DBRuntime
+
+
+class PgRetrievalStore:
+    def __init__(self, db_runtime: DBRuntime, config: Dict[str, Any]):
+        self.db_runtime = db_runtime
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+        self.enabled = self.db_runtime.backend == "postgres"
+        self.backend_mode = config.get("retrieval", {}).get("backend", "pg_hybrid")
+        if self.enabled:
+            self._init_db()
+
+    def _init_db(self) -> None:
+        with self.db_runtime.connect() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            except Exception as e:
+                self.logger.warning(f"pgvector extension unavailable: {e}")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS embedding_vectors (
+                    snapshot_id TEXT NOT NULL,
+                    element_id TEXT NOT NULL,
+                    repo_name TEXT,
+                    relative_path TEXT,
+                    language TEXT,
+                    element_type TEXT,
+                    embedding vector,
+                    embedding_arr DOUBLE PRECISION[],
+                    metadata_json JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (snapshot_id, element_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_embedding_snapshot_repo
+                ON embedding_vectors (snapshot_id, repo_name)
+                """
+            )
+            # HNSW optional; skip hard-fail if not supported by deployment.
+            try:
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_embedding_hnsw
+                    ON embedding_vectors USING hnsw (embedding vector_cosine_ops)
+                    """
+                )
+            except Exception:
+                pass
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS search_documents (
+                    snapshot_id TEXT NOT NULL,
+                    element_id TEXT NOT NULL,
+                    repo_name TEXT,
+                    relative_path TEXT,
+                    language TEXT,
+                    element_type TEXT,
+                    text_content TEXT NOT NULL,
+                    metadata_json JSONB NOT NULL,
+                    search_tsv tsvector GENERATED ALWAYS AS (
+                        to_tsvector('english', coalesce(text_content, ''))
+                    ) STORED,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (snapshot_id, element_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_search_documents_tsv
+                ON search_documents USING GIN(search_tsv)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_search_documents_snapshot_repo
+                ON search_documents (snapshot_id, repo_name)
+                """
+            )
+            conn.commit()
+
+    def is_active(self) -> bool:
+        return self.enabled and self.backend_mode == "pg_hybrid"
+
+    @staticmethod
+    def _vector_literal(vec: Sequence[float]) -> str:
+        return "[" + ",".join(f"{float(v):.8f}" for v in vec) + "]"
+
+    def upsert_elements(self, snapshot_id: str, elements: List[Dict[str, Any]]) -> None:
+        if not self.enabled:
+            return
+        with self.db_runtime.connect() as conn:
+            cur = conn.cursor()
+            for elem in elements:
+                element_id = str(elem.get("id") or "")
+                if not element_id:
+                    continue
+                meta = elem.get("metadata") or {}
+                embedding = meta.get("embedding")
+                repo_name = elem.get("repo_name") or meta.get("repo_name")
+                relative_path = elem.get("relative_path")
+                language = elem.get("language")
+                element_type = elem.get("type")
+                text_content = " ".join(
+                    [
+                        str(elem.get("name") or ""),
+                        str(elem.get("summary") or ""),
+                        str(elem.get("signature") or ""),
+                        str(elem.get("docstring") or ""),
+                        str(elem.get("code") or "")[:2000],
+                    ]
+                )
+                metadata_json = json.dumps(elem, ensure_ascii=False)
+
+                vector_literal = None
+                embedding_arr = None
+                if isinstance(embedding, (list, tuple)) and embedding:
+                    embedding_arr = [float(x) for x in embedding]
+                    vector_literal = self._vector_literal(embedding_arr)
+                if isinstance(embedding, np.ndarray) and embedding.size > 0:
+                    embedding_arr = [float(x) for x in embedding.tolist()]
+                    vector_literal = self._vector_literal(embedding_arr)
+
+                cur.execute(
+                    """
+                    INSERT INTO embedding_vectors (
+                        snapshot_id, element_id, repo_name, relative_path, language, element_type,
+                        embedding, embedding_arr, metadata_json, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s::vector, %s, %s::jsonb, NOW())
+                    ON CONFLICT (snapshot_id, element_id) DO UPDATE SET
+                        repo_name=EXCLUDED.repo_name,
+                        relative_path=EXCLUDED.relative_path,
+                        language=EXCLUDED.language,
+                        element_type=EXCLUDED.element_type,
+                        embedding=EXCLUDED.embedding,
+                        embedding_arr=EXCLUDED.embedding_arr,
+                        metadata_json=EXCLUDED.metadata_json,
+                        updated_at=EXCLUDED.updated_at
+                    """,
+                    (
+                        snapshot_id,
+                        element_id,
+                        repo_name,
+                        relative_path,
+                        language,
+                        element_type,
+                        vector_literal,
+                        embedding_arr,
+                        metadata_json,
+                    ),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO search_documents (
+                        snapshot_id, element_id, repo_name, relative_path, language, element_type,
+                        text_content, metadata_json, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
+                    ON CONFLICT (snapshot_id, element_id) DO UPDATE SET
+                        repo_name=EXCLUDED.repo_name,
+                        relative_path=EXCLUDED.relative_path,
+                        language=EXCLUDED.language,
+                        element_type=EXCLUDED.element_type,
+                        text_content=EXCLUDED.text_content,
+                        metadata_json=EXCLUDED.metadata_json,
+                        updated_at=EXCLUDED.updated_at
+                    """,
+                    (
+                        snapshot_id,
+                        element_id,
+                        repo_name,
+                        relative_path,
+                        language,
+                        element_type,
+                        text_content,
+                        metadata_json,
+                    ),
+                )
+            conn.commit()
+
+    def semantic_search(
+        self,
+        snapshot_id: str,
+        query_embedding: Sequence[float],
+        *,
+        repo_filter: Optional[List[str]] = None,
+        top_k: int = 20,
+    ) -> List[Tuple[Dict[str, Any], float]]:
+        if not self.enabled or not query_embedding:
+            return []
+        vector_literal = self._vector_literal(query_embedding)
+
+        with self.db_runtime.connect() as conn:
+            cur = conn.cursor()
+            try:
+                if repo_filter:
+                    cur.execute(
+                        """
+                        SELECT metadata_json, (1 - (embedding <=> %s::vector)) AS score
+                        FROM embedding_vectors
+                        WHERE snapshot_id=%s
+                          AND repo_name = ANY(%s)
+                        ORDER BY embedding <=> %s::vector
+                        LIMIT %s
+                        """,
+                        (vector_literal, snapshot_id, repo_filter, vector_literal, top_k),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT metadata_json, (1 - (embedding <=> %s::vector)) AS score
+                        FROM embedding_vectors
+                        WHERE snapshot_id=%s
+                        ORDER BY embedding <=> %s::vector
+                        LIMIT %s
+                        """,
+                        (vector_literal, snapshot_id, vector_literal, top_k),
+                    )
+                rows = cur.fetchall()
+                out = []
+                for row in rows:
+                    meta = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+                    out.append((meta, float(row[1] or 0.0)))
+                return out
+            except Exception:
+                # Fallback: compute cosine with embedding_arr client-side.
+                if repo_filter:
+                    cur.execute(
+                        """
+                        SELECT metadata_json, embedding_arr
+                        FROM embedding_vectors
+                        WHERE snapshot_id=%s
+                          AND repo_name = ANY(%s)
+                        LIMIT %s
+                        """,
+                        (snapshot_id, repo_filter, top_k * 8),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT metadata_json, embedding_arr
+                        FROM embedding_vectors
+                        WHERE snapshot_id=%s
+                        LIMIT %s
+                        """,
+                        (snapshot_id, top_k * 8),
+                    )
+                q = np.array(query_embedding, dtype=np.float32)
+                q_norm = float(np.linalg.norm(q)) or 1.0
+                scored = []
+                for row in cur.fetchall():
+                    meta_raw, emb_arr = row
+                    if not emb_arr:
+                        continue
+                    emb = np.array(emb_arr, dtype=np.float32)
+                    denom = (float(np.linalg.norm(emb)) or 1.0) * q_norm
+                    score = float(np.dot(emb, q) / denom)
+                    meta = meta_raw if isinstance(meta_raw, dict) else json.loads(meta_raw)
+                    scored.append((meta, score))
+                scored.sort(key=lambda x: x[1], reverse=True)
+                return scored[:top_k]
+
+    def keyword_search(
+        self,
+        snapshot_id: str,
+        query: str,
+        *,
+        repo_filter: Optional[List[str]] = None,
+        top_k: int = 20,
+    ) -> List[Tuple[Dict[str, Any], float]]:
+        if not self.enabled or not query.strip():
+            return []
+        with self.db_runtime.connect() as conn:
+            cur = conn.cursor()
+            if repo_filter:
+                cur.execute(
+                    """
+                    SELECT metadata_json, ts_rank(search_tsv, plainto_tsquery('english', %s)) AS score
+                    FROM search_documents
+                    WHERE snapshot_id=%s
+                      AND repo_name = ANY(%s)
+                      AND search_tsv @@ plainto_tsquery('english', %s)
+                    ORDER BY score DESC
+                    LIMIT %s
+                    """,
+                    (query, snapshot_id, repo_filter, query, top_k),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT metadata_json, ts_rank(search_tsv, plainto_tsquery('english', %s)) AS score
+                    FROM search_documents
+                    WHERE snapshot_id=%s
+                      AND search_tsv @@ plainto_tsquery('english', %s)
+                    ORDER BY score DESC
+                    LIMIT %s
+                    """,
+                    (query, snapshot_id, query, top_k),
+                )
+            out = []
+            for row in cur.fetchall():
+                meta = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+                out.append((meta, float(row[1] or 0.0)))
+            return out

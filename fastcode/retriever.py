@@ -20,6 +20,7 @@ from .query_processor import ProcessedQuery
 from .repo_selector import RepositorySelector
 from .utils import ensure_dir
 from .iterative_agent import IterativeAgent
+from .pg_retrieval import PgRetrievalStore
 
 
 class HybridRetriever:
@@ -42,6 +43,7 @@ class HybridRetriever:
         self.graph_weight = self.retrieval_config.get("graph_weight", 0.1)
         self.graph_backend = self.retrieval_config.get("graph_backend", "ir")
         self.allow_legacy_graph_fallback = self.retrieval_config.get("allow_legacy_graph_fallback", True)
+        self.retrieval_backend = self.retrieval_config.get("backend", "pg_hybrid")
         
         # Retrieval parameters
         self.min_similarity = self.retrieval_config.get("min_similarity", 0.3)
@@ -99,6 +101,8 @@ class HybridRetriever:
         self.current_loaded_repos = None  # None means all repos loaded, List means specific repos
         self.ir_graphs: Optional[IRGraphs] = None
         self.ir_snapshot_id: Optional[str] = None
+        self.pg_retrieval_store: Optional[PgRetrievalStore] = None
+        self._active_snapshot_id: Optional[str] = None
     
     def index_for_bm25(self, elements: List[CodeElement]):
         """
@@ -153,6 +157,13 @@ class HybridRetriever:
             self.logger.info(f"IR graph backend active for snapshot {snapshot_id or 'unknown'}")
         else:
             self.logger.info("IR graph backend cleared")
+
+    def set_pg_retrieval_store(self, store: Optional[PgRetrievalStore]) -> None:
+        self.pg_retrieval_store = store
+        if store and store.is_active():
+            self.logger.info("PG hybrid retrieval backend enabled")
+        else:
+            self.logger.info("PG hybrid retrieval backend disabled")
     
     def build_repo_overview_bm25(self):
         """
@@ -216,6 +227,7 @@ class HybridRetriever:
             List of retrieved elements with metadata
         """
         # Handle both string and ProcessedQuery inputs
+        self._active_snapshot_id = (filters or {}).get("snapshot_id") or self.ir_snapshot_id
         if isinstance(query, ProcessedQuery):
             processed_query = query
             query_str = processed_query.original
@@ -746,6 +758,21 @@ class HybridRetriever:
         """
         # Embed query
         query_embedding = self.embedder.embed_text(query)
+
+        if (
+            self.retrieval_backend == "pg_hybrid"
+            and self.pg_retrieval_store is not None
+            and self.pg_retrieval_store.is_active()
+            and self._active_snapshot_id
+        ):
+            pg_results = self.pg_retrieval_store.semantic_search(
+                snapshot_id=self._active_snapshot_id,
+                query_embedding=query_embedding,
+                repo_filter=repo_filter,
+                top_k=top_k,
+            )
+            if pg_results:
+                return pg_results
         
         # Choose which vector store to use
         if self.filtered_vector_store is not None and self.filtered_vector_store.get_count() > 0:
@@ -790,6 +817,21 @@ class HybridRetriever:
         Keyword search using BM25
         Uses filtered_bm25 if available, otherwise uses full_bm25
         """
+        if (
+            self.retrieval_backend == "pg_hybrid"
+            and self.pg_retrieval_store is not None
+            and self.pg_retrieval_store.is_active()
+            and self._active_snapshot_id
+        ):
+            pg_results = self.pg_retrieval_store.keyword_search(
+                snapshot_id=self._active_snapshot_id,
+                query=query,
+                repo_filter=repo_filter,
+                top_k=top_k,
+            )
+            if pg_results:
+                return pg_results
+
         # Choose which BM25 index to use
         if self.filtered_bm25 is not None and len(self.filtered_bm25_elements) > 0:
             # Use filtered BM25

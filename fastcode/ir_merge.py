@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
-from .semantic_ir import IROccurrence, IRSnapshot, IRSymbol
+from .semantic_ir import IREdge, IROccurrence, IRSnapshot, IRSymbol
 
 
 def _symbol_key(symbol: IRSymbol) -> Tuple[str, str, str, int | None]:
@@ -73,9 +73,18 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
     for edge in ast_snapshot.edges + scip_snapshot.edges:
         src_id = ast_to_canonical.get(edge.src_id, edge.src_id)
         dst_id = ast_to_canonical.get(edge.dst_id, edge.dst_id)
-        edge.src_id = src_id
-        edge.dst_id = dst_id
-        merged_edges.append(edge)
+        merged_edges.append(
+            IREdge(
+                edge_id=edge.edge_id,
+                src_id=src_id,
+                dst_id=dst_id,
+                edge_type=edge.edge_type,
+                source=edge.source,
+                confidence=edge.confidence,
+                doc_id=edge.doc_id,
+                metadata=edge.metadata,
+            )
+        )
 
     return IRSnapshot(
         repo_name=ast_snapshot.repo_name,
@@ -96,4 +105,3 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
             )
         },
     )
-

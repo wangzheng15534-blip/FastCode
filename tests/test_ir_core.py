@@ -180,6 +180,27 @@ def test_ast_symbol_id_falls_back_to_name_when_no_qualified_name():
     assert ":10:0" in sid  # start_col defaults to 0
 
 
+def test_validate_catches_duplicate_doc_paths():
+    """Spec: document paths must be unique inside snapshot."""
+    snap = IRSnapshot(
+        repo_name="r",
+        snapshot_id="s",
+        documents=[
+            IRDocument(doc_id="d1", path="a.py", language="python", source_set={"ast"}),
+            IRDocument(doc_id="d2", path="a.py", language="python", source_set={"ast"}),
+        ],
+        symbols=[
+            IRSymbol(
+                symbol_id="s1", external_symbol_id=None, path="a.py",
+                display_name="x", kind="function", language="python",
+                source_priority=0, source_set={"ast"}, metadata={"source": "ast"},
+            )
+        ],
+    )
+    errors = validate_snapshot(snap)
+    assert any("duplicate document path" in e for e in errors)
+
+
 def test_ir_graph_builder_routes_edge_types():
     snap = IRSnapshot(
         repo_name="r",

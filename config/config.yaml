@@ -213,3 +213,23 @@ terminus:
   endpoint: ""  # e.g. http://127.0.0.1:6363/api/lineage/publish
   api_key: ""
   timeout_seconds: 15
+
+# Transform-layer projection (Postgres primary store)
+projection:
+  postgres_dsn: ""  # e.g. postgresql://user:pass@127.0.0.1:5432/fastcode
+  enable_leiden: true
+  llm_enabled: true
+  llm_timeout_seconds: 8
+  llm_max_tokens: 180
+  llm_temperature: 0.2
+  max_entity_hops: 2
+  max_query_hops: 2
+  max_chunk_count: 64
+  edge_weights:
+    contain: 4.0
+    defines: 4.0
+    owns: 4.0
+    call: 2.0
+    import: 2.0
+    inherit: 2.0
+    ref: 2.0

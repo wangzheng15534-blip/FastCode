@@ -27,6 +27,7 @@ chromadb
 # Search & Retrieval
 rank-bm25
 networkx
+python-igraph
 
 # LLM Integration
 openai
@@ -46,6 +47,7 @@ tqdm
 numpy
 pandas
 pathspec
+psycopg[binary]
 
 # Caching
 diskcache
@@ -58,5 +60,4 @@ mcp[cli]
 pytest
 pytest-asyncio
 pytest-cov
-
 

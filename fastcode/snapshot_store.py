@@ -72,6 +72,18 @@ class SnapshotStore:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS scip_artifacts (
+                    snapshot_id TEXT PRIMARY KEY,
+                    indexer_name TEXT NOT NULL,
+                    indexer_version TEXT,
+                    artifact_path TEXT NOT NULL,
+                    checksum TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_snapshot_refs_repo_branch
                 ON snapshot_refs (repo_name, branch, created_at DESC)
                 """
@@ -206,6 +218,19 @@ class SnapshotStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def find_by_artifact_key(self, artifact_key: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM snapshots
+                WHERE artifact_key=?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (artifact_key,),
+            ).fetchone()
+        return dict(row) if row else None
+
     def resolve_snapshot_for_ref(self, repo_name: str, branch: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(
@@ -216,5 +241,47 @@ class SnapshotStore:
                 LIMIT 1
                 """,
                 (repo_name, branch),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def save_scip_artifact_ref(
+        self,
+        snapshot_id: str,
+        indexer_name: str,
+        indexer_version: Optional[str],
+        artifact_path: str,
+        checksum: str,
+    ) -> Dict[str, Any]:
+        created_at = _utc_now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO scip_artifacts (
+                    snapshot_id, indexer_name, indexer_version, artifact_path, checksum, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(snapshot_id) DO UPDATE SET
+                    indexer_name=excluded.indexer_name,
+                    indexer_version=excluded.indexer_version,
+                    artifact_path=excluded.artifact_path,
+                    checksum=excluded.checksum,
+                    created_at=excluded.created_at
+                """,
+                (snapshot_id, indexer_name, indexer_version, artifact_path, checksum, created_at),
+            )
+            conn.commit()
+        return {
+            "snapshot_id": snapshot_id,
+            "indexer_name": indexer_name,
+            "indexer_version": indexer_version,
+            "artifact_path": artifact_path,
+            "checksum": checksum,
+            "created_at": created_at,
+        }
+
+    def get_scip_artifact_ref(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM scip_artifacts WHERE snapshot_id=?",
+                (snapshot_id,),
             ).fetchone()
         return dict(row) if row else None

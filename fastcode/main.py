@@ -42,6 +42,7 @@ from .terminus_publisher import TerminusPublisher
 from .projection_models import ProjectionScope
 from .projection_store import ProjectionStore
 from .projection_transform import ProjectionTransformer
+from .snapshot_symbol_index import SnapshotSymbolIndex
 
 
 class FastCode:
@@ -129,6 +130,7 @@ class FastCode:
         self.terminus_publisher = TerminusPublisher(self.config)
         self.projection_transformer = ProjectionTransformer(self.config)
         self.projection_store = ProjectionStore(self.config)
+        self.snapshot_symbol_index = SnapshotSymbolIndex()
         
         # State
         self.repo_loaded = False
@@ -235,7 +237,7 @@ class FastCode:
             repo_url = self.repo_info.get("url")
             
             # Index code elements with repository information
-            elements = self.indexer.index_repository(repo_name=repo_name, repo_url=repo_url)
+            elements = self.indexer.extract_elements(repo_name=repo_name, repo_url=repo_url)
             
             # Initialize vector store if not already done
             if self.vector_store.dimension is None:
@@ -394,6 +396,15 @@ class FastCode:
 
         bm25_loaded = self.retriever.load_bm25(artifact_key)
         graph_loaded = self.graph_builder.load(artifact_key)
+        ir_graphs = None
+        if artifact_key.startswith("snap_"):
+            record = self.snapshot_store.find_by_artifact_key(artifact_key)
+            snapshot_id = record["snapshot_id"] if record else None
+            if snapshot_id:
+                ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
+                self.retriever.set_ir_graphs(ir_graphs, snapshot_id=snapshot_id)
+        else:
+            self.retriever.set_ir_graphs(None, snapshot_id=None)
         self.retriever.build_repo_overview_bm25()
 
         if not bm25_loaded or not graph_loaded:
@@ -475,7 +486,7 @@ class FastCode:
 
         try:
             self.index_run_store.mark_status(run_id, "extracting")
-            elements = self.indexer.index_repository(repo_name=repo_name, repo_url=repo_url)
+            elements = self.indexer.extract_elements(repo_name=repo_name, repo_url=repo_url)
 
             artifact_key = self.snapshot_store.artifact_key_for_snapshot(snapshot_id)
 
@@ -535,10 +546,13 @@ class FastCode:
             )
 
             scip_snapshot = None
+            scip_artifact_ref = None
             if enable_scip:
                 try:
+                    raw_scip_path = None
                     if scip_artifact_path:
                         scip_data = load_scip_artifact(scip_artifact_path)
+                        raw_scip_path = scip_artifact_path
                         scip_snapshot = build_ir_from_scip(
                             repo_name=repo_name,
                             snapshot_id=snapshot_id,
@@ -552,6 +566,7 @@ class FastCode:
                         out_path = os.path.join(out_dir, "index.scip.json")
                         run_scip_python_index(self.loader.repo_path or "", out_path)
                         scip_data = load_scip_artifact(out_path)
+                        raw_scip_path = out_path
                         scip_snapshot = build_ir_from_scip(
                             repo_name=repo_name,
                             snapshot_id=snapshot_id,
@@ -559,6 +574,26 @@ class FastCode:
                             branch=snapshot_ref.get("branch"),
                             commit_id=snapshot_ref.get("commit_id"),
                             tree_id=snapshot_ref.get("tree_id"),
+                        )
+                    if raw_scip_path and os.path.exists(raw_scip_path):
+                        import hashlib
+                        import shutil
+
+                        scip_dir = os.path.join(self.snapshot_store.snapshot_dir(snapshot_id), "scip")
+                        ensure_dir(scip_dir)
+                        ext = os.path.splitext(raw_scip_path)[1] or ".json"
+                        preserved_path = os.path.join(scip_dir, f"raw{ext}")
+                        shutil.copy2(raw_scip_path, preserved_path)
+                        digest = hashlib.sha256()
+                        with open(preserved_path, "rb") as fh:
+                            for chunk in iter(lambda: fh.read(8192), b""):
+                                digest.update(chunk)
+                        scip_artifact_ref = self.snapshot_store.save_scip_artifact_ref(
+                            snapshot_id=snapshot_id,
+                            indexer_name=scip_data.get("indexer_name", "scip-python"),
+                            indexer_version=scip_data.get("indexer_version"),
+                            artifact_path=preserved_path,
+                            checksum=digest.hexdigest(),
                         )
                 except Exception as e:
                     degraded = True
@@ -568,11 +603,38 @@ class FastCode:
             errors = validate_snapshot(merged_snapshot)
             if errors:
                 raise RuntimeError(f"IR validation failed: {errors[:5]}")
+            self.snapshot_symbol_index.register_snapshot(merged_snapshot)
+
+            # Backfill canonical IR symbol IDs into vector metadata for IR-aware retrieval.
+            ast_id_to_ir: Dict[str, str] = {}
+            for sym in merged_snapshot.symbols:
+                meta = sym.metadata or {}
+                ast_elem_id = meta.get("ast_element_id")
+                if ast_elem_id:
+                    ast_id_to_ir[str(ast_elem_id)] = sym.symbol_id
+                for alias in meta.get("aliases", []) if isinstance(meta.get("aliases", []), list) else []:
+                    # alias can be an AST symbol id; keep as an extra hint only
+                    if alias:
+                        ast_id_to_ir.setdefault(str(alias), sym.symbol_id)
+            for row in temp_store.metadata:
+                elem_id = row.get("id")
+                ir_symbol_id = ast_id_to_ir.get(str(elem_id))
+                if ir_symbol_id:
+                    row["ir_symbol_id"] = ir_symbol_id
+                    row_meta = row.get("metadata") or {}
+                    row_meta["ir_symbol_id"] = ir_symbol_id
+                    row["metadata"] = row_meta
+            temp_store.save(artifact_key)
 
             self.index_run_store.mark_status(run_id, "persisting")
             self.snapshot_store.save_snapshot(
                 merged_snapshot,
-                metadata={"run_id": run_id, "artifact_key": artifact_key, "warnings": warnings},
+                metadata={
+                    "run_id": run_id,
+                    "artifact_key": artifact_key,
+                    "warnings": warnings,
+                    "scip_artifact_ref": scip_artifact_ref,
+                },
             )
             ir_graphs = self.ir_graph_builder.build_graphs(merged_snapshot)
             self.snapshot_store.save_ir_graphs(snapshot_id, ir_graphs)
@@ -732,6 +794,28 @@ class FastCode:
 
     def get_snapshot_manifest(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
         return self.manifest_store.get_snapshot_manifest(snapshot_id)
+
+    def get_scip_artifact_ref(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
+        return self.snapshot_store.get_scip_artifact_ref(snapshot_id)
+
+    def resolve_snapshot_symbol(
+        self,
+        snapshot_id: str,
+        *,
+        symbol_id: Optional[str] = None,
+        name: Optional[str] = None,
+        path: Optional[str] = None,
+    ) -> Optional[str]:
+        if not self.snapshot_symbol_index.has_snapshot(snapshot_id):
+            snap = self.snapshot_store.load_snapshot(snapshot_id)
+            if snap:
+                self.snapshot_symbol_index.register_snapshot(snap)
+        return self.snapshot_symbol_index.resolve_symbol(
+            snapshot_id,
+            symbol_id=symbol_id,
+            name=name,
+            path=path,
+        )
 
     @staticmethod
     def _projection_scope_key(
@@ -919,6 +1003,10 @@ class FastCode:
 
         if not self._load_artifacts_by_key(snapshot_record["artifact_key"]):
             raise RuntimeError(f"failed to load artifacts for snapshot: {snapshot_id}")
+        if not self.snapshot_symbol_index.has_snapshot(snapshot_id):
+            loaded_snapshot = self.snapshot_store.load_snapshot(snapshot_id)
+            if loaded_snapshot:
+                self.snapshot_symbol_index.register_snapshot(loaded_snapshot)
 
         merged_filters = dict(filters or {})
         merged_filters["snapshot_id"] = snapshot_id
@@ -1534,6 +1622,8 @@ class FastCode:
                 "keyword_weight": 0.3,
                 "graph_weight": 0.1,
                 "max_results": 5,
+                "graph_backend": "ir",
+                "allow_legacy_graph_fallback": True,
             },
             "generation": {
                 "provider": "openai",
@@ -1635,7 +1725,7 @@ class FastCode:
                                           self.embedder, temp_vector_store)
                 
                 # Index with repository information
-                elements = temp_indexer.index_repository(repo_name=repo_name, repo_url=repo_url)
+                elements = temp_indexer.extract_elements(repo_name=repo_name, repo_url=repo_url)
                 
                 # Add to temporary vector store
                 vectors = []

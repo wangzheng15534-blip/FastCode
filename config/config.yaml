@@ -104,6 +104,8 @@ retrieval:
   semantic_weight: 0.5
   keyword_weight: 0.5
   graph_weight: 1
+  graph_backend: "ir"  # "ir" (default) or "legacy"
+  allow_legacy_graph_fallback: true
 
   # Filters
   min_similarity: 0.15

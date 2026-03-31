@@ -123,7 +123,12 @@ def test_scip_adapter_uses_snapshot_prefixed_symbol_ids_and_ref_edges():
                         "symbol": "pkg app/service.py login().",
                         "role": "reference",
                         "range": [10, 0, 10, 5],
-                    }
+                    },
+                    {
+                        "symbol": "pkg app/service.py login().",
+                        "role": "type_definition",
+                        "range": [12, 0, 12, 5],
+                    },
                 ],
             }
         ],
@@ -133,3 +138,4 @@ def test_scip_adapter_uses_snapshot_prefixed_symbol_ids_and_ref_edges():
     assert snap.symbols[0].symbol_id.startswith("scip:snap:repo:abc:")
     assert any(e.edge_type == "contain" and e.source == "scip" for e in snap.edges)
     assert any(e.edge_type == "ref" and e.source == "scip" for e in snap.edges)
+    assert any(o.role == "type_definition" for o in snap.occurrences)

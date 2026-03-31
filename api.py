@@ -113,6 +113,7 @@ class StatusResponse(BaseModel):
     repo_loaded: bool
     repo_indexed: bool
     repo_info: Dict[str, Any]
+    graph_backend: Optional[str] = None
     available_repositories: List[Dict[str, Any]] = Field(default_factory=list)
     loaded_repositories: List[Dict[str, Any]] = Field(default_factory=list)
 
@@ -221,6 +222,7 @@ async def get_status(full_scan: bool = False):
         repo_loaded=fastcode.repo_loaded,
         repo_indexed=fastcode.repo_indexed,
         repo_info=fastcode.repo_info,
+        graph_backend=fastcode.config.get("retrieval", {}).get("graph_backend", "legacy"),
         available_repositories=available_repos,
         loaded_repositories=loaded_repos,
     )
@@ -288,6 +290,8 @@ async def index_repository(force: bool = False):
             "status": "success",
             "message": "Repository indexed successfully",
             "summary": fastcode.get_repository_summary(),
+            "deprecated": True,
+            "deprecation_note": "Use /index/run for IR-first snapshot indexing.",
         }
 
     except Exception as e:
@@ -679,6 +683,16 @@ async def get_snapshot_manifest(snapshot_id: str):
     if not manifest:
         raise HTTPException(status_code=404, detail="Manifest not found")
     return {"status": "success", "manifest": manifest}
+
+
+@app.get("/scip/artifacts/{snapshot_id}")
+async def get_scip_artifact(snapshot_id: str):
+    """Get preserved SCIP artifact metadata for a snapshot."""
+    fastcode = _ensure_fastcode_initialized()
+    artifact = fastcode.get_scip_artifact_ref(snapshot_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="SCIP artifact not found")
+    return {"status": "success", "artifact": artifact}
 
 
 @app.post("/projection/build")

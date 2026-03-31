@@ -114,6 +114,8 @@ class StatusResponse(BaseModel):
     repo_indexed: bool
     repo_info: Dict[str, Any]
     graph_backend: Optional[str] = None
+    storage_backend: Optional[str] = None
+    retrieval_backend: Optional[str] = None
     available_repositories: List[Dict[str, Any]] = Field(default_factory=list)
     loaded_repositories: List[Dict[str, Any]] = Field(default_factory=list)
 
@@ -201,6 +203,8 @@ async def health_check():
         "repo_loaded": fastcode_instance.repo_loaded,
         "repo_indexed": fastcode_instance.repo_indexed,
         "multi_repo_mode": fastcode_instance.multi_repo_mode,
+        "storage_backend": fastcode_instance.snapshot_store.db_runtime.backend,
+        "retrieval_backend": fastcode_instance.config.get("retrieval", {}).get("backend", "legacy"),
     }
 
 
@@ -223,6 +227,8 @@ async def get_status(full_scan: bool = False):
         repo_indexed=fastcode.repo_indexed,
         repo_info=fastcode.repo_info,
         graph_backend=fastcode.config.get("retrieval", {}).get("graph_backend", "legacy"),
+        storage_backend=fastcode.snapshot_store.db_runtime.backend,
+        retrieval_backend=fastcode.config.get("retrieval", {}).get("backend", "legacy"),
         available_repositories=available_repos,
         loaded_repositories=loaded_repos,
     )

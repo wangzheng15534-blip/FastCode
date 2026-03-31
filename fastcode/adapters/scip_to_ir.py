@@ -102,6 +102,7 @@ def build_ir_from_scip(
                     confidence="precise",
                     doc_id=doc_id,
                     metadata={
+                        "extractor": "fastcode.adapters.scip_to_ir",
                         "indexer_name": indexer_name,
                         "indexer_version": indexer_version,
                     },
@@ -146,6 +147,7 @@ def build_ir_from_scip(
                         confidence="precise",
                         doc_id=doc_id,
                         metadata={
+                            "extractor": "fastcode.adapters.scip_to_ir",
                             "role": role,
                             "occurrence_id": occ_id,
                             "indexer_name": indexer_name,

@@ -15,7 +15,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from git import Repo, GitCommandError
 
-from .utils import load_config, resolve_config_paths, setup_logging, ensure_dir
+from .utils import load_config, resolve_config_paths, setup_logging, ensure_dir, compute_file_hash
 from .loader import RepositoryLoader
 from .parser import CodeParser
 from .embedder import CodeEmbedder
@@ -39,6 +39,9 @@ from .index_run import IndexRunStore
 from .scip_loader import load_scip_artifact, run_scip_python_index
 from .snapshot_store import SnapshotStore
 from .terminus_publisher import TerminusPublisher
+from .projection_models import ProjectionScope
+from .projection_store import ProjectionStore
+from .projection_transform import ProjectionTransformer
 
 
 class FastCode:
@@ -124,6 +127,8 @@ class FastCode:
         self.manifest_store = ManifestStore(self.snapshot_store.db_path)
         self.index_run_store = IndexRunStore(self.snapshot_store.db_path)
         self.terminus_publisher = TerminusPublisher(self.config)
+        self.projection_transformer = ProjectionTransformer(self.config)
+        self.projection_store = ProjectionStore(self.config)
         
         # State
         self.repo_loaded = False
@@ -369,7 +374,10 @@ class FastCode:
                 digest = hashlib.sha1()
                 for f in sorted(files, key=lambda x: x["relative_path"]):
                     digest.update(f["relative_path"].encode("utf-8"))
-                    digest.update(str(f.get("size", 0)).encode("utf-8"))
+                    try:
+                        digest.update(compute_file_hash(f["path"]).encode("utf-8"))
+                    except Exception:
+                        digest.update(str(f.get("size", 0)).encode("utf-8"))
                 synthetic = digest.hexdigest()
             return {
                 "repo_name": repo_name,
@@ -438,19 +446,40 @@ class FastCode:
                 "loaded": loaded,
             }
 
+        import hashlib
+        idempotency_key = hashlib.sha1(
+            f"{repo_name}:{snapshot_id}:{bool(publish)}:{bool(enable_scip)}".encode("utf-8")
+        ).hexdigest()
         run_id = self.index_run_store.create_run(
             repo_name=repo_name,
             snapshot_id=snapshot_id,
             branch=snapshot_ref.get("branch"),
             commit_id=snapshot_ref.get("commit_id"),
+            idempotency_key=idempotency_key,
         )
+        existing_run = self.index_run_store.get_run(run_id)
+        if existing_run and existing_run.get("status") in {"published", "succeeded", "degraded", "publish_pending"} and not force:
+            existing_snapshot = self.snapshot_store.get_snapshot_record(snapshot_id)
+            if existing_snapshot:
+                loaded = self._load_artifacts_by_key(existing_snapshot["artifact_key"])
+                return {
+                    "status": existing_run.get("status"),
+                    "run_id": run_id,
+                    "repo_name": repo_name,
+                    "snapshot_id": snapshot_id,
+                    "artifact_key": existing_snapshot["artifact_key"],
+                    "loaded": loaded,
+                    "warnings": json.loads(existing_run.get("warnings_json") or "[]"),
+                }
         self.index_run_store.mark_started(run_id)
 
         try:
+            self.index_run_store.mark_status(run_id, "extracting")
             elements = self.indexer.index_repository(repo_name=repo_name, repo_url=repo_url)
 
             artifact_key = self.snapshot_store.artifact_key_for_snapshot(snapshot_id)
 
+            self.index_run_store.mark_status(run_id, "materializing")
             temp_store = VectorStore(self.config)
             temp_store.initialize(self.embedder.embedding_dim)
             vectors = []
@@ -458,8 +487,12 @@ class FastCode:
             for elem in elements:
                 embedding = elem.metadata.get("embedding")
                 if embedding is not None:
+                    elem.metadata["snapshot_id"] = snapshot_id
+                    elem.metadata["source_priority"] = 10
                     vectors.append(embedding)
-                    metadata.append(elem.to_dict())
+                    elem_dict = elem.to_dict()
+                    elem_dict["snapshot_id"] = snapshot_id
+                    metadata.append(elem_dict)
             if not vectors:
                 raise RuntimeError("No embeddings produced during indexing")
             temp_store.add_vectors(np.array(vectors), metadata)
@@ -490,6 +523,7 @@ class FastCode:
             temp_retriever.save_bm25(artifact_key)
             temp_graph.save(artifact_key)
 
+            self.index_run_store.mark_status(run_id, "validating")
             ast_snapshot = build_ir_from_ast(
                 repo_name=repo_name,
                 snapshot_id=snapshot_id,
@@ -535,6 +569,7 @@ class FastCode:
             if errors:
                 raise RuntimeError(f"IR validation failed: {errors[:5]}")
 
+            self.index_run_store.mark_status(run_id, "persisting")
             self.snapshot_store.save_snapshot(
                 merged_snapshot,
                 metadata={"run_id": run_id, "artifact_key": artifact_key, "warnings": warnings},
@@ -549,6 +584,7 @@ class FastCode:
             status = "degraded" if degraded else "succeeded"
 
             if publish:
+                self.index_run_store.mark_status(run_id, "publishing")
                 ref_name = snapshot_ref.get("branch") or ref or "HEAD"
                 manifest = self.manifest_store.publish(
                     repo_name=repo_name,
@@ -563,6 +599,7 @@ class FastCode:
                             snapshot=merged_snapshot.to_dict(),
                             manifest=manifest,
                             git_meta=snapshot_ref,
+                            idempotency_key=f"lineage:{run_id}:{snapshot_id}",
                         )
                         status = "published" if not degraded else "degraded"
                     except Exception as e:
@@ -620,6 +657,7 @@ class FastCode:
                         "branch": run.get("branch"),
                         "commit_id": run.get("commit_id"),
                     },
+                    idempotency_key=f"lineage:{run_id}:{run['snapshot_id']}",
                 )
             except Exception as e:
                 self.index_run_store.enqueue_publish_retry(
@@ -632,11 +670,230 @@ class FastCode:
         self.index_run_store.mark_completed(run_id, status=status)
         return {"status": status, "manifest": manifest, "run_id": run_id}
 
+    def retry_pending_publishes(self, limit: int = 10) -> Dict[str, Any]:
+        if not self.terminus_publisher.is_configured():
+            return {"processed": 0, "succeeded": 0, "failed": 0, "message": "terminus_not_configured"}
+
+        processed = 0
+        succeeded = 0
+        failed = 0
+
+        while processed < limit:
+            task = self.index_run_store.claim_next_publish_task()
+            if not task:
+                break
+            processed += 1
+            task_id = task["task_id"]
+            run_id = task["run_id"]
+            try:
+                run = self.index_run_store.get_run(run_id)
+                if not run:
+                    raise RuntimeError(f"run not found: {run_id}")
+                snapshot = self.snapshot_store.load_snapshot(run["snapshot_id"])
+                if not snapshot:
+                    raise RuntimeError(f"snapshot not found: {run['snapshot_id']}")
+
+                ref_name = run.get("branch") or "HEAD"
+                manifest = self.manifest_store.get_branch_manifest(run["repo_name"], ref_name)
+                if not manifest:
+                    manifest = self.manifest_store.publish(
+                        repo_name=run["repo_name"],
+                        ref_name=ref_name,
+                        snapshot_id=run["snapshot_id"],
+                        index_run_id=run_id,
+                        status="published",
+                    )
+
+                self.terminus_publisher.publish_snapshot_lineage(
+                    snapshot=snapshot.to_dict(),
+                    manifest=manifest,
+                    git_meta={
+                        "repo_name": run["repo_name"],
+                        "branch": run.get("branch"),
+                        "commit_id": run.get("commit_id"),
+                    },
+                    idempotency_key=f"lineage:{run_id}:{run['snapshot_id']}",
+                )
+                self.index_run_store.mark_publish_task_done(task_id)
+                self.index_run_store.mark_completed(run_id, status="published")
+                succeeded += 1
+            except Exception as e:
+                self.index_run_store.mark_publish_task_failed(task_id, str(e))
+                failed += 1
+
+        return {
+            "processed": processed,
+            "succeeded": succeeded,
+            "failed": failed,
+        }
+
     def get_branch_manifest(self, repo_name: str, ref_name: str) -> Optional[Dict[str, Any]]:
         return self.manifest_store.get_branch_manifest(repo_name, ref_name)
 
     def get_snapshot_manifest(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
         return self.manifest_store.get_snapshot_manifest(snapshot_id)
+
+    @staticmethod
+    def _projection_scope_key(
+        scope_kind: str,
+        snapshot_id: str,
+        query: Optional[str],
+        target_id: Optional[str],
+        filters: Optional[Dict[str, Any]],
+    ) -> str:
+        base = {
+            "scope_kind": scope_kind,
+            "snapshot_id": snapshot_id,
+            "query": query or "",
+            "target_id": target_id or "",
+            "filters": filters or {},
+        }
+        payload = json.dumps(base, sort_keys=True, ensure_ascii=False)
+        import hashlib
+        return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:24]
+
+    @staticmethod
+    def _projection_params_hash(scope: ProjectionScope) -> str:
+        payload = json.dumps(scope.to_dict(), sort_keys=True, ensure_ascii=False)
+        import hashlib
+        return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+    def _resolve_snapshot_id(
+        self,
+        snapshot_id: Optional[str],
+        repo_name: Optional[str],
+        ref_name: Optional[str],
+    ) -> str:
+        if snapshot_id:
+            return snapshot_id
+        if not repo_name or not ref_name:
+            raise RuntimeError("projection requires snapshot_id or repo_name+ref_name")
+        manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
+        if not manifest:
+            raise RuntimeError(f"manifest not found for {repo_name}:{ref_name}")
+        return manifest["snapshot_id"]
+
+    def _mirror_projection_artifacts(self, snapshot_id: str, result: Dict[str, Any]) -> str:
+        import os
+
+        root = os.path.join(self.snapshot_store.snapshot_dir(snapshot_id), "projection", result["projection_id"])
+        ensure_dir(root)
+        chunk_dir = os.path.join(root, "chunks")
+        ensure_dir(chunk_dir)
+        with open(os.path.join(root, "node.l0.json"), "w", encoding="utf-8") as f:
+            json.dump(result["l0"], f, ensure_ascii=False, indent=2)
+        with open(os.path.join(root, "node.l1.json"), "w", encoding="utf-8") as f:
+            json.dump(result["l1"], f, ensure_ascii=False, indent=2)
+        with open(os.path.join(root, "node.l2.index.json"), "w", encoding="utf-8") as f:
+            json.dump(result["l2_index"], f, ensure_ascii=False, indent=2)
+        for chunk in result.get("chunks", []):
+            chunk_id = chunk.get("chunk_id")
+            if not chunk_id:
+                continue
+            with open(os.path.join(chunk_dir, f"{chunk_id}.json"), "w", encoding="utf-8") as f:
+                json.dump(chunk, f, ensure_ascii=False, indent=2)
+        return root
+
+    def build_projection(
+        self,
+        scope_kind: str,
+        snapshot_id: Optional[str] = None,
+        repo_name: Optional[str] = None,
+        ref_name: Optional[str] = None,
+        query: Optional[str] = None,
+        target_id: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        if scope_kind not in {"snapshot", "query", "entity"}:
+            raise RuntimeError("scope_kind must be one of: snapshot, query, entity")
+        if not self.projection_store.enabled:
+            raise RuntimeError("projection store is not configured (set projection.postgres_dsn)")
+
+        resolved_snapshot_id = self._resolve_snapshot_id(snapshot_id, repo_name, ref_name)
+        snapshot_record = self.snapshot_store.get_snapshot_record(resolved_snapshot_id)
+        if not snapshot_record:
+            raise RuntimeError(f"snapshot not found: {resolved_snapshot_id}")
+
+        if not self._load_artifacts_by_key(snapshot_record["artifact_key"]):
+            raise RuntimeError(f"failed to load artifacts for snapshot: {resolved_snapshot_id}")
+
+        snapshot = self.snapshot_store.load_snapshot(resolved_snapshot_id)
+        if not snapshot:
+            raise RuntimeError(f"IR snapshot not found: {resolved_snapshot_id}")
+        ir_graphs = self.snapshot_store.load_ir_graphs(resolved_snapshot_id)
+
+        scope_key = self._projection_scope_key(
+            scope_kind=scope_kind,
+            snapshot_id=resolved_snapshot_id,
+            query=query,
+            target_id=target_id,
+            filters=filters,
+        )
+        scope = ProjectionScope(
+            scope_kind=scope_kind,
+            snapshot_id=resolved_snapshot_id,
+            scope_key=scope_key,
+            query=query,
+            target_id=target_id,
+            filters=filters or {},
+        )
+        params_hash = self._projection_params_hash(scope)
+
+        if not force:
+            cached_id = self.projection_store.find_cached_projection_id(scope, params_hash)
+            if cached_id:
+                l0 = self.projection_store.get_layer(cached_id, "L0")
+                l1 = self.projection_store.get_layer(cached_id, "L1")
+                l2 = self.projection_store.get_layer(cached_id, "L2")
+                if l0 and l1 and l2:
+                    return {
+                        "status": "reused",
+                        "projection_id": cached_id,
+                        "snapshot_id": resolved_snapshot_id,
+                        "scope_kind": scope_kind,
+                        "scope_key": scope_key,
+                        "l0": l0,
+                        "l1": l1,
+                        "l2_index": l2,
+                        "warnings": [],
+                    }
+
+        build = self.projection_transformer.build(scope=scope, snapshot=snapshot, ir_graphs=ir_graphs)
+        self.projection_store.save(build, params_hash=params_hash)
+        payload = build.to_dict()
+        mirror_root = self._mirror_projection_artifacts(resolved_snapshot_id, payload)
+        payload["status"] = "built"
+        payload["mirror_path"] = mirror_root
+        return payload
+
+    def get_projection_layer(self, projection_id: str, layer: str) -> Dict[str, Any]:
+        if not self.projection_store.enabled:
+            raise RuntimeError("projection store is not configured (set projection.postgres_dsn)")
+        layer_payload = self.projection_store.get_layer(projection_id, layer)
+        if not layer_payload:
+            raise RuntimeError(f"projection layer not found: {projection_id}:{layer}")
+        build = self.projection_store.get_build(projection_id)
+        return {
+            "projection_id": projection_id,
+            "layer": layer.upper(),
+            "node": layer_payload,
+            "build": build,
+        }
+
+    def get_projection_chunk(self, projection_id: str, chunk_id: str) -> Dict[str, Any]:
+        if not self.projection_store.enabled:
+            raise RuntimeError("projection store is not configured (set projection.postgres_dsn)")
+        chunk_payload = self.projection_store.get_chunk(projection_id, chunk_id)
+        if not chunk_payload:
+            raise RuntimeError(f"projection chunk not found: {projection_id}:{chunk_id}")
+        build = self.projection_store.get_build(projection_id)
+        return {
+            "projection_id": projection_id,
+            "chunk_id": chunk_id,
+            "chunk": chunk_payload,
+            "build": build,
+        }
 
     def query_snapshot(
         self,
@@ -663,9 +920,12 @@ class FastCode:
         if not self._load_artifacts_by_key(snapshot_record["artifact_key"]):
             raise RuntimeError(f"failed to load artifacts for snapshot: {snapshot_id}")
 
+        merged_filters = dict(filters or {})
+        merged_filters["snapshot_id"] = snapshot_id
+
         result = self.query(
             question=question,
-            filters=filters,
+            filters=merged_filters,
             repo_filter=None,
             session_id=session_id,
             enable_multi_turn=enable_multi_turn,
@@ -1302,6 +1562,17 @@ class FastCode:
                 "endpoint": "",
                 "api_key": "",
                 "timeout_seconds": 15,
+            },
+            "projection": {
+                "postgres_dsn": "",
+                "enable_leiden": True,
+                "llm_enabled": True,
+                "llm_timeout_seconds": 8,
+                "llm_max_tokens": 180,
+                "llm_temperature": 0.2,
+                "max_entity_hops": 2,
+                "max_query_hops": 2,
+                "max_chunk_count": 64,
             },
         }
     

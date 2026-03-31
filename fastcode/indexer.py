@@ -68,8 +68,20 @@ class CodeIndexer:
     
     def index_repository(self, repo_name: Optional[str] = None, repo_url: Optional[str] = None) -> List[CodeElement]:
         """
-        Index entire repository at multiple levels
-        
+        Backward-compatible wrapper.
+
+        Deprecated semantics: final indexing orchestration should happen in FastCode pipeline.
+        """
+        self.logger.warning(
+            "CodeIndexer.index_repository() is deprecated as a final indexing entrypoint; "
+            "use extract_elements() and orchestrate persistence/graph in the pipeline."
+        )
+        return self.extract_elements(repo_name=repo_name, repo_url=repo_url)
+
+    def extract_elements(self, repo_name: Optional[str] = None, repo_url: Optional[str] = None) -> List[CodeElement]:
+        """
+        Extract and embed code elements for a repository.
+
         Args:
             repo_name: Optional repository name for identification
             repo_url: Optional repository URL for identification
@@ -77,7 +89,7 @@ class CodeIndexer:
         Returns:
             List of indexed code elements
         """
-        self.logger.info("Starting repository indexing")
+        self.logger.info("Starting repository element extraction")
         
         # Set current repository information
         self.current_repo_name = repo_name
@@ -135,8 +147,11 @@ class CodeIndexer:
             elem.metadata["embedding"] = elem_dict.get("embedding")
             elem.metadata["embedding_text"] = elem_dict.get("embedding_text")
         
-        self.logger.info(f"✓ Repository indexing completed for {repo_name or 'Unknown'}: {len(self.elements)} elements indexed with embeddings")
-        
+        self.logger.info(
+            f"✓ Repository extraction completed for {repo_name or 'Unknown'}: "
+            f"{len(self.elements)} elements with embeddings"
+        )
+
         return self.elements
 
     def index_files(self, file_infos: List[Dict], repo_name: str,
@@ -498,4 +513,3 @@ class CodeIndexer:
             overviews = self.vector_store.load_repo_overviews()
             return overviews.get(self.current_repo_name)
         return None
-

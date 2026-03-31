@@ -24,6 +24,9 @@ class CodeGraphBuilder:
         self.config = config
         self.graph_config = config.get("graph", {})
         self.logger = logging.getLogger(__name__)
+        self.logger.warning(
+            "CodeGraphBuilder is in compatibility mode; IRGraphBuilder is the primary backend."
+        )
         
         self.build_call_graph = self.graph_config.get("build_call_graph", True)
         self.build_dependency_graph = self.graph_config.get("build_dependency_graph", True)

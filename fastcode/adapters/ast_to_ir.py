@@ -20,9 +20,11 @@ def _doc_id(snapshot_id: str, rel_path: str) -> str:
 
 
 def _ast_symbol_id(snapshot_id: str, elem: CodeElement) -> str:
+    qualified = (elem.metadata or {}).get("qualified_name") or elem.name or "unknown"
+    start_col = int((elem.metadata or {}).get("start_col") or 0)
     return (
         f"ast:{snapshot_id}:{elem.language or 'unknown'}:{elem.relative_path or ''}:"
-        f"{elem.type or 'unknown'}:{elem.name or 'unknown'}:{int(elem.start_line or 0)}:{int(elem.end_line or 0)}"
+        f"{elem.type or 'unknown'}:{qualified}:{int(elem.start_line or 0)}:{start_col}"
     )
 
 

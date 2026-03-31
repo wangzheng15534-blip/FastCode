@@ -5,33 +5,28 @@ Index run tracking and publish retry queue.
 from __future__ import annotations
 
 import json
-import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from .db_runtime import DBRuntime
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 class IndexRunStore:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
+    def __init__(self, db_path_or_runtime: str | DBRuntime):
+        if isinstance(db_path_or_runtime, DBRuntime):
+            self.db_runtime = db_path_or_runtime
+        else:
+            self.db_runtime = DBRuntime(backend="sqlite", sqlite_path=db_path_or_runtime)
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA busy_timeout=5000")
-        return conn
-
     def _init_db(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
+        with self.db_runtime.connect() as conn:
+            self.db_runtime.execute(
+                conn,
                 """
                 CREATE TABLE IF NOT EXISTS index_runs (
                     run_id TEXT PRIMARY KEY,
@@ -49,7 +44,8 @@ class IndexRunStore:
                 )
                 """
             )
-            conn.execute(
+            self.db_runtime.execute(
+                conn,
                 """
                 CREATE TABLE IF NOT EXISTS publish_tasks (
                     task_id TEXT PRIMARY KEY,
@@ -65,6 +61,26 @@ class IndexRunStore:
                 )
                 """
             )
+            self.db_runtime.execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    component TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    applied_at TEXT NOT NULL,
+                    PRIMARY KEY (component, version)
+                )
+                """,
+            )
+            self.db_runtime.execute(
+                conn,
+                """
+                INSERT INTO schema_migrations (component, version, applied_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(component, version) DO NOTHING
+                """,
+                ("index_run_store", "v1", _utc_now()),
+            )
             conn.commit()
 
     def create_run(
@@ -76,8 +92,9 @@ class IndexRunStore:
         idempotency_key: Optional[str] = None,
     ) -> str:
         if idempotency_key:
-            with self._connect() as conn:
-                existing = conn.execute(
+            with self.db_runtime.connect() as conn:
+                existing = self.db_runtime.execute(
+                    conn,
                     "SELECT run_id FROM index_runs WHERE idempotency_key=?",
                     (idempotency_key,),
                 ).fetchone()
@@ -85,8 +102,9 @@ class IndexRunStore:
                     return existing["run_id"]
 
         run_id = f"run_{uuid.uuid4().hex[:16]}"
-        with self._connect() as conn:
-            conn.execute(
+        with self.db_runtime.connect() as conn:
+            self.db_runtime.execute(
+                conn,
                 """
                 INSERT INTO index_runs (
                     run_id, repo_name, snapshot_id, branch, commit_id, idempotency_key, status, created_at
@@ -122,19 +140,22 @@ class IndexRunStore:
         error_message: str,
     ) -> str:
         now = _utc_now()
-        with self._connect() as conn:
-            existing = conn.execute(
+        with self.db_runtime.connect() as conn:
+            existing = self.db_runtime.execute(
+                conn,
                 """
                 SELECT task_id FROM publish_tasks
-                WHERE run_id=? AND snapshot_id=? AND manifest_id IS ?
+                WHERE run_id=? AND snapshot_id=?
+                  AND ((manifest_id=? ) OR (manifest_id IS NULL AND ? IS NULL))
                   AND status IN ('pending', 'running')
                 ORDER BY updated_at DESC
                 LIMIT 1
                 """,
-                (run_id, snapshot_id, manifest_id),
+                (run_id, snapshot_id, manifest_id, manifest_id),
             ).fetchone()
             if existing:
-                conn.execute(
+                self.db_runtime.execute(
+                    conn,
                     """
                     UPDATE publish_tasks
                     SET last_error=?, updated_at=?
@@ -147,7 +168,8 @@ class IndexRunStore:
                 return existing["task_id"]
 
             task_id = f"pub_{uuid.uuid4().hex[:16]}"
-            conn.execute(
+            self.db_runtime.execute(
+                conn,
                 """
                 INSERT INTO publish_tasks (
                     task_id, run_id, snapshot_id, manifest_id, status,
@@ -161,8 +183,9 @@ class IndexRunStore:
         return task_id
 
     def mark_publish_task_done(self, task_id: str) -> None:
-        with self._connect() as conn:
-            conn.execute(
+        with self.db_runtime.connect() as conn:
+            self.db_runtime.execute(
+                conn,
                 """
                 UPDATE publish_tasks
                 SET status='completed', updated_at=?
@@ -173,18 +196,32 @@ class IndexRunStore:
             conn.commit()
 
     def claim_next_publish_task(self) -> Optional[Dict[str, Any]]:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT * FROM publish_tasks
-                WHERE status='pending'
-                ORDER BY updated_at ASC
-                LIMIT 1
-                """
-            ).fetchone()
+        with self.db_runtime.connect() as conn:
+            if self.db_runtime.backend == "postgres":
+                row = self.db_runtime.execute(
+                    conn,
+                    """
+                    SELECT * FROM publish_tasks
+                    WHERE status='pending'
+                    ORDER BY updated_at ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                    """,
+                ).fetchone()
+            else:
+                row = self.db_runtime.execute(
+                    conn,
+                    """
+                    SELECT * FROM publish_tasks
+                    WHERE status='pending'
+                    ORDER BY updated_at ASC
+                    LIMIT 1
+                    """,
+                ).fetchone()
             if not row:
                 return None
-            conn.execute(
+            self.db_runtime.execute(
+                conn,
                 """
                 UPDATE publish_tasks
                 SET status='running', attempts=attempts+1, updated_at=?
@@ -193,11 +230,12 @@ class IndexRunStore:
                 (_utc_now(), row["task_id"]),
             )
             conn.commit()
-        return dict(row)
+        return self.db_runtime.row_to_dict(row)
 
     def mark_publish_task_failed(self, task_id: str, error: str) -> None:
-        with self._connect() as conn:
-            conn.execute(
+        with self.db_runtime.connect() as conn:
+            self.db_runtime.execute(
+                conn,
                 """
                 UPDATE publish_tasks
                 SET status='pending', last_error=?, updated_at=?
@@ -208,15 +246,15 @@ class IndexRunStore:
             conn.commit()
 
     def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
-        with self._connect() as conn:
-            row = conn.execute("SELECT * FROM index_runs WHERE run_id=?", (run_id,)).fetchone()
-        return dict(row) if row else None
+        with self.db_runtime.connect() as conn:
+            row = self.db_runtime.execute(conn, "SELECT * FROM index_runs WHERE run_id=?", (run_id,)).fetchone()
+        return self.db_runtime.row_to_dict(row)
 
     def _set_run_fields(self, run_id: str, **fields: Any) -> None:
         if not fields:
             return
         assignments = ", ".join(f"{k}=?" for k in fields.keys())
         values = list(fields.values()) + [run_id]
-        with self._connect() as conn:
-            conn.execute(f"UPDATE index_runs SET {assignments} WHERE run_id=?", values)
+        with self.db_runtime.connect() as conn:
+            self.db_runtime.execute(conn, f"UPDATE index_runs SET {assignments} WHERE run_id=?", tuple(values))
             conn.commit()

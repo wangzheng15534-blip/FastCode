@@ -40,10 +40,31 @@ class LoadRepositoryRequest(BaseModel):
     )
 
 
+class IndexRunRequest(BaseModel):
+    source: str = Field(..., description="Repository URL or local path")
+    is_url: Optional[bool] = Field(None, description="Explicit source type override")
+    ref: Optional[str] = Field(None, description="Branch/tag/ref to index")
+    commit: Optional[str] = Field(None, description="Commit hash to index")
+    force: bool = Field(False, description="Force re-index even if snapshot already exists")
+    publish: bool = Field(True, description="Publish manifest after indexing")
+    enable_scip: bool = Field(True, description="Enable SCIP extraction path")
+    scip_artifact_path: Optional[str] = Field(None, description="Optional pre-built SCIP artifact path")
+
+
 class QueryRequest(BaseModel):
     question: str = Field(..., description="Question to ask about the repository")
     filters: Optional[Dict[str, Any]] = Field(None, description="Optional filters")
     repo_filter: Optional[List[str]] = Field(None, description="Repository names to search")
+    multi_turn: bool = Field(False, description="Enable multi-turn mode")
+    session_id: Optional[str] = Field(None, description="Session ID for multi-turn dialogue")
+
+
+class QuerySnapshotRequest(BaseModel):
+    question: str = Field(..., description="Question to ask")
+    snapshot_id: Optional[str] = Field(None, description="Direct snapshot ID")
+    repo_name: Optional[str] = Field(None, description="Repository name (when resolving by ref)")
+    ref_name: Optional[str] = Field(None, description="Branch/ref name (when resolving by ref)")
+    filters: Optional[Dict[str, Any]] = Field(None, description="Optional retrieval filters")
     multi_turn: bool = Field(False, description="Enable multi-turn mode")
     session_id: Optional[str] = Field(None, description="Session ID for multi-turn dialogue")
 
@@ -260,6 +281,51 @@ async def index_repository(force: bool = False):
 
     except Exception as e:
         logger.error(f"Failed to index repository: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/index/run")
+async def run_index_pipeline(request: IndexRunRequest):
+    """Run snapshot-based indexing pipeline."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        result = await asyncio.to_thread(
+            fastcode.run_index_pipeline,
+            source=request.source,
+            is_url=request.is_url,
+            ref=request.ref,
+            commit=request.commit,
+            force=request.force,
+            publish=request.publish,
+            scip_artifact_path=request.scip_artifact_path,
+            enable_scip=request.enable_scip,
+        )
+        fastcode.vector_store.invalidate_scan_cache()
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Index run failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/index/runs/{run_id}")
+async def get_index_run(run_id: str):
+    """Get index run status/details."""
+    fastcode = _ensure_fastcode_initialized()
+    run = fastcode.get_index_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+    return {"status": "success", "run": run}
+
+
+@app.post("/index/publish/{run_id}")
+async def publish_index_run(run_id: str, ref_name: Optional[str] = None):
+    """Publish an existing index run into manifest and lineage."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        result = await asyncio.to_thread(fastcode.publish_index_run, run_id, ref_name)
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Publish run failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -496,6 +562,44 @@ async def query_repository(request: QueryRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/query-snapshot", response_model=QueryResponse)
+async def query_snapshot(request: QuerySnapshotRequest):
+    """Query a specific snapshot or repo/ref manifest head."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        session_id = request.session_id or str(uuid.uuid4())[:8]
+        result = await asyncio.to_thread(
+            fastcode.query_snapshot,
+            question=request.question,
+            repo_name=request.repo_name,
+            ref_name=request.ref_name,
+            snapshot_id=request.snapshot_id,
+            filters=request.filters,
+            session_id=session_id,
+            enable_multi_turn=request.multi_turn,
+        )
+
+        prompt_tokens = result.get("prompt_tokens")
+        completion_tokens = result.get("completion_tokens")
+        total_tokens = result.get("total_tokens")
+        if total_tokens is None and prompt_tokens and completion_tokens:
+            total_tokens = prompt_tokens + completion_tokens
+
+        return QueryResponse(
+            answer=result.get("answer", ""),
+            query=result.get("query", ""),
+            context_elements=result.get("context_elements", 0),
+            sources=[_safe_jsonable(source) for source in result.get("sources", [])],
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            session_id=session_id,
+        )
+    except Exception as e:
+        logger.error(f"Snapshot query failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/query-stream")
 async def query_repository_stream(request: QueryRequest):
     """Query the repository with streaming response (SSE)"""
@@ -593,6 +697,26 @@ async def get_repository_summary():
         raise HTTPException(status_code=500, detail=str(e))
 
     return summary_payload
+
+
+@app.get("/manifests/{repo_name}/{ref_name}")
+async def get_branch_manifest(repo_name: str, ref_name: str):
+    """Get latest published manifest for repo/ref."""
+    fastcode = _ensure_fastcode_initialized()
+    manifest = fastcode.get_branch_manifest(repo_name, ref_name)
+    if not manifest:
+        raise HTTPException(status_code=404, detail="Manifest not found")
+    return {"status": "success", "manifest": manifest}
+
+
+@app.get("/manifests/snapshot/{snapshot_id}")
+async def get_snapshot_manifest(snapshot_id: str):
+    """Get latest published manifest for snapshot ID."""
+    fastcode = _ensure_fastcode_initialized()
+    manifest = fastcode.get_snapshot_manifest(snapshot_id)
+    if not manifest:
+        raise HTTPException(status_code=404, detail="Manifest not found")
+    return {"status": "success", "manifest": manifest}
 
 
 @app.post("/new-session", response_model=NewSessionResponse)

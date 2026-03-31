@@ -139,6 +139,47 @@ def test_merge_deduplicates_occurrences_scip_wins():
     assert merged.occurrences[0].source == "scip"
 
 
+def test_ast_symbol_id_uses_qualified_name_and_start_col():
+    """Spec: ast:{snapshot_id}:{language}:{file_path}:{kind}:{qualified_name}:{start_line}:{start_col}"""
+    from fastcode.indexer import CodeElement
+    from fastcode.adapters.ast_to_ir import _ast_symbol_id
+
+    elem = CodeElement(
+        id="el1", name="MyClass.my_method", type="method",
+        language="python", relative_path="src/app.py",
+        file_path="/repo/src/app.py",
+        start_line=42, end_line=50,
+        code="", signature=None, docstring=None, summary=None,
+        metadata={
+            "qualified_name": "pkg.src.app.MyClass.my_method",
+            "start_col": 8,
+        },
+    )
+    sid = _ast_symbol_id("snap:abc", elem)
+    # Must contain qualified_name value and start_col, not name and end_line
+    assert "pkg.src.app.MyClass.my_method" in sid
+    assert ":42:8" in sid
+    assert ":50:" not in sid  # end_line should not appear as position
+
+
+def test_ast_symbol_id_falls_back_to_name_when_no_qualified_name():
+    """When qualified_name is absent from metadata, fall back to elem.name."""
+    from fastcode.indexer import CodeElement
+    from fastcode.adapters.ast_to_ir import _ast_symbol_id
+
+    elem = CodeElement(
+        id="el2", name="my_func", type="function",
+        language="python", relative_path="lib/util.py",
+        file_path="/repo/lib/util.py",
+        start_line=10, end_line=20,
+        code="", signature=None, docstring=None, summary=None,
+        metadata={},
+    )
+    sid = _ast_symbol_id("snap:xyz", elem)
+    assert "my_func" in sid
+    assert ":10:0" in sid  # start_col defaults to 0
+
+
 def test_ir_graph_builder_routes_edge_types():
     snap = IRSnapshot(
         repo_name="r",

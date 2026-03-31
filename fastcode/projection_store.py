@@ -17,6 +17,11 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     psycopg = None
 
+try:
+    from psycopg_pool import ConnectionPool
+except Exception:  # pragma: no cover - optional dependency
+    ConnectionPool = None
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -26,17 +31,36 @@ class ProjectionStore:
     def __init__(self, config: Dict[str, Any]):
         self.logger = logging.getLogger(__name__)
         proj_cfg = config.get("projection", {})
-        self.dsn = proj_cfg.get("postgres_dsn", "") or os.getenv("FASTCODE_PROJECTION_POSTGRES_DSN", "")
+        storage_cfg = config.get("storage", {})
+        self.dsn = (
+            proj_cfg.get("postgres_dsn")
+            or storage_cfg.get("postgres_dsn")
+            or os.getenv("FASTCODE_PROJECTION_POSTGRES_DSN")
+            or os.getenv("FASTCODE_POSTGRES_DSN")
+            or ""
+        )
         self.enabled = bool(self.dsn)
+        self.pool = None
         if self.enabled and psycopg is None:
             raise RuntimeError("projection store requires psycopg; install dependency first")
         if self.enabled:
+            pool_min = int(storage_cfg.get("pool_min", 1))
+            pool_max = int(storage_cfg.get("pool_max", 8))
+            if ConnectionPool is not None:
+                self.pool = ConnectionPool(
+                    conninfo=self.dsn,
+                    min_size=pool_min,
+                    max_size=pool_max,
+                    kwargs={"autocommit": False},
+                )
             self._init_db()
 
     def _connect(self):
         if not self.enabled:
             raise RuntimeError("projection store is not configured (projection.postgres_dsn missing)")
-        return psycopg.connect(self.dsn)
+        if self.pool is not None:
+            return self.pool.connection()
+        return psycopg.connect(self.dsn, autocommit=False)
 
     def _init_db(self) -> None:
         with self._connect() as conn:
@@ -83,6 +107,24 @@ class ProjectionStore:
                         PRIMARY KEY (projection_id, chunk_id)
                     )
                     """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS schema_migrations (
+                        component TEXT NOT NULL,
+                        version TEXT NOT NULL,
+                        applied_at TEXT NOT NULL,
+                        PRIMARY KEY (component, version)
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO schema_migrations (component, version, applied_at)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT(component, version) DO NOTHING
+                    """,
+                    ("projection_store", "v1", _utc_now()),
                 )
             conn.commit()
 

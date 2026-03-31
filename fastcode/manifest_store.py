@@ -4,33 +4,28 @@ Published manifest storage for branch/ref -> snapshot mapping.
 
 from __future__ import annotations
 
-import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from .db_runtime import DBRuntime
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 class ManifestStore:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
+    def __init__(self, db_path_or_runtime: str | DBRuntime):
+        if isinstance(db_path_or_runtime, DBRuntime):
+            self.db_runtime = db_path_or_runtime
+        else:
+            self.db_runtime = DBRuntime(backend="sqlite", sqlite_path=db_path_or_runtime)
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA busy_timeout=5000")
-        return conn
-
     def _init_db(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
+        with self.db_runtime.connect() as conn:
+            self.db_runtime.execute(
+                conn,
                 """
                 CREATE TABLE IF NOT EXISTS manifests (
                     manifest_id TEXT PRIMARY KEY,
@@ -44,13 +39,15 @@ class ManifestStore:
                 )
                 """
             )
-            conn.execute(
+            self.db_runtime.execute(
+                conn,
                 """
                 CREATE INDEX IF NOT EXISTS idx_manifest_repo_ref_time
                 ON manifests (repo_name, ref_name, published_at DESC)
                 """
             )
-            conn.execute(
+            self.db_runtime.execute(
+                conn,
                 """
                 CREATE TABLE IF NOT EXISTS manifest_heads (
                     repo_name TEXT NOT NULL,
@@ -61,6 +58,26 @@ class ManifestStore:
                     FOREIGN KEY (manifest_id) REFERENCES manifests(manifest_id)
                 )
                 """
+            )
+            self.db_runtime.execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    component TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    applied_at TEXT NOT NULL,
+                    PRIMARY KEY (component, version)
+                )
+                """,
+            )
+            self.db_runtime.execute(
+                conn,
+                """
+                INSERT INTO schema_migrations (component, version, applied_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(component, version) DO NOTHING
+                """,
+                ("manifest_store", "v1", _utc_now()),
             )
             conn.commit()
 
@@ -75,9 +92,10 @@ class ManifestStore:
         manifest_id = f"manifest_{uuid.uuid4().hex[:16]}"
         now = _utc_now()
 
-        with self._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            previous_row = conn.execute(
+        with self.db_runtime.connect() as conn:
+            self.db_runtime.begin_write(conn)
+            previous_row = self.db_runtime.execute(
+                conn,
                 """
                 SELECT m.* FROM manifest_heads h
                 JOIN manifests m ON m.manifest_id = h.manifest_id
@@ -85,9 +103,10 @@ class ManifestStore:
                 """,
                 (repo_name, ref_name),
             ).fetchone()
-            previous = dict(previous_row) if previous_row else None
+            previous = self.db_runtime.row_to_dict(previous_row) if previous_row else None
             previous_id = previous["manifest_id"] if previous else None
-            conn.execute(
+            self.db_runtime.execute(
+                conn,
                 """
                 INSERT INTO manifests (
                     manifest_id, repo_name, ref_name, snapshot_id, index_run_id,
@@ -105,7 +124,8 @@ class ManifestStore:
                     status,
                 ),
             )
-            conn.execute(
+            self.db_runtime.execute(
+                conn,
                 """
                 INSERT INTO manifest_heads (repo_name, ref_name, manifest_id, updated_at)
                 VALUES (?, ?, ?, ?)
@@ -129,8 +149,9 @@ class ManifestStore:
         }
 
     def get_branch_manifest(self, repo_name: str, ref_name: str) -> Optional[Dict[str, Any]]:
-        with self._connect() as conn:
-            row = conn.execute(
+        with self.db_runtime.connect() as conn:
+            row = self.db_runtime.execute(
+                conn,
                 """
                 SELECT m.* FROM manifest_heads h
                 JOIN manifests m ON m.manifest_id = h.manifest_id
@@ -138,11 +159,12 @@ class ManifestStore:
                 """,
                 (repo_name, ref_name),
             ).fetchone()
-        return dict(row) if row else None
+        return self.db_runtime.row_to_dict(row)
 
     def get_snapshot_manifest(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
-        with self._connect() as conn:
-            row = conn.execute(
+        with self.db_runtime.connect() as conn:
+            row = self.db_runtime.execute(
+                conn,
                 """
                 SELECT * FROM manifests
                 WHERE snapshot_id=?
@@ -151,4 +173,4 @@ class ManifestStore:
                 """,
                 (snapshot_id,),
             ).fetchone()
-        return dict(row) if row else None
+        return self.db_runtime.row_to_dict(row)

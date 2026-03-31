@@ -8,12 +8,14 @@ import pickle
 import logging
 from typing import List, Dict, Any, Set, Tuple, Optional, Union
 import numpy as np
+import networkx as nx
 from rank_bm25 import BM25Okapi
 
 from .vector_store import VectorStore
 from .embedder import CodeEmbedder
 from .graph_builder import CodeGraphBuilder
 from .indexer import CodeElement
+from .ir_graph_builder import IRGraphs
 from .query_processor import ProcessedQuery
 from .repo_selector import RepositorySelector
 from .utils import ensure_dir
@@ -38,6 +40,8 @@ class HybridRetriever:
         self.semantic_weight = self.retrieval_config.get("semantic_weight", 0.6)
         self.keyword_weight = self.retrieval_config.get("keyword_weight", 0.3)
         self.graph_weight = self.retrieval_config.get("graph_weight", 0.1)
+        self.graph_backend = self.retrieval_config.get("graph_backend", "ir")
+        self.allow_legacy_graph_fallback = self.retrieval_config.get("allow_legacy_graph_fallback", True)
         
         # Retrieval parameters
         self.min_similarity = self.retrieval_config.get("min_similarity", 0.3)
@@ -93,6 +97,8 @@ class HybridRetriever:
         
         # Track currently loaded repositories for filtering
         self.current_loaded_repos = None  # None means all repos loaded, List means specific repos
+        self.ir_graphs: Optional[IRGraphs] = None
+        self.ir_snapshot_id: Optional[str] = None
     
     def index_for_bm25(self, elements: List[CodeElement]):
         """
@@ -139,6 +145,14 @@ class HybridRetriever:
         
         self.full_bm25 = BM25Okapi(self.full_bm25_corpus)
         self.logger.info(f"Built full BM25 index with {len(self.full_bm25_corpus)} documents")
+
+    def set_ir_graphs(self, ir_graphs: Optional[IRGraphs], snapshot_id: Optional[str] = None) -> None:
+        self.ir_graphs = ir_graphs
+        self.ir_snapshot_id = snapshot_id
+        if ir_graphs is not None:
+            self.logger.info(f"IR graph backend active for snapshot {snapshot_id or 'unknown'}")
+        else:
+            self.logger.info("IR graph backend cleared")
     
     def build_repo_overview_bm25(self):
         """
@@ -345,9 +359,9 @@ class HybridRetriever:
             semantic_results, keyword_results, pseudocode_results
         )
         
-        # # Stage 4: Graph expansion
-        # if self.graph_weight > 0:
-        #     combined_results = self._expand_with_graph(combined_results, max_hops=2)
+        # Stage 4: Graph expansion
+        if self.graph_weight > 0:
+            combined_results = self._expand_with_graph(combined_results, max_hops=2)
         
         # Stage 5: Re-rank
         final_results = self._rerank(query_str, combined_results)
@@ -942,37 +956,120 @@ class HybridRetriever:
                 unique_key = f"_no_graph_id_{idx}"
                 expanded[unique_key] = result
 
-        # Step 2: Expand only the top 10 elements that exist in the graph
+        # Step 2: Expand only the top 10 elements that exist in the active graph backend
         for result in results[:10]:
             elem_id = result["element"].get("id")
             elem_name = result["element"].get("name")
 
-            # Only expand if elem_id exists and is in the graph
-            if elem_id and elem_id in expanded:
-                # Get related elements
-                related_ids = self.graph_builder.get_related_elements(elem_id, max_hops)
+            if not elem_id or elem_id not in expanded:
+                continue
+            related_ids = self._get_related_ids(elem_id, result["element"], max_hops=max_hops)
 
-                # Add related elements with reduced score
-                for related_id in related_ids:
-                    if related_id not in expanded:
-                        # Try to get element metadata
-                        elem = self.graph_builder.element_by_id.get(related_id)
-                        if elem:
-                            graph_score = result["total_score"] * 0.5 * self.graph_weight
-                            expanded[related_id] = {
-                                "element": elem.to_dict(),
-                                "semantic_score": 0.0,
-                                "keyword_score": 0.0,
-                                "graph_score": graph_score,
-                                "total_score": graph_score,
-                                "related_to": elem_name,
-                            }
+            # Add related elements with reduced score
+            for related_id in related_ids:
+                if related_id in expanded:
+                    continue
+                elem = self.graph_builder.element_by_id.get(related_id)
+                if elem is None:
+                    continue
+                graph_score = result["total_score"] * 0.5 * self.graph_weight
+                expanded[related_id] = {
+                    "element": elem.to_dict(),
+                    "semantic_score": 0.0,
+                    "keyword_score": 0.0,
+                    "graph_score": graph_score,
+                    "total_score": graph_score,
+                    "related_to": elem_name,
+                }
 
         # Convert back to list and sort
         results = list(expanded.values())
         results.sort(key=lambda x: x["total_score"], reverse=True)
 
         return results
+
+    def _get_related_ids(self, element_id: str, element_meta: Dict[str, Any], max_hops: int = 2) -> Set[str]:
+        use_ir = self.graph_backend == "ir" and self.ir_graphs is not None
+        if use_ir:
+            ids = self._get_related_ids_from_ir(element_id, element_meta, max_hops=max_hops)
+            if ids:
+                return ids
+            if not self.allow_legacy_graph_fallback:
+                return set()
+            self.logger.debug("IR graph expansion yielded no results; falling back to legacy graph")
+        return self.graph_builder.get_related_elements(element_id, max_hops)
+
+    def _get_related_ids_from_ir(self, element_id: str, element_meta: Dict[str, Any], max_hops: int = 2) -> Set[str]:
+        if self.ir_graphs is None:
+            return set()
+        seed = (
+            (element_meta.get("metadata", {}) or {}).get("ir_symbol_id")
+            or (element_meta.get("metadata", {}) or {}).get("ir_node_id")
+        )
+        if not seed:
+            seed = self._heuristic_ir_seed(element_meta)
+        if not seed:
+            return set()
+
+        g = nx.Graph()
+        for graph in [
+            self.ir_graphs.dependency_graph,
+            self.ir_graphs.call_graph,
+            self.ir_graphs.inheritance_graph,
+            self.ir_graphs.reference_graph,
+            self.ir_graphs.containment_graph,
+        ]:
+            if graph is None:
+                continue
+            g.add_nodes_from(graph.nodes())
+            g.add_edges_from(graph.edges())
+
+        if seed not in g:
+            return set()
+        related_ir_nodes = set(nx.single_source_shortest_path_length(g, seed, cutoff=max_hops).keys())
+        related_ir_nodes.discard(seed)
+        if not related_ir_nodes:
+            return set()
+
+        # Map IR nodes back to legacy element ids through lightweight heuristics.
+        mapped: Set[str] = set()
+        for elem in self.graph_builder.element_by_id.values():
+            meta = elem.metadata or {}
+            elem_ir = meta.get("ir_symbol_id") or meta.get("ir_node_id")
+            if elem_ir and elem_ir in related_ir_nodes:
+                mapped.add(elem.id)
+                continue
+            # fallback match by path and symbol name
+            rel_path = getattr(elem, "relative_path", None) or getattr(elem, "file_path", None)
+            name = getattr(elem, "name", None)
+            for ir_id in related_ir_nodes:
+                if rel_path and rel_path in ir_id:
+                    mapped.add(elem.id)
+                    break
+                if name and name in ir_id:
+                    mapped.add(elem.id)
+                    break
+        return mapped
+
+    def _heuristic_ir_seed(self, element_meta: Dict[str, Any]) -> Optional[str]:
+        rel_path = element_meta.get("relative_path") or element_meta.get("file_path")
+        name = element_meta.get("name")
+        if not rel_path and not name:
+            return None
+
+        candidates = []
+        for graph in [
+            self.ir_graphs.containment_graph if self.ir_graphs else None,
+            self.ir_graphs.call_graph if self.ir_graphs else None,
+        ]:
+            if graph is None:
+                continue
+            for n in graph.nodes():
+                if rel_path and rel_path in str(n):
+                    candidates.append(str(n))
+                elif name and name in str(n):
+                    candidates.append(str(n))
+        return candidates[0] if candidates else None
     
     def _rerank(self, query: str, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Re-rank results based on additional factors"""

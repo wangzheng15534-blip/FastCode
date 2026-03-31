@@ -902,6 +902,19 @@ class HybridRetriever:
         
         # Convert to list and sort by total score
         results = list(combined.values())
+
+        # Source-aware boost: prefer precise/SCIP-derived facts.
+        for result in results:
+            elem = result.get("element", {})
+            meta = elem.get("metadata", {}) if isinstance(elem, dict) else {}
+            source_priority = meta.get("source_priority", 0)
+            try:
+                source_priority = float(source_priority)
+            except Exception:
+                source_priority = 0.0
+            boost = 1.0 + min(max(source_priority, 0.0), 100.0) / 200.0
+            result["total_score"] *= boost
+
         results.sort(key=lambda x: x["total_score"], reverse=True)
         
         return results
@@ -1007,6 +1020,12 @@ class HybridRetriever:
             # Check file path filter
             if "file_path" in filters:
                 if filters["file_path"] not in elem.get("relative_path", ""):
+                    continue
+
+            # Check snapshot filter
+            if "snapshot_id" in filters:
+                elem_snapshot = elem.get("snapshot_id") or (elem.get("metadata", {}) or {}).get("snapshot_id")
+                if elem_snapshot != filters["snapshot_id"]:
                     continue
             
             filtered.append(result)
@@ -1440,4 +1459,3 @@ class HybridRetriever:
             self.logger.error(traceback.format_exc())
             # Fallback to original results
             return results
-

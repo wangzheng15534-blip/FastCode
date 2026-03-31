@@ -37,6 +37,14 @@ def validate_snapshot(snapshot: IRSnapshot) -> List[str]:
             errors.append(f"edge src not found: {edge.edge_id} -> {edge.src_id}")
         if edge.dst_id not in valid_nodes:
             errors.append(f"edge dst not found: {edge.edge_id} -> {edge.dst_id}")
+        if not edge.source:
+            errors.append(f"edge source missing: {edge.edge_id}")
+        if not edge.confidence:
+            errors.append(f"edge confidence missing: {edge.edge_id}")
+
+    for sym in snapshot.symbols:
+        src = (sym.metadata or {}).get("source")
+        if not src and not sym.source_set:
+            errors.append(f"symbol provenance missing: {sym.symbol_id}")
 
     return errors
-

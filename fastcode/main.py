@@ -7,13 +7,15 @@ import pickle
 import logging
 import json
 import re
+import tempfile
 from datetime import datetime
 from urllib.parse import urlparse
 from typing import Optional, Dict, Any, List, Callable
 import numpy as np
 from rank_bm25 import BM25Okapi
+from git import Repo, GitCommandError
 
-from .utils import load_config, resolve_config_paths, setup_logging, compute_file_hash, ensure_dir
+from .utils import load_config, resolve_config_paths, setup_logging, ensure_dir
 from .loader import RepositoryLoader
 from .parser import CodeParser
 from .embedder import CodeEmbedder
@@ -27,6 +29,16 @@ from .retriever import HybridRetriever
 from .query_processor import QueryProcessor
 from .answer_generator import AnswerGenerator
 from .cache import CacheManager
+from .adapters.ast_to_ir import build_ir_from_ast
+from .adapters.scip_to_ir import build_ir_from_scip
+from .ir_graph_builder import IRGraphBuilder
+from .ir_merge import merge_ir
+from .ir_validators import validate_snapshot
+from .manifest_store import ManifestStore
+from .index_run import IndexRunStore
+from .scip_loader import load_scip_artifact, run_scip_python_index
+from .snapshot_store import SnapshotStore
+from .terminus_publisher import TerminusPublisher
 
 
 class FastCode:
@@ -92,6 +104,7 @@ class FastCode:
         self.vector_store = VectorStore(self.config)
         self.indexer = CodeIndexer(self.config, self.loader, self.parser, self.embedder, self.vector_store)
         self.graph_builder = CodeGraphBuilder(self.config)
+        self.ir_graph_builder = IRGraphBuilder()
         
         # Get repo_root from config if available
         config_repo_root = self.config.get("repo_root")
@@ -105,6 +118,12 @@ class FastCode:
         self.query_processor = QueryProcessor(self.config)
         self.answer_generator = AnswerGenerator(self.config)
         self.cache_manager = CacheManager(self.config)
+
+        persist_dir = self.vector_store.persist_dir
+        self.snapshot_store = SnapshotStore(persist_dir)
+        self.manifest_store = ManifestStore(self.snapshot_store.db_path)
+        self.index_run_store = IndexRunStore(self.snapshot_store.db_path)
+        self.terminus_publisher = TerminusPublisher(self.config)
         
         # State
         self.repo_loaded = False
@@ -300,6 +319,360 @@ class FastCode:
             import traceback
             self.logger.error(traceback.format_exc())
             raise
+
+    def _checkout_target_ref(self, ref: Optional[str] = None, commit: Optional[str] = None) -> None:
+        """Checkout requested ref/commit inside loaded repository workspace."""
+        target = commit or ref
+        if not target or not self.loader.repo_path:
+            return
+        try:
+            repo = Repo(self.loader.repo_path)
+            repo.git.checkout(target)
+            self.logger.info(f"Checked out target: {target}")
+        except (GitCommandError, Exception) as e:
+            raise RuntimeError(f"Failed to checkout target '{target}': {e}")
+
+    def _resolve_snapshot_ref(
+        self,
+        repo_name: str,
+        requested_ref: Optional[str] = None,
+        requested_commit: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Resolve repo snapshot identity from git metadata or file hashes."""
+        repo_path = self.loader.repo_path or ""
+        try:
+            repo = Repo(repo_path)
+            commit_obj = repo.commit(requested_commit or requested_ref or "HEAD")
+            tree_id = commit_obj.tree.hexsha
+            commit_id = commit_obj.hexsha
+            branch = requested_ref
+            if branch is None:
+                try:
+                    branch = repo.active_branch.name
+                except Exception:
+                    branch = None
+            snapshot_id = f"snap:{repo_name}:{commit_id}"
+            return {
+                "repo_name": repo_name,
+                "branch": branch,
+                "commit_id": commit_id,
+                "tree_id": tree_id,
+                "snapshot_id": snapshot_id,
+            }
+        except Exception:
+            files = self.loader.scan_files()
+            if not files:
+                synthetic = "empty"
+            else:
+                import hashlib
+
+                digest = hashlib.sha1()
+                for f in sorted(files, key=lambda x: x["relative_path"]):
+                    digest.update(f["relative_path"].encode("utf-8"))
+                    digest.update(str(f.get("size", 0)).encode("utf-8"))
+                synthetic = digest.hexdigest()
+            return {
+                "repo_name": repo_name,
+                "branch": requested_ref,
+                "commit_id": requested_commit,
+                "tree_id": synthetic,
+                "snapshot_id": f"snap:{repo_name}:{synthetic}",
+            }
+
+    def _load_artifacts_by_key(self, artifact_key: str) -> bool:
+        """Load vector/BM25/graph artifacts for a snapshot artifact key."""
+        if not self.vector_store.load(artifact_key):
+            return False
+
+        bm25_loaded = self.retriever.load_bm25(artifact_key)
+        graph_loaded = self.graph_builder.load(artifact_key)
+        self.retriever.build_repo_overview_bm25()
+
+        if not bm25_loaded or not graph_loaded:
+            elements = self._reconstruct_elements_from_metadata()
+            if elements:
+                if not bm25_loaded:
+                    self.retriever.index_for_bm25(elements)
+                if not graph_loaded:
+                    self.graph_builder.build_graphs(elements)
+
+        self.repo_indexed = True
+        self.repo_loaded = True
+        return True
+
+    def run_index_pipeline(
+        self,
+        source: str,
+        is_url: Optional[bool] = None,
+        ref: Optional[str] = None,
+        commit: Optional[str] = None,
+        force: bool = False,
+        publish: bool = True,
+        scip_artifact_path: Optional[str] = None,
+        enable_scip: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Run snapshot-oriented indexing pipeline with AST + optional SCIP merge.
+        """
+        resolved_is_url = self._infer_is_url(source) if is_url is None else is_url
+        self.load_repository(source, is_url=resolved_is_url)
+        self._checkout_target_ref(ref=ref, commit=commit)
+        self.repo_info = self.loader.get_repository_info()
+
+        repo_name = self.repo_info.get("name", "default")
+        repo_url = self.repo_info.get("url", source)
+        snapshot_ref = self._resolve_snapshot_ref(repo_name, requested_ref=ref, requested_commit=commit)
+        snapshot_id = snapshot_ref["snapshot_id"]
+        warnings: List[str] = []
+        degraded = False
+
+        existing = self.snapshot_store.get_snapshot_record(snapshot_id)
+        if existing and not force:
+            artifact_key = existing["artifact_key"]
+            loaded = self._load_artifacts_by_key(artifact_key)
+            return {
+                "status": "reused",
+                "repo_name": repo_name,
+                "snapshot_id": snapshot_id,
+                "artifact_key": artifact_key,
+                "loaded": loaded,
+            }
+
+        run_id = self.index_run_store.create_run(
+            repo_name=repo_name,
+            snapshot_id=snapshot_id,
+            branch=snapshot_ref.get("branch"),
+            commit_id=snapshot_ref.get("commit_id"),
+        )
+        self.index_run_store.mark_started(run_id)
+
+        try:
+            elements = self.indexer.index_repository(repo_name=repo_name, repo_url=repo_url)
+
+            artifact_key = self.snapshot_store.artifact_key_for_snapshot(snapshot_id)
+
+            temp_store = VectorStore(self.config)
+            temp_store.initialize(self.embedder.embedding_dim)
+            vectors = []
+            metadata = []
+            for elem in elements:
+                embedding = elem.metadata.get("embedding")
+                if embedding is not None:
+                    vectors.append(embedding)
+                    metadata.append(elem.to_dict())
+            if not vectors:
+                raise RuntimeError("No embeddings produced during indexing")
+            temp_store.add_vectors(np.array(vectors), metadata)
+
+            temp_graph = CodeGraphBuilder(self.config)
+            module_resolver = None
+            symbol_resolver = None
+            try:
+                gib = GlobalIndexBuilder(self.config)
+                gib.build_maps(elements, self.loader.repo_path or "")
+                module_resolver = ModuleResolver(gib)
+                symbol_resolver = SymbolResolver(gib, module_resolver)
+            except Exception as e:
+                warnings.append(f"resolver_init_failed: {e}")
+            temp_graph.build_graphs(elements, module_resolver, symbol_resolver)
+
+            temp_retriever = HybridRetriever(
+                self.config,
+                temp_store,
+                self.embedder,
+                CodeGraphBuilder(self.config),
+                repo_root=self.loader.repo_path,
+            )
+            temp_retriever.index_for_bm25(elements)
+            temp_retriever.build_repo_overview_bm25()
+
+            temp_store.save(artifact_key)
+            temp_retriever.save_bm25(artifact_key)
+            temp_graph.save(artifact_key)
+
+            ast_snapshot = build_ir_from_ast(
+                repo_name=repo_name,
+                snapshot_id=snapshot_id,
+                elements=elements,
+                repo_root=self.loader.repo_path or "",
+                branch=snapshot_ref.get("branch"),
+                commit_id=snapshot_ref.get("commit_id"),
+                tree_id=snapshot_ref.get("tree_id"),
+            )
+
+            scip_snapshot = None
+            if enable_scip:
+                try:
+                    if scip_artifact_path:
+                        scip_data = load_scip_artifact(scip_artifact_path)
+                        scip_snapshot = build_ir_from_scip(
+                            repo_name=repo_name,
+                            snapshot_id=snapshot_id,
+                            scip_index=scip_data,
+                            branch=snapshot_ref.get("branch"),
+                            commit_id=snapshot_ref.get("commit_id"),
+                            tree_id=snapshot_ref.get("tree_id"),
+                        )
+                    else:
+                        out_dir = tempfile.mkdtemp(prefix="fastcode_scip_")
+                        out_path = os.path.join(out_dir, "index.scip.json")
+                        run_scip_python_index(self.loader.repo_path or "", out_path)
+                        scip_data = load_scip_artifact(out_path)
+                        scip_snapshot = build_ir_from_scip(
+                            repo_name=repo_name,
+                            snapshot_id=snapshot_id,
+                            scip_index=scip_data,
+                            branch=snapshot_ref.get("branch"),
+                            commit_id=snapshot_ref.get("commit_id"),
+                            tree_id=snapshot_ref.get("tree_id"),
+                        )
+                except Exception as e:
+                    degraded = True
+                    warnings.append(f"scip_unavailable_or_failed: {e}")
+
+            merged_snapshot = merge_ir(ast_snapshot, scip_snapshot)
+            errors = validate_snapshot(merged_snapshot)
+            if errors:
+                raise RuntimeError(f"IR validation failed: {errors[:5]}")
+
+            self.snapshot_store.save_snapshot(
+                merged_snapshot,
+                metadata={"run_id": run_id, "artifact_key": artifact_key, "warnings": warnings},
+            )
+            ir_graphs = self.ir_graph_builder.build_graphs(merged_snapshot)
+            self.snapshot_store.save_ir_graphs(snapshot_id, ir_graphs)
+
+            self._load_artifacts_by_key(artifact_key)
+            self.loaded_repositories[repo_name] = self.repo_info
+
+            manifest = None
+            status = "degraded" if degraded else "succeeded"
+
+            if publish:
+                ref_name = snapshot_ref.get("branch") or ref or "HEAD"
+                manifest = self.manifest_store.publish(
+                    repo_name=repo_name,
+                    ref_name=ref_name,
+                    snapshot_id=snapshot_id,
+                    index_run_id=run_id,
+                    status="published",
+                )
+                if self.terminus_publisher.is_configured():
+                    try:
+                        self.terminus_publisher.publish_snapshot_lineage(
+                            snapshot=merged_snapshot.to_dict(),
+                            manifest=manifest,
+                            git_meta=snapshot_ref,
+                        )
+                        status = "published" if not degraded else "degraded"
+                    except Exception as e:
+                        warnings.append(f"terminus_publish_failed: {e}")
+                        self.index_run_store.enqueue_publish_retry(
+                            run_id=run_id,
+                            snapshot_id=snapshot_id,
+                            manifest_id=manifest.get("manifest_id") if manifest else None,
+                            error_message=str(e),
+                        )
+                        status = "publish_pending"
+                else:
+                    warnings.append("terminus_not_configured")
+
+            self.index_run_store.mark_completed(run_id, status=status, warnings=warnings)
+            return {
+                "status": status,
+                "run_id": run_id,
+                "repo_name": repo_name,
+                "snapshot_id": snapshot_id,
+                "artifact_key": artifact_key,
+                "manifest": manifest,
+                "warnings": warnings,
+            }
+        except Exception as e:
+            self.index_run_store.mark_failed(run_id, str(e))
+            raise
+
+    def get_index_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        return self.index_run_store.get_run(run_id)
+
+    def publish_index_run(self, run_id: str, ref_name: Optional[str] = None) -> Dict[str, Any]:
+        run = self.index_run_store.get_run(run_id)
+        if not run:
+            raise RuntimeError(f"index run not found: {run_id}")
+        snapshot = self.snapshot_store.load_snapshot(run["snapshot_id"])
+        if not snapshot:
+            raise RuntimeError(f"snapshot not found for run: {run_id}")
+
+        manifest = self.manifest_store.publish(
+            repo_name=run["repo_name"],
+            ref_name=ref_name or run.get("branch") or "HEAD",
+            snapshot_id=run["snapshot_id"],
+            index_run_id=run_id,
+            status="published",
+        )
+        status = "published"
+        if self.terminus_publisher.is_configured():
+            try:
+                self.terminus_publisher.publish_snapshot_lineage(
+                    snapshot=snapshot.to_dict(),
+                    manifest=manifest,
+                    git_meta={
+                        "repo_name": run["repo_name"],
+                        "branch": run.get("branch"),
+                        "commit_id": run.get("commit_id"),
+                    },
+                )
+            except Exception as e:
+                self.index_run_store.enqueue_publish_retry(
+                    run_id=run_id,
+                    snapshot_id=run["snapshot_id"],
+                    manifest_id=manifest.get("manifest_id"),
+                    error_message=str(e),
+                )
+                status = "publish_pending"
+        self.index_run_store.mark_completed(run_id, status=status)
+        return {"status": status, "manifest": manifest, "run_id": run_id}
+
+    def get_branch_manifest(self, repo_name: str, ref_name: str) -> Optional[Dict[str, Any]]:
+        return self.manifest_store.get_branch_manifest(repo_name, ref_name)
+
+    def get_snapshot_manifest(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
+        return self.manifest_store.get_snapshot_manifest(snapshot_id)
+
+    def query_snapshot(
+        self,
+        question: str,
+        repo_name: Optional[str] = None,
+        ref_name: Optional[str] = None,
+        snapshot_id: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        enable_multi_turn: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        if not snapshot_id:
+            if not repo_name or not ref_name:
+                raise RuntimeError("query_snapshot requires snapshot_id or repo_name+ref_name")
+            manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
+            if not manifest:
+                raise RuntimeError(f"manifest not found for {repo_name}:{ref_name}")
+            snapshot_id = manifest["snapshot_id"]
+
+        snapshot_record = self.snapshot_store.get_snapshot_record(snapshot_id)
+        if not snapshot_record:
+            raise RuntimeError(f"snapshot not found: {snapshot_id}")
+
+        if not self._load_artifacts_by_key(snapshot_record["artifact_key"]):
+            raise RuntimeError(f"failed to load artifacts for snapshot: {snapshot_id}")
+
+        result = self.query(
+            question=question,
+            filters=filters,
+            repo_filter=None,
+            session_id=session_id,
+            enable_multi_turn=enable_multi_turn,
+        )
+        result["snapshot_id"] = snapshot_id
+        result["artifact_key"] = snapshot_record["artifact_key"]
+        return result
     
     def query(self, question: str, filters: Optional[Dict[str, Any]] = None, 
               repo_filter: Optional[List[str]] = None,
@@ -883,7 +1256,9 @@ class FastCode:
                 "extract_imports": True,
             },
             "embedding": {
-                "model": "sentence-transformers/all-MiniLM-L6-v2",
+                "provider": "ollama",
+                "model": "bge-large-en-v1.5",
+                "ollama_url": "http://127.0.0.1:11434/api/embeddings",
                 "device": "cpu",
                 "batch_size": 32,
             },
@@ -922,6 +1297,11 @@ class FastCode:
             "logging": {
                 "level": "INFO",
                 "console": True,
+            },
+            "terminus": {
+                "endpoint": "",
+                "api_key": "",
+                "timeout_seconds": 15,
             },
         }
     

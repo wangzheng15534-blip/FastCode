@@ -58,9 +58,11 @@ parser:
 
 # Embedding Settings
 embedding:
-  model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"  # Multilingual support (470MB)
-  # model: "sentence-transformers/all-MiniLM-L6-v2"  # Faster download but English only (90MB)
-  # Alternative: "BAAI/bge-large-en-v1.5" for better quality
+  provider: "ollama"  # "ollama" or "sentence_transformers"
+  model: "bge-large-en-v1.5"
+  ollama_url: "http://127.0.0.1:11434/api/embeddings"
+  # model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+  # model: "sentence-transformers/all-MiniLM-L6-v2"
   device: "auto"  # "auto" (recommended), "cuda", "mps", or "cpu"
   batch_size: 32
   max_seq_length: 512
@@ -205,3 +207,9 @@ logging:
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: "./logs/fastcode.log"
   console: true
+
+# Terminus lineage publishing (optional)
+terminus:
+  endpoint: ""  # e.g. http://127.0.0.1:6363/api/lineage/publish
+  api_key: ""
+  timeout_seconds: 15

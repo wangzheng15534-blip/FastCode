@@ -49,3 +49,18 @@ def test_index_run_idempotency_key_reuses_run():
 
         assert run_1 == run_2
 
+
+def test_snapshot_store_persists_scip_artifact_ref():
+    with tempfile.TemporaryDirectory(prefix="fc_scip_artifact_test_") as tmp:
+        store = SnapshotStore(tmp)
+        artifact = store.save_scip_artifact_ref(
+            snapshot_id="snap:repo:abc",
+            indexer_name="scip-python",
+            indexer_version="1.0.0",
+            artifact_path="/tmp/index.scip.json",
+            checksum="deadbeef",
+        )
+        assert artifact["snapshot_id"] == "snap:repo:abc"
+        loaded = store.get_scip_artifact_ref("snap:repo:abc")
+        assert loaded is not None
+        assert loaded["indexer_name"] == "scip-python"

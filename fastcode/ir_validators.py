@@ -22,6 +22,10 @@ def validate_snapshot(snapshot: IRSnapshot) -> List[str]:
 
     if len(doc_ids) != len(snapshot.documents):
         errors.append("duplicate document IDs detected")
+    doc_paths = [d.path for d in snapshot.documents]
+    if len(doc_paths) != len(set(doc_paths)):
+        dupes = [p for p in set(doc_paths) if doc_paths.count(p) > 1]
+        errors.append(f"duplicate document paths detected: {dupes}")
     if len(sym_ids) != len(snapshot.symbols):
         errors.append("duplicate symbol IDs detected")
 

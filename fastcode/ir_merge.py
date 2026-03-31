@@ -51,11 +51,14 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
             canonical_symbols[ast.symbol_id] = ast
             by_key[key] = ast.symbol_id
 
-    merged_occurrences = []
-    for occ in ast_snapshot.occurrences + scip_snapshot.occurrences:
+    # Merge occurrences — deduplicate by (symbol_id, doc_id, role, range).
+    # SCIP wins when both sources produce the same occurrence (Rule D).
+    occ_seen: Dict[tuple, IROccurrence] = {}
+    for occ in scip_snapshot.occurrences + ast_snapshot.occurrences:
         symbol_id = ast_to_canonical.get(occ.symbol_id, occ.symbol_id)
-        merged_occurrences.append(
-            IROccurrence(
+        key = (symbol_id, occ.doc_id, occ.role, occ.start_line, occ.start_col, occ.end_line, occ.end_col)
+        if key not in occ_seen:
+            occ_seen[key] = IROccurrence(
                 occurrence_id=occ.occurrence_id,
                 symbol_id=symbol_id,
                 doc_id=occ.doc_id,
@@ -67,7 +70,7 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
                 source=occ.source,
                 metadata=occ.metadata,
             )
-        )
+    merged_occurrences = list(occ_seen.values())
 
     merged_edges = []
     for edge in ast_snapshot.edges + scip_snapshot.edges:

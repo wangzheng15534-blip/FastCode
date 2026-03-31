@@ -28,6 +28,7 @@ class TerminusPublisher:
         snapshot: Dict[str, Any],
         manifest: Dict[str, Any],
         git_meta: Dict[str, Any],
+        idempotency_key: str | None = None,
     ) -> None:
         if not self.endpoint:
             raise RuntimeError("Terminus endpoint is not configured")
@@ -44,6 +45,7 @@ class TerminusPublisher:
             method="POST",
             headers={
                 "Content-Type": "application/json",
+                **({"X-Idempotency-Key": idempotency_key} if idempotency_key else {}),
                 **({"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}),
             },
         )
@@ -54,4 +56,3 @@ class TerminusPublisher:
                 self.logger.info("Published snapshot lineage to Terminus")
         except urllib.error.URLError as e:
             raise RuntimeError(f"Terminus publish error: {e}") from e
-

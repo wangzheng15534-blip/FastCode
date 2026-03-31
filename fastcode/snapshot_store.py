@@ -32,6 +32,10 @@ class SnapshotStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _init_db(self) -> None:
@@ -52,6 +56,26 @@ class SnapshotStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS snapshot_refs (
+                    ref_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    repo_name TEXT NOT NULL,
+                    branch TEXT,
+                    commit_id TEXT,
+                    tree_id TEXT,
+                    snapshot_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(repo_name, commit_id, snapshot_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_snapshot_refs_repo_branch
+                ON snapshot_refs (repo_name, branch, created_at DESC)
+                """
+            )
             conn.commit()
 
     def artifact_key_for_snapshot(self, snapshot_id: str) -> str:
@@ -66,8 +90,12 @@ class SnapshotStore:
     def save_snapshot(self, snapshot: IRSnapshot, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         snap_dir = self.snapshot_dir(snapshot.snapshot_id)
         ir_path = os.path.join(snap_dir, "ir_snapshot.json")
-        with open(ir_path, "w", encoding="utf-8") as f:
+        tmp_ir_path = f"{ir_path}.tmp"
+        with open(tmp_ir_path, "w", encoding="utf-8") as f:
             json.dump(snapshot.to_dict(), f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_ir_path, ir_path)
 
         artifact_key = self.artifact_key_for_snapshot(snapshot.snapshot_id)
         with self._connect() as conn:
@@ -98,6 +126,22 @@ class SnapshotStore:
                     json.dumps(metadata or {}, ensure_ascii=False),
                 ),
             )
+            conn.execute(
+                """
+                INSERT INTO snapshot_refs (
+                    repo_name, branch, commit_id, tree_id, snapshot_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(repo_name, commit_id, snapshot_id) DO NOTHING
+                """,
+                (
+                    snapshot.repo_name,
+                    snapshot.branch,
+                    snapshot.commit_id,
+                    snapshot.tree_id,
+                    snapshot.snapshot_id,
+                    _utc_now(),
+                ),
+            )
             conn.commit()
 
         return {
@@ -119,6 +163,16 @@ class SnapshotStore:
             )
             conn.commit()
         return path
+
+    def load_ir_graphs(self, snapshot_id: str) -> Optional[Any]:
+        row = self.get_snapshot_record(snapshot_id)
+        if not row:
+            return None
+        path = row.get("ir_graphs_path")
+        if not path or not os.path.exists(path):
+            return None
+        with open(path, "rb") as f:
+            return pickle.load(f)
 
     def load_snapshot(self, snapshot_id: str) -> Optional[IRSnapshot]:
         row = self.get_snapshot_record(snapshot_id)
@@ -152,3 +206,15 @@ class SnapshotStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def resolve_snapshot_for_ref(self, repo_name: str, branch: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM snapshot_refs
+                WHERE repo_name=? AND branch=?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (repo_name, branch),
+            ).fetchone()
+        return dict(row) if row else None

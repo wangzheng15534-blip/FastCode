@@ -22,6 +22,7 @@ from .repo_overview import RepositoryOverviewGenerator
 from .repo_selector import RepositorySelector
 from .iterative_agent import IterativeAgent
 from .agent_tools import AgentTools
+from .semantic_ir import IRSnapshot, IRDocument, IRSymbol, IROccurrence, IREdge
 
 __version__ = "2.0.0"
 FastCode = FastCode
@@ -38,5 +39,9 @@ __all__ = [
     "RepositorySelector",
     "IterativeAgent",
     "AgentTools",
+    "IRSnapshot",
+    "IRDocument",
+    "IRSymbol",
+    "IROccurrence",
+    "IREdge",
 ]
-

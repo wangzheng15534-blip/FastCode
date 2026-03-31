@@ -22,6 +22,10 @@ class ManifestStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _init_db(self) -> None:
@@ -46,6 +50,18 @@ class ManifestStore:
                 ON manifests (repo_name, ref_name, published_at DESC)
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS manifest_heads (
+                    repo_name TEXT NOT NULL,
+                    ref_name TEXT NOT NULL,
+                    manifest_id TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (repo_name, ref_name),
+                    FOREIGN KEY (manifest_id) REFERENCES manifests(manifest_id)
+                )
+                """
+            )
             conn.commit()
 
     def publish(
@@ -56,12 +72,21 @@ class ManifestStore:
         index_run_id: str,
         status: str = "published",
     ) -> Dict[str, Any]:
-        previous = self.get_branch_manifest(repo_name, ref_name)
         manifest_id = f"manifest_{uuid.uuid4().hex[:16]}"
         now = _utc_now()
-        previous_id = previous["manifest_id"] if previous else None
 
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            previous_row = conn.execute(
+                """
+                SELECT m.* FROM manifest_heads h
+                JOIN manifests m ON m.manifest_id = h.manifest_id
+                WHERE h.repo_name=? AND h.ref_name=?
+                """,
+                (repo_name, ref_name),
+            ).fetchone()
+            previous = dict(previous_row) if previous_row else None
+            previous_id = previous["manifest_id"] if previous else None
             conn.execute(
                 """
                 INSERT INTO manifests (
@@ -80,6 +105,16 @@ class ManifestStore:
                     status,
                 ),
             )
+            conn.execute(
+                """
+                INSERT INTO manifest_heads (repo_name, ref_name, manifest_id, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(repo_name, ref_name) DO UPDATE SET
+                    manifest_id=excluded.manifest_id,
+                    updated_at=excluded.updated_at
+                """,
+                (repo_name, ref_name, manifest_id, now),
+            )
             conn.commit()
 
         return {
@@ -97,10 +132,9 @@ class ManifestStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT * FROM manifests
-                WHERE repo_name=? AND ref_name=?
-                ORDER BY published_at DESC
-                LIMIT 1
+                SELECT m.* FROM manifest_heads h
+                JOIN manifests m ON m.manifest_id = h.manifest_id
+                WHERE h.repo_name=? AND h.ref_name=?
                 """,
                 (repo_name, ref_name),
             ).fetchone()
@@ -118,4 +152,3 @@ class ManifestStore:
                 (snapshot_id,),
             ).fetchone()
         return dict(row) if row else None
-

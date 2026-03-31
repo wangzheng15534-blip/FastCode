@@ -4,6 +4,8 @@ Code Embedder - Generate embeddings for code snippets
 
 import logging
 import platform
+import json
+import urllib.request
 from typing import List, Dict, Any, Optional
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -18,19 +20,28 @@ class CodeEmbedder:
         self.embedding_config = config.get("embedding", {})
         self.logger = logging.getLogger(__name__)
         
+        self.provider = self.embedding_config.get("provider", "sentence_transformers")
         self.model_name = self.embedding_config.get("model", "sentence-transformers/all-MiniLM-L6-v2")
         self.device = self.embedding_config.get("device", "auto")
         self.batch_size = self.embedding_config.get("batch_size", 32)
         self.max_seq_length = self.embedding_config.get("max_seq_length", 512)
         self.normalize = self.embedding_config.get("normalize_embeddings", True)
+        self.ollama_url = self.embedding_config.get("ollama_url", "http://127.0.0.1:11434/api/embeddings")
         
         # Auto-detect best available device: CUDA > MPS > CPU
         if self.device != "cpu":
             self.device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-        
-        self.logger.info(f"Loading embedding model: {self.model_name}")
-        self.model = self._load_model()
-        self.embedding_dim = self.model.get_sentence_embedding_dimension()
+
+        self.model: Optional[SentenceTransformer] = None
+        if self.provider == "ollama":
+            self.logger.info(f"Using Ollama embeddings model: {self.model_name} ({self.ollama_url})")
+            probe = self._embed_text_ollama("embedding dimension probe")
+            self.embedding_dim = int(len(probe))
+        else:
+            self.logger.info(f"Loading embedding model: {self.model_name}")
+            self.model = self._load_model()
+            self.embedding_dim = self.model.get_sentence_embedding_dimension()
+
         self.logger.info(f"Embedding dimension: {self.embedding_dim}")
     
     def _load_model(self) -> SentenceTransformer:
@@ -63,7 +74,11 @@ class CodeEmbedder:
         """
         if not texts:
             return np.array([])
-        
+
+        if self.provider == "ollama":
+            vectors = [self._embed_text_ollama(t) for t in texts]
+            return np.array(vectors, dtype=np.float32)
+
         encode_kwargs = {
             'batch_size': self.batch_size,
             'show_progress_bar': len(texts) > 100,
@@ -79,6 +94,21 @@ class CodeEmbedder:
         embeddings = self.model.encode(texts, **encode_kwargs)
         
         return embeddings
+
+    def _embed_text_ollama(self, text: str) -> np.ndarray:
+        payload = {"model": self.model_name, "prompt": text}
+        req = urllib.request.Request(
+            self.ollama_url,
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        vector = body.get("embedding")
+        if not vector:
+            raise RuntimeError("Ollama embedding response missing 'embedding'")
+        return np.array(vector, dtype=np.float32)
     
     def embed_code_elements(self, elements: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -192,4 +222,3 @@ class CodeEmbedder:
             similarities = np.dot(embeddings, query_embedding) / (norms * query_norm)
         
         return similarities
-

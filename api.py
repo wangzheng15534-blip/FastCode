@@ -13,7 +13,6 @@ if platform.system() == 'Darwin':
     os.environ['MKL_NUM_THREADS'] = '1'
 
 from fastapi import FastAPI, HTTPException, File, UploadFile
-from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pydantic import BaseModel, Field
@@ -25,7 +24,6 @@ import tempfile
 import zipfile
 import shutil
 import uuid
-import json as json_module
 import asyncio
 
 from fastcode import FastCode
@@ -53,8 +51,10 @@ class IndexRunRequest(BaseModel):
 
 class QueryRequest(BaseModel):
     question: str = Field(..., description="Question to ask about the repository")
+    snapshot_id: Optional[str] = Field(None, description="Direct snapshot ID")
+    repo_name: Optional[str] = Field(None, description="Repository name (for ref resolution)")
+    ref_name: Optional[str] = Field(None, description="Branch/ref name (for ref resolution)")
     filters: Optional[Dict[str, Any]] = Field(None, description="Optional filters")
-    repo_filter: Optional[List[str]] = Field(None, description="Repository names to search")
     multi_turn: bool = Field(False, description="Enable multi-turn mode")
     session_id: Optional[str] = Field(None, description="Session ID for multi-turn dialogue")
 
@@ -67,6 +67,17 @@ class QuerySnapshotRequest(BaseModel):
     filters: Optional[Dict[str, Any]] = Field(None, description="Optional retrieval filters")
     multi_turn: bool = Field(False, description="Enable multi-turn mode")
     session_id: Optional[str] = Field(None, description="Session ID for multi-turn dialogue")
+
+
+class ProjectionBuildRequest(BaseModel):
+    scope_kind: str = Field(..., description="Projection scope: snapshot | query | entity")
+    snapshot_id: Optional[str] = Field(None, description="Direct snapshot ID")
+    repo_name: Optional[str] = Field(None, description="Repository name (for ref resolution)")
+    ref_name: Optional[str] = Field(None, description="Branch/ref name (for ref resolution)")
+    query: Optional[str] = Field(None, description="Query text for query-scoped projection")
+    target_id: Optional[str] = Field(None, description="Entity ID/path for entity-scoped projection")
+    filters: Optional[Dict[str, Any]] = Field(None, description="Optional scope filters")
+    force: bool = Field(False, description="Force regeneration even when cached")
 
 
 class QueryResponse(BaseModel):
@@ -329,6 +340,18 @@ async def publish_index_run(run_id: str, ref_name: Optional[str] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/index/publish/retry")
+async def retry_publish_tasks(limit: int = 10):
+    """Retry pending Terminus lineage publish tasks."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        result = await asyncio.to_thread(fastcode.retry_pending_publishes, limit)
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Retry publish failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/load-and-index")
 async def load_and_index(request: LoadRepositoryRequest, force: bool = False):
     """Load and index repository in one call"""
@@ -513,11 +536,14 @@ async def upload_and_index(file: UploadFile = File(...), force: bool = False):
 
 @app.post("/query", response_model=QueryResponse)
 async def query_repository(request: QueryRequest):
-    """Query the repository"""
+    """Query by snapshot scope (snapshot_id or repo_name+ref_name)."""
     fastcode = _ensure_fastcode_initialized()
 
-    if not fastcode.repo_indexed:
-        raise HTTPException(status_code=400, detail="Repository not indexed")
+    if not request.snapshot_id and not (request.repo_name and request.ref_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Query requires snapshot_id or repo_name+ref_name",
+        )
 
     try:
         session_id = request.session_id or str(uuid.uuid4())[:8]
@@ -528,10 +554,12 @@ async def query_repository(request: QueryRequest):
 
         logger.info(f"Processing query: {request.question}")
         result = await asyncio.to_thread(
-            fastcode.query,
-            request.question,
-            request.filters,
-            repo_filter=request.repo_filter,
+            fastcode.query_snapshot,
+            question=request.question,
+            snapshot_id=request.snapshot_id,
+            repo_name=request.repo_name,
+            ref_name=request.ref_name,
+            filters=request.filters,
             session_id=session_id,
             enable_multi_turn=request.multi_turn,
         )
@@ -602,76 +630,10 @@ async def query_snapshot(request: QuerySnapshotRequest):
 
 @app.post("/query-stream")
 async def query_repository_stream(request: QueryRequest):
-    """Query the repository with streaming response (SSE)"""
-    fastcode = _ensure_fastcode_initialized()
-
-    if not fastcode.repo_indexed:
-        raise HTTPException(status_code=400, detail="Repository not indexed")
-
-    session_id = request.session_id or str(uuid.uuid4())[:8]
-    if request.multi_turn and not request.session_id:
-        logger.info(f"Generated new multi-turn session: {session_id}")
-    elif not request.session_id:
-        logger.info(f"Generated session for single-turn request: {session_id}")
-
-    logger.info(f"Processing streaming query: {request.question}")
-
-    async def event_generator():
-        """Generate SSE events from query_stream"""
-        try:
-            for chunk, metadata in fastcode.query_stream(
-                request.question,
-                request.filters,
-                repo_filter=request.repo_filter,
-                session_id=session_id,
-                enable_multi_turn=request.multi_turn,
-            ):
-                if metadata:
-                    status = metadata.get("status", "")
-                    if status == "retrieving":
-                        event_data = {"type": "status", "status": "retrieving"}
-                    elif status == "generating":
-                        sources = metadata.get("sources", [])
-                        serialized_sources = [_safe_jsonable(s) for s in sources]
-                        event_data = {
-                            "type": "status",
-                            "status": "generating",
-                            "sources": serialized_sources,
-                            "session_id": session_id
-                        }
-                    elif status == "complete":
-                        sources = metadata.get("sources", [])
-                        serialized_sources = [_safe_jsonable(s) for s in sources]
-                        event_data = {
-                            "type": "done",
-                            "sources": serialized_sources,
-                            "context_elements": metadata.get("context_elements", 0),
-                            "session_id": session_id
-                        }
-                    elif "error" in metadata:
-                        event_data = {"type": "error", "error": metadata["error"]}
-                    else:
-                        continue
-                    yield f"data: {json_module.dumps(event_data)}\n\n"
-                elif chunk:
-                    event_data = {"type": "chunk", "content": chunk}
-                    yield f"data: {json_module.dumps(event_data)}\n\n"
-
-                await asyncio.sleep(0)
-
-        except Exception as e:
-            logger.error(f"Streaming query failed: {e}")
-            error_data = {"type": "error", "error": str(e)}
-            yield f"data: {json_module.dumps(error_data)}\n\n"
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        }
+    """Deprecated in snapshot-cutover mode."""
+    raise HTTPException(
+        status_code=501,
+        detail="query-stream is disabled in snapshot-cutover mode. Use POST /query with snapshot scope.",
     )
 
 
@@ -717,6 +679,52 @@ async def get_snapshot_manifest(snapshot_id: str):
     if not manifest:
         raise HTTPException(status_code=404, detail="Manifest not found")
     return {"status": "success", "manifest": manifest}
+
+
+@app.post("/projection/build")
+async def build_projection(request: ProjectionBuildRequest):
+    """Build or reuse a cached projection artifact."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        result = await asyncio.to_thread(
+            fastcode.build_projection,
+            scope_kind=request.scope_kind,
+            snapshot_id=request.snapshot_id,
+            repo_name=request.repo_name,
+            ref_name=request.ref_name,
+            query=request.query,
+            target_id=request.target_id,
+            filters=request.filters,
+            force=request.force,
+        )
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Projection build failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/projection/{projection_id}/{layer}")
+async def get_projection_layer(projection_id: str, layer: str):
+    """Fetch a specific projection layer (L0/L1/L2)."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        result = await asyncio.to_thread(fastcode.get_projection_layer, projection_id, layer)
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Projection layer fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/projection/{projection_id}/chunks/{chunk_id}")
+async def get_projection_chunk(projection_id: str, chunk_id: str):
+    """Fetch a single projection L2 chunk payload."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        result = await asyncio.to_thread(fastcode.get_projection_chunk, projection_id, chunk_id)
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Projection chunk fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/new-session", response_model=NewSessionResponse)

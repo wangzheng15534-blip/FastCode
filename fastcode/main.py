@@ -43,6 +43,7 @@ from .projection_models import ProjectionScope
 from .projection_store import ProjectionStore
 from .projection_transform import ProjectionTransformer
 from .snapshot_symbol_index import SnapshotSymbolIndex
+from .pg_retrieval import PgRetrievalStore
 
 
 class FastCode:
@@ -124,13 +125,16 @@ class FastCode:
         self.cache_manager = CacheManager(self.config)
 
         persist_dir = self.vector_store.persist_dir
-        self.snapshot_store = SnapshotStore(persist_dir)
-        self.manifest_store = ManifestStore(self.snapshot_store.db_path)
-        self.index_run_store = IndexRunStore(self.snapshot_store.db_path)
+        storage_cfg = self.config.get("storage", {})
+        self.snapshot_store = SnapshotStore(persist_dir, storage_cfg=storage_cfg)
+        self.manifest_store = ManifestStore(self.snapshot_store.db_runtime)
+        self.index_run_store = IndexRunStore(self.snapshot_store.db_runtime)
         self.terminus_publisher = TerminusPublisher(self.config)
         self.projection_transformer = ProjectionTransformer(self.config)
         self.projection_store = ProjectionStore(self.config)
         self.snapshot_symbol_index = SnapshotSymbolIndex()
+        self.pg_retrieval_store = PgRetrievalStore(self.snapshot_store.db_runtime, self.config)
+        self.retriever.set_pg_retrieval_store(self.pg_retrieval_store)
         
         # State
         self.repo_loaded = False
@@ -483,6 +487,10 @@ class FastCode:
                     "warnings": json.loads(existing_run.get("warnings_json") or "[]"),
                 }
         self.index_run_store.mark_started(run_id)
+        lock_name = f"index:{snapshot_id}"
+        if not self.snapshot_store.acquire_lock(lock_name, owner_id=run_id, ttl_seconds=600):
+            raise RuntimeError(f"snapshot is currently locked for indexing: {snapshot_id}")
+        stage_id: Optional[str] = None
 
         try:
             self.index_run_store.mark_status(run_id, "extracting")
@@ -636,8 +644,18 @@ class FastCode:
                     "scip_artifact_ref": scip_artifact_ref,
                 },
             )
+            self.snapshot_store.import_git_backbone(merged_snapshot, git_meta=snapshot_ref)
+            self.snapshot_store.save_relational_facts(merged_snapshot)
             ir_graphs = self.ir_graph_builder.build_graphs(merged_snapshot)
             self.snapshot_store.save_ir_graphs(snapshot_id, ir_graphs)
+            stage_id = self.snapshot_store.stage_snapshot(
+                merged_snapshot,
+                metadata={"run_id": run_id, "artifact_key": artifact_key},
+            )
+            self.pg_retrieval_store.upsert_elements(
+                snapshot_id=snapshot_id,
+                elements=[elem.to_dict() for elem in elements],
+            )
 
             self._load_artifacts_by_key(artifact_key)
             self.loaded_repositories[repo_name] = self.repo_info
@@ -675,6 +693,8 @@ class FastCode:
                         status = "publish_pending"
                 else:
                     warnings.append("terminus_not_configured")
+                if stage_id:
+                    self.snapshot_store.promote_staged_snapshot(snapshot_id=snapshot_id, stage_id=stage_id)
 
             self.index_run_store.mark_completed(run_id, status=status, warnings=warnings)
             return {
@@ -688,7 +708,14 @@ class FastCode:
             }
         except Exception as e:
             self.index_run_store.mark_failed(run_id, str(e))
+            self.snapshot_store.enqueue_redo_task(
+                task_type="index_run_recovery",
+                payload={"run_id": run_id, "snapshot_id": snapshot_id},
+                error=str(e),
+            )
             raise
+        finally:
+            self.snapshot_store.release_lock(lock_name, owner_id=run_id)
 
     def get_index_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         return self.index_run_store.get_run(run_id)
@@ -1591,6 +1618,12 @@ class FastCode:
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration"""
         return {
+            "storage": {
+                "backend": "sqlite",
+                "postgres_dsn": "",
+                "pool_min": 1,
+                "pool_max": 8,
+            },
             "repository": {
                 "clone_depth": 1,
                 "max_file_size_mb": 5,
@@ -1622,6 +1655,7 @@ class FastCode:
                 "keyword_weight": 0.3,
                 "graph_weight": 0.1,
                 "max_results": 5,
+                "backend": "pg_hybrid",
                 "graph_backend": "ir",
                 "allow_legacy_graph_fallback": True,
             },

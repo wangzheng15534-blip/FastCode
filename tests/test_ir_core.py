@@ -201,6 +201,30 @@ def test_validate_catches_duplicate_doc_paths():
     assert any("duplicate document path" in e for e in errors)
 
 
+def test_scip_edges_include_extractor_field():
+    """SCIP edges should carry extractor field for consistency with AST edges."""
+    from fastcode.adapters.scip_to_ir import build_ir_from_scip
+
+    scip = {
+        "indexer_name": "scip-python",
+        "indexer_version": "0.1.0",
+        "documents": [
+            {
+                "path": "a.py",
+                "language": "python",
+                "symbols": [{"symbol": "pkg a/Foo.", "name": "Foo", "kind": "class"}],
+                "occurrences": [
+                    {"symbol": "pkg a/Foo.", "role": "reference", "range": [5, 0, 5, 3]},
+                ],
+            }
+        ],
+    }
+    snap = build_ir_from_scip(repo_name="r", snapshot_id="s:1", scip_index=scip)
+    for edge in snap.edges:
+        assert "extractor" in (edge.metadata or {}), f"missing extractor in {edge.edge_type} edge"
+        assert edge.metadata["extractor"] == "fastcode.adapters.scip_to_ir"
+
+
 def test_ir_graph_builder_routes_edge_types():
     snap = IRSnapshot(
         repo_name="r",

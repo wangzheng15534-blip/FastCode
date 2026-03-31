@@ -5,6 +5,13 @@
 # This will be overridden when loading a repository dynamically
 repo_root: ./repos # safe repository path
 
+# Storage backend
+storage:
+  backend: "sqlite"  # "postgres" in production
+  postgres_dsn: ""   # e.g. postgresql://user:pass@127.0.0.1:5432/fastcode
+  pool_min: 1
+  pool_max: 8
+
 # Repository Settings
 repository:
   clone_depth: 1  # Shallow clone for faster processing
@@ -104,6 +111,7 @@ retrieval:
   semantic_weight: 0.5
   keyword_weight: 0.5
   graph_weight: 1
+  backend: "pg_hybrid"  # "pg_hybrid" primary, fallback to legacy
   graph_backend: "ir"  # "ir" (default) or "legacy"
   allow_legacy_graph_fallback: true
 

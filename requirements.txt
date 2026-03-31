@@ -48,6 +48,7 @@ numpy
 pandas
 pathspec
 psycopg[binary]
+psycopg_pool
 
 # Caching
 diskcache
@@ -60,4 +61,3 @@ mcp[cli]
 pytest
 pytest-asyncio
 pytest-cov
-

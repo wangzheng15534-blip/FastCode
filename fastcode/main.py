@@ -6,6 +6,7 @@ import os
 import pickle
 import logging
 import json
+import hashlib
 import re
 import tempfile
 from datetime import datetime
@@ -16,7 +17,7 @@ import networkx as nx
 from rank_bm25 import BM25Okapi
 from git import Repo, GitCommandError
 
-from .utils import load_config, resolve_config_paths, setup_logging, ensure_dir, compute_file_hash
+from .utils import load_config, resolve_config_paths, setup_logging, ensure_dir, compute_file_hash, safe_jsonable
 from .loader import RepositoryLoader
 from .parser import CodeParser
 from .embedder import CodeEmbedder
@@ -386,8 +387,6 @@ class FastCode:
             if not files:
                 synthetic = "empty"
             else:
-                import hashlib
-
                 digest = hashlib.sha1()
                 for f in sorted(files, key=lambda x: x["relative_path"]):
                     digest.update(f["relative_path"].encode("utf-8"))
@@ -510,7 +509,6 @@ class FastCode:
                 "loaded": loaded,
             }
 
-        import hashlib
         idempotency_key = hashlib.sha1(
             f"{repo_name}:{snapshot_id}:{bool(publish)}:{bool(enable_scip)}".encode("utf-8")
         ).hexdigest()
@@ -663,7 +661,6 @@ class FastCode:
                             tree_id=snapshot_ref.get("tree_id"),
                         )
                     if raw_scip_path and os.path.exists(raw_scip_path):
-                        import hashlib
                         import shutil
 
                         scip_dir = os.path.join(self.snapshot_store.snapshot_dir(snapshot_id), "scip")
@@ -1074,13 +1071,11 @@ class FastCode:
             "filters": filters or {},
         }
         payload = json.dumps(base, sort_keys=True, ensure_ascii=False)
-        import hashlib
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:24]
 
     @staticmethod
     def _projection_params_hash(scope: ProjectionScope) -> str:
         payload = json.dumps(scope.to_dict(), sort_keys=True, ensure_ascii=False)
-        import hashlib
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
     def _resolve_snapshot_id(
@@ -1391,7 +1386,7 @@ class FastCode:
                 # This ensures proper display format when loading history
                 sources = result.get("sources", [])
                 # Ensure sources are fully JSON-serializable
-                serializable_sources = self._ensure_jsonable_sources(sources)
+                serializable_sources = safe_jsonable(sources)
 
                 # Ensure metadata is JSON-serializable
                 metadata = {
@@ -1400,7 +1395,7 @@ class FastCode:
                     "repo_filter": repo_filter,
                     "multi_turn": enable_multi_turn,
                 }
-                serializable_metadata = self._ensure_jsonable_metadata(metadata)
+                serializable_metadata = safe_jsonable(metadata)
 
                 self.cache_manager.save_dialogue_turn(
                     session_id=session_id,
@@ -1558,8 +1553,8 @@ class FastCode:
             # Save dialogue turn if session_id provided
             if session_id:
                 turn_number = self._get_next_turn_number(session_id)
-                serializable_sources = self._ensure_jsonable_sources(result.get("sources", []))
-                serializable_metadata = self._ensure_jsonable_metadata({
+                serializable_sources = safe_jsonable(result.get("sources", []))
+                serializable_metadata = safe_jsonable({
                     "intent": getattr(processed_query, "intent", None),
                     "keywords": getattr(processed_query, "keywords", None),
                     "repo_filter": repo_filter,
@@ -1765,69 +1760,6 @@ class FastCode:
         if self.eval_config.get("disable_persistence", False):
             return False
         return not self._is_ephemeral_mode()
-    
-    def _serialize_retrieved_elements(self, elements: List[Any]) -> List[Dict[str, Any]]:
-        """Safely serialize retrieved elements for caching/session history"""
-        serialized = []
-        for elem in elements or []:
-            try:
-                if hasattr(elem, "to_dict"):
-                    serialized.append(elem.to_dict())
-                elif isinstance(elem, dict):
-                    serialized.append(elem)
-                else:
-                    serialized.append({"repr": repr(elem)})
-            except Exception as e:
-                self.logger.warning(f"Failed to serialize element: {e}")
-        return serialized
-    
-    def _ensure_jsonable_sources(self, sources: List[Any]) -> List[Dict[str, Any]]:
-        """Ensure sources are JSON-serializable, converting any complex objects"""
-        jsonable_sources = []
-        for source in sources or []:
-            try:
-                if isinstance(source, dict):
-                    # Ensure all values in dict are JSON-serializable
-                    clean_source = {}
-                    for key, value in source.items():
-                        if isinstance(value, (str, int, float, bool, type(None))):
-                            clean_source[key] = value
-                        elif isinstance(value, (list, tuple)):
-                            clean_source[key] = list(value)
-                        elif isinstance(value, dict):
-                            clean_source[key] = dict(value)
-                        else:
-                            clean_source[key] = str(value)
-                    jsonable_sources.append(clean_source)
-                else:
-                    jsonable_sources.append({"repr": str(source)})
-            except Exception as e:
-                self.logger.warning(f"Failed to serialize source: {e}")
-        return jsonable_sources
-
-    def _ensure_jsonable_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
-        """Ensure metadata is JSON-serializable, converting any complex objects"""
-        jsonable_metadata = {}
-        for key, value in (metadata or {}).items():
-            try:
-                if isinstance(value, (str, int, float, bool, type(None))):
-                    jsonable_metadata[key] = value
-                elif isinstance(value, (list, tuple)):
-                    # Recursively ensure list items are serializable
-                    jsonable_metadata[key] = [
-                        v if isinstance(v, (str, int, float, bool, type(None))) else str(v)
-                        for v in value
-                    ]
-                elif isinstance(value, dict):
-                    # Recursively ensure dict values are serializable
-                    jsonable_metadata[key] = self._ensure_jsonable_metadata(value)
-                else:
-                    # Convert complex objects to string
-                    jsonable_metadata[key] = str(value)
-            except Exception as e:
-                self.logger.warning(f"Failed to serialize metadata key '{key}': {e}")
-                jsonable_metadata[key] = str(value)
-        return jsonable_metadata
 
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration"""

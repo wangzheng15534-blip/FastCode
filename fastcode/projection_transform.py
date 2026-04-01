@@ -9,7 +9,6 @@ import math
 import os
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import networkx as nx
@@ -17,6 +16,7 @@ import networkx as nx
 from .ir_graph_builder import IRGraphs
 from .projection_models import ProjectionBuildResult, ProjectionScope
 from .semantic_ir import IRSnapshot
+from .utils import utc_now
 
 try:
     import igraph as ig  # type: ignore
@@ -27,10 +27,6 @@ try:
     from openai import OpenAI
 except Exception:  # pragma: no cover - optional dependency
     OpenAI = None
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _stable_hash(payload: str) -> str:
@@ -149,17 +145,6 @@ class ProjectionTransformer:
                 )
 
         l1_relations: Dict[str, Any] = {
-            "cross_links": [
-                {
-                    "id": f"{src}->{dst}",
-                    "title": f"{src} -> {dst}",
-                    "type": "xref",
-                    "confidence": min(1.0, float(weight) / 4.0),
-                }
-                for src, dst, weight in xrefs
-            ]
-        }
-        l1_relations_v2: Dict[str, Any] = {
             "xref": [
                 {
                     "id": f"{src}->{dst}",
@@ -183,7 +168,6 @@ class ProjectionTransformer:
             content_extra={
                 "sections": sections,
                 "relations": l1_relations,
-                "relations_v2": l1_relations_v2,
                 "navigation": navigation,
                 "decisions": [
                     f"cluster_method={cluster_method}",
@@ -644,7 +628,7 @@ class ProjectionTransformer:
         parent_reason: str,
     ) -> Dict[str, Any]:
         return {
-            "updated_at": _utc_now(),
+            "updated_at": utc_now(),
             "covers_nodes": sorted(list(sg.nodes())),
             "covers_edges": sorted([f"{u}->{v}" for u, v in sg.edges()]),
             "xrefs": [{"src": s, "dst": d, "weight": w} for s, d, w in xrefs],

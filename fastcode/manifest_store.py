@@ -5,13 +5,10 @@ Published manifest storage for branch/ref -> snapshot mapping.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from .db_runtime import DBRuntime
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from .utils import utc_now
 
 
 class ManifestStore:
@@ -77,7 +74,7 @@ class ManifestStore:
                 VALUES (?, ?, ?)
                 ON CONFLICT(component, version) DO NOTHING
                 """,
-                ("manifest_store", "v1", _utc_now()),
+                ("manifest_store", "v1", utc_now()),
             )
             conn.commit()
 
@@ -90,7 +87,7 @@ class ManifestStore:
         status: str = "published",
     ) -> Dict[str, Any]:
         manifest_id = f"manifest_{uuid.uuid4().hex[:16]}"
-        now = _utc_now()
+        now = utc_now()
 
         with self.db_runtime.connect() as conn:
             self.db_runtime.begin_write(conn)

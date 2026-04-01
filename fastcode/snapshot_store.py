@@ -15,11 +15,7 @@ from typing import Any, Dict, Optional
 from .db_runtime import DBRuntime
 from .scip_models import SCIPArtifactRef
 from .semantic_ir import IRSnapshot
-from .utils import ensure_dir
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from .utils import ensure_dir, utc_now
 
 
 class SnapshotStore:
@@ -121,7 +117,7 @@ class SnapshotStore:
                 VALUES (?, ?, ?)
                 ON CONFLICT(component, version) DO NOTHING
                 """,
-                ("core_metadata", "v1", _utc_now()),
+                ("core_metadata", "v1", utc_now()),
             )
             if self.db_runtime.backend == "postgres":
                 # Git backbone
@@ -306,7 +302,7 @@ class SnapshotStore:
                     VALUES (?, ?, ?)
                     ON CONFLICT(component, version) DO NOTHING
                     """,
-                    ("pg_full_spec_alignment", "v1", _utc_now()),
+                    ("pg_full_spec_alignment", "v1", utc_now()),
                 )
             conn.commit()
 
@@ -355,7 +351,7 @@ class SnapshotStore:
                     snapshot.tree_id,
                     artifact_key,
                     ir_path,
-                    _utc_now(),
+                    utc_now(),
                     json.dumps(metadata or {}, ensure_ascii=False),
                 ),
             )
@@ -373,7 +369,7 @@ class SnapshotStore:
                     snapshot.commit_id,
                     snapshot.tree_id,
                     snapshot.snapshot_id,
-                    _utc_now(),
+                    utc_now(),
                 ),
             )
             conn.commit()
@@ -480,7 +476,7 @@ class SnapshotStore:
         artifact_path: str = "",
         checksum: str = "",
     ) -> Dict[str, Any]:
-        created_at = _utc_now()
+        created_at = utc_now()
         artifact_ref = SCIPArtifactRef(
             snapshot_id=snapshot_id,
             indexer_name=indexer_name,
@@ -529,7 +525,7 @@ class SnapshotStore:
             return
         git_meta = git_meta or {}
         repo_id = snapshot.repo_name
-        now = _utc_now()
+        now = utc_now()
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,
@@ -678,7 +674,7 @@ class SnapshotStore:
                 VALUES (?, ?, 'staged', ?, ?)
                 ON CONFLICT(stage_id) DO NOTHING
                 """,
-                (stage_id, snapshot.snapshot_id, json.dumps(metadata or {}, ensure_ascii=False), _utc_now()),
+                (stage_id, snapshot.snapshot_id, json.dumps(metadata or {}, ensure_ascii=False), utc_now()),
             )
             conn.commit()
         return stage_id
@@ -694,7 +690,7 @@ class SnapshotStore:
                 SET status='published', promoted_at=?
                 WHERE stage_id=? AND snapshot_id=?
                 """,
-                (_utc_now(), stage_id, snapshot_id),
+                (utc_now(), stage_id, snapshot_id),
             )
             conn.commit()
 
@@ -736,7 +732,7 @@ class SnapshotStore:
                     updated_at=excluded.updated_at,
                     fencing_token=excluded.fencing_token
                 """,
-                (lock_name, owner_id, expires_iso, _utc_now(), new_token),
+                (lock_name, owner_id, expires_iso, utc_now(), new_token),
             )
             conn.commit()
         return new_token
@@ -769,7 +765,7 @@ class SnapshotStore:
         task_id = f"redo_{uuid.uuid4().hex[:16]}"
         if self.db_runtime.backend != "postgres":
             return task_id
-        now = _utc_now()
+        now = utc_now()
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,
@@ -786,7 +782,7 @@ class SnapshotStore:
     def claim_redo_task(self) -> Optional[Dict[str, Any]]:
         if self.db_runtime.backend != "postgres":
             return None
-        now = _utc_now()
+        now = utc_now()
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -829,7 +825,7 @@ class SnapshotStore:
                 SET status='completed', updated_at=?
                 WHERE task_id=?
                 """,
-                (_utc_now(), task_id),
+                (utc_now(), task_id),
             )
             conn.commit()
 
@@ -851,7 +847,7 @@ class SnapshotStore:
                     SET status='dead', last_error=?, updated_at=?
                     WHERE task_id=?
                     """,
-                    (error, _utc_now(), task_id),
+                    (error, utc_now(), task_id),
                 )
             else:
                 backoff_seconds = max(1, 2 ** attempts)
@@ -863,6 +859,6 @@ class SnapshotStore:
                     SET status='pending', last_error=?, next_attempt_at=?, updated_at=?
                     WHERE task_id=?
                     """,
-                    (error, next_attempt_at, _utc_now(), task_id),
+                    (error, next_attempt_at, utc_now(), task_id),
                 )
             conn.commit()

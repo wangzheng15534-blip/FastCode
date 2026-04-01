@@ -6,13 +6,10 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from .db_runtime import DBRuntime
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from .utils import utc_now
 
 
 class IndexRunStore:
@@ -79,7 +76,7 @@ class IndexRunStore:
                 VALUES (?, ?, ?)
                 ON CONFLICT(component, version) DO NOTHING
                 """,
-                ("index_run_store", "v1", _utc_now()),
+                ("index_run_store", "v1", utc_now()),
             )
             conn.commit()
 
@@ -110,13 +107,13 @@ class IndexRunStore:
                     run_id, repo_name, snapshot_id, branch, commit_id, idempotency_key, status, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (run_id, repo_name, snapshot_id, branch, commit_id, idempotency_key, "queued", _utc_now()),
+                (run_id, repo_name, snapshot_id, branch, commit_id, idempotency_key, "queued", utc_now()),
             )
             conn.commit()
         return run_id
 
     def mark_started(self, run_id: str) -> None:
-        self._set_run_fields(run_id, status="running", started_at=_utc_now())
+        self._set_run_fields(run_id, status="running", started_at=utc_now())
 
     def mark_status(self, run_id: str, status: str) -> None:
         self._set_run_fields(run_id, status=status)
@@ -125,12 +122,12 @@ class IndexRunStore:
         self._set_run_fields(
             run_id,
             status=status,
-            completed_at=_utc_now(),
+            completed_at=utc_now(),
             warnings_json=json.dumps(warnings or [], ensure_ascii=False),
         )
 
     def mark_failed(self, run_id: str, error_message: str) -> None:
-        self._set_run_fields(run_id, status="failed", error_message=error_message, completed_at=_utc_now())
+        self._set_run_fields(run_id, status="failed", error_message=error_message, completed_at=utc_now())
 
     def enqueue_publish_retry(
         self,
@@ -139,7 +136,7 @@ class IndexRunStore:
         manifest_id: Optional[str],
         error_message: str,
     ) -> str:
-        now = _utc_now()
+        now = utc_now()
         with self.db_runtime.connect() as conn:
             existing = self.db_runtime.execute(
                 conn,
@@ -191,7 +188,7 @@ class IndexRunStore:
                 SET status='completed', updated_at=?
                 WHERE task_id=?
                 """,
-                (_utc_now(), task_id),
+                (utc_now(), task_id),
             )
             conn.commit()
 
@@ -227,7 +224,7 @@ class IndexRunStore:
                 SET status='running', attempts=attempts+1, updated_at=?
                 WHERE task_id=?
                 """,
-                (_utc_now(), row["task_id"]),
+                (utc_now(), row["task_id"]),
             )
             conn.commit()
         return self.db_runtime.row_to_dict(row)
@@ -241,7 +238,7 @@ class IndexRunStore:
                 SET status='pending', last_error=?, updated_at=?
                 WHERE task_id=?
                 """,
-                (error, _utc_now(), task_id),
+                (error, utc_now(), task_id),
             )
             conn.commit()
 

@@ -1,3 +1,10 @@
+import sys
+import os
+from pathlib import Path
+
+# api.py is a root-level module, not in the fastcode package
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from fastapi.testclient import TestClient
 
 import api

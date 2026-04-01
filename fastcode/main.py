@@ -697,32 +697,33 @@ class FastCode:
             doc_chunks_payload: List[Dict[str, Any]] = []
             doc_mentions_payload: List[Dict[str, Any]] = []
             doc_elements_payload: List[Dict[str, Any]] = []
-            try:
-                doc_ingest = self.doc_ingester.ingest(
-                    repo_path=self.loader.repo_path or "",
-                    repo_name=repo_name,
-                    snapshot_id=snapshot_id,
-                    snapshot=merged_snapshot,
-                )
-                doc_chunks_payload = [
-                    {
-                        "chunk_id": c.chunk_id,
-                        "snapshot_id": c.snapshot_id,
-                        "repo_name": c.repo_name,
-                        "path": c.path,
-                        "title": c.title,
-                        "heading": c.heading,
-                        "doc_type": c.doc_type,
-                        "content": c.text,
-                        "start_line": c.start_line,
-                        "end_line": c.end_line,
-                    }
-                    for c in (doc_ingest.get("chunks") or [])
-                ]
-                doc_mentions_payload = list(doc_ingest.get("mentions") or [])
-                doc_elements_payload = list(doc_ingest.get("elements") or [])
-            except Exception as e:
-                warnings.append(f"doc_ingestion_failed: {e}")
+            if self._should_ingest_docs():
+                try:
+                    doc_ingest = self.doc_ingester.ingest(
+                        repo_path=self.loader.repo_path or "",
+                        repo_name=repo_name,
+                        snapshot_id=snapshot_id,
+                        snapshot=merged_snapshot,
+                    )
+                    doc_chunks_payload = [
+                        {
+                            "chunk_id": c.chunk_id,
+                            "snapshot_id": c.snapshot_id,
+                            "repo_name": c.repo_name,
+                            "path": c.path,
+                            "title": c.title,
+                            "heading": c.heading,
+                            "doc_type": c.doc_type,
+                            "content": c.text,
+                            "start_line": c.start_line,
+                            "end_line": c.end_line,
+                        }
+                        for c in (doc_ingest.get("chunks") or [])
+                    ]
+                    doc_mentions_payload = list(doc_ingest.get("mentions") or [])
+                    doc_elements_payload = list(doc_ingest.get("elements") or [])
+                except Exception as e:
+                    warnings.append(f"doc_ingestion_failed: {e}")
 
             # Backfill canonical IR symbol IDs into vector metadata for IR-aware retrieval.
             ast_id_to_ir: Dict[str, str] = {}
@@ -780,11 +781,11 @@ class FastCode:
                 snapshot_id=snapshot_id,
                 elements=all_pg_elements,
             )
-            if doc_chunks_payload:
-                try:
-                    self.graph_runtime.sync_docs(chunks=doc_chunks_payload, mentions=doc_mentions_payload)
-                except Exception as e:
-                    warnings.append(f"ladybug_doc_sync_failed: {e}")
+            self._sync_doc_overlay(
+                chunks=doc_chunks_payload,
+                mentions=doc_mentions_payload,
+                warnings=warnings,
+            )
 
             self._load_artifacts_by_key(artifact_key)
             self.loaded_repositories[repo_name] = self.repo_info
@@ -831,6 +832,16 @@ class FastCode:
                 if stage_id:
                     self.snapshot_store.promote_staged_snapshot(snapshot_id=snapshot_id, stage_id=stage_id)
 
+            self.snapshot_store.update_snapshot_metadata(
+                snapshot_id,
+                {
+                    "run_id": run_id,
+                    "artifact_key": artifact_key,
+                    "warnings": warnings,
+                    "scip_artifact_ref": scip_artifact_ref,
+                    "fencing_token": fencing_token,
+                },
+            )
             self.index_run_store.mark_completed(run_id, status=status, warnings=warnings)
             return {
                 "status": status,
@@ -1819,6 +1830,35 @@ class FastCode:
         if self.eval_config.get("disable_persistence", False):
             return False
         return not self._is_ephemeral_mode()
+
+    def _has_active_doc_persistence(self) -> bool:
+        """Return True when doc ingestion has at least one active sink."""
+        return (
+            self.snapshot_store.db_runtime.backend == "postgres"
+            or bool(getattr(self.graph_runtime, "enabled", False))
+        )
+
+    def _should_ingest_docs(self) -> bool:
+        """Only ingest docs when the feature is enabled and results can be persisted."""
+        return bool(getattr(self.doc_ingester, "enabled", False)) and self._has_active_doc_persistence()
+
+    def _sync_doc_overlay(
+        self,
+        *,
+        chunks: List[Dict[str, Any]],
+        mentions: List[Dict[str, Any]],
+        warnings: List[str],
+    ) -> None:
+        """Best-effort Ladybug sync with explicit failure reporting."""
+        if not chunks or not getattr(self.graph_runtime, "enabled", False):
+            return
+        try:
+            synced = self.graph_runtime.sync_docs(chunks=chunks, mentions=mentions)
+        except Exception as e:
+            warnings.append(f"ladybug_doc_sync_failed: {e}")
+            return
+        if not synced:
+            warnings.append("ladybug_doc_sync_failed")
 
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration"""

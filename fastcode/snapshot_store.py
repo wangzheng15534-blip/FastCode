@@ -412,6 +412,15 @@ class SnapshotStore:
             "dir": snap_dir,
         }
 
+    def update_snapshot_metadata(self, snapshot_id: str, metadata: Dict[str, Any]) -> None:
+        with self.db_runtime.connect() as conn:
+            self.db_runtime.execute(
+                conn,
+                "UPDATE snapshots SET metadata_json=? WHERE snapshot_id=?",
+                (json.dumps(metadata or {}, ensure_ascii=False), snapshot_id),
+            )
+            conn.commit()
+
     def save_ir_graphs(self, snapshot_id: str, ir_graphs: Any) -> str:
         snap_dir = self.snapshot_dir(snapshot_id)
         path = os.path.join(snap_dir, "ir_graphs.pkl")

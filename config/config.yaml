@@ -131,6 +131,16 @@ retrieval:
   # Agency mode for accurate and comprehensive retrieval
   enable_agency_mode: true  # Enable agent-based retrieval
 
+  # Adaptive docs+code fusion
+  adaptive_fusion:
+    enabled: true
+    alpha_min: 0.25
+    alpha_max: 0.90
+    alpha_base: 0.80
+    rrf_k_min: 20
+    rrf_k_max: 100
+    rrf_k_base: 60
+
 
 # Query Processing
 query:
@@ -178,6 +188,25 @@ graph:
   build_dependency_graph: true
   build_inheritance_graph: true
   max_depth: 5
+  ladybug:
+    enabled: false
+    db_path: "./data/ladybug/fastcode.lb"
+    postgres_attach_dsn: ""
+
+# Key document integration (lightweight, key docs only by default)
+docs_integration:
+  enabled: true
+  curated_paths:
+    - "README*"
+    - "docs/design/**"
+    - "docs/research/**"
+    - "docs/adr/**"
+    - "docs/rfc/**"
+  allow_paths: []
+  deny_paths: []
+  chunk_size: 420
+  chunk_overlap: 80
+  max_chunk_chars: 2400
 
 # Agent Settings
 agent:

@@ -204,6 +204,7 @@ class PgRetrievalStore:
         query_embedding: Sequence[float],
         *,
         repo_filter: Optional[List[str]] = None,
+        element_types: Optional[List[str]] = None,
         top_k: int = 20,
     ) -> List[Tuple[Dict[str, Any], float]]:
         if not self.enabled or not query_embedding:
@@ -213,7 +214,20 @@ class PgRetrievalStore:
         with self.db_runtime.connect() as conn:
             cur = conn.cursor()
             try:
-                if repo_filter:
+                if repo_filter and element_types:
+                    cur.execute(
+                        """
+                        SELECT metadata_json, (1 - (embedding <=> %s::vector)) AS score
+                        FROM embedding_vectors
+                        WHERE snapshot_id=%s
+                          AND repo_name = ANY(%s)
+                          AND element_type = ANY(%s)
+                        ORDER BY embedding <=> %s::vector
+                        LIMIT %s
+                        """,
+                        (vector_literal, snapshot_id, repo_filter, element_types, vector_literal, top_k),
+                    )
+                elif repo_filter:
                     cur.execute(
                         """
                         SELECT metadata_json, (1 - (embedding <=> %s::vector)) AS score
@@ -224,6 +238,18 @@ class PgRetrievalStore:
                         LIMIT %s
                         """,
                         (vector_literal, snapshot_id, repo_filter, vector_literal, top_k),
+                    )
+                elif element_types:
+                    cur.execute(
+                        """
+                        SELECT metadata_json, (1 - (embedding <=> %s::vector)) AS score
+                        FROM embedding_vectors
+                        WHERE snapshot_id=%s
+                          AND element_type = ANY(%s)
+                        ORDER BY embedding <=> %s::vector
+                        LIMIT %s
+                        """,
+                        (vector_literal, snapshot_id, element_types, vector_literal, top_k),
                     )
                 else:
                     cur.execute(
@@ -244,7 +270,19 @@ class PgRetrievalStore:
                 return out
             except Exception:
                 # Fallback: compute cosine with embedding_arr client-side.
-                if repo_filter:
+                if repo_filter and element_types:
+                    cur.execute(
+                        """
+                        SELECT metadata_json, embedding_arr
+                        FROM embedding_vectors
+                        WHERE snapshot_id=%s
+                          AND repo_name = ANY(%s)
+                          AND element_type = ANY(%s)
+                        LIMIT %s
+                        """,
+                        (snapshot_id, repo_filter, element_types, top_k * 8),
+                    )
+                elif repo_filter:
                     cur.execute(
                         """
                         SELECT metadata_json, embedding_arr
@@ -254,6 +292,17 @@ class PgRetrievalStore:
                         LIMIT %s
                         """,
                         (snapshot_id, repo_filter, top_k * 8),
+                    )
+                elif element_types:
+                    cur.execute(
+                        """
+                        SELECT metadata_json, embedding_arr
+                        FROM embedding_vectors
+                        WHERE snapshot_id=%s
+                          AND element_type = ANY(%s)
+                        LIMIT %s
+                        """,
+                        (snapshot_id, element_types, top_k * 8),
                     )
                 else:
                     cur.execute(
@@ -286,13 +335,28 @@ class PgRetrievalStore:
         query: str,
         *,
         repo_filter: Optional[List[str]] = None,
+        element_types: Optional[List[str]] = None,
         top_k: int = 20,
     ) -> List[Tuple[Dict[str, Any], float]]:
         if not self.enabled or not query.strip():
             return []
         with self.db_runtime.connect() as conn:
             cur = conn.cursor()
-            if repo_filter:
+            if repo_filter and element_types:
+                cur.execute(
+                    """
+                    SELECT metadata_json, ts_rank(search_tsv, plainto_tsquery('english', %s)) AS score
+                    FROM search_documents
+                    WHERE snapshot_id=%s
+                      AND repo_name = ANY(%s)
+                      AND element_type = ANY(%s)
+                      AND search_tsv @@ plainto_tsquery('english', %s)
+                    ORDER BY score DESC
+                    LIMIT %s
+                    """,
+                    (query, snapshot_id, repo_filter, element_types, query, top_k),
+                )
+            elif repo_filter:
                 cur.execute(
                     """
                     SELECT metadata_json, ts_rank(search_tsv, plainto_tsquery('english', %s)) AS score
@@ -304,6 +368,19 @@ class PgRetrievalStore:
                     LIMIT %s
                     """,
                     (query, snapshot_id, repo_filter, query, top_k),
+                )
+            elif element_types:
+                cur.execute(
+                    """
+                    SELECT metadata_json, ts_rank(search_tsv, plainto_tsquery('english', %s)) AS score
+                    FROM search_documents
+                    WHERE snapshot_id=%s
+                      AND element_type = ANY(%s)
+                      AND search_tsv @@ plainto_tsquery('english', %s)
+                    ORDER BY score DESC
+                    LIMIT %s
+                    """,
+                    (query, snapshot_id, element_types, query, top_k),
                 )
             else:
                 cur.execute(

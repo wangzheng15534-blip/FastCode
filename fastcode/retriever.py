@@ -44,6 +44,8 @@ class HybridRetriever:
         self.graph_backend = self.retrieval_config.get("graph_backend", "ir")
         self.allow_legacy_graph_fallback = self.retrieval_config.get("allow_legacy_graph_fallback", True)
         self.retrieval_backend = self.retrieval_config.get("backend", "pg_hybrid")
+        self.adaptive_fusion_cfg = self.retrieval_config.get("adaptive_fusion", {}) or {}
+        self.adaptive_fusion_enabled = bool(self.adaptive_fusion_cfg.get("enabled", False))
         
         # Retrieval parameters
         self.min_similarity = self.retrieval_config.get("min_similarity", 0.3)
@@ -103,6 +105,7 @@ class HybridRetriever:
         self.ir_snapshot_id: Optional[str] = None
         self.pg_retrieval_store: Optional[PgRetrievalStore] = None
         self._active_snapshot_id: Optional[str] = None
+        self._last_fusion_debug: Optional[Dict[str, Any]] = None
     
     def index_for_bm25(self, elements: List[CodeElement]):
         """
@@ -353,38 +356,73 @@ class HybridRetriever:
         # CRITICAL: Always pass repo_filter for safety, even when using filtered indexes
         # The search methods will apply appropriate filtering based on which index they use
         
-        # Stage 1: Semantic search (use enhanced query text)
-        semantic_results = self._semantic_search(search_text4semantic, top_k=20, repo_filter=repo_filter)
-        
-        # Stage 1b: Pseudocode-based search (if available)
+        # Stage 1: retrieval channels
+        keyword_query = " ".join(keywords) if keywords else query_str
+        doc_integration_enabled = bool(self.config.get("docs_integration", {}).get("enabled", False))
+
+        code_types = ["file", "class", "function", "documentation"]
+        doc_types = ["design_document"]
+
+        semantic_results = self._semantic_search(
+            search_text4semantic,
+            top_k=20,
+            repo_filter=repo_filter,
+            element_types=code_types if doc_integration_enabled else None,
+        )
         pseudocode_results = []
         if pseudocode:
-            pseudocode_results = self._semantic_search(pseudocode, top_k=10, repo_filter=repo_filter)
+            pseudocode_results = self._semantic_search(
+                pseudocode,
+                top_k=10,
+                repo_filter=repo_filter,
+                element_types=code_types if doc_integration_enabled else None,
+            )
             self.logger.info(f"Pseudocode search found {len(pseudocode_results)} additional results")
-        
-        # Stage 2: Keyword search (use enhanced keywords if available)
-        keyword_query = " ".join(keywords) if keywords else query_str
-        keyword_results = self._keyword_search(keyword_query, top_k=10, repo_filter=repo_filter)
-        
-        # Stage 3: Combine and score (include pseudocode results)
-        combined_results = self._combine_results(
-            semantic_results, keyword_results, pseudocode_results
+        keyword_results = self._keyword_search(
+            keyword_query,
+            top_k=10,
+            repo_filter=repo_filter,
+            element_types=code_types if doc_integration_enabled else None,
         )
-        
-        # Stage 4: Graph expansion
+
+        code_combined = self._combine_results(semantic_results, keyword_results, pseudocode_results)
         if self.graph_weight > 0:
-            combined_results = self._expand_with_graph(combined_results, max_hops=2)
-        
-        # Stage 5: Re-rank
-        final_results = self._rerank(query_str, combined_results)
-        
+            code_combined = self._expand_with_graph(code_combined, max_hops=2)
+        code_final = self._rerank(query_str, code_combined)
+
+        doc_final: List[Dict[str, Any]] = []
+        if doc_integration_enabled:
+            doc_semantic = self._semantic_search(
+                search_text4semantic,
+                top_k=16,
+                repo_filter=repo_filter,
+                element_types=doc_types,
+            )
+            doc_keyword = self._keyword_search(
+                keyword_query,
+                top_k=16,
+                repo_filter=repo_filter,
+                element_types=doc_types,
+            )
+            doc_final = self._rerank(query_str, self._combine_results(doc_semantic, doc_keyword, []))
+
+        if doc_integration_enabled and self.adaptive_fusion_enabled and doc_final:
+            final_results = self._adaptive_fuse_channels(
+                query=query_str,
+                query_info=query_info,
+                code_results=code_final,
+                doc_results=doc_final,
+            )
+        else:
+            final_results = code_final
+
         # Stage 6: Apply filters
         if filters:
             final_results = self._apply_filters(final_results, filters)
-        
+
         # Stage 7: Diversification
         final_results = self._diversify(final_results)
-        
+
         # Limit results
         final_results = final_results[:self.max_results]
         
@@ -749,9 +787,137 @@ class HybridRetriever:
                     })
         
         return results
+
+    def _adaptive_fuse_channels(
+        self,
+        *,
+        query: str,
+        query_info: Dict[str, Any],
+        code_results: List[Dict[str, Any]],
+        doc_results: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        alpha, k_code, k_doc = self._compute_adaptive_fusion_params(
+            query=query,
+            query_info=query_info,
+            code_results=code_results,
+            doc_results=doc_results,
+        )
+        fused: Dict[str, Dict[str, Any]] = {}
+        for rank, row in enumerate(code_results, start=1):
+            elem = row.get("element", {})
+            elem_id = elem.get("id")
+            if not elem_id:
+                continue
+            rrf = 1.0 / (float(k_code) + float(rank))
+            entry = fused.setdefault(
+                elem_id,
+                {
+                    "element": elem,
+                    "semantic_score": 0.0,
+                    "keyword_score": 0.0,
+                    "pseudocode_score": 0.0,
+                    "graph_score": 0.0,
+                    "total_score": 0.0,
+                    "fusion": {},
+                },
+            )
+            entry["semantic_score"] = max(entry.get("semantic_score", 0.0), row.get("semantic_score", 0.0))
+            entry["keyword_score"] = max(entry.get("keyword_score", 0.0), row.get("keyword_score", 0.0))
+            entry["pseudocode_score"] = max(entry.get("pseudocode_score", 0.0), row.get("pseudocode_score", 0.0))
+            entry["graph_score"] = max(entry.get("graph_score", 0.0), row.get("graph_score", 0.0))
+            entry["total_score"] += alpha * rrf
+            entry["fusion"]["code_rrf"] = rrf
+            entry["fusion"]["alpha"] = alpha
+            entry["fusion"]["k_code"] = k_code
+            entry["fusion"]["k_doc"] = k_doc
+
+        for rank, row in enumerate(doc_results, start=1):
+            elem = row.get("element", {})
+            elem_id = elem.get("id")
+            if not elem_id:
+                continue
+            rrf = 1.0 / (float(k_doc) + float(rank))
+            entry = fused.setdefault(
+                elem_id,
+                {
+                    "element": elem,
+                    "semantic_score": 0.0,
+                    "keyword_score": 0.0,
+                    "pseudocode_score": 0.0,
+                    "graph_score": 0.0,
+                    "total_score": 0.0,
+                    "fusion": {},
+                },
+            )
+            entry["semantic_score"] = max(entry.get("semantic_score", 0.0), row.get("semantic_score", 0.0))
+            entry["keyword_score"] = max(entry.get("keyword_score", 0.0), row.get("keyword_score", 0.0))
+            entry["total_score"] += (1.0 - alpha) * rrf
+            entry["fusion"]["doc_rrf"] = rrf
+            entry["fusion"]["alpha"] = alpha
+            entry["fusion"]["k_code"] = k_code
+            entry["fusion"]["k_doc"] = k_doc
+
+        out = list(fused.values())
+        out.sort(key=lambda x: x.get("total_score", 0.0), reverse=True)
+        self._last_fusion_debug = {
+            "alpha": alpha,
+            "k_code": k_code,
+            "k_doc": k_doc,
+            "code_candidates": len(code_results),
+            "doc_candidates": len(doc_results),
+        }
+        return out
+
+    def _compute_adaptive_fusion_params(
+        self,
+        *,
+        query: str,
+        query_info: Dict[str, Any],
+        code_results: List[Dict[str, Any]],
+        doc_results: List[Dict[str, Any]],
+    ) -> Tuple[float, float, float]:
+        cfg = self.adaptive_fusion_cfg or {}
+        alpha_base = float(cfg.get("alpha_base", 0.80))
+        alpha_min = float(cfg.get("alpha_min", 0.25))
+        alpha_max = float(cfg.get("alpha_max", 0.90))
+        k_base = float(cfg.get("rrf_k_base", 60))
+        k_min = float(cfg.get("rrf_k_min", 20))
+        k_max = float(cfg.get("rrf_k_max", 100))
+
+        q = (query or "").lower()
+        intent = str((query_info or {}).get("intent") or "").lower()
+        doc_terms = {"design", "architecture", "adr", "rfc", "decision", "tradeoff", "rationale", "why", "approach"}
+        code_terms = {"function", "class", "method", "line", "call", "bug", "fix", "trace", "implementation"}
+        doc_hit = any(t in q for t in doc_terms) or any(t in intent for t in doc_terms)
+        code_hit = any(t in q for t in code_terms) or any(t in intent for t in code_terms)
+
+        code_top = float(code_results[0].get("total_score", 0.0)) if code_results else 0.0
+        doc_top = float(doc_results[0].get("total_score", 0.0)) if doc_results else 0.0
+
+        alpha = alpha_base
+        if doc_hit:
+            alpha -= 0.28
+        if code_hit:
+            alpha += 0.10
+        if doc_top > (code_top * 1.15):
+            alpha -= 0.10
+        if code_top > (doc_top * 1.35):
+            alpha += 0.08
+        alpha = min(alpha_max, max(alpha_min, alpha))
+
+        code_conf = min(1.0, max(0.0, code_top))
+        doc_conf = min(1.0, max(0.0, doc_top))
+        k_code = min(k_max, max(k_min, k_base + (1.0 - code_conf) * 30.0))
+        k_doc = min(k_max, max(k_min, k_base + (1.0 - doc_conf) * 30.0))
+        return alpha, k_code, k_doc
     
-    def _semantic_search(self, query: str, top_k: int = 20, 
-                         repo_filter: Optional[List[str]] = None) -> List[Tuple[Dict[str, Any], float]]:
+    def _semantic_search(
+        self,
+        query: str,
+        top_k: int = 20,
+        repo_filter: Optional[List[str]] = None,
+        element_types: Optional[List[str]] = None,
+    ) -> List[Tuple[Dict[str, Any], float]]:
         """
         Semantic search using embeddings
         Uses filtered_vector_store if available, otherwise uses full vector_store
@@ -769,6 +935,7 @@ class HybridRetriever:
                 snapshot_id=self._active_snapshot_id,
                 query_embedding=query_embedding,
                 repo_filter=repo_filter,
+                element_types=element_types,
                 top_k=top_k,
             )
             if pg_results:
@@ -808,11 +975,20 @@ class HybridRetriever:
                         f"(expected: {repo_filter}). Element: {metadata.get('name', 'unknown')}"
                     )
             results = filtered_results[:top_k]  # Limit to top_k after filtering
-        
+
+        if element_types:
+            allowed = set(element_types)
+            results = [(m, s) for m, s in results if (m.get("type") in allowed)]
+
         return results
     
-    def _keyword_search(self, query: str, top_k: int = 10, 
-                        repo_filter: Optional[List[str]] = None) -> List[Tuple[Dict[str, Any], float]]:
+    def _keyword_search(
+        self,
+        query: str,
+        top_k: int = 10,
+        repo_filter: Optional[List[str]] = None,
+        element_types: Optional[List[str]] = None,
+    ) -> List[Tuple[Dict[str, Any], float]]:
         """
         Keyword search using BM25
         Uses filtered_bm25 if available, otherwise uses full_bm25
@@ -827,6 +1003,7 @@ class HybridRetriever:
                 snapshot_id=self._active_snapshot_id,
                 query=query,
                 repo_filter=repo_filter,
+                element_types=element_types,
                 top_k=top_k,
             )
             if pg_results:
@@ -861,11 +1038,14 @@ class HybridRetriever:
         
         results = []
         filtered_count = 0
+        allowed_types = set(element_types) if element_types else None
         
         for idx in top_indices:
             score = scores[idx]
             if score > 0:  # Only include non-zero scores
                 elem = bm25_elements[idx]
+                if allowed_types and elem.type not in allowed_types:
+                    continue
                 
                 # CRITICAL: Always apply repository filter when repo_filter is provided
                 if use_filter and elem.repo_name not in repo_filter:
@@ -1121,6 +1301,7 @@ class HybridRetriever:
             "class": 1.1,     # Then classes
             "file": 0.9,      # Then files
             "documentation": 0.8,  # Then docs
+            "design_document": 0.95,
         }
         
         for result in results:

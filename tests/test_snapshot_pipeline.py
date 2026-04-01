@@ -64,3 +64,11 @@ def test_snapshot_store_persists_scip_artifact_ref():
         loaded = store.get_scip_artifact_ref("snap:repo:abc")
         assert loaded is not None
         assert loaded["indexer_name"] == "scip-python"
+
+
+def test_snapshot_store_lock_api_returns_fencing_token_shape():
+    with tempfile.TemporaryDirectory(prefix="fc_lock_test_") as tmp:
+        store = SnapshotStore(tmp)
+        token = store.acquire_lock("index:snap:repo:1", owner_id="run1", ttl_seconds=60)
+        assert token == 1
+        assert store.validate_fencing_token("index:snap:repo:1", expected_token=token)

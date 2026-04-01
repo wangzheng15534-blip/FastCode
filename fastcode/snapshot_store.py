@@ -10,7 +10,7 @@ import os
 import pickle
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .db_runtime import DBRuntime
 from .scip_models import SCIPArtifactRef
@@ -292,6 +292,37 @@ class SnapshotStore:
                         next_attempt_at TEXT,
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL
+                    )
+                    """,
+                )
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    CREATE TABLE IF NOT EXISTS design_documents (
+                        snapshot_id TEXT NOT NULL,
+                        chunk_id TEXT NOT NULL,
+                        repo_name TEXT NOT NULL,
+                        path TEXT NOT NULL,
+                        title TEXT,
+                        heading TEXT,
+                        doc_type TEXT,
+                        content TEXT NOT NULL,
+                        metadata_json TEXT,
+                        PRIMARY KEY (snapshot_id, chunk_id)
+                    )
+                    """,
+                )
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    CREATE TABLE IF NOT EXISTS design_doc_mentions (
+                        snapshot_id TEXT NOT NULL,
+                        chunk_id TEXT NOT NULL,
+                        symbol_id TEXT NOT NULL,
+                        symbol_name TEXT,
+                        confidence TEXT,
+                        metadata_json TEXT,
+                        PRIMARY KEY (snapshot_id, chunk_id, symbol_id)
                     )
                     """,
                 )
@@ -778,6 +809,61 @@ class SnapshotStore:
             )
             conn.commit()
         return task_id
+
+    def save_design_documents(
+        self,
+        snapshot_id: str,
+        repo_name: str,
+        chunks: List[Dict[str, Any]],
+        mentions: List[Dict[str, Any]],
+    ) -> None:
+        if self.db_runtime.backend != "postgres":
+            return
+        with self.db_runtime.connect() as conn:
+            self.db_runtime.execute(conn, "DELETE FROM design_documents WHERE snapshot_id=?", (snapshot_id,))
+            self.db_runtime.execute(conn, "DELETE FROM design_doc_mentions WHERE snapshot_id=?", (snapshot_id,))
+            for chunk in chunks:
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    INSERT INTO design_documents (
+                        snapshot_id, chunk_id, repo_name, path, title, heading, doc_type, content, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot_id,
+                        chunk.get("chunk_id"),
+                        repo_name,
+                        chunk.get("path"),
+                        chunk.get("title"),
+                        chunk.get("heading"),
+                        chunk.get("doc_type"),
+                        chunk.get("content", ""),
+                        json.dumps(chunk, ensure_ascii=False),
+                    ),
+                )
+            for mention in mentions:
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    INSERT INTO design_doc_mentions (
+                        snapshot_id, chunk_id, symbol_id, symbol_name, confidence, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(snapshot_id, chunk_id, symbol_id) DO UPDATE SET
+                        symbol_name=excluded.symbol_name,
+                        confidence=excluded.confidence,
+                        metadata_json=excluded.metadata_json
+                    """,
+                    (
+                        snapshot_id,
+                        mention.get("chunk_id"),
+                        mention.get("symbol_id"),
+                        mention.get("symbol_name"),
+                        mention.get("confidence"),
+                        json.dumps(mention, ensure_ascii=False),
+                    ),
+                )
+            conn.commit()
 
     def claim_redo_task(self) -> Optional[Dict[str, Any]]:
         if self.db_runtime.backend != "postgres":

@@ -9,10 +9,11 @@ import json
 import os
 import pickle
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from .db_runtime import DBRuntime
+from .scip_models import SCIPArtifactRef
 from .semantic_ir import IRSnapshot
 from .utils import ensure_dir
 
@@ -270,8 +271,16 @@ class SnapshotStore:
                         lock_name TEXT PRIMARY KEY,
                         owner_id TEXT NOT NULL,
                         expires_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL
+                        updated_at TEXT NOT NULL,
+                        fencing_token BIGINT NOT NULL DEFAULT 0
                     )
+                    """,
+                )
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    ALTER TABLE resource_locks
+                    ADD COLUMN IF NOT EXISTS fencing_token BIGINT NOT NULL DEFAULT 0
                     """,
                 )
                 self.db_runtime.execute(
@@ -464,13 +473,24 @@ class SnapshotStore:
 
     def save_scip_artifact_ref(
         self,
-        snapshot_id: str,
-        indexer_name: str,
-        indexer_version: Optional[str],
-        artifact_path: str,
-        checksum: str,
+        snapshot_id: str | SCIPArtifactRef,
+        indexer_name: Optional[str] = None,
+        indexer_version: Optional[str] = None,
+        artifact_path: Optional[str] = None,
+        checksum: Optional[str] = None,
     ) -> Dict[str, Any]:
-        created_at = _utc_now()
+        if isinstance(snapshot_id, SCIPArtifactRef):
+            artifact_ref = snapshot_id
+        else:
+            artifact_ref = SCIPArtifactRef(
+                snapshot_id=snapshot_id,
+                indexer_name=indexer_name or "unknown",
+                indexer_version=indexer_version,
+                artifact_path=artifact_path or "",
+                checksum=checksum or "",
+                created_at=_utc_now(),
+            )
+        created_at = artifact_ref.created_at
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,
@@ -485,17 +505,17 @@ class SnapshotStore:
                     checksum=excluded.checksum,
                     created_at=excluded.created_at
                 """,
-                (snapshot_id, indexer_name, indexer_version, artifact_path, checksum, created_at),
+                (
+                    artifact_ref.snapshot_id,
+                    artifact_ref.indexer_name,
+                    artifact_ref.indexer_version,
+                    artifact_ref.artifact_path,
+                    artifact_ref.checksum,
+                    created_at,
+                ),
             )
             conn.commit()
-        return {
-            "snapshot_id": snapshot_id,
-            "indexer_name": indexer_name,
-            "indexer_version": indexer_version,
-            "artifact_path": artifact_path,
-            "checksum": checksum,
-            "created_at": created_at,
-        }
+        return artifact_ref.to_dict()
 
     def get_scip_artifact_ref(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
         with self.db_runtime.connect() as conn:
@@ -680,18 +700,19 @@ class SnapshotStore:
             )
             conn.commit()
 
-    def acquire_lock(self, lock_name: str, owner_id: str, ttl_seconds: int = 300) -> bool:
+    def acquire_lock(self, lock_name: str, owner_id: str, ttl_seconds: int = 300) -> Optional[int]:
         if self.db_runtime.backend != "postgres":
-            return True
+            return 1
         now = datetime.now(timezone.utc)
         expires_at = (now.timestamp() + ttl_seconds)
         expires_iso = datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat()
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
-                "SELECT owner_id, expires_at FROM resource_locks WHERE lock_name=?",
+                "SELECT owner_id, expires_at, fencing_token FROM resource_locks WHERE lock_name=?",
                 (lock_name,),
             ).fetchone()
+            new_token = 1
             if row:
                 current_exp = row["expires_at"]
                 if isinstance(current_exp, datetime):
@@ -704,21 +725,36 @@ class SnapshotStore:
                 else:
                     current_exp_dt = None
                 if current_exp_dt and current_exp_dt > now and row["owner_id"] != owner_id:
-                    return False
+                    return None
+                new_token = int(row.get("fencing_token") or 0) + 1
             self.db_runtime.execute(
                 conn,
                 """
-                INSERT INTO resource_locks (lock_name, owner_id, expires_at, updated_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO resource_locks (lock_name, owner_id, expires_at, updated_at, fencing_token)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(lock_name) DO UPDATE SET
                     owner_id=excluded.owner_id,
                     expires_at=excluded.expires_at,
-                    updated_at=excluded.updated_at
+                    updated_at=excluded.updated_at,
+                    fencing_token=excluded.fencing_token
                 """,
-                (lock_name, owner_id, expires_iso, _utc_now()),
+                (lock_name, owner_id, expires_iso, _utc_now(), new_token),
             )
             conn.commit()
-        return True
+        return new_token
+
+    def validate_fencing_token(self, lock_name: str, expected_token: int) -> bool:
+        if self.db_runtime.backend != "postgres":
+            return True
+        with self.db_runtime.connect() as conn:
+            row = self.db_runtime.execute(
+                conn,
+                "SELECT fencing_token FROM resource_locks WHERE lock_name=?",
+                (lock_name,),
+            ).fetchone()
+        if not row:
+            return False
+        return int(row.get("fencing_token") or 0) == int(expected_token)
 
     def release_lock(self, lock_name: str, owner_id: str) -> None:
         if self.db_runtime.backend != "postgres":
@@ -748,3 +784,87 @@ class SnapshotStore:
             )
             conn.commit()
         return task_id
+
+    def claim_redo_task(self) -> Optional[Dict[str, Any]]:
+        if self.db_runtime.backend != "postgres":
+            return None
+        now = _utc_now()
+        with self.db_runtime.connect() as conn:
+            row = self.db_runtime.execute(
+                conn,
+                """
+                SELECT * FROM redo_tasks
+                WHERE status='pending'
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                ORDER BY created_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+                """,
+                (now,),
+            ).fetchone()
+            if not row:
+                conn.commit()
+                return None
+            task = self.db_runtime.row_to_dict(row) or {}
+            self.db_runtime.execute(
+                conn,
+                """
+                UPDATE redo_tasks
+                SET status='running', attempts=attempts+1, updated_at=?
+                WHERE task_id=?
+                """,
+                (now, task.get("task_id")),
+            )
+            conn.commit()
+        task["status"] = "running"
+        task["attempts"] = int(task.get("attempts") or 0) + 1
+        return task
+
+    def mark_redo_task_done(self, task_id: str) -> None:
+        if self.db_runtime.backend != "postgres":
+            return
+        with self.db_runtime.connect() as conn:
+            self.db_runtime.execute(
+                conn,
+                """
+                UPDATE redo_tasks
+                SET status='completed', updated_at=?
+                WHERE task_id=?
+                """,
+                (_utc_now(), task_id),
+            )
+            conn.commit()
+
+    def mark_redo_task_failed(self, task_id: str, error: str, max_attempts: int = 5) -> None:
+        if self.db_runtime.backend != "postgres":
+            return
+        with self.db_runtime.connect() as conn:
+            row = self.db_runtime.execute(
+                conn,
+                "SELECT attempts FROM redo_tasks WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            attempts = int((row or {}).get("attempts") or 0)
+            if attempts >= max_attempts:
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    UPDATE redo_tasks
+                    SET status='dead', last_error=?, updated_at=?
+                    WHERE task_id=?
+                    """,
+                    (error, _utc_now(), task_id),
+                )
+            else:
+                backoff_seconds = max(1, 2 ** attempts)
+                next_attempt_at = (datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds)).isoformat()
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    UPDATE redo_tasks
+                    SET status='pending', last_error=?, next_attempt_at=?, updated_at=?
+                    WHERE task_id=?
+                    """,
+                    (error, next_attempt_at, _utc_now(), task_id),
+                )
+            conn.commit()

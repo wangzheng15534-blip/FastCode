@@ -73,7 +73,7 @@ def _sample_graphs():
     )
 
 
-def test_projection_dual_write_fields_exist():
+def test_projection_schema_has_hierarchy_and_relations():
     snapshot = _sample_snapshot()
     transformer = ProjectionTransformer(config={"projection": {"enable_leiden": False}})
     scope = ProjectionScope(scope_kind="snapshot", snapshot_id=snapshot.snapshot_id, scope_key="k2")
@@ -82,6 +82,8 @@ def test_projection_dual_write_fields_exist():
     l1_content = result.l1["content"]
     assert "relations" in l1_content
     assert "xref" in l1_content["relations"]
+    assert "hierarchy" in l1_content["relations"]
+    assert "backbone" in l1_content["relations"]
     assert "related_code" in l1_content
     assert "related_memory" in l1_content
 
@@ -93,6 +95,7 @@ def test_projection_dual_write_fields_exist():
     assert "source" in chunk
     assert "render" in chunk
     assert "meta" in chunk
+    assert "aggregation" in chunk["meta"]
 
 
 def test_projection_l2_chunk_has_all_required_metadata():
@@ -112,15 +115,15 @@ def test_projection_l2_chunk_has_all_required_metadata():
         assert "meta" in chunk, f"chunk {chunk['chunk_id']} missing meta"
 
 
-def test_projection_l1_relations_v2_has_confidence():
+def test_projection_l1_xref_relations_have_confidence():
     snapshot = _sample_snapshot()
     transformer = ProjectionTransformer(config={"projection": {"enable_leiden": False}})
     scope = ProjectionScope(scope_kind="snapshot", snapshot_id=snapshot.snapshot_id, scope_key="k4")
     result = transformer.build(scope=scope, snapshot=snapshot, ir_graphs=_sample_graphs())
 
     l1_content = result.l1["content"]
-    v2 = l1_content["relations"]["xref"]
-    for rel in v2:
+    xrefs = l1_content["relations"]["xref"]
+    for rel in xrefs:
         assert "id" in rel
         assert "type" in rel
         assert 0.0 <= rel["confidence"] <= 1.0

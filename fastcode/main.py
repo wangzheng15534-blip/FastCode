@@ -49,6 +49,8 @@ from .snapshot_symbol_index import SnapshotSymbolIndex
 from .pg_retrieval import PgRetrievalStore
 from .redo_worker import RedoWorker
 from .semantic_ir import IREdge
+from .doc_ingester import KeyDocIngester
+from .graph_runtime import LadybugGraphRuntime
 
 
 class FastCode:
@@ -140,6 +142,8 @@ class FastCode:
         self.snapshot_symbol_index = SnapshotSymbolIndex()
         self.pg_retrieval_store = PgRetrievalStore(self.snapshot_store.db_runtime, self.config)
         self.retriever.set_pg_retrieval_store(self.pg_retrieval_store)
+        self.doc_ingester = KeyDocIngester(self.config, self.embedder)
+        self.graph_runtime = LadybugGraphRuntime(self.config)
 
         self._redo_worker: Optional[RedoWorker] = None
         if self.snapshot_store.db_runtime.backend == "postgres":
@@ -690,6 +694,36 @@ class FastCode:
                 raise RuntimeError(f"IR validation failed: {errors[:5]}")
             self.snapshot_symbol_index.register_snapshot(merged_snapshot)
 
+            doc_chunks_payload: List[Dict[str, Any]] = []
+            doc_mentions_payload: List[Dict[str, Any]] = []
+            doc_elements_payload: List[Dict[str, Any]] = []
+            try:
+                doc_ingest = self.doc_ingester.ingest(
+                    repo_path=self.loader.repo_path or "",
+                    repo_name=repo_name,
+                    snapshot_id=snapshot_id,
+                    snapshot=merged_snapshot,
+                )
+                doc_chunks_payload = [
+                    {
+                        "chunk_id": c.chunk_id,
+                        "snapshot_id": c.snapshot_id,
+                        "repo_name": c.repo_name,
+                        "path": c.path,
+                        "title": c.title,
+                        "heading": c.heading,
+                        "doc_type": c.doc_type,
+                        "content": c.text,
+                        "start_line": c.start_line,
+                        "end_line": c.end_line,
+                    }
+                    for c in (doc_ingest.get("chunks") or [])
+                ]
+                doc_mentions_payload = list(doc_ingest.get("mentions") or [])
+                doc_elements_payload = list(doc_ingest.get("elements") or [])
+            except Exception as e:
+                warnings.append(f"doc_ingestion_failed: {e}")
+
             # Backfill canonical IR symbol IDs into vector metadata for IR-aware retrieval.
             ast_id_to_ir: Dict[str, str] = {}
             for sym in merged_snapshot.symbols:
@@ -726,16 +760,31 @@ class FastCode:
             )
             self.snapshot_store.import_git_backbone(merged_snapshot, git_meta=git_meta)
             self.snapshot_store.save_relational_facts(merged_snapshot)
+            if doc_chunks_payload:
+                self.snapshot_store.save_design_documents(
+                    snapshot_id=snapshot_id,
+                    repo_name=repo_name,
+                    chunks=doc_chunks_payload,
+                    mentions=doc_mentions_payload,
+                )
             ir_graphs = self.ir_graph_builder.build_graphs(merged_snapshot)
             self.snapshot_store.save_ir_graphs(snapshot_id, ir_graphs)
             stage_id = self.snapshot_store.stage_snapshot(
                 merged_snapshot,
                 metadata={"run_id": run_id, "artifact_key": artifact_key},
             )
+            all_pg_elements = [elem.to_dict() for elem in elements]
+            if doc_elements_payload:
+                all_pg_elements.extend(doc_elements_payload)
             self.pg_retrieval_store.upsert_elements(
                 snapshot_id=snapshot_id,
-                elements=[elem.to_dict() for elem in elements],
+                elements=all_pg_elements,
             )
+            if doc_chunks_payload:
+                try:
+                    self.graph_runtime.sync_docs(chunks=doc_chunks_payload, mentions=doc_mentions_payload)
+                except Exception as e:
+                    warnings.append(f"ladybug_doc_sync_failed: {e}")
 
             self._load_artifacts_by_key(artifact_key)
             self.loaded_repositories[repo_name] = self.repo_info
@@ -2514,6 +2563,8 @@ class FastCode:
         """Stop background workers."""
         if self._redo_worker:
             self._redo_worker.stop()
+        if self.graph_runtime:
+            self.graph_runtime.close()
     
     def _get_full_dialogue_history(self, session_id: Optional[str], enable_multi_turn: bool) -> Optional[List[Dict[str, Any]]]:
         """

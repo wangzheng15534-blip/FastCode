@@ -24,6 +24,8 @@ from fastcode.adapters.scip_to_ir import build_ir_from_scip
 from fastcode.ir_merge import merge_ir
 from fastcode.ir_validators import validate_snapshot
 from fastcode.ir_graph_builder import IRGraphBuilder
+import networkx as nx
+from fastcode.scip_models import SCIPIndex, SCIPDocument, SCIPSymbol, SCIPOccurrence
 
 
 def main():
@@ -73,41 +75,38 @@ def main():
         print(f"  AST edge: {e.edge_type} {e.src_id[:30]}... -> {e.dst_id[:30]}... "
               f"[{e.source}/{e.confidence}]")
 
-    # --- 3. Build SCIP IR ---
-    scip_payload = {
-        "indexer_name": "scip-python",
-        "indexer_version": "0.5.0",
-        "documents": [
-            {
-                "path": "app/auth.py",
-                "language": "python",
-                "symbols": [
-                    {"symbol": "pkg app/auth.py AuthService.", "name": "AuthService",
-                     "kind": "class", "range": [10, 0, 50, 0]},
-                    {"symbol": "pkg app/auth.py AuthService.login().", "name": "login",
-                     "kind": "method", "range": [20, 4, 35, 0]},
+    # --- 3. Build SCIP IR (typed model) ---
+    scip_index = SCIPIndex(
+        indexer_name="scip-python",
+        indexer_version="0.5.0",
+        documents=[
+            SCIPDocument(
+                path="app/auth.py",
+                language="python",
+                symbols=[
+                    SCIPSymbol(symbol="pkg app/auth.py AuthService.", name="AuthService",
+                               kind="class", range=[10, 0, 50, 0]),
+                    SCIPSymbol(symbol="pkg app/auth.py AuthService.login().", name="login",
+                               kind="method", range=[20, 4, 35, 0]),
                 ],
-                "occurrences": [
-                    {"symbol": "pkg app/auth.py AuthService.login().", "role": "definition",
-                     "range": [20, 4, 35, 0]},
-                    {"symbol": "pkg app/auth.py AuthService.login().", "role": "reference",
-                     "range": [100, 0, 100, 5]},
+                occurrences=[
+                    SCIPOccurrence(symbol="pkg app/auth.py AuthService.login().",
+                                   role="definition", range=[20, 4, 35, 0]),
+                    SCIPOccurrence(symbol="pkg app/auth.py AuthService.login().",
+                                   role="reference", range=[100, 0, 100, 5]),
                 ],
-            }
+            )
         ],
-    }
+    )
     scip_snapshot = build_ir_from_scip(
         repo_name="demo-repo",
         snapshot_id="snap:demo:abc123",
-        scip_index=scip_payload,
+        scip_index=scip_index,
     )
-    print(f"\nSCIP IR: {len(scip_snapshot.documents)} docs, {len(scip_snapshot.symbols)} symbols, "
+    print(f"\nSCIP IR (typed model): {len(scip_snapshot.documents)} docs, {len(scip_snapshot.symbols)} symbols, "
           f"{len(scip_snapshot.occurrences)} occurrences, {len(scip_snapshot.edges)} edges")
     for s in scip_snapshot.symbols:
         print(f"  SCIP symbol: {s.symbol_id} ({s.source_priority})")
-    for e in scip_snapshot.edges:
-        print(f"  SCIP edge: {e.edge_type} {e.src_id[:30]}... -> {e.dst_id[:30]}... "
-              f"[{e.source}/{e.confidence}]")
 
     # --- 4. Merge ---
     merged = merge_ir(ast_snapshot, scip_snapshot)
@@ -127,7 +126,7 @@ def main():
     else:
         print("\nValidation PASSED (no errors)")
 
-    # --- 6. Build graphs ---
+    # --- 6. Build graphs and traverse ---
     builder = IRGraphBuilder()
     graphs = builder.build_graphs(merged)
     print(f"\nGraphs built:")
@@ -137,6 +136,15 @@ def main():
     ]:
         g = getattr(graphs, name)
         print(f"  {name}: {g.number_of_nodes()} nodes, {g.number_of_edges()} edges")
+
+    # Demonstrate call graph traversal (NetworkX shortest path)
+    if graphs.call_graph.number_of_nodes() > 0:
+        start_node = list(graphs.call_graph.nodes)[0]
+        dist = nx.single_source_shortest_path_length(graphs.call_graph, start_node, cutoff=2)
+        print(f"\nCall graph from '{start_node[:40]}...' (max 2 hops):")
+        for node, d in dist.items():
+            if node != start_node:
+                print(f"  -> {node[:50]}... (distance {d})")
 
     print("\nDone.")
 

@@ -81,9 +81,7 @@ def test_projection_dual_write_fields_exist():
 
     l1_content = result.l1["content"]
     assert "relations" in l1_content
-    assert "cross_links" in l1_content["relations"]
-    assert "relations_v2" in l1_content
-    assert "xref" in l1_content["relations_v2"]
+    assert "xref" in l1_content["relations"]
     assert "related_code" in l1_content
     assert "related_memory" in l1_content
 
@@ -121,7 +119,7 @@ def test_projection_l1_relations_v2_has_confidence():
     result = transformer.build(scope=scope, snapshot=snapshot, ir_graphs=_sample_graphs())
 
     l1_content = result.l1["content"]
-    v2 = l1_content["relations_v2"]["xref"]
+    v2 = l1_content["relations"]["xref"]
     for rel in v2:
         assert "id" in rel
         assert "type" in rel

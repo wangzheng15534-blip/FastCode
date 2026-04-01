@@ -12,6 +12,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 from typing import Optional, Dict, Any, List, Callable
 import numpy as np
+import networkx as nx
 from rank_bm25 import BM25Okapi
 from git import Repo, GitCommandError
 
@@ -37,6 +38,7 @@ from .ir_validators import validate_snapshot
 from .manifest_store import ManifestStore
 from .index_run import IndexRunStore
 from .scip_loader import load_scip_artifact, run_scip_python_index
+from .scip_models import SCIPIndex
 from .snapshot_store import SnapshotStore
 from .terminus_publisher import TerminusPublisher
 from .projection_models import ProjectionScope
@@ -44,6 +46,8 @@ from .projection_store import ProjectionStore
 from .projection_transform import ProjectionTransformer
 from .snapshot_symbol_index import SnapshotSymbolIndex
 from .pg_retrieval import PgRetrievalStore
+from .redo_worker import RedoWorker
+from .semantic_ir import IREdge
 
 
 class FastCode:
@@ -135,6 +139,13 @@ class FastCode:
         self.snapshot_symbol_index = SnapshotSymbolIndex()
         self.pg_retrieval_store = PgRetrievalStore(self.snapshot_store.db_runtime, self.config)
         self.retriever.set_pg_retrieval_store(self.pg_retrieval_store)
+
+        self._redo_worker: Optional[RedoWorker] = None
+        if self.snapshot_store.db_runtime.backend == "postgres":
+            storage_cfg = self.config.get("storage", {}) or {}
+            poll_interval = int(storage_cfg.get("redo_poll_interval_seconds", 30))
+            self._redo_worker = RedoWorker(self, poll_interval_seconds=poll_interval)
+            self._redo_worker.start()
         
         # State
         self.repo_loaded = False
@@ -393,6 +404,43 @@ class FastCode:
                 "snapshot_id": f"snap:{repo_name}:{synthetic}",
             }
 
+    def _build_git_meta(self, snapshot_ref: Dict[str, Any]) -> Dict[str, Any]:
+        git_meta = dict(snapshot_ref or {})
+        commit_id = git_meta.get("commit_id")
+        if not commit_id or not self.loader.repo_path:
+            return git_meta
+        try:
+            repo = Repo(self.loader.repo_path)
+            commit_obj = repo.commit(commit_id)
+            parent_ids = [p.hexsha for p in commit_obj.parents]
+            git_meta["parent_commit_id"] = parent_ids[0] if parent_ids else None
+            git_meta["parent_commit_ids"] = parent_ids
+        except Exception as e:
+            self.logger.warning(f"Failed to resolve commit parent metadata: {e}")
+        return git_meta
+
+    def _previous_snapshot_symbol_versions(
+        self,
+        repo_name: str,
+        ref_name: str,
+        current_snapshot_id: str,
+    ) -> Optional[Dict[str, str]]:
+        previous_manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
+        if not previous_manifest:
+            return None
+        previous_snapshot_id = previous_manifest.get("snapshot_id")
+        if not previous_snapshot_id or previous_snapshot_id == current_snapshot_id:
+            return None
+        previous_snapshot = self.snapshot_store.load_snapshot(previous_snapshot_id)
+        if not previous_snapshot:
+            return None
+        out: Dict[str, str] = {}
+        for symbol in previous_snapshot.symbols:
+            if not symbol.external_symbol_id:
+                continue
+            out[symbol.external_symbol_id] = f"symbol:{previous_snapshot_id}:{symbol.symbol_id}"
+        return out
+
     def _load_artifacts_by_key(self, artifact_key: str) -> bool:
         """Load vector/BM25/graph artifacts for a snapshot artifact key."""
         if not self.vector_store.load(artifact_key):
@@ -445,6 +493,7 @@ class FastCode:
         repo_name = self.repo_info.get("name", "default")
         repo_url = self.repo_info.get("url", source)
         snapshot_ref = self._resolve_snapshot_ref(repo_name, requested_ref=ref, requested_commit=commit)
+        git_meta = self._build_git_meta(snapshot_ref)
         snapshot_id = snapshot_ref["snapshot_id"]
         warnings: List[str] = []
         degraded = False
@@ -488,7 +537,8 @@ class FastCode:
                 }
         self.index_run_store.mark_started(run_id)
         lock_name = f"index:{snapshot_id}"
-        if not self.snapshot_store.acquire_lock(lock_name, owner_id=run_id, ttl_seconds=600):
+        fencing_token = self.snapshot_store.acquire_lock(lock_name, owner_id=run_id, ttl_seconds=600)
+        if fencing_token is None:
             raise RuntimeError(f"snapshot is currently locked for indexing: {snapshot_id}")
         stage_id: Optional[str] = None
 
@@ -527,6 +577,7 @@ class FastCode:
             except Exception as e:
                 warnings.append(f"resolver_init_failed: {e}")
             temp_graph.build_graphs(elements, module_resolver, symbol_resolver)
+            call_graph_edges_raw = list(temp_graph.call_graph.edges(data=True))
 
             temp_retriever = HybridRetriever(
                 self.config,
@@ -552,6 +603,34 @@ class FastCode:
                 commit_id=snapshot_ref.get("commit_id"),
                 tree_id=snapshot_ref.get("tree_id"),
             )
+            ast_element_to_symbol: Dict[str, str] = {}
+            for symbol in ast_snapshot.symbols:
+                ast_element_id = (symbol.metadata or {}).get("ast_element_id")
+                if ast_element_id:
+                    ast_element_to_symbol[str(ast_element_id)] = symbol.symbol_id
+            for caller_id, callee_id, data in call_graph_edges_raw:
+                src_id = ast_element_to_symbol.get(str(caller_id))
+                dst_id = ast_element_to_symbol.get(str(callee_id))
+                if not src_id or not dst_id:
+                    continue
+                edge_id = f"edge:call:{hashlib.md5(f'{src_id}->{dst_id}'.encode('utf-8')).hexdigest()[:20]}"
+                ast_snapshot.edges.append(
+                    IREdge(
+                        edge_id=edge_id,
+                        src_id=src_id,
+                        dst_id=dst_id,
+                        edge_type="call",
+                        source="ast",
+                        confidence="heuristic",
+                        doc_id=None,
+                        metadata={
+                            "extractor": "fastcode.graph_builder.call_graph_bridge",
+                            "call_name": (data or {}).get("call_name"),
+                            "call_type": (data or {}).get("call_type"),
+                            "file_path": (data or {}).get("file_path"),
+                        },
+                    )
+                )
 
             scip_snapshot = None
             scip_artifact_ref = None
@@ -598,8 +677,9 @@ class FastCode:
                                 digest.update(chunk)
                         scip_artifact_ref = self.snapshot_store.save_scip_artifact_ref(
                             snapshot_id=snapshot_id,
-                            indexer_name=scip_data.get("indexer_name", "scip-python"),
-                            indexer_version=scip_data.get("indexer_version"),
+                            indexer_name=(scip_data.indexer_name if isinstance(scip_data, SCIPIndex) else None)
+                            or "scip-python",
+                            indexer_version=scip_data.indexer_version if isinstance(scip_data, SCIPIndex) else None,
                             artifact_path=preserved_path,
                             checksum=digest.hexdigest(),
                         )
@@ -635,6 +715,8 @@ class FastCode:
             temp_store.save(artifact_key)
 
             self.index_run_store.mark_status(run_id, "persisting")
+            if fencing_token is not None and not self.snapshot_store.validate_fencing_token(lock_name, fencing_token):
+                raise RuntimeError(f"stale_lock_detected_for_snapshot:{snapshot_id}")
             self.snapshot_store.save_snapshot(
                 merged_snapshot,
                 metadata={
@@ -642,9 +724,10 @@ class FastCode:
                     "artifact_key": artifact_key,
                     "warnings": warnings,
                     "scip_artifact_ref": scip_artifact_ref,
+                    "fencing_token": fencing_token,
                 },
             )
-            self.snapshot_store.import_git_backbone(merged_snapshot, git_meta=snapshot_ref)
+            self.snapshot_store.import_git_backbone(merged_snapshot, git_meta=git_meta)
             self.snapshot_store.save_relational_facts(merged_snapshot)
             ir_graphs = self.ir_graph_builder.build_graphs(merged_snapshot)
             self.snapshot_store.save_ir_graphs(snapshot_id, ir_graphs)
@@ -666,6 +749,11 @@ class FastCode:
             if publish:
                 self.index_run_store.mark_status(run_id, "publishing")
                 ref_name = snapshot_ref.get("branch") or ref or "HEAD"
+                previous_snapshot_symbols = self._previous_snapshot_symbol_versions(
+                    repo_name=repo_name,
+                    ref_name=ref_name,
+                    current_snapshot_id=snapshot_id,
+                )
                 manifest = self.manifest_store.publish(
                     repo_name=repo_name,
                     ref_name=ref_name,
@@ -678,7 +766,8 @@ class FastCode:
                         self.terminus_publisher.publish_snapshot_lineage(
                             snapshot=merged_snapshot.to_dict(),
                             manifest=manifest,
-                            git_meta=snapshot_ref,
+                            git_meta=git_meta,
+                            previous_snapshot_symbols=previous_snapshot_symbols,
                             idempotency_key=f"lineage:{run_id}:{snapshot_id}",
                         )
                         status = "published" if not degraded else "degraded"
@@ -710,7 +799,17 @@ class FastCode:
             self.index_run_store.mark_failed(run_id, str(e))
             self.snapshot_store.enqueue_redo_task(
                 task_type="index_run_recovery",
-                payload={"run_id": run_id, "snapshot_id": snapshot_id},
+                payload={
+                    "run_id": run_id,
+                    "snapshot_id": snapshot_id,
+                    "source": source,
+                    "is_url": resolved_is_url,
+                    "ref": ref,
+                    "commit": commit,
+                    "publish": publish,
+                    "enable_scip": enable_scip,
+                    "scip_artifact_path": scip_artifact_path,
+                },
                 error=str(e),
             )
             raise
@@ -738,14 +837,24 @@ class FastCode:
         status = "published"
         if self.terminus_publisher.is_configured():
             try:
-                self.terminus_publisher.publish_snapshot_lineage(
-                    snapshot=snapshot.to_dict(),
-                    manifest=manifest,
-                    git_meta={
+                git_meta = self._build_git_meta(
+                    {
                         "repo_name": run["repo_name"],
                         "branch": run.get("branch"),
                         "commit_id": run.get("commit_id"),
-                    },
+                    }
+                )
+                branch_name = manifest.get("ref_name") or run.get("branch") or "HEAD"
+                previous_snapshot_symbols = self._previous_snapshot_symbol_versions(
+                    repo_name=run["repo_name"],
+                    ref_name=branch_name,
+                    current_snapshot_id=run["snapshot_id"],
+                )
+                self.terminus_publisher.publish_snapshot_lineage(
+                    snapshot=snapshot.to_dict(),
+                    manifest=manifest,
+                    git_meta=git_meta,
+                    previous_snapshot_symbols=previous_snapshot_symbols,
                     idempotency_key=f"lineage:{run_id}:{run['snapshot_id']}",
                 )
             except Exception as e:
@@ -793,14 +902,23 @@ class FastCode:
                         status="published",
                     )
 
-                self.terminus_publisher.publish_snapshot_lineage(
-                    snapshot=snapshot.to_dict(),
-                    manifest=manifest,
-                    git_meta={
+                git_meta = self._build_git_meta(
+                    {
                         "repo_name": run["repo_name"],
                         "branch": run.get("branch"),
                         "commit_id": run.get("commit_id"),
-                    },
+                    }
+                )
+                previous_snapshot_symbols = self._previous_snapshot_symbol_versions(
+                    repo_name=run["repo_name"],
+                    ref_name=ref_name,
+                    current_snapshot_id=run["snapshot_id"],
+                )
+                self.terminus_publisher.publish_snapshot_lineage(
+                    snapshot=snapshot.to_dict(),
+                    manifest=manifest,
+                    git_meta=git_meta,
+                    previous_snapshot_symbols=previous_snapshot_symbols,
                     idempotency_key=f"lineage:{run_id}:{run['snapshot_id']}",
                 )
                 self.index_run_store.mark_publish_task_done(task_id)
@@ -815,6 +933,102 @@ class FastCode:
             "succeeded": succeeded,
             "failed": failed,
         }
+
+    def retry_index_run_recovery(self, run_id: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        payload = payload or {}
+        source = payload.get("source")
+        if not source:
+            raise RuntimeError(f"redo recovery payload missing source for run {run_id}")
+        return self.run_index_pipeline(
+            source=source,
+            is_url=payload.get("is_url"),
+            ref=payload.get("ref"),
+            commit=payload.get("commit"),
+            force=True,
+            publish=bool(payload.get("publish", True)),
+            scip_artifact_path=payload.get("scip_artifact_path"),
+            enable_scip=bool(payload.get("enable_scip", True)),
+        )
+
+    def process_redo_tasks(self, limit: int = 10) -> Dict[str, Any]:
+        if not self._redo_worker:
+            return {"processed": 0, "succeeded": 0, "failed": 0, "message": "redo_worker_disabled"}
+        processed = 0
+        succeeded = 0
+        failed = 0
+        while processed < max(1, int(limit)):
+            status = self._redo_worker.process_once_status()
+            if status == "none":
+                break
+            processed += 1
+            if status == "succeeded":
+                succeeded += 1
+            elif status == "failed":
+                failed += 1
+        return {"processed": processed, "succeeded": succeeded, "failed": failed}
+
+    def list_repo_refs(self, repo_name: str) -> List[Dict[str, Any]]:
+        with self.snapshot_store.db_runtime.connect() as conn:
+            rows = self.snapshot_store.db_runtime.execute(
+                conn,
+                """
+                SELECT branch, commit_id, tree_id, snapshot_id, created_at
+                FROM snapshot_refs
+                WHERE repo_name=?
+                ORDER BY created_at DESC
+                """,
+                (repo_name,),
+            ).fetchall()
+        return [self.snapshot_store.db_runtime.row_to_dict(r) for r in rows if r]
+
+    def find_symbol(
+        self,
+        snapshot_id: str,
+        *,
+        symbol_id: Optional[str] = None,
+        name: Optional[str] = None,
+        path: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        resolved = self.resolve_snapshot_symbol(snapshot_id, symbol_id=symbol_id, name=name, path=path)
+        if not resolved:
+            return None
+        snapshot = self.snapshot_store.load_snapshot(snapshot_id)
+        if not snapshot:
+            return None
+        for symbol in snapshot.symbols:
+            if symbol.symbol_id == resolved:
+                return symbol.to_dict()
+        return None
+
+    def get_graph_callees(self, snapshot_id: str, symbol_id: str, max_hops: int = 1) -> List[Dict[str, Any]]:
+        ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
+        if not ir_graphs:
+            return []
+        g = ir_graphs.call_graph
+        if symbol_id not in g:
+            return []
+        dist = nx.single_source_shortest_path_length(g, symbol_id, cutoff=max_hops)
+        return [{"symbol_id": node, "distance": d} for node, d in dist.items() if node != symbol_id]
+
+    def get_graph_callers(self, snapshot_id: str, symbol_id: str, max_hops: int = 1) -> List[Dict[str, Any]]:
+        ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
+        if not ir_graphs:
+            return []
+        g = ir_graphs.call_graph.reverse(copy=False)
+        if symbol_id not in g:
+            return []
+        dist = nx.single_source_shortest_path_length(g, symbol_id, cutoff=max_hops)
+        return [{"symbol_id": node, "distance": d} for node, d in dist.items() if node != symbol_id]
+
+    def get_graph_dependencies(self, snapshot_id: str, doc_id: str, max_hops: int = 1) -> List[Dict[str, Any]]:
+        ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
+        if not ir_graphs:
+            return []
+        g = ir_graphs.dependency_graph
+        if doc_id not in g:
+            return []
+        dist = nx.single_source_shortest_path_length(g, doc_id, cutoff=max_hops)
+        return [{"doc_id": node, "distance": d} for node, d in dist.items() if node != doc_id]
 
     def get_branch_manifest(self, repo_name: str, ref_name: str) -> Optional[Dict[str, Any]]:
         return self.manifest_store.get_branch_manifest(repo_name, ref_name)
@@ -2350,8 +2564,14 @@ class FastCode:
 
     def cleanup(self):
         """Cleanup resources"""
+        self.shutdown()
         self.loader.cleanup()
         self.logger.info("Cleanup complete")
+
+    def shutdown(self):
+        """Stop background workers."""
+        if self._redo_worker:
+            self._redo_worker.stop()
     
     def _get_full_dialogue_history(self, session_id: Optional[str], enable_multi_turn: bool) -> Optional[List[Dict[str, Any]]]:
         """

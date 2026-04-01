@@ -473,24 +473,22 @@ class SnapshotStore:
 
     def save_scip_artifact_ref(
         self,
-        snapshot_id: str | SCIPArtifactRef,
-        indexer_name: Optional[str] = None,
+        snapshot_id: str,
+        *,
+        indexer_name: str = "unknown",
         indexer_version: Optional[str] = None,
-        artifact_path: Optional[str] = None,
-        checksum: Optional[str] = None,
+        artifact_path: str = "",
+        checksum: str = "",
     ) -> Dict[str, Any]:
-        if isinstance(snapshot_id, SCIPArtifactRef):
-            artifact_ref = snapshot_id
-        else:
-            artifact_ref = SCIPArtifactRef(
-                snapshot_id=snapshot_id,
-                indexer_name=indexer_name or "unknown",
-                indexer_version=indexer_version,
-                artifact_path=artifact_path or "",
-                checksum=checksum or "",
-                created_at=_utc_now(),
-            )
-        created_at = artifact_ref.created_at
+        created_at = _utc_now()
+        artifact_ref = SCIPArtifactRef(
+            snapshot_id=snapshot_id,
+            indexer_name=indexer_name,
+            indexer_version=indexer_version,
+            artifact_path=artifact_path,
+            checksum=checksum,
+            created_at=created_at,
+        )
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,

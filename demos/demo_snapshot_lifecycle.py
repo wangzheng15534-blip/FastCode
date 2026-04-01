@@ -93,6 +93,19 @@ def main():
         assert loaded_graphs is not None
         print(f"Loaded IR graphs: containment has {loaded_graphs.containment_graph.number_of_edges()} edges")
 
+        # 8. Fencing token on lock
+        token = store.acquire_lock("index:snap:my-repo:aaa", owner_id=run1, ttl_seconds=60)
+        print(f"Fencing token for snap:my-repo:aaa: {token}")
+        print(f"Token valid: {store.validate_fencing_token('index:snap:my-repo:aaa', token)}")
+
+        # 9. Enqueue redo task (SQLite returns ID without persisting)
+        redo_id = store.enqueue_redo_task(
+            task_type="index_run_recovery",
+            payload={"run_id": run1, "source": "/tmp/repo"},
+            error="simulated failure",
+        )
+        print(f"Enqueued redo task: {redo_id}")
+
         print("\nDone.")
 
 

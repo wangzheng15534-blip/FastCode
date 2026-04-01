@@ -95,3 +95,34 @@ def test_projection_dual_write_fields_exist():
     assert "source" in chunk
     assert "render" in chunk
     assert "meta" in chunk
+
+
+def test_projection_l2_chunk_has_all_required_metadata():
+    snapshot = _sample_snapshot()
+    transformer = ProjectionTransformer(config={"projection": {"enable_leiden": False}})
+    scope = ProjectionScope(scope_kind="snapshot", snapshot_id=snapshot.snapshot_id, scope_key="k3")
+    result = transformer.build(scope=scope, snapshot=snapshot, ir_graphs=_sample_graphs())
+
+    for chunk in result.chunks:
+        assert chunk["version"] == "v1", f"chunk {chunk['chunk_id']} missing version"
+        assert chunk["layer"] == "L2", f"chunk {chunk['chunk_id']} missing layer"
+        assert "id" in chunk, f"chunk {chunk['chunk_id']} missing id"
+        assert "path" in chunk, f"chunk {chunk['chunk_id']} missing path"
+        assert "title" in chunk, f"chunk {chunk['chunk_id']} missing title"
+        assert "source" in chunk, f"chunk {chunk['chunk_id']} missing source"
+        assert "render" in chunk, f"chunk {chunk['chunk_id']} missing render"
+        assert "meta" in chunk, f"chunk {chunk['chunk_id']} missing meta"
+
+
+def test_projection_l1_relations_v2_has_confidence():
+    snapshot = _sample_snapshot()
+    transformer = ProjectionTransformer(config={"projection": {"enable_leiden": False}})
+    scope = ProjectionScope(scope_kind="snapshot", snapshot_id=snapshot.snapshot_id, scope_key="k4")
+    result = transformer.build(scope=scope, snapshot=snapshot, ir_graphs=_sample_graphs())
+
+    l1_content = result.l1["content"]
+    v2 = l1_content["relations_v2"]["xref"]
+    for rel in v2:
+        assert "id" in rel
+        assert "type" in rel
+        assert 0.0 <= rel["confidence"] <= 1.0

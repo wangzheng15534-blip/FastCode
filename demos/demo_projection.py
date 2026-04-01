@@ -93,14 +93,24 @@ def main():
     print(json.dumps(result.l0, indent=2, ensure_ascii=False)[:500])
 
     print(f"\n=== L1 (Navigation) ===")
-    print(json.dumps(result.l1, indent=2, ensure_ascii=False)[:800])
+    l1_content = result.l1.get("content", {})
+    print(f"  relations keys: {list(l1_content.get('relations', {}).keys())}")
+    print(f"  relations_v2 keys: {list(l1_content.get('relations_v2', {}).keys())}")
+    v2_xrefs = l1_content.get("relations_v2", {}).get("xref", [])
+    print(f"  relations_v2.xref count: {len(v2_xrefs)}")
+    if v2_xrefs:
+        print(f"  first xref: {v2_xrefs[0]}")
+    print(f"  related_code: {len(l1_content.get('related_code', []))} refs")
 
     print(f"\n=== L2 Index ===")
     print(json.dumps(result.l2_index, indent=2, ensure_ascii=False)[:500])
 
     print(f"\n=== Chunks: {len(result.chunks)} ===")
     for chunk in result.chunks:
-        print(f"  chunk {chunk.get('chunk_id', '?')}: {chunk.get('kind', '?')}")
+        print(f"  {chunk['chunk_id']}: {chunk['kind']} | version={chunk.get('version')} "
+              f"layer={chunk.get('layer')} title={chunk.get('title', '?')}")
+        if chunk.get('meta'):
+            print(f"    meta: {chunk['meta']}")
 
     print("\nDone.")
 

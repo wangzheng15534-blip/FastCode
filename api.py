@@ -27,6 +27,7 @@ import uuid
 import asyncio
 
 from fastcode import FastCode
+from fastcode.utils import safe_jsonable
 
 
 # Pydantic models
@@ -600,7 +601,7 @@ async def query_repository(request: QueryRequest):
             total_tokens = prompt_tokens + completion_tokens
 
         sources = result.get("sources", [])
-        serialized_sources = [_safe_jsonable(source) for source in sources]
+        serialized_sources = [safe_jsonable(source) for source in sources]
 
         return QueryResponse(
             answer=result.get("answer", ""),
@@ -645,7 +646,7 @@ async def query_snapshot(request: QuerySnapshotRequest):
             answer=result.get("answer", ""),
             query=result.get("query", ""),
             context_elements=result.get("context_elements", 0),
-            sources=[_safe_jsonable(source) for source in result.get("sources", [])],
+            sources=[safe_jsonable(source) for source in result.get("sources", [])],
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
@@ -877,7 +878,7 @@ async def get_session(session_id: str):
     fastcode = _ensure_fastcode_initialized()
     try:
         history = fastcode.get_session_history(session_id) or []
-        safe_history = [_safe_jsonable(turn) for turn in history]
+        safe_history = [safe_jsonable(turn) for turn in history]
         return {"status": "success", "session_id": session_id, "history": safe_history}
     except Exception as e:
         logger.error(f"Failed to load session {session_id}: {e}")
@@ -992,32 +993,6 @@ async def unload_repository():
 
     return {"status": "success", "message": "Repository unloaded"}
 
-
-def _safe_jsonable(obj: Any) -> Any:
-    """Recursively convert objects to JSON-serializable structures."""
-    if obj is None or isinstance(obj, (bool, int, float, str)):
-        return obj
-    if isinstance(obj, dict):
-        safe_dict = {}
-        for k, v in obj.items():
-            try:
-                safe_dict[str(k)] = _safe_jsonable(v)
-            except Exception:
-                safe_dict[str(k)] = repr(v)
-        return safe_dict
-    if isinstance(obj, (list, tuple, set)):
-        return [_safe_jsonable(v) for v in obj]
-    if hasattr(obj, "to_dict"):
-        try:
-            return _safe_jsonable(obj.to_dict())
-        except Exception:
-            return {"repr": repr(obj)}
-    if hasattr(obj, "__dict__"):
-        try:
-            return _safe_jsonable(vars(obj))
-        except Exception:
-            return {"repr": repr(obj)}
-    return repr(obj)
 
 
 def start_api(host: str = "0.0.0.0", port: int = 8000, reload: bool = False):

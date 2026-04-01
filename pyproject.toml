@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fastcode"
+version = "2.0.0"
+description = "Repository-level code understanding system with multi-repo support"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+dependencies = [
+    # Core
+    "python-dotenv",
+    "pyyaml",
+    "click",
+    "gitpython",
+    # Code parsing
+    "tree-sitter",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-java",
+    "tree-sitter-go",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-rust",
+    "tree-sitter-c-sharp",
+    "libcst",
+    # Embeddings & vector store
+    "sentence-transformers",
+    "onnxruntime",
+    "faiss-cpu",
+    "chromadb",
+    # Search & retrieval
+    "rank-bm25",
+    "networkx",
+    "python-igraph",
+    # LLM integration
+    "openai",
+    "anthropic",
+    "tiktoken",
+    # API
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "flask",
+    "flask-cors",
+    "python-multipart",
+    # Database
+    "psycopg[binary]",
+    "psycopg_pool",
+    # Utilities
+    "tqdm",
+    "numpy",
+    "pandas",
+    "pathspec",
+    # Caching
+    "diskcache",
+    "redis",
+    # MCP server
+    "mcp[cli]",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-benchmark",
+]
+ladybug = [
+    "real_ladybug",
+]
+
+[tool.setuptools.packages.find]
+include = ["fastcode*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "strict"

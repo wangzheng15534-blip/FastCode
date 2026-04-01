@@ -1074,8 +1074,15 @@ class FastCode:
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:24]
 
     @staticmethod
-    def _projection_params_hash(scope: ProjectionScope) -> str:
-        payload = json.dumps(scope.to_dict(), sort_keys=True, ensure_ascii=False)
+    def _projection_params_hash(scope: ProjectionScope, projection_algo_version: str = "v1") -> str:
+        payload = json.dumps(
+            {
+                "scope": scope.to_dict(),
+                "projection_algo_version": projection_algo_version,
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
     def _resolve_snapshot_id(
@@ -1158,7 +1165,10 @@ class FastCode:
             target_id=target_id,
             filters=filters or {},
         )
-        params_hash = self._projection_params_hash(scope)
+        params_hash = self._projection_params_hash(
+            scope,
+            projection_algo_version=getattr(self.projection_transformer, "ALGO_VERSION", "v1"),
+        )
 
         if not force:
             cached_id = self.projection_store.find_cached_projection_id(scope, params_hash)

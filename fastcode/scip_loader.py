@@ -11,11 +11,12 @@ import shutil
 import subprocess
 from typing import Any, Dict
 
+from .scip_models import SCIPIndex
 
 logger = logging.getLogger(__name__)
 
 
-def load_scip_artifact(path: str) -> Dict[str, Any]:
+def load_scip_artifact(path: str) -> SCIPIndex:
     """
     Load a SCIP artifact.
 
@@ -27,7 +28,7 @@ def load_scip_artifact(path: str) -> Dict[str, Any]:
     ext = os.path.splitext(path)[1].lower()
     if ext in {".json", ".scip.json"}:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            return SCIPIndex.from_dict(json.load(f))
     if ext == ".scip":
         scip_cli = shutil.which("scip")
         if not scip_cli:
@@ -41,7 +42,7 @@ def load_scip_artifact(path: str) -> Dict[str, Any]:
         for cmd in candidate_cmds:
             proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
             if proc.returncode == 0 and proc.stdout.strip():
-                return json.loads(proc.stdout)
+                return SCIPIndex.from_dict(json.loads(proc.stdout))
             last_error = proc.stderr.strip() or proc.stdout.strip()
         raise RuntimeError(f"Failed to decode .scip artifact via scip CLI: {last_error}")
 

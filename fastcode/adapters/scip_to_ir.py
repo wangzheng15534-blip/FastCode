@@ -5,8 +5,9 @@ Adapter from SCIP payloads into canonical IR.
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
+from ..scip_models import SCIPIndex
 from ..semantic_ir import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
 
 
@@ -17,10 +18,11 @@ def _hid(prefix: str, payload: str) -> str:
 def build_ir_from_scip(
     repo_name: str,
     snapshot_id: str,
-    scip_index: Dict[str, Any],
+    scip_index: Union[Dict[str, Any], SCIPIndex],
     branch: str | None = None,
     commit_id: str | None = None,
     tree_id: str | None = None,
+    language_hint: str | None = None,
 ) -> IRSnapshot:
     """
     Convert a simplified SCIP payload to IRSnapshot.
@@ -45,12 +47,13 @@ def build_ir_from_scip(
     symbols: List[IRSymbol] = []
     occurrences: List[IROccurrence] = []
     edges: List[IREdge] = []
-    indexer_name = scip_index.get("indexer_name")
-    indexer_version = scip_index.get("indexer_version")
+    scip_payload = scip_index.to_dict() if isinstance(scip_index, SCIPIndex) else scip_index
+    indexer_name = scip_payload.get("indexer_name")
+    indexer_version = scip_payload.get("indexer_version")
 
-    for doc in scip_index.get("documents", []):
+    for doc in scip_payload.get("documents", []):
         path = doc.get("path", "")
-        language = doc.get("language", "unknown")
+        language = doc.get("language") or language_hint or "unknown"
         doc_id = _hid("doc", f"{snapshot_id}:{path}")
         documents.append(
             IRDocument(

@@ -7,10 +7,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from .projection_models import ProjectionBuildResult, ProjectionScope
+from .utils import utc_now
 
 try:
     import psycopg
@@ -22,9 +22,6 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     ConnectionPool = None
 
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 class ProjectionStore:
@@ -124,7 +121,7 @@ class ProjectionStore:
                     VALUES (%s, %s, %s)
                     ON CONFLICT(component, version) DO NOTHING
                     """,
-                    ("projection_store", "v1", _utc_now()),
+                    ("projection_store", "v1", utc_now()),
                 )
             conn.commit()
 
@@ -149,7 +146,7 @@ class ProjectionStore:
                 return row[0] if row else None
 
     def save(self, result: ProjectionBuildResult, params_hash: str) -> None:
-        now = _utc_now()
+        now = utc_now()
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(

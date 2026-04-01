@@ -5,10 +5,16 @@ Utility functions for FastCode
 import os
 import hashlib
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import yaml
 import tiktoken
+
+
+def utc_now() -> str:
+    """Return current UTC time as ISO-8601 string."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def setup_logging(config: Dict[str, Any]) -> logging.Logger:
@@ -298,6 +304,38 @@ def safe_get(d: Dict, *keys, default=None):
 def ensure_dir(directory: str):
     """Ensure directory exists"""
     Path(directory).mkdir(parents=True, exist_ok=True)
+
+
+def safe_jsonable(obj: Any) -> Any:
+    """Recursively convert objects to JSON-serializable structures.
+
+    Handles dicts, lists/tuples/sets, objects with ``to_dict()``, and
+    arbitrary objects via ``vars()``.  Non-serializable values fall back
+    to ``repr()``.
+    """
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    if isinstance(obj, dict):
+        safe_dict = {}
+        for k, v in obj.items():
+            try:
+                safe_dict[str(k)] = safe_jsonable(v)
+            except Exception:
+                safe_dict[str(k)] = repr(v)
+        return safe_dict
+    if isinstance(obj, (list, tuple, set)):
+        return [safe_jsonable(v) for v in obj]
+    if hasattr(obj, "to_dict"):
+        try:
+            return safe_jsonable(obj.to_dict())
+        except Exception:
+            return {"repr": repr(obj)}
+    if hasattr(obj, "__dict__"):
+        try:
+            return safe_jsonable(vars(obj))
+        except Exception:
+            return {"repr": repr(obj)}
+    return repr(obj)
 
 
 def get_repo_name_from_url(url: str) -> str:

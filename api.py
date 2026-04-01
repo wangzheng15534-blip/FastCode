@@ -129,6 +129,12 @@ async def lifespan(app: FastAPI):
     logger.info("FastCode API started - system will initialize on first request")
     yield
     # Shutdown
+    global fastcode_instance
+    if fastcode_instance is not None:
+        try:
+            fastcode_instance.shutdown()
+        except Exception as e:
+            logger.warning(f"FastCode shutdown hook failed: {e}")
     logger.info("FastCode API shutting down")
 
 
@@ -359,6 +365,18 @@ async def retry_publish_tasks(limit: int = 10):
         return {"status": "success", "result": result}
     except Exception as e:
         logger.error(f"Retry publish failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/redo/process")
+async def process_redo_tasks(limit: int = 10):
+    """Admin endpoint to process pending redo tasks immediately."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        result = await asyncio.to_thread(fastcode.process_redo_tasks, limit)
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Redo process failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -681,6 +699,17 @@ async def get_branch_manifest(repo_name: str, ref_name: str):
     return {"status": "success", "manifest": manifest}
 
 
+@app.get("/repos/{repo_name}/refs")
+async def get_repo_refs(repo_name: str):
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        refs = await asyncio.to_thread(fastcode.list_repo_refs, repo_name)
+        return {"status": "success", "repo_name": repo_name, "refs": refs}
+    except Exception as e:
+        logger.error(f"Repo refs lookup failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/manifests/snapshot/{snapshot_id}")
 async def get_snapshot_manifest(snapshot_id: str):
     """Get latest published manifest for snapshot ID."""
@@ -699,6 +728,65 @@ async def get_scip_artifact(snapshot_id: str):
     if not artifact:
         raise HTTPException(status_code=404, detail="SCIP artifact not found")
     return {"status": "success", "artifact": artifact}
+
+
+@app.get("/symbols/find")
+async def find_symbol(
+    snapshot_id: str,
+    symbol_id: Optional[str] = None,
+    name: Optional[str] = None,
+    path: Optional[str] = None,
+):
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        symbol = await asyncio.to_thread(
+            fastcode.find_symbol,
+            snapshot_id,
+            symbol_id=symbol_id,
+            name=name,
+            path=path,
+        )
+        if not symbol:
+            raise HTTPException(status_code=404, detail="Symbol not found")
+        return {"status": "success", "symbol": symbol}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Symbol lookup failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/graph/callees/{snapshot_id}/{symbol_id}")
+async def get_graph_callees(snapshot_id: str, symbol_id: str, max_hops: int = 1):
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        callees = await asyncio.to_thread(fastcode.get_graph_callees, snapshot_id, symbol_id, max_hops)
+        return {"status": "success", "snapshot_id": snapshot_id, "symbol_id": symbol_id, "callees": callees}
+    except Exception as e:
+        logger.error(f"Graph callees lookup failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/graph/callers/{snapshot_id}/{symbol_id}")
+async def get_graph_callers(snapshot_id: str, symbol_id: str, max_hops: int = 1):
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        callers = await asyncio.to_thread(fastcode.get_graph_callers, snapshot_id, symbol_id, max_hops)
+        return {"status": "success", "snapshot_id": snapshot_id, "symbol_id": symbol_id, "callers": callers}
+    except Exception as e:
+        logger.error(f"Graph callers lookup failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/graph/dependencies/{snapshot_id}/{doc_id}")
+async def get_graph_dependencies(snapshot_id: str, doc_id: str, max_hops: int = 1):
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        deps = await asyncio.to_thread(fastcode.get_graph_dependencies, snapshot_id, doc_id, max_hops)
+        return {"status": "success", "snapshot_id": snapshot_id, "doc_id": doc_id, "dependencies": deps}
+    except Exception as e:
+        logger.error(f"Graph dependencies lookup failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/projection/build")

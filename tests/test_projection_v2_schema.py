@@ -1,0 +1,97 @@
+import networkx as nx
+
+from fastcode.projection_models import ProjectionScope
+from fastcode.projection_transform import ProjectionTransformer
+from fastcode.semantic_ir import IRDocument, IREdge, IRSnapshot, IRSymbol
+
+
+def _sample_snapshot() -> IRSnapshot:
+    doc = IRDocument(doc_id="doc:1", path="app/service.py", language="python", source_set={"ast"})
+    sym_a = IRSymbol(
+        symbol_id="ast:snap:repo:abc:python:app/service.py:function:login:10:20",
+        external_symbol_id=None,
+        path="app/service.py",
+        display_name="login",
+        kind="function",
+        language="python",
+        start_line=10,
+        end_line=20,
+        source_priority=10,
+        source_set={"ast"},
+        metadata={"source": "ast"},
+    )
+    sym_b = IRSymbol(
+        symbol_id="ast:snap:repo:abc:python:app/service.py:function:validate:22:30",
+        external_symbol_id=None,
+        path="app/service.py",
+        display_name="validate",
+        kind="function",
+        language="python",
+        start_line=22,
+        end_line=30,
+        source_priority=10,
+        source_set={"ast"},
+        metadata={"source": "ast"},
+    )
+    return IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:repo:abc",
+        branch="main",
+        commit_id="abc",
+        documents=[doc],
+        symbols=[sym_a, sym_b],
+        edges=[
+            IREdge(
+                edge_id="edge:contain:1",
+                src_id=doc.doc_id,
+                dst_id=sym_a.symbol_id,
+                edge_type="contain",
+                source="ast",
+                confidence="resolved",
+            ),
+            IREdge(
+                edge_id="edge:call:1",
+                src_id=sym_a.symbol_id,
+                dst_id=sym_b.symbol_id,
+                edge_type="call",
+                source="ast",
+                confidence="heuristic",
+            ),
+        ],
+    )
+
+
+def _sample_graphs():
+    from fastcode.ir_graph_builder import IRGraphs
+
+    return IRGraphs(
+        dependency_graph=nx.DiGraph(),
+        call_graph=nx.DiGraph(),
+        inheritance_graph=nx.DiGraph(),
+        reference_graph=nx.DiGraph(),
+        containment_graph=nx.DiGraph(),
+    )
+
+
+def test_projection_dual_write_fields_exist():
+    snapshot = _sample_snapshot()
+    transformer = ProjectionTransformer(config={"projection": {"enable_leiden": False}})
+    scope = ProjectionScope(scope_kind="snapshot", snapshot_id=snapshot.snapshot_id, scope_key="k2")
+    result = transformer.build(scope=scope, snapshot=snapshot, ir_graphs=_sample_graphs())
+
+    l1_content = result.l1["content"]
+    assert "relations" in l1_content
+    assert "cross_links" in l1_content["relations"]
+    assert "relations_v2" in l1_content
+    assert "xref" in l1_content["relations_v2"]
+    assert "related_code" in l1_content
+    assert "related_memory" in l1_content
+
+    chunk = result.chunks[0]
+    assert "chunk_id" in chunk
+    assert "content" in chunk
+    assert chunk["version"] == "v1"
+    assert chunk["layer"] == "L2"
+    assert "source" in chunk
+    assert "render" in chunk
+    assert "meta" in chunk

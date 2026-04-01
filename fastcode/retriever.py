@@ -6,6 +6,9 @@ Enhanced with LLM-processed query support
 import os
 import pickle
 import logging
+import math
+import re
+from collections import Counter
 from typing import List, Dict, Any, Set, Tuple, Optional, Union
 import numpy as np
 import networkx as nx
@@ -809,18 +812,7 @@ class HybridRetriever:
             if not elem_id:
                 continue
             rrf = 1.0 / (float(k_code) + float(rank))
-            entry = fused.setdefault(
-                elem_id,
-                {
-                    "element": elem,
-                    "semantic_score": 0.0,
-                    "keyword_score": 0.0,
-                    "pseudocode_score": 0.0,
-                    "graph_score": 0.0,
-                    "total_score": 0.0,
-                    "fusion": {},
-                },
-            )
+            entry = self._ensure_fused_entry(fused, elem_id, elem)
             entry["semantic_score"] = max(entry.get("semantic_score", 0.0), row.get("semantic_score", 0.0))
             entry["keyword_score"] = max(entry.get("keyword_score", 0.0), row.get("keyword_score", 0.0))
             entry["pseudocode_score"] = max(entry.get("pseudocode_score", 0.0), row.get("pseudocode_score", 0.0))
@@ -837,18 +829,7 @@ class HybridRetriever:
             if not elem_id:
                 continue
             rrf = 1.0 / (float(k_doc) + float(rank))
-            entry = fused.setdefault(
-                elem_id,
-                {
-                    "element": elem,
-                    "semantic_score": 0.0,
-                    "keyword_score": 0.0,
-                    "pseudocode_score": 0.0,
-                    "graph_score": 0.0,
-                    "total_score": 0.0,
-                    "fusion": {},
-                },
-            )
+            entry = self._ensure_fused_entry(fused, elem_id, elem)
             entry["semantic_score"] = max(entry.get("semantic_score", 0.0), row.get("semantic_score", 0.0))
             entry["keyword_score"] = max(entry.get("keyword_score", 0.0), row.get("keyword_score", 0.0))
             entry["total_score"] += (1.0 - alpha) * rrf
@@ -859,14 +840,86 @@ class HybridRetriever:
 
         out = list(fused.values())
         out.sort(key=lambda x: x.get("total_score", 0.0), reverse=True)
-        self._last_fusion_debug = {
-            "alpha": alpha,
-            "k_code": k_code,
-            "k_doc": k_doc,
-            "code_candidates": len(code_results),
-            "doc_candidates": len(doc_results),
-        }
+        debug = dict(self._last_fusion_debug or {})
+        debug.update(
+            {
+                "alpha": alpha,
+                "k_code": k_code,
+                "k_doc": k_doc,
+                "code_candidates": len(code_results),
+                "doc_candidates": len(doc_results),
+            }
+        )
+        self._last_fusion_debug = debug
         return out
+
+    @staticmethod
+    def _new_fused_entry(element: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "element": element,
+            "semantic_score": 0.0,
+            "keyword_score": 0.0,
+            "pseudocode_score": 0.0,
+            "graph_score": 0.0,
+            "total_score": 0.0,
+            "fusion": {},
+        }
+
+    def _ensure_fused_entry(
+        self,
+        fused: Dict[str, Dict[str, Any]],
+        elem_id: str,
+        element: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        entry = fused.get(elem_id)
+        if entry is None:
+            entry = self._new_fused_entry(element)
+            fused[elem_id] = entry
+        return entry
+
+    @staticmethod
+    def _sigmoid(x: float) -> float:
+        # Clamp input for numerical stability under extreme values.
+        x = max(-30.0, min(30.0, float(x)))
+        return 1.0 / (1.0 + math.exp(-x))
+
+    @staticmethod
+    def _tokenize_signal(text: str) -> List[str]:
+        return re.findall(r"[a-z0-9_]+", (text or "").lower())
+
+    @staticmethod
+    def _normalized_query_entropy(tokens: List[str]) -> float:
+        if not tokens:
+            return 0.0
+        counts = Counter(tokens)
+        total = float(len(tokens))
+        if total <= 1:
+            return 0.0
+        entropy = 0.0
+        for count in counts.values():
+            p = count / total
+            entropy -= p * math.log2(max(p, 1e-12))
+        max_entropy = math.log2(max(2, len(counts)))
+        if max_entropy <= 0:
+            return 0.0
+        return max(0.0, min(1.0, entropy / max_entropy))
+
+    @staticmethod
+    def _weighted_keyword_affinity(
+        tokens: List[str],
+        weights: Dict[str, float],
+    ) -> float:
+        if not tokens or not weights:
+            return 0.0
+        token_set = set(tokens)
+        total = float(sum(max(0.0, w) for w in weights.values()))
+        if total <= 0:
+            return 0.0
+        matched = 0.0
+        for term, weight in weights.items():
+            if term in token_set:
+                matched += max(0.0, float(weight))
+        return max(0.0, min(1.0, matched / total))
 
     def _compute_adaptive_fusion_params(
         self,
@@ -884,31 +937,92 @@ class HybridRetriever:
         k_min = float(cfg.get("rrf_k_min", 20))
         k_max = float(cfg.get("rrf_k_max", 100))
 
-        q = (query or "").lower()
-        intent = str((query_info or {}).get("intent") or "").lower()
-        doc_terms = {"design", "architecture", "adr", "rfc", "decision", "tradeoff", "rationale", "why", "approach"}
-        code_terms = {"function", "class", "method", "line", "call", "bug", "fix", "trace", "implementation"}
-        doc_hit = any(t in q for t in doc_terms) or any(t in intent for t in doc_terms)
-        code_hit = any(t in q for t in code_terms) or any(t in intent for t in code_terms)
+        q = query or ""
+        query_info = query_info or {}
+        intent = str(query_info.get("intent") or "")
+        keywords = query_info.get("keywords")
+        if isinstance(keywords, list):
+            keyword_text = " ".join(str(k) for k in keywords)
+        else:
+            keyword_text = ""
+
+        signal_text = " ".join([q, intent, keyword_text])
+        tokens = self._tokenize_signal(signal_text)
+        query_entropy = self._normalized_query_entropy(tokens)
+
+        doc_term_weights = {
+            "design": 1.0,
+            "architecture": 1.0,
+            "adr": 1.2,
+            "rfc": 1.2,
+            "decision": 1.0,
+            "tradeoff": 1.1,
+            "rationale": 1.1,
+            "approach": 0.8,
+            "spec": 0.9,
+            "why": 0.7,
+            "intent": 0.7,
+        }
+        code_term_weights = {
+            "function": 1.0,
+            "class": 1.0,
+            "method": 1.0,
+            "line": 0.7,
+            "call": 0.9,
+            "bug": 1.0,
+            "fix": 1.0,
+            "trace": 0.9,
+            "implementation": 1.0,
+            "stack": 0.7,
+            "runtime": 0.8,
+        }
+        doc_affinity = self._weighted_keyword_affinity(tokens, doc_term_weights)
+        code_affinity = self._weighted_keyword_affinity(tokens, code_term_weights)
 
         code_top = float(code_results[0].get("total_score", 0.0)) if code_results else 0.0
         doc_top = float(doc_results[0].get("total_score", 0.0)) if doc_results else 0.0
 
         alpha = alpha_base
-        if doc_hit:
-            alpha -= 0.28
-        if code_hit:
-            alpha += 0.10
-        if doc_top > (code_top * 1.15):
-            alpha -= 0.10
-        if code_top > (doc_top * 1.35):
-            alpha += 0.08
+        # Continuous domain affinity (replaces binary doc_hit/code_hit).
+        alpha -= 0.30 * doc_affinity
+        alpha += 0.18 * code_affinity
+
+        # Continuous confidence skew from retrieval channel strengths.
+        strength_delta = math.tanh((code_top - doc_top) * 2.2)
+        alpha += 0.12 * strength_delta
+
+        # High-entropy queries are more ambiguous, so pull alpha toward balanced blending.
+        entropy_pull = 0.22 * query_entropy
+        alpha = (1.0 - entropy_pull) * alpha + entropy_pull * 0.5
         alpha = min(alpha_max, max(alpha_min, alpha))
 
         code_conf = min(1.0, max(0.0, code_top))
         doc_conf = min(1.0, max(0.0, doc_top))
-        k_code = min(k_max, max(k_min, k_base + (1.0 - code_conf) * 30.0))
-        k_doc = min(k_max, max(k_min, k_base + (1.0 - doc_conf) * 30.0))
+
+        # Smooth sigmoid k to avoid cliff effects from piecewise/linear shifts.
+        code_k_z = ((0.55 - code_conf) * 4.2) + ((query_entropy - 0.5) * 1.4) + ((doc_affinity - code_affinity) * 1.0)
+        doc_k_z = ((0.55 - doc_conf) * 4.2) + ((query_entropy - 0.5) * 1.4) + ((code_affinity - doc_affinity) * 1.0)
+        k_code_sig = self._sigmoid(code_k_z)
+        k_doc_sig = self._sigmoid(doc_k_z)
+        k_code = k_min + (k_max - k_min) * k_code_sig
+        k_doc = k_min + (k_max - k_min) * k_doc_sig
+
+        # Gentle pull toward configured base to keep behavior stable across repos.
+        k_code = 0.8 * k_code + 0.2 * k_base
+        k_doc = 0.8 * k_doc + 0.2 * k_base
+
+        k_code = min(k_max, max(k_min, k_code))
+        k_doc = min(k_max, max(k_min, k_doc))
+        self._last_fusion_debug = {
+            "alpha": alpha,
+            "k_code": k_code,
+            "k_doc": k_doc,
+            "query_entropy": query_entropy,
+            "doc_affinity": doc_affinity,
+            "code_affinity": code_affinity,
+            "code_top": code_top,
+            "doc_top": doc_top,
+        }
         return alpha, k_code, k_doc
     
     def _semantic_search(

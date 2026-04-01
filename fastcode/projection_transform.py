@@ -159,6 +159,18 @@ class ProjectionTransformer:
                 for src, dst, weight in xrefs
             ]
         }
+        l1_relations_v2: Dict[str, Any] = {
+            "xref": [
+                {
+                    "id": f"{src}->{dst}",
+                    "title": f"{src} -> {dst}",
+                    "type": "xref",
+                    "confidence": min(1.0, float(weight) / 4.0),
+                }
+                for src, dst, weight in xrefs
+            ]
+        }
+        source_refs = self._source_refs(snapshot, scope)
 
         l1 = self._envelope(
             layer="L1",
@@ -167,15 +179,18 @@ class ProjectionTransformer:
             path=f"/projection/{projection_id}/l1",
             title=f"Projection {scope.scope_kind} L1",
             summary=l1_summary,
-            source_refs=self._source_refs(snapshot, scope),
+            source_refs=source_refs,
             content_extra={
                 "sections": sections,
                 "relations": l1_relations,
+                "relations_v2": l1_relations_v2,
                 "navigation": navigation,
                 "decisions": [
                     f"cluster_method={cluster_method}",
                     f"backbone_edges={len(tree_edges)}",
                 ],
+                "related_code": source_refs,
+                "related_memory": [],
             },
             projection_meta=self._projection_meta(
                 sg,
@@ -721,7 +736,21 @@ class ProjectionTransformer:
                     "facts": facts,
                     "refs": refs,
                 }
-            chunks.append({"chunk_id": chunk_id, "kind": "cluster_evidence", "content": content})
+            chunks.append(
+                {
+                    "chunk_id": chunk_id,
+                    "kind": "cluster_evidence",
+                    "content": content,
+                    "version": "v1",
+                    "layer": "L2",
+                    "id": f"chunk:{chunk_id}",
+                    "path": f"./chunks/{chunk_id}.json",
+                    "title": labels.get(cid) or chunk_id,
+                    "source": {"domain": "code", "refs": refs},
+                    "render": {"text": content.get("snippet") or ""},
+                    "meta": {"cluster_id": cid, "members": len(members)},
+                }
+            )
         return chunks
 
     def _build_l2_index(

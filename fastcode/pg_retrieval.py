@@ -55,6 +55,7 @@ class PgRetrievalStore:
                 """
             )
             # HNSW optional; skip hard-fail if not supported by deployment.
+            cur.execute("SAVEPOINT sp_hnsw")
             try:
                 cur.execute(
                     """
@@ -62,8 +63,9 @@ class PgRetrievalStore:
                     ON embedding_vectors USING hnsw (embedding vector_cosine_ops)
                     """
                 )
+                cur.execute("RELEASE SAVEPOINT sp_hnsw")
             except Exception:
-                pass
+                cur.execute("ROLLBACK TO SAVEPOINT sp_hnsw")
 
             cur.execute(
                 """
@@ -129,7 +131,19 @@ class PgRetrievalStore:
                         str(elem.get("code") or "")[:2000],
                     ]
                 )
-                metadata_json = json.dumps(elem, ensure_ascii=False)
+                # Strip numpy arrays and other non-serializable values from metadata
+                # before JSON encoding. Embeddings are stored separately in the
+                # embedding/embedding_arr columns.
+                serializable_elem = {
+                    k: (v.tolist() if isinstance(v, np.ndarray) else v)
+                    for k, v in elem.items()
+                }
+                if isinstance(serializable_elem.get("metadata"), dict):
+                    serializable_elem["metadata"] = {
+                        k: (v.tolist() if isinstance(v, np.ndarray) else v)
+                        for k, v in serializable_elem["metadata"].items()
+                    }
+                metadata_json = json.dumps(serializable_elem, ensure_ascii=False)
 
                 vector_literal = None
                 embedding_arr = None

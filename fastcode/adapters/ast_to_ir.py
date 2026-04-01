@@ -88,7 +88,7 @@ def build_ir_from_ast(
                 "source": "ast",
                 "confidence": "fallback",
                 "extractor": "fastcode.adapters.ast_to_ir",
-                **elem_meta,
+                **{k: v for k, v in elem_meta.items() if k not in ("embedding", "embedding_text")},
             },
         )
         symbols.append(symbol)

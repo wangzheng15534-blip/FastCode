@@ -317,6 +317,8 @@ class PgRetrievalStore:
                 q = np.array(query_embedding, dtype=np.float32)
                 q_norm = float(np.linalg.norm(q)) or 1.0
                 scored = []
+                allowed_types = set(element_types) if element_types else None
+                allowed_repos = set(repo_filter) if repo_filter else None
                 for row in cur.fetchall():
                     meta_raw, emb_arr = row
                     if not emb_arr:
@@ -325,6 +327,14 @@ class PgRetrievalStore:
                     denom = (float(np.linalg.norm(emb)) or 1.0) * q_norm
                     score = float(np.dot(emb, q) / denom)
                     meta = meta_raw if isinstance(meta_raw, dict) else json.loads(meta_raw)
+                    if allowed_types:
+                        meta_type = meta.get("type") or meta.get("element_type")
+                        if meta_type not in allowed_types:
+                            continue
+                    if allowed_repos:
+                        meta_repo = meta.get("repo_name")
+                        if meta_repo not in allowed_repos:
+                            continue
                     scored.append((meta, score))
                 scored.sort(key=lambda x: x[1], reverse=True)
                 return scored[:top_k]

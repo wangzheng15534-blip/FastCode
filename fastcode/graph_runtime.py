@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any, Dict, Iterable
+from urllib.parse import urlparse
 
 
 class LadybugGraphRuntime:
@@ -50,14 +52,34 @@ class LadybugGraphRuntime:
         for s in stmts:
             try:
                 self._conn.execute(s)
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.warning(f"Ladybug schema statement failed: {e}; sql={s}")
+
+    @staticmethod
+    def _sanitize_attach_dsn(dsn: str) -> str:
+        raw = (dsn or "").strip()
+        if not raw:
+            raise ValueError("empty postgres attach dsn")
+        # Reject SQL-control characters/tokens to prevent statement injection.
+        forbidden_tokens = (";", "--", "/*", "*/", "\x00", "\n", "\r")
+        if any(tok in raw for tok in forbidden_tokens):
+            raise ValueError("unsafe postgres attach dsn")
+        if "://" in raw:
+            parsed = urlparse(raw)
+            if parsed.scheme not in {"postgres", "postgresql"}:
+                raise ValueError("unsupported postgres attach dsn scheme")
+        else:
+            if not re.fullmatch(r"[A-Za-z0-9_\-.:/@?&=%+, ]+", raw):
+                raise ValueError("unsupported postgres attach dsn format")
+        # Escape single quotes for SQL literal context.
+        return raw.replace("'", "''")
 
     def _attach_postgres(self, dsn: str) -> None:
         if not self._conn:
             return
         try:
-            self._conn.execute(f"ATTACH '{dsn}' AS pg (dbtype postgres)")
+            safe_dsn = self._sanitize_attach_dsn(dsn)
+            self._conn.execute(f"ATTACH '{safe_dsn}' AS pg (dbtype postgres)")
         except Exception as e:
             self.logger.warning(f"Ladybug ATTACH postgres failed: {e}")
 

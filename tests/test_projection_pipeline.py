@@ -106,6 +106,7 @@ def test_projection_transform_emits_required_layers_and_meta():
     assert "covers_nodes" in result.l0["meta"]
     assert "covers_edges" in result.l1["meta"]
     assert "projection_method" in result.l2_index["meta"]
+    assert result.l1["meta"]["algo_version"] == transformer.ALGO_VERSION
     assert result.chunks
 
 
@@ -139,3 +140,14 @@ def test_scip_adapter_uses_snapshot_prefixed_symbol_ids_and_ref_edges():
     assert any(e.edge_type == "contain" and e.source == "scip" for e in snap.edges)
     assert any(e.edge_type == "ref" and e.source == "scip" for e in snap.edges)
     assert any(o.role == "type_definition" for o in snap.occurrences)
+
+
+def test_steiner_prune_removes_non_terminal_leaves():
+    transformer = ProjectionTransformer(config={"projection": {"enable_leiden": False, "steiner_prune": True}})
+    tree = nx.Graph()
+    tree.add_edge("t1", "mid")
+    tree.add_edge("mid", "t2")
+    tree.add_edge("mid", "leaf")
+    pruned = transformer._prune_steiner_leaves(tree, {"t1", "t2"})
+    assert "leaf" not in pruned.nodes
+    assert {"t1", "mid", "t2"} == set(pruned.nodes)

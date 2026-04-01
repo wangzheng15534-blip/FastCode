@@ -28,12 +28,18 @@ class TerminusPublisher:
         snapshot: Dict[str, Any],
         manifest: Dict[str, Any],
         git_meta: Dict[str, Any],
+        previous_snapshot_symbols: Dict[str, str] | None = None,
         idempotency_key: str | None = None,
     ) -> None:
         if not self.endpoint:
             raise RuntimeError("Terminus endpoint is not configured")
 
-        payload = self.build_lineage_payload(snapshot=snapshot, manifest=manifest, git_meta=git_meta)
+        payload = self.build_lineage_payload(
+            snapshot=snapshot,
+            manifest=manifest,
+            git_meta=git_meta,
+            previous_snapshot_symbols=previous_snapshot_symbols,
+        )
         body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             self.endpoint,
@@ -58,6 +64,7 @@ class TerminusPublisher:
         snapshot: Dict[str, Any],
         manifest: Dict[str, Any],
         git_meta: Dict[str, Any],
+        previous_snapshot_symbols: Dict[str, str] | None = None,
     ) -> Dict[str, Any]:
         repo_name = snapshot.get("repo_name") or git_meta.get("repo_name")
         snapshot_id = snapshot.get("snapshot_id")
@@ -111,6 +118,21 @@ class TerminusPublisher:
             edges.append({"type": "branch_head", "src": branch_node_id, "dst": snapshot_node_id})
         if commit_node_id:
             edges.append({"type": "commit_snapshot", "src": commit_node_id, "dst": snapshot_node_id})
+            parent_ids = git_meta.get("parent_commit_ids") or []
+            if not parent_ids and git_meta.get("parent_commit_id"):
+                parent_ids = [git_meta.get("parent_commit_id")]
+            for parent_id in parent_ids:
+                if not parent_id:
+                    continue
+                parent_node_id = f"commit:{repo_name}:{parent_id}"
+                nodes.append(
+                    {
+                        "id": parent_node_id,
+                        "type": "Commit",
+                        "props": {"repo_name": repo_name, "commit_id": parent_id},
+                    }
+                )
+                edges.append({"type": "commit_parent", "src": commit_node_id, "dst": parent_node_id})
         if run_node_id:
             edges.append({"type": "index_run_for_snapshot", "src": run_node_id, "dst": snapshot_node_id})
         if manifest_node_id:
@@ -167,6 +189,15 @@ class TerminusPublisher:
                             "dst": node_id,
                         }
                     )
+            ext_symbol = sym.get("external_symbol_id")
+            if ext_symbol and previous_snapshot_symbols and ext_symbol in previous_snapshot_symbols:
+                edges.append(
+                    {
+                        "type": "symbol_version_from",
+                        "src": node_id,
+                        "dst": previous_snapshot_symbols[ext_symbol],
+                    }
+                )
 
         return {
             "version": "v1",

@@ -1,7 +1,8 @@
 """
-Optional Ladybug graph runtime overlay.
+Optional LadybugDB graph runtime overlay.
 
 PostgreSQL remains source-of-truth. This runtime is best-effort and optional.
+Uses LadybugDB's Cypher-like query language for graph storage.
 """
 
 from __future__ import annotations
@@ -9,8 +10,18 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, List
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
+
+
+def _esc(val: Any) -> str:
+    """Escape a value for inline Cypher property strings."""
+    if val is None:
+        return "NULL"
+    s = str(val).replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
+    return f'"{s}"'
 
 
 class LadybugGraphRuntime:
@@ -27,12 +38,10 @@ class LadybugGraphRuntime:
 
     def _init(self) -> None:
         try:
-            import ladybugdb  # type: ignore
+            from real_ladybug import Database, Connection  # type: ignore
 
-            ensure_dir = os.path.dirname(os.path.abspath(self.db_path))
-            if ensure_dir:
-                os.makedirs(ensure_dir, exist_ok=True)
-            self._conn = ladybugdb.connect(self.db_path)
+            db = Database()
+            self._conn = Connection(database=db)
             self._create_schema()
             if self.postgres_attach_dsn:
                 self._attach_postgres(self.postgres_attach_dsn)
@@ -45,15 +54,35 @@ class LadybugGraphRuntime:
     def _create_schema(self) -> None:
         if not self._conn:
             return
-        stmts = [
-            "CREATE TABLE IF NOT EXISTS design_documents (chunk_id TEXT PRIMARY KEY, snapshot_id TEXT, repo_name TEXT, path TEXT, title TEXT, heading TEXT, doc_type TEXT, content TEXT)",
-            "CREATE TABLE IF NOT EXISTS mentions (chunk_id TEXT, symbol_id TEXT, confidence TEXT)",
+        # LadybugDB uses node/rel tables (not SQL tables).
+        # Create one at a time; IF NOT EXISTS prevents errors on re-init.
+        node_tables = [
+            (
+                "CREATE NODE TABLE IF NOT EXISTS design_documents "
+                "(chunk_id STRING, snapshot_id STRING, repo_name STRING, "
+                "path STRING, title STRING, heading STRING, doc_type STRING, "
+                "content STRING, PRIMARY KEY(chunk_id))"
+            ),
+            (
+                "CREATE NODE TABLE IF NOT EXISTS mentions "
+                "(mention_id STRING, chunk_id STRING, symbol_id STRING, "
+                "confidence STRING, PRIMARY KEY(mention_id))"
+            ),
         ]
-        for s in stmts:
+        for s in node_tables:
             try:
                 self._conn.execute(s)
             except Exception as e:
                 self.logger.warning(f"Ladybug schema statement failed: {e}; sql={s}")
+
+        # Create rel table only after both node tables exist.
+        try:
+            self._conn.execute(
+                "CREATE REL TABLE IF NOT EXISTS has_mention "
+                "(FROM design_documents TO mentions)"
+            )
+        except Exception as e:
+            self.logger.warning(f"Ladybug rel table creation failed: {e}")
 
     @staticmethod
     def _sanitize_attach_dsn(dsn: str) -> str:
@@ -89,32 +118,69 @@ class LadybugGraphRuntime:
         chunks: Iterable[Dict[str, Any]],
         mentions: Iterable[Dict[str, Any]],
     ) -> bool:
+        """Sync doc chunks and mentions to LadybugDB as graph nodes."""
         if not self.enabled or not self._conn:
             return False
         try:
             for c in chunks:
+                chunk_id = c.get("chunk_id", "")
+                # Upsert: delete old node then create new one
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO design_documents VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    [
-                        c.get("chunk_id"),
-                        c.get("snapshot_id"),
-                        c.get("repo_name"),
-                        c.get("path"),
-                        c.get("title"),
-                        c.get("heading"),
-                        c.get("doc_type"),
-                        c.get("content"),
-                    ],
+                    f"MATCH (d:design_documents {{chunk_id: {_esc(chunk_id)}}}) DELETE d"
+                )
+                self._conn.execute(
+                    "CREATE (d:design_documents {"
+                    f"chunk_id: {_esc(chunk_id)}, "
+                    f"snapshot_id: {_esc(c.get('snapshot_id'))}, "
+                    f"repo_name: {_esc(c.get('repo_name'))}, "
+                    f"path: {_esc(c.get('path'))}, "
+                    f"title: {_esc(c.get('title'))}, "
+                    f"heading: {_esc(c.get('heading'))}, "
+                    f"doc_type: {_esc(c.get('doc_type'))}, "
+                    f"content: {_esc(c.get('content'))}"
+                    "})"
                 )
             for m in mentions:
+                # Generate synthetic mention_id from composite key
+                mention_id = f"{m.get('chunk_id', '')}:{m.get('symbol_id', '')}"
+                # Upsert: delete old then create new
                 self._conn.execute(
-                    "INSERT INTO mentions VALUES (?, ?, ?)",
-                    [m.get("chunk_id"), m.get("symbol_id"), m.get("confidence")],
+                    f"MATCH (mt:mentions {{mention_id: {_esc(mention_id)}}}) DELETE mt"
+                )
+                self._conn.execute(
+                    "CREATE (mt:mentions {"
+                    f"mention_id: {_esc(mention_id)}, "
+                    f"chunk_id: {_esc(m.get('chunk_id'))}, "
+                    f"symbol_id: {_esc(m.get('symbol_id'))}, "
+                    f"confidence: {_esc(m.get('confidence'))}"
+                    "})"
                 )
             return True
         except Exception as e:
             self.logger.warning(f"Ladybug sync failed: {e}")
             return False
+
+    def query_docs(self, *, snapshot_id: str) -> List[Dict[str, Any]]:
+        """Query doc chunks from LadybugDB by snapshot_id."""
+        if not self.enabled or not self._conn:
+            return []
+        try:
+            result = self._conn.execute(
+                f"MATCH (d:design_documents {{snapshot_id: {_esc(snapshot_id)}}}) "
+                "RETURN d.chunk_id, d.heading, d.doc_type, d.content"
+            )
+            rows = []
+            for row in result:
+                rows.append({
+                    "chunk_id": row[0],
+                    "heading": row[1],
+                    "doc_type": row[2],
+                    "content": row[3],
+                })
+            return rows
+        except Exception as e:
+            self.logger.warning(f"Ladybug query failed: {e}")
+            return []
 
     def close(self) -> None:
         try:

@@ -8,6 +8,7 @@ based on the target language. Each indexer produces a binary .scip artifact.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 from typing import Dict, List, Optional, Tuple
@@ -85,3 +86,42 @@ def run_scip_indexer(
             f"{proc.stderr.strip() or proc.stdout.strip()}"
         )
     return output_path
+
+
+# Map file extension -> language name (only languages with SCIP indexers)
+_EXTENSION_MAP: Dict[str, str] = {
+    ".java": "java",
+    ".kt": "kotlin",
+    ".scala": "scala",
+    ".go": "go",
+    ".py": "python",
+    ".rb": "ruby",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".hpp": "cpp",
+    ".cs": "csharp",
+    ".rs": "rust",
+    ".php": "php",
+    ".dart": "dart",
+}
+
+
+def detect_scip_languages(repo_path: str) -> List[str]:
+    """Walk the repo and return deduplicated list of languages with SCIP indexers support."""
+    seen: set[str] = set()
+    for root, _dirs, files in os.walk(repo_path):
+        # Skip hidden and common non-source directories
+        dirs_to_skip = {".git", ".hg", "node_modules", "__pycache__", ".venv", "venv"}
+        _dirs[:] = [d for d in _dirs if d not in dirs_to_skip]
+        for fname in files:
+            _, ext = os.path.splitext(fname)
+            lang = _EXTENSION_MAP.get(ext)
+            if lang:
+                seen.add(lang)
+    return sorted(seen)

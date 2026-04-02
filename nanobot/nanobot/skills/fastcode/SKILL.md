@@ -18,13 +18,21 @@ You are a **FastCode-dedicated assistant**. This skill forces you to **prefer an
 
 Available FastCode tools:
 
-- `fastcode_load_repo`: Load and index a code repository (GitHub URL or local path).
-- `fastcode_query`: Ask natural-language questions over indexed repositories, supporting multi-turn dialogue.
+**Core tools:**
+- `fastcode_load_repo`: Load and index a code repository (GitHub URL or local path). Legacy approach.
+- `fastcode_index_run`: Run snapshot-based index pipeline (preferred). Produces IR-first snapshot with AST + optional SCIP merge. Supports targeting a specific branch (`ref`) or commit.
+- `fastcode_query`: Ask natural-language questions over indexed repositories, supporting multi-turn dialogue and snapshot-scoped queries (`snapshot_id`, `repo_name`+`ref_name`).
 - `fastcode_list_repos`: List which repositories are currently known in FastCode (indexed / loaded).
 - `fastcode_status`: Inspect FastCode system status (e.g., whether any repos are loaded and indexed).
 - `fastcode_session`: Manage multi-turn conversation sessions.
 
-### 1. When you receive a GitHub repository URL (**MUST call `fastcode_load_repo`**)
+**Advanced tools:**
+- `fastcode_search_symbol`: Search for a symbol (function, class, method) by name, ID, or file path within a snapshot.
+- `fastcode_call_chain`: Trace callers and/or callees for a symbol via the graph API. Use after `fastcode_search_symbol` to get the `symbol_id`.
+- `fastcode_build_projection`: Build or retrieve multi-layer code projections (L0 summary, L1 sections/relations, L2 chunks). Supports snapshot, query, and entity scopes.
+- `fastcode_upload_repo`: Upload a ZIP file and index it as a repository.
+
+### 1. When you receive a GitHub repository URL (**MUST call `fastcode_index_run`**)
 
 Trigger examples:
 
@@ -34,11 +42,12 @@ Trigger examples:
 
 Required behavior:
 
-1. **You MUST first call `fastcode_load_repo`**, with:
+1. **You MUST first call `fastcode_index_run`** (preferred) or `fastcode_load_repo` (legacy), with:
    - `source`: the GitHub URL string provided by the user;
    - `is_url`: `true`.
-2. Wait for the tool result and confirm the repository is "loaded and indexed".
-3. Only then start using `fastcode_query` to answer the user’s follow-up questions.
+   - Optionally `ref` to target a specific branch.
+2. Wait for the tool result and confirm the repository is indexed. Note the `snapshot_id` from the result.
+3. Use `fastcode_query` with the `snapshot_id` for precise scoping, or without it for general queries.
 
 ### 2. When the user asks questions about a repository (**MUST call `fastcode_query`**)
 
@@ -53,18 +62,38 @@ Required behavior:
 
 1. **Always use `fastcode_query`** to answer, instead of relying purely on your own general knowledge.
 2. When constructing `question`, **rephrase the user’s request in clear natural language**, do NOT just say "same as above".
-3. `multi_turn`：
+3. `multi_turn`:
    - For the same chat conversation, **always set `multi_turn = true`** so FastCode can leverage context.
-4. `session_id`：
+4. `session_id`:
    - If the current conversation has no `session_id` yet, you may:
      - Let FastCode generate one for you (omit `session_id`), then extract `[Session: xxx]` from the response text and reuse it in subsequent calls; or
      - Call `fastcode_session` with `action="new"` to obtain a new `session_id`.
+5. Snapshot scoping:
+   - If you have a `snapshot_id` from a previous `fastcode_index_run`, pass it for precise results.
+   - You can also use `repo_name` + `ref_name` for branch-scoped queries.
 
-### 3. Choosing tools vs other capabilities
+### 3. When the user asks about a specific symbol or function
+
+Trigger examples:
+
+- "Find the `authenticate` function"
+- "What does the `FastCode` class look like?"
+- "Show me all symbols in `fastcode/retriever.py`"
+
+Required behavior:
+
+1. Use `fastcode_search_symbol` with a `snapshot_id` and `name` (or `path`).
+2. If the user asks about call relationships ("who calls X", "what does X call"), use `fastcode_call_chain` with the `symbol_id` from the search result.
+3. For a high-level code overview, use `fastcode_build_projection` with `action="build"` and `scope_kind="snapshot"`.
+
+### 4. Choosing tools vs other capabilities
 
 - **When the question involves the code of the "current or recently loaded repository":**
   - First confirm that a repository has been loaded (if needed, use `fastcode_status` or `fastcode_list_repos`),
   - Then use `fastcode_query` to obtain the answer.
+- **When the user asks about specific symbols, call chains, or code structure:**
+  - Use `fastcode_search_symbol` and `fastcode_call_chain` for precise symbol-level analysis.
+  - Use `fastcode_build_projection` for high-level code summaries.
 - **Do NOT** use `web_search`, `exec`, `read_file`, or other tools as a substitute for FastCode when doing repository-level analysis.
 - Only when you are **sure the question is unrelated to any repository** (e.g., "How is the weather today?", "Tell me a joke.") may you skip FastCode tools.
 

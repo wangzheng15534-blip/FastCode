@@ -29,9 +29,7 @@ dependencies = [
     "libcst",
     # Embeddings & vector store
     "sentence-transformers",
-    "onnxruntime",
     "faiss-cpu",
-    "chromadb",
     # Search & retrieval
     "rank-bm25",
     "networkx",
@@ -45,8 +43,6 @@ dependencies = [
     "uvicorn",
     "pydantic",
     "flask",
-    "flask-cors",
-    "python-multipart",
     # Database
     "psycopg[binary]",
     "psycopg_pool",
@@ -60,6 +56,8 @@ dependencies = [
     "redis",
     # MCP server
     "mcp[cli]",
+    # Semantic chunking
+    "chonkie[semantic]>=1.6",
 ]
 
 [project.optional-dependencies]

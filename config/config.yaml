@@ -204,9 +204,8 @@ docs_integration:
     - "docs/rfc/**"
   allow_paths: []
   deny_paths: []
-  chunk_size: 420
-  chunk_overlap: 80
-  max_chunk_chars: 2400
+  chunk_token_size: 512
+  similarity_threshold: 0.5
 
 # Agent Settings
 agent:

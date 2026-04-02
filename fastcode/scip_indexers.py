@@ -11,10 +11,9 @@ import logging
 import os
 import shutil
 import subprocess
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-if TYPE_CHECKING:
-    from .scip_models import SCIPIndex
+from .scip_models import SCIPIndex
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +38,6 @@ SUPPORTED_LANGUAGES: Dict[str, Tuple[str, List[str]]] = {
 
 def get_indexer_command(
     language: str,
-    repo_path: str,
     output_path: str,
 ) -> Optional[List[str]]:
     """Build the indexer command for a language. Returns None if unsupported."""
@@ -61,7 +59,7 @@ def run_scip_indexer(
     Returns the output artifact path on success.
     Raises RuntimeError if indexer is not installed or fails.
     """
-    cmd = get_indexer_command(language, repo_path, output_path)
+    cmd = get_indexer_command(language, output_path)
     if cmd is None:
         raise RuntimeError(f"No SCIP indexer available for language: {language}")
 
@@ -118,10 +116,10 @@ _EXTENSION_MAP: Dict[str, str] = {
 def detect_scip_languages(repo_path: str) -> List[str]:
     """Walk the repo and return deduplicated list of languages with SCIP indexers support."""
     seen: set[str] = set()
-    for root, _dirs, files in os.walk(repo_path):
+    for _, dirs, files in os.walk(repo_path):
         # Skip hidden and common non-source directories
         dirs_to_skip = {".git", ".hg", "node_modules", "__pycache__", ".venv", "venv"}
-        _dirs[:] = [d for d in _dirs if d not in dirs_to_skip]
+        dirs[:] = [d for d in dirs if d not in dirs_to_skip]
         for fname in files:
             _, ext = os.path.splitext(fname)
             lang = _EXTENSION_MAP.get(ext)

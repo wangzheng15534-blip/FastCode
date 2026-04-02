@@ -154,3 +154,44 @@ def test_binary_scip_to_ir_round_trip(tmp_path):
     assert len(snapshot.occurrences) == 1
     assert snapshot.occurrences[0].role == "definition"
     assert len(snapshot.edges) == 2  # containment + ref edge
+
+
+def test_run_scip_python_index_delegates_to_scip_indexers(tmp_path):
+    """run_scip_python_index delegates to scip_indexers.run_scip_indexer."""
+    from fastcode.scip_loader import run_scip_python_index
+    from unittest.mock import patch
+
+    with patch("fastcode.scip_indexers.run_scip_indexer", return_value="/fake/output.scip") as mock_run:
+        result = run_scip_python_index(str(tmp_path), "/fake/output.scip")
+
+    mock_run.assert_called_once_with("python", str(tmp_path), "/fake/output.scip")
+    assert result == "/fake/output.scip"
+
+
+def test_no_run_scip_python_index_function_body():
+    """No duplicate run_scip_python_index function body in scip_loader."""
+    import inspect
+    from fastcode import scip_loader
+
+    source = inspect.getsource(scip_loader)
+    # Should only have the thin wrapper, not a full indexer body
+    func = dict(inspect.getmembers(scip_loader, predicate=inspect.isfunction))["run_scip_python_index"]
+    # The function body should be very short (just delegates)
+    source_lines = inspect.getsource(func).split("\n")
+    non_blank = [l.strip() for l in source_lines if l.strip()]
+    # Should be <= 5 non-blank lines (def + docstring + import + return)
+    assert len(non_blank) <= 5, f"run_scip_python_index should be a thin wrapper, got {len(non_blank)} lines"
+
+
+def test_empty_range_constant_not_duplicated():
+    """_EMPTY_RANGE is defined once in scip_models."""
+    from fastcode.scip_models import _EMPTY_RANGE
+    assert _EMPTY_RANGE == [None, None, None, None]
+
+
+def test_skip_dirs_is_frozen():
+    """_SKIP_DIRS is a frozenset for immutability."""
+    from fastcode.scip_indexers import _SKIP_DIRS
+    assert isinstance(_SKIP_DIRS, frozenset)
+    assert ".git" in _SKIP_DIRS
+    assert "node_modules" in _SKIP_DIRS

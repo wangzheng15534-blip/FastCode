@@ -11,7 +11,10 @@ import logging
 import os
 import shutil
 import subprocess
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from .scip_models import SCIPIndex
 
 logger = logging.getLogger(__name__)
 
@@ -125,3 +128,24 @@ def detect_scip_languages(repo_path: str) -> List[str]:
             if lang:
                 seen.add(lang)
     return sorted(seen)
+
+
+def run_scip_for_language(
+    language: str,
+    repo_path: str,
+    output_dir: str,
+) -> Optional[SCIPIndex]:
+    """
+    Run the SCIP indexer for one language and load the result.
+
+    Returns SCIPIndex on success, None if indexer not available.
+    """
+    from .scip_loader import load_scip_artifact
+
+    output_path = os.path.join(output_dir, f"{language}.scip")
+    try:
+        artifact_path = run_scip_indexer(language, repo_path, output_path)
+        return load_scip_artifact(artifact_path)
+    except RuntimeError as exc:
+        logger.warning("SCIP indexer for %s unavailable: %s", language, exc)
+        return None

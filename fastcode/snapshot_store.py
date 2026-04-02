@@ -679,7 +679,11 @@ class SnapshotStore:
                         json.dumps(occ.to_dict(), ensure_ascii=False),
                     ),
                 )
+            seen_edge_ids: set[str] = set()
             for edge in snapshot.edges:
+                if edge.edge_id in seen_edge_ids:
+                    continue
+                seen_edge_ids.add(edge.edge_id)
                 self.db_runtime.execute(
                     conn,
                     """

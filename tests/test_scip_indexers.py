@@ -120,3 +120,38 @@ def test_auto_detect_deduplicates():
         (p / "b.java").write_text("class B {}")
         languages = detect_scip_languages(td)
         assert languages.count("java") == 1
+
+
+def test_run_scip_for_language_success(tmp_path):
+    """run_scip_for_language orchestrates indexing and loading."""
+    from fastcode.scip_indexers import run_scip_for_language
+    from fastcode.scip_pb2 import Index
+
+    # Create a fake repo with a Java file
+    (tmp_path / "Main.java").write_text("class Main {}")
+    output_dir = tmp_path / "scip_output"
+    output_dir.mkdir()
+    # Build a fake .scip artifact
+    idx = Index()
+    idx.metadata.version = 0
+    idx.metadata.tool_info.name = "scip-java"
+    doc = idx.documents.add()
+    doc.relative_path = "Main.java"
+    doc.language = "java"
+    artifact_path = output_dir / "java.scip"
+    artifact_path.write_bytes(idx.SerializeToString())
+    with patch("fastcode.scip_indexers.run_scip_indexer", return_value=str(artifact_path)):
+        result = run_scip_for_language("java", str(tmp_path), str(output_dir))
+
+    assert result is not None
+    assert len(result.documents) == 1
+    assert result.documents[0].language == "java"
+
+
+def test_run_scip_for_language_not_available(tmp_path):
+    """run_scip_for_language returns None when indexer not installed."""
+    from fastcode.scip_indexers import run_scip_for_language
+    with patch("fastcode.scip_indexers.run_scip_indexer", side_effect=RuntimeError("not found")):
+        result = run_scip_for_language("java", str(tmp_path), str(tmp_path))
+
+    assert result is None

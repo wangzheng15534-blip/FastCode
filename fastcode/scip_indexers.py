@@ -11,14 +11,12 @@ import logging
 import os
 import shutil
 import subprocess
-from typing import Dict, List, Optional, Tuple
 
 from .scip_models import SCIPIndex
 
 logger = logging.getLogger(__name__)
 
-# Map language name -> (binary_name, extra_args)
-SUPPORTED_LANGUAGES: Dict[str, Tuple[str, List[str]]] = {
+SUPPORTED_LANGUAGES: dict[str, tuple[str, list[str]]] = {
     "java": ("scip-java", ["index", "--output"]),
     "kotlin": ("scip-java", ["index", "--output"]),
     "scala": ("scip-java", ["index", "--output"]),
@@ -39,7 +37,7 @@ SUPPORTED_LANGUAGES: Dict[str, Tuple[str, List[str]]] = {
 def get_indexer_command(
     language: str,
     output_path: str,
-) -> Optional[List[str]]:
+) -> list[str] | None:
     """Build the indexer command for a language. Returns None if unsupported."""
     entry = SUPPORTED_LANGUAGES.get(language)
     if not entry:
@@ -89,8 +87,7 @@ def run_scip_indexer(
     return output_path
 
 
-# Map file extension -> language name (only languages with SCIP indexers)
-_EXTENSION_MAP: Dict[str, str] = {
+_EXTENSION_MAP: dict[str, str] = {
     ".java": "java",
     ".kt": "kotlin",
     ".scala": "scala",
@@ -112,14 +109,13 @@ _EXTENSION_MAP: Dict[str, str] = {
     ".dart": "dart",
 }
 
+_SKIP_DIRS = frozenset({".git", ".hg", "node_modules", "__pycache__", ".venv", "venv"})
 
-def detect_scip_languages(repo_path: str) -> List[str]:
-    """Walk the repo and return deduplicated list of languages with SCIP indexers support."""
+
+def detect_scip_languages(repo_path: str) -> list[str]:
     seen: set[str] = set()
     for _, dirs, files in os.walk(repo_path):
-        # Skip hidden and common non-source directories
-        dirs_to_skip = {".git", ".hg", "node_modules", "__pycache__", ".venv", "venv"}
-        dirs[:] = [d for d in dirs if d not in dirs_to_skip]
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
         for fname in files:
             _, ext = os.path.splitext(fname)
             lang = _EXTENSION_MAP.get(ext)
@@ -132,7 +128,7 @@ def run_scip_for_language(
     language: str,
     repo_path: str,
     output_dir: str,
-) -> Optional[SCIPIndex]:
+) -> SCIPIndex | None:
     """
     Run the SCIP indexer for one language and load the result.
 

@@ -5,71 +5,73 @@ Typed SCIP payload models.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+_EMPTY_RANGE: list[None] = [None, None, None, None]
 
 
 @dataclass
 class SCIPOccurrence:
     symbol: str
     role: str = "reference"
-    range: List[Optional[int]] = field(default_factory=lambda: [None, None, None, None])
+    range: list[int | None] = field(default_factory=lambda: list(_EMPTY_RANGE))
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SCIPOccurrence":
+    def from_dict(cls, data: dict[str, Any]) -> SCIPOccurrence:
         return cls(
             symbol=str(data.get("symbol") or ""),
             role=str(data.get("role") or "reference"),
-            range=list(data.get("range") or [None, None, None, None]),
+            range=list(data.get("range") or _EMPTY_RANGE),
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "symbol": self.symbol,
             "role": self.role,
-            "range": list(self.range or [None, None, None, None]),
+            "range": list(self.range or _EMPTY_RANGE),
         }
 
 
 @dataclass
 class SCIPSymbol:
     symbol: str
-    name: Optional[str] = None
-    kind: Optional[str] = None
-    qualified_name: Optional[str] = None
-    signature: Optional[str] = None
-    range: List[Optional[int]] = field(default_factory=lambda: [None, None, None, None])
+    name: str | None = None
+    kind: str | None = None
+    qualified_name: str | None = None
+    signature: str | None = None
+    range: list[int | None] = field(default_factory=lambda: list(_EMPTY_RANGE))
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SCIPSymbol":
+    def from_dict(cls, data: dict[str, Any]) -> SCIPSymbol:
         return cls(
             symbol=str(data.get("symbol") or ""),
             name=data.get("name"),
             kind=data.get("kind"),
             qualified_name=data.get("qualified_name"),
             signature=data.get("signature"),
-            range=list(data.get("range") or [None, None, None, None]),
+            range=list(data.get("range") or _EMPTY_RANGE),
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "symbol": self.symbol,
             "name": self.name,
             "kind": self.kind,
             "qualified_name": self.qualified_name,
             "signature": self.signature,
-            "range": list(self.range or [None, None, None, None]),
+            "range": list(self.range or _EMPTY_RANGE),
         }
 
 
 @dataclass
 class SCIPDocument:
     path: str
-    language: Optional[str] = None
-    symbols: List[SCIPSymbol] = field(default_factory=list)
-    occurrences: List[SCIPOccurrence] = field(default_factory=list)
+    language: str | None = None
+    symbols: list[SCIPSymbol] = field(default_factory=list)
+    occurrences: list[SCIPOccurrence] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SCIPDocument":
+    def from_dict(cls, data: dict[str, Any]) -> SCIPDocument:
         return cls(
             path=str(data.get("path") or ""),
             language=data.get("language"),
@@ -77,7 +79,7 @@ class SCIPDocument:
             occurrences=[SCIPOccurrence.from_dict(o) for o in (data.get("occurrences") or [])],
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "path": self.path,
             "language": self.language,
@@ -88,13 +90,13 @@ class SCIPDocument:
 
 @dataclass
 class SCIPIndex:
-    documents: List[SCIPDocument] = field(default_factory=list)
-    indexer_name: Optional[str] = None
-    indexer_version: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    documents: list[SCIPDocument] = field(default_factory=list)
+    indexer_name: str | None = None
+    indexer_version: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SCIPIndex":
+    def from_dict(cls, data: dict[str, Any]) -> SCIPIndex:
         reserved = {"documents", "indexer_name", "indexer_version"}
         metadata = {k: v for k, v in data.items() if k not in reserved}
         return cls(
@@ -104,7 +106,7 @@ class SCIPIndex:
             metadata=metadata,
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = dict(self.metadata or {})
         data.update(
             {
@@ -120,12 +122,12 @@ class SCIPIndex:
 class SCIPArtifactRef:
     snapshot_id: str
     indexer_name: str
-    indexer_version: Optional[str]
+    indexer_version: str | None
     artifact_path: str
     checksum: str
     created_at: str
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "snapshot_id": self.snapshot_id,
             "indexer_name": self.indexer_name,

@@ -65,43 +65,13 @@ def load_scip_artifact(path: str) -> SCIPIndex:
 
 
 def run_scip_python_index(repo_path: str, output_path: str) -> str:
-    """
-    Run scip-python locally and return produced artifact path.
-
-    Delegates to the multi-language indexer runner in scip_indexers.
-    """
     from .scip_indexers import run_scip_indexer
 
     return run_scip_indexer("python", repo_path, output_path)
-    if cmd is None:
-        raise RuntimeError(f"No SCIP indexer available for language: {language}")
-    binary_name = cmd[0]
-    binary_path = shutil.which(binary_name)
-    if not binary_path:
-        raise RuntimeError(
-            f"SCIP indexer '{binary_name}' not found in PATH. "
-            f"Install it to enable {language} support via SCIP"
-        )
-    cmd[0] = binary_path
-    logger.info("Running SCIP indexer: %s", " ".join(cmd))
-    proc = subprocess.run(
-        cmd,
-        cwd=repo_path,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"{binary_name} failed ({proc.returncode}): "
-            f"{proc.stderr.strip() or proc.stdout.strip()}"
-        )
-    return output_path
 
 
 def _protobuf_to_scip_index(pb_index) -> SCIPIndex:
-    """Convert a protobuf Index message to SCIPIndex."""
-    from .scip_models import SCIPDocument, SCIPOccurrence, SCIPSymbol
+    from .scip_models import SCIPDocument, SCIPOccurrence, SCIPSymbol, _EMPTY_RANGE
 
     documents = []
     for doc in pb_index.documents:
@@ -116,7 +86,7 @@ def _protobuf_to_scip_index(pb_index) -> SCIPIndex:
             )
         occurrences = []
         for occ in doc.occurrences:
-            r = list(occ.range) if occ.range else [None, None, None, None]
+            r = list(occ.range) if occ.range else list(_EMPTY_RANGE)
             roles = occ.symbol_roles
             role = "definition" if roles & 1 else "reference"
             occurrences.append(
@@ -126,11 +96,10 @@ def _protobuf_to_scip_index(pb_index) -> SCIPIndex:
                     range=r,
                 )
             )
-        lang = doc.language if doc.language else None
         documents.append(
             SCIPDocument(
                 path=doc.relative_path,
-                language=lang,
+                language=doc.language or None,
                 symbols=symbols,
                 occurrences=occurrences,
             )

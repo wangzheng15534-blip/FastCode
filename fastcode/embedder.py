@@ -96,6 +96,9 @@ class CodeEmbedder:
         return embeddings
 
     def _embed_text_ollama(self, text: str) -> np.ndarray:
+        # Truncate text to avoid Ollama context window overflow
+        if len(text) > self.max_seq_length:
+            text = text[:self.max_seq_length]
         payload = {"model": self.model_name, "prompt": text}
         req = urllib.request.Request(
             self.ollama_url,

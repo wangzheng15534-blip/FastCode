@@ -45,9 +45,9 @@ def test_graph_and_symbol_endpoints():
         assert symbol.status_code == 200
         assert symbol.json()["symbol"]["display_name"] == "foo"
 
-        callees = client.get("/graph/callees/snap:repo:1/sym:1")
-        callers = client.get("/graph/callers/snap:repo:1/sym:1")
-        deps = client.get("/graph/dependencies/snap:repo:1/doc:1")
+        callees = client.get("/graph/callees", params={"snapshot_id": "snap:repo:1", "symbol_id": "sym:1"})
+        callers = client.get("/graph/callers", params={"snapshot_id": "snap:repo:1", "symbol_id": "sym:1"})
+        deps = client.get("/graph/dependencies", params={"snapshot_id": "snap:repo:1", "doc_id": "doc:1"})
         assert callees.status_code == 200
         assert callers.status_code == 200
         assert deps.status_code == 200

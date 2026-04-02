@@ -757,7 +757,7 @@ async def find_symbol(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/graph/callees/{snapshot_id}/{symbol_id}")
+@app.get("/graph/callees")
 async def get_graph_callees(snapshot_id: str, symbol_id: str, max_hops: int = 1):
     fastcode = _ensure_fastcode_initialized()
     try:
@@ -768,7 +768,7 @@ async def get_graph_callees(snapshot_id: str, symbol_id: str, max_hops: int = 1)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/graph/callers/{snapshot_id}/{symbol_id}")
+@app.get("/graph/callers")
 async def get_graph_callers(snapshot_id: str, symbol_id: str, max_hops: int = 1):
     fastcode = _ensure_fastcode_initialized()
     try:
@@ -779,7 +779,7 @@ async def get_graph_callers(snapshot_id: str, symbol_id: str, max_hops: int = 1)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/graph/dependencies/{snapshot_id}/{doc_id}")
+@app.get("/graph/dependencies")
 async def get_graph_dependencies(snapshot_id: str, doc_id: str, max_hops: int = 1):
     fastcode = _ensure_fastcode_initialized()
     try:

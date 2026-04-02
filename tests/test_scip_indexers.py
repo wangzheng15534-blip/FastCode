@@ -80,3 +80,43 @@ def test_run_scip_indexer_failure(tmp_path):
         with patch("fastcode.scip_indexers.shutil.which", return_value="/usr/bin/scip-python"):
             with pytest.raises(RuntimeError, match="error msg"):
                 run_scip_indexer("python", str(tmp_path), str(tmp_path / "out.scip"))
+
+
+def test_auto_detect_scip_languages(tmp_path):
+    """detect_scip_languages identifies languages present in repo."""
+    from fastcode.scip_indexers import detect_scip_languages
+
+    # Create a repo with mixed language files
+    (tmp_path / "Main.java").write_text("class Main {}")
+    (tmp_path / "main.go").write_text("package main")
+    (tmp_path / "app.py").write_text("print('hi')")
+    (tmp_path / "README.md").write_text("# readme")
+
+    languages = detect_scip_languages(str(tmp_path))
+    assert "java" in languages
+    assert "go" in languages
+    assert "python" in languages
+    assert "markdown" not in languages  # No SCIP indexer for markdown
+
+
+def test_auto_detect_scip_languages_empty(tmp_path):
+    """detect_scip_languages returns empty for no matching files."""
+    from fastcode.scip_indexers import detect_scip_languages
+
+    (tmp_path / "README.md").write_text("# readme")
+    languages = detect_scip_languages(str(tmp_path))
+    assert len(languages) == 0
+
+
+def test_auto_detect_deduplicates():
+    """detect_scip_languages deduplicates languages."""
+    from fastcode.scip_indexers import detect_scip_languages
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        from pathlib import Path
+        p = Path(td)
+        (p / "a.java").write_text("class A {}")
+        (p / "b.java").write_text("class B {}")
+        languages = detect_scip_languages(td)
+        assert languages.count("java") == 1

@@ -221,7 +221,7 @@ class PgRetrievalStore:
         element_types: Optional[List[str]] = None,
         top_k: int = 20,
     ) -> List[Tuple[Dict[str, Any], float]]:
-        if not self.enabled or not query_embedding:
+        if not self.enabled or query_embedding is None:
             return []
         vector_literal = self._vector_literal(query_embedding)
 
@@ -279,8 +279,10 @@ class PgRetrievalStore:
                 rows = cur.fetchall()
                 out = []
                 for row in rows:
-                    meta = row[0] if isinstance(row[0], dict) else json.loads(row[0])
-                    out.append((meta, float(row[1] or 0.0)))
+                    raw_meta = row.get("metadata_json") if isinstance(row, dict) else row[0]
+                    raw_score = row.get("score") if isinstance(row, dict) else row[1]
+                    meta = raw_meta if isinstance(raw_meta, dict) else json.loads(raw_meta)
+                    out.append((meta, float(raw_score or 0.0)))
                 return out
             except Exception:
                 # Fallback: compute cosine with embedding_arr client-side.
@@ -420,6 +422,8 @@ class PgRetrievalStore:
                 )
             out = []
             for row in cur.fetchall():
-                meta = row[0] if isinstance(row[0], dict) else json.loads(row[0])
-                out.append((meta, float(row[1] or 0.0)))
+                raw_meta = row.get("metadata_json") if isinstance(row, dict) else row[0]
+                raw_score = row.get("score") if isinstance(row, dict) else row[1]
+                meta = raw_meta if isinstance(raw_meta, dict) else json.loads(raw_meta)
+                out.append((meta, float(raw_score or 0.0)))
             return out

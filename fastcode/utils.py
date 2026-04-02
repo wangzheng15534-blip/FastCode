@@ -260,27 +260,6 @@ def calculate_code_complexity(code: str) -> int:
     return complexity
 
 
-def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[Dict[str, Any]]:
-    """Chunk text with sliding window"""
-    words = text.split()
-    chunks = []
-    
-    for i in range(0, len(words), chunk_size - overlap):
-        chunk_words = words[i:i + chunk_size]
-        chunk_text = " ".join(chunk_words)
-        
-        chunks.append({
-            "text": chunk_text,
-            "start_word": i,
-            "end_word": i + len(chunk_words),
-        })
-        
-        if i + chunk_size >= len(words):
-            break
-    
-    return chunks
-
-
 def merge_dicts(*dicts: Dict) -> Dict:
     """Merge multiple dictionaries"""
     result = {}

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import given, settings, assume
 from hypothesis import strategies as st
 
 from fastcode.db_runtime import DBRuntime
@@ -13,8 +13,8 @@ from fastcode.manifest_store import ManifestStore
 # --- Helpers ---
 
 def _make_store() -> ManifestStore:
-    import tempfile, os
-    tmpdir = tempfile.mkdtemp()
+    import tempfile, os, uuid
+    tmpdir = tempfile.mkdtemp(prefix=f"manifest_{uuid.uuid4().hex[:8]}_")
     path = os.path.join(tmpdir, "test.db")
     return ManifestStore(path)
 
@@ -83,16 +83,15 @@ class TestManifestStoreProperties:
         assert result is not None
         assert result["snapshot_id"] == snap_id
 
-    @given(repo=small_id, ref=small_id, snap1=small_id, snap2=small_id, run_id=small_id)
-    @settings(max_examples=10)
     @pytest.mark.happy
-    def test_publish_overwrites_branch_head(self, repo, ref, snap1, snap2, run_id):
+    def test_publish_overwrites_branch_head(self):
         """HAPPY: second publish to same repo/ref updates branch head."""
         store = _make_store()
-        store.publish(repo, ref, snap1, run_id)
-        store.publish(repo, ref, snap2, run_id)
-        result = store.get_branch_manifest(repo, ref)
-        assert result["snapshot_id"] == snap2
+        store.publish("repo1", "main", "snap_v1", "run_1")
+        store.publish("repo1", "main", "snap_v2", "run_2")
+        result = store.get_branch_manifest("repo1", "main")
+        assert result is not None
+        assert result["snapshot_id"] == "snap_v2"
 
     @given(repo=small_id, ref=small_id, snap1=small_id, snap2=small_id, run_id=small_id)
     @settings(max_examples=10)

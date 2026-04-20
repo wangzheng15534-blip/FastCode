@@ -144,3 +144,45 @@ class TestManifestStoreProperties:
         b = store.get_branch_manifest("repo_b", "main")
         assert a["snapshot_id"] == "snap_a"
         assert b["snapshot_id"] == "snap_b"
+
+    @pytest.mark.edge
+    def test_publish_same_snapshot_different_refs(self):
+        """EDGE: same snapshot_id published to different refs."""
+        store = _make_store()
+        store.publish("repo", "main", "snap1", "run1")
+        store.publish("repo", "dev", "snap1", "run2")
+        main = store.get_branch_manifest("repo", "main")
+        dev = store.get_branch_manifest("repo", "dev")
+        assert main["snapshot_id"] == "snap1"
+        assert dev["snapshot_id"] == "snap1"
+        assert main["ref_name"] == "main"
+        assert dev["ref_name"] == "dev"
+
+    @pytest.mark.edge
+    def test_publish_generates_unique_manifest_ids(self):
+        """EDGE: each publish gets unique manifest_id."""
+        store = _make_store()
+        m1 = store.publish("repo", "main", "snap1", "run1")
+        m2 = store.publish("repo", "main", "snap2", "run2")
+        assert m1["manifest_id"] != m2["manifest_id"]
+
+    @pytest.mark.edge
+    def test_publish_published_at_is_iso_format(self):
+        """EDGE: published_at is a valid timestamp string."""
+        import re
+        store = _make_store()
+        result = store.publish("repo", "main", "snap1", "run1")
+        ts = result["published_at"]
+        assert isinstance(ts, str)
+        assert re.match(r"\d{4}-\d{2}-\d{2}", ts)
+
+    @pytest.mark.edge
+    def test_chain_across_three_publishes(self):
+        """EDGE: chain links across 3 sequential publishes."""
+        store = _make_store()
+        m1 = store.publish("repo", "main", "s1", "r1")
+        m2 = store.publish("repo", "main", "s2", "r2")
+        m3 = store.publish("repo", "main", "s3", "r3")
+        assert m2["previous_manifest_id"] == m1["manifest_id"]
+        assert m3["previous_manifest_id"] == m2["manifest_id"]
+        assert m1["previous_manifest_id"] is None

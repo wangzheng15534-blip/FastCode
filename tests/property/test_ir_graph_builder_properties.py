@@ -92,6 +92,81 @@ class TestIRGraphBuilder:
                    graphs.containment_graph]:
             assert g.number_of_edges() == 0
 
+    @pytest.mark.edge
+    def test_self_loop_edge(self):
+        """EDGE: self-referencing edge (src == dst) doesn't crash."""
+        builder = IRGraphBuilder()
+        snap = _snapshot([_edge("e1", "a", "a", "call")])
+        graphs = builder.build_graphs(snap)
+        assert graphs.call_graph.number_of_nodes() == 1
+        assert graphs.call_graph.number_of_edges() == 1
+
+    @pytest.mark.edge
+    def test_duplicate_edges_deduped_in_graph(self):
+        """EDGE: duplicate edges produce single graph edge (DiGraph dedup)."""
+        builder = IRGraphBuilder()
+        snap = _snapshot([
+            _edge("e1", "a", "b", "call"),
+            _edge("e2", "a", "b", "call"),
+        ])
+        graphs = builder.build_graphs(snap)
+        assert graphs.call_graph.number_of_edges() == 1
+
+    @pytest.mark.edge
+    def test_mixed_edge_types_isolated_graphs(self):
+        """EDGE: different edge types only populate their respective graph."""
+        builder = IRGraphBuilder()
+        snap = _snapshot([
+            _edge("e1", "a", "b", "call"),
+            _edge("e2", "c", "d", "import"),
+        ])
+        graphs = builder.build_graphs(snap)
+        assert graphs.call_graph.number_of_edges() == 1
+        assert graphs.dependency_graph.number_of_edges() == 1
+        assert graphs.inheritance_graph.number_of_edges() == 0
+
+    @pytest.mark.edge
+    def test_large_node_count(self):
+        """EDGE: many unique nodes handled without error."""
+        builder = IRGraphBuilder()
+        edges = [_edge(f"e{i}", f"n{i}", f"n{i+1}", "call") for i in range(100)]
+        snap = _snapshot(edges)
+        graphs = builder.build_graphs(snap)
+        assert graphs.call_graph.number_of_edges() == 100
+
+    @pytest.mark.edge
+    def test_empty_edge_fields(self):
+        """EDGE: empty string src/dst doesn't crash."""
+        builder = IRGraphBuilder()
+        snap = _snapshot([_edge("e1", "", "b", "call")])
+        graphs = builder.build_graphs(snap)
+        assert graphs.call_graph.number_of_nodes() == 2
+
+    @pytest.mark.edge
+    def test_stats_populated_graphs(self):
+        """EDGE: stats returns non-zero for populated graphs."""
+        builder = IRGraphBuilder()
+        snap = _snapshot([
+            _edge("e1", "a", "b", "call"),
+            _edge("e2", "c", "d", "import"),
+        ])
+        graphs = builder.build_graphs(snap)
+        stats = graphs.stats()
+        assert stats["call"]["edges"] == 1
+        assert stats["dependency"]["edges"] == 1
+        assert stats["call"]["nodes"] == 2
+
+    @pytest.mark.edge
+    def test_builder_reuse(self):
+        """EDGE: same builder instance used for multiple snapshots."""
+        builder = IRGraphBuilder()
+        snap1 = _snapshot([_edge("e1", "a", "b", "call")])
+        snap2 = _snapshot([_edge("e2", "x", "y", "ref")])
+        g1 = builder.build_graphs(snap1)
+        g2 = builder.build_graphs(snap2)
+        assert g1.call_graph.number_of_edges() == 1
+        assert g2.reference_graph.number_of_edges() == 1
+
     @given(
         edge_type=edge_type_st,
         n_edges=st.integers(min_value=1, max_value=10),

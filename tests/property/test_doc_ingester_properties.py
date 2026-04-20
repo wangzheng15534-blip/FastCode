@@ -254,3 +254,51 @@ class TestEmbed:
         ingester = _make_ingester(embedder=NoneEmbedder())
         result = ingester._embed("test")
         assert result is None
+
+
+@pytest.mark.property
+class TestDocIngesterEdgeCases:
+
+    @pytest.mark.edge
+    def test_read_empty_file(self):
+        """EDGE: empty file returns empty string."""
+        ingester = _make_ingester()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("")
+            f.flush()
+            content = ingester._read_text(f.name)
+        os.unlink(f.name)
+        assert content == ""
+
+    @pytest.mark.edge
+    def test_chunk_section_fallback_whitespace_only(self):
+        """EDGE: whitespace-only text produces no pieces or empty."""
+        ingester = _make_ingester()
+        pieces = ingester._chunk_section_fallback("   \n\t  ")
+        assert isinstance(pieces, list)
+
+    @pytest.mark.edge
+    def test_chunk_id_different_index(self):
+        """EDGE: different index produces different chunk ID."""
+        id1 = KeyDocIngester._chunk_id("snap:1", "a.py", 0)
+        id2 = KeyDocIngester._chunk_id("snap:1", "a.py", 1)
+        assert id1 != id2
+
+    @pytest.mark.edge
+    def test_detect_doc_type_changelog(self):
+        """EDGE: CHANGELOG files detected."""
+        result = KeyDocIngester._detect_doc_type("CHANGELOG.md")
+        assert isinstance(result, str)
+
+    @pytest.mark.edge
+    def test_read_symlink_to_file(self):
+        """EDGE: reading symlink resolves to target."""
+        ingester = _make_ingester()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "real.txt")
+            link = os.path.join(tmpdir, "link.txt")
+            with open(target, "w") as f:
+                f.write("symlinked")
+            os.symlink(target, link)
+            content = ingester._read_text(link)
+            assert content == "symlinked"

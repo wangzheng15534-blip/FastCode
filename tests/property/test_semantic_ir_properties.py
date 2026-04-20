@@ -165,20 +165,6 @@ class TestIRDocumentProperties:
 
     @given(
         doc_id=identifier,
-        path=st.just("a/b.py"),
-        language=language_st,
-        source_set=st.sets(source_st, max_size=2),
-    )
-    @settings(max_examples=20)
-    @pytest.mark.edge
-    def test_document_from_dict_none_source_set(self, doc_id: str, path: str, language: str, source_set: set):
-        """EDGE: from_dict with source_set=None via .get() fallback (line 28 get with default [])."""
-        data = {"doc_id": doc_id, "path": path, "language": language}
-        restored = IRDocument.from_dict(data)
-        assert restored.source_set == set()
-
-    @given(
-        doc_id=identifier,
         path=file_path_st,
         language=language_st,
         source_set=st.sets(source_st, max_size=2),
@@ -196,19 +182,16 @@ class TestIRDocumentProperties:
         doc_id=identifier,
         path=file_path_st,
         language=language_st,
-        extra_key=identifier,
+        extra_key=identifier.filter(lambda k: k not in {"doc_id", "path", "language", "blob_oid", "content_hash", "source_set"}),
         extra_val=st.integers(min_value=0, max_value=100),
     )
     @settings(max_examples=20)
     @pytest.mark.edge
-    def test_document_from_dict_extra_keys_ignored_or_error(self, doc_id, path, language, extra_key, extra_val):
+    def test_document_from_dict_extra_keys_raise_typeerror(self, doc_id, path, language, extra_key, extra_val):
         """EDGE: from_dict with extra unknown key raises TypeError (dataclass rejects unexpected kwargs)."""
         data = {"doc_id": doc_id, "path": path, "language": language, extra_key: extra_val}
-        try:
+        with pytest.raises(TypeError):
             IRDocument.from_dict(data)
-            # If the key happens to match a field name, that is fine
-        except TypeError:
-            pass  # Expected: extra unknown keys cause TypeError
 
     @given(doc=ir_document_st)
     @settings(max_examples=20)

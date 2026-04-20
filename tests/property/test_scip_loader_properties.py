@@ -285,3 +285,45 @@ class TestLoadScipArtifactJson:
             path = _write_json_file(tmpdir, "min.json", data)
             result = load_scip_artifact(path)
             assert len(result.documents) == 1
+
+    @pytest.mark.edge
+    def test_role_bitmask_combined(self):
+        """EDGE: combined definition + import bit returns definition (priority)."""
+        assert _symbol_role_to_str(1 | 2) == "definition"
+
+    @pytest.mark.edge
+    def test_role_high_bits_only(self):
+        """EDGE: bits above defined roles return reference."""
+        assert _symbol_role_to_str(128) == "reference"
+
+    @pytest.mark.edge
+    def test_kind_zero(self):
+        """EDGE: kind value 0 returns mapped value or symbol."""
+        result = _scip_kind_to_str(0)
+        assert isinstance(result, str)
+
+    @pytest.mark.edge
+    def test_load_json_with_no_language(self):
+        """EDGE: document without language field."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data = {"documents": [{"path": "unknown.xyz", "symbols": [], "occurrences": []}]}
+            path = _write_json_file(tmpdir, "nolang.json", data)
+            result = load_scip_artifact(path)
+            assert result.documents[0].language is None
+
+    @pytest.mark.edge
+    def test_load_json_with_extra_fields(self):
+        """EDGE: extra fields in JSON are ignored gracefully."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data = {"documents": [], "extra_field": "ignored", "version": 999}
+            path = _write_json_file(tmpdir, "extra.json", data)
+            result = load_scip_artifact(path)
+            assert len(result.documents) == 0
+
+    @pytest.mark.edge
+    def test_load_empty_json_object(self):
+        """EDGE: empty JSON object produces empty index."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = _write_json_file(tmpdir, "empty.json", {})
+            result = load_scip_artifact(path)
+            assert isinstance(result, SCIPIndex)

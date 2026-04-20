@@ -132,6 +132,44 @@ class TestDetectScipLanguages:
             langs = detect_scip_languages(tmpdir)
             assert "typescript" in langs
 
+    @pytest.mark.edge
+    def test_none_output_path(self):
+        """EDGE: None output path in get_indexer_command."""
+        result = get_indexer_command("python", None)
+        # Should either return None or handle gracefully
+        if result is not None:
+            assert isinstance(result, list)
+
+    @pytest.mark.edge
+    def test_empty_output_path(self):
+        """EDGE: empty string output path."""
+        result = get_indexer_command("python", "")
+        if result is not None:
+            assert isinstance(result, list)
+
+    @pytest.mark.edge
+    def test_supported_languages_is_dict(self):
+        """EDGE: SUPPORTED_LANGUAGES is a non-empty dict."""
+        assert isinstance(SUPPORTED_LANGUAGES, dict)
+        assert len(SUPPORTED_LANGUAGES) > 0
+
+    @pytest.mark.edge
+    def test_detect_nonexistent_dir(self):
+        """EDGE: nonexistent directory returns empty list."""
+        langs = detect_scip_languages("/nonexistent/path/xyz")
+        assert langs == []
+
+    @pytest.mark.edge
+    def test_node_modules_skipped(self):
+        """EDGE: node_modules directory is skipped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nm = os.path.join(tmpdir, "node_modules")
+            os.makedirs(nm)
+            with open(os.path.join(nm, "lib.ts"), "w") as f:
+                f.write("// lib")
+            langs = detect_scip_languages(tmpdir)
+            assert "typescript" not in langs
+
     @pytest.mark.happy
     def test_nested_dirs_scanned(self):
         """HAPPY: nested directories are scanned."""

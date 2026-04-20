@@ -373,3 +373,67 @@ class TestMergeIrProperties:
         ast = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc")
         merged = merge_ir(ast, scip)
         assert len(merged.occurrences) == n
+
+    @pytest.mark.edge
+    def test_merge_ast_only_edges_preserved(self):
+        """EDGE: AST-only edges survive when SCIP has none."""
+        edge = _edge("e:1", "a", "b", "call", "ast")
+        ast = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc", edges=[edge])
+        scip = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc")
+        merged = merge_ir(ast, scip)
+        assert len(merged.edges) == 1
+        assert merged.edges[0].source == "ast"
+
+    @pytest.mark.edge
+    def test_merge_preserves_branch(self):
+        """EDGE: branch from AST preserved in merge."""
+        ast = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc", branch="dev")
+        scip = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc")
+        merged = merge_ir(ast, scip)
+        assert merged.branch == "dev"
+
+    @pytest.mark.edge
+    def test_merge_preserves_commit_id(self):
+        """EDGE: commit_id from AST preserved in merge."""
+        ast = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc", commit_id="abc123")
+        scip = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc")
+        merged = merge_ir(ast, scip)
+        assert merged.commit_id == "abc123"
+
+    @pytest.mark.edge
+    def test_merge_documents_with_same_id_union_source(self):
+        """EDGE: same doc_id from both sources unions source_set."""
+        doc_ast = _doc("d1", "a.py", "ast")
+        doc_scip = _doc("d1", "a.py", "scip")
+        ast = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc", documents=[doc_ast])
+        scip = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc", documents=[doc_scip])
+        merged = merge_ir(ast, scip)
+        d = next(d for d in merged.documents if d.doc_id == "d1")
+        assert "ast" in d.source_set
+        assert "scip" in d.source_set
+
+    @pytest.mark.edge
+    def test_merge_no_overlap_symbols_coexist(self):
+        """EDGE: non-overlapping symbols from AST and SCIP both survive."""
+        ast_sym = _sym("ast:s1", "a.py", "foo", source="ast")
+        scip_sym = _sym("scip:s2", "b.py", "bar", source="scip")
+        ast = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc", symbols=[ast_sym])
+        scip = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc", symbols=[scip_sym])
+        merged = merge_ir(ast, scip)
+        ids = {s.symbol_id for s in merged.symbols}
+        assert "ast:s1" in ids
+        assert "scip:s2" in ids
+
+    @pytest.mark.edge
+    def test_merge_occurrence_dedup_same_role(self):
+        """EDGE: occurrences with same symbol/doc/role deduplicate."""
+        doc = _doc("d1", "a.py")
+        occ1 = _occ("ast:o1", "sym:1", "d1", "definition", start_line=5, source="ast")
+        occ2 = _occ("scip:o2", "sym:1", "d1", "definition", start_line=5, source="scip")
+        ast = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc",
+                         documents=[doc], occurrences=[occ1])
+        scip = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc",
+                         documents=[doc], occurrences=[occ2])
+        merged = merge_ir(ast, scip)
+        assert len(merged.occurrences) == 1
+        assert merged.occurrences[0].source == "scip"

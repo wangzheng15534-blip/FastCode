@@ -275,3 +275,75 @@ class TestScipParsingProperties:
         ])
         snap = build_ir_from_scip(repo_name="repo", snapshot_id=snap_id, scip_index=index)
         assert len(snap.symbols) == 2
+
+    @pytest.mark.edge
+    def test_scip_occurrence_all_none_range(self):
+        """EDGE: occurrence with all-None range doesn't crash."""
+        occ = SCIPOccurrence(symbol="pkg x.", role="reference", range=[None, None, None, None])
+        d = occ.to_dict()
+        r = SCIPOccurrence.from_dict(d)
+        assert r.range == [None, None, None, None]
+
+    @pytest.mark.edge
+    def test_scip_symbol_missing_optional_fields(self):
+        """EDGE: symbol with only required fields gets defaults."""
+        sym = SCIPSymbol(symbol="pkg x.")
+        assert sym.name is None
+        assert sym.kind is None
+        d = sym.to_dict()
+        r = SCIPSymbol.from_dict(d)
+        assert r.symbol == "pkg x."
+
+    @pytest.mark.edge
+    def test_scip_document_no_language_no_symbols(self):
+        """EDGE: document with no language and no symbols roundtrips."""
+        doc = SCIPDocument(path="data.bin", language=None, symbols=[], occurrences=[])
+        d = doc.to_dict()
+        r = SCIPDocument.from_dict(d)
+        assert r.path == "data.bin"
+        assert r.language is None
+
+    @pytest.mark.edge
+    def test_build_ir_from_scip_empty_symbol_name_skipped(self):
+        """EDGE: symbol with empty name field still gets processed."""
+        index = SCIPIndex(documents=[
+            SCIPDocument(path="a.py", language="python", symbols=[
+                SCIPSymbol(symbol="pkg foo.", name=""),
+            ]),
+        ])
+        snap = build_ir_from_scip(repo_name="repo", snapshot_id="s1", scip_index=index)
+        assert len(snap.symbols) == 1
+
+    @pytest.mark.edge
+    def test_scip_index_with_metadata(self):
+        """EDGE: SCIPIndex with indexer metadata roundtrips."""
+        idx = SCIPIndex(documents=[], indexer_name="scip-go", indexer_version="1.2.3")
+        d = idx.to_dict()
+        r = SCIPIndex.from_dict(d)
+        assert r.indexer_name == "scip-go"
+        assert r.indexer_version == "1.2.3"
+
+    @given(data=st.dictionaries(st.text(min_size=1, max_size=5), st.integers(min_value=0, max_value=100), max_size=3))
+    @settings(max_examples=10)
+    @pytest.mark.edge
+    def test_scip_occurrence_from_arbitrary_dict(self, data):
+        """EDGE: SCIPOccurrence.from_dict handles arbitrary dicts without crash."""
+        occ = SCIPOccurrence.from_dict(data)
+        assert isinstance(occ, SCIPOccurrence)
+
+    @pytest.mark.edge
+    def test_scip_symbol_roundtrip_preserves_range(self):
+        """EDGE: SCIPSymbol range field survives roundtrip."""
+        sym = SCIPSymbol(symbol="pkg x.", name="x", range=[10, 0, 20, 5])
+        d = sym.to_dict()
+        r = SCIPSymbol.from_dict(d)
+        assert r.range == [10, 0, 20, 5]
+
+    @pytest.mark.edge
+    def test_scip_document_with_many_occurrences(self):
+        """EDGE: document with many occurrences roundtrips."""
+        occs = [SCIPOccurrence(symbol=f"pkg s{i}.", role="reference", range=[i, 0, i, 5]) for i in range(20)]
+        doc = SCIPDocument(path="big.py", language="python", symbols=[], occurrences=occs)
+        d = doc.to_dict()
+        r = SCIPDocument.from_dict(d)
+        assert len(r.occurrences) == 20

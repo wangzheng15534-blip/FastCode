@@ -1,0 +1,165 @@
+# serializer version: 1
+# name: TestIRSnapshotContract.test_ir_document_serialization
+  dict({
+    'blob_oid': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'content_hash': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    'doc_id': 'doc:abc123',
+    'language': 'python',
+    'path': 'src/main.py',
+    'source_set': list([
+      'ast',
+      'scip',
+    ]),
+  })
+# ---
+# name: TestIRSnapshotContract.test_ir_edge_serialization
+  dict({
+    'confidence': 'precise',
+    'doc_id': 'doc:abc123',
+    'dst_id': 'scip:snap:1:pkg.main.MyClass',
+    'edge_id': 'edge:abc123',
+    'edge_type': 'contain',
+    'metadata': dict({
+      'extractor': 'fastcode.adapters.scip_to_ir',
+    }),
+    'source': 'scip',
+    'src_id': 'doc:abc123',
+  })
+# ---
+# name: TestIRSnapshotContract.test_ir_occurrence_serialization
+  dict({
+    'doc_id': 'doc:abc123',
+    'end_col': 0,
+    'end_line': 20,
+    'metadata': dict({
+      'confidence': 'precise',
+      'source': 'scip',
+    }),
+    'occurrence_id': 'occ:abc123',
+    'role': 'definition',
+    'source': 'scip',
+    'start_col': 0,
+    'start_line': 10,
+    'symbol_id': 'scip:snap:1:pkg.main.foo',
+  })
+# ---
+# name: TestIRSnapshotContract.test_ir_snapshot_empty_collections_serialization
+  dict({
+    'branch': None,
+    'commit_id': None,
+    'documents': list([
+    ]),
+    'edges': list([
+    ]),
+    'metadata': dict({
+    }),
+    'occurrences': list([
+    ]),
+    'repo_name': 'empty-repo',
+    'snapshot_id': 'snap:empty:000',
+    'symbols': list([
+    ]),
+    'tree_id': None,
+  })
+# ---
+# name: TestIRSnapshotContract.test_ir_snapshot_full_serialization
+  dict({
+    'branch': 'main',
+    'commit_id': 'abc123',
+    'documents': list([
+      dict({
+        'blob_oid': None,
+        'content_hash': None,
+        'doc_id': 'doc:1',
+        'language': 'python',
+        'path': 'app.py',
+        'source_set': list([
+          'ast',
+        ]),
+      }),
+    ]),
+    'edges': list([
+      dict({
+        'confidence': 'resolved',
+        'doc_id': None,
+        'dst_id': 'sym:1',
+        'edge_id': 'e:1',
+        'edge_type': 'contain',
+        'metadata': dict({
+        }),
+        'source': 'ast',
+        'src_id': 'doc:1',
+      }),
+    ]),
+    'metadata': dict({
+      'source_modes': list([
+        'ast',
+      ]),
+    }),
+    'occurrences': list([
+      dict({
+        'doc_id': 'doc:1',
+        'end_col': 0,
+        'end_line': 5,
+        'metadata': dict({
+        }),
+        'occurrence_id': 'occ:1',
+        'role': 'definition',
+        'source': 'ast',
+        'start_col': 0,
+        'start_line': 1,
+        'symbol_id': 'sym:1',
+      }),
+    ]),
+    'repo_name': 'my-repo',
+    'snapshot_id': 'snap:my-repo:abc123',
+    'symbols': list([
+      dict({
+        'display_name': 'main',
+        'end_col': None,
+        'end_line': None,
+        'external_symbol_id': None,
+        'kind': 'function',
+        'language': 'python',
+        'metadata': dict({
+          'source': 'ast',
+        }),
+        'path': 'app.py',
+        'qualified_name': None,
+        'signature': None,
+        'source_priority': 10,
+        'source_set': list([
+          'ast',
+        ]),
+        'start_col': None,
+        'start_line': 1,
+        'symbol_id': 'sym:1',
+      }),
+    ]),
+    'tree_id': None,
+  })
+# ---
+# name: TestIRSnapshotContract.test_ir_symbol_serialization
+  dict({
+    'display_name': 'my_method',
+    'end_col': 20,
+    'end_line': 50,
+    'external_symbol_id': 'pkg.main.MyClass.my_method',
+    'kind': 'method',
+    'language': 'python',
+    'metadata': dict({
+      'scip': True,
+      'source': 'scip',
+    }),
+    'path': 'src/main.py',
+    'qualified_name': 'pkg.main.MyClass.my_method',
+    'signature': 'def my_method(self, x: int) -> str',
+    'source_priority': 100,
+    'source_set': list([
+      'scip',
+    ]),
+    'start_col': 8,
+    'start_line': 42,
+    'symbol_id': 'scip:snap:1:pkg.main.MyClass.my_method',
+  })
+# ---

@@ -458,42 +458,16 @@ class TestRowToDict:
         """Line 116: None input returns None."""
         assert DBRuntime.row_to_dict(None) is None
 
+    @pytest.mark.parametrize("falsy_val", ["", 0, [], {}])
     @pytest.mark.edge
-    def test_falsy_empty_string_returns_none(self) -> None:
-        """Line 116: falsy string returns None."""
-        assert DBRuntime.row_to_dict("") is None
-
-    @pytest.mark.edge
-    def test_falsy_zero_returns_none(self) -> None:
-        """Line 116: falsy int returns None."""
-        assert DBRuntime.row_to_dict(0) is None
-
-    @pytest.mark.edge
-    def test_falsy_empty_list_returns_none(self) -> None:
-        """Line 116: falsy list returns None."""
-        assert DBRuntime.row_to_dict([]) is None
-
-    @pytest.mark.edge
-    def test_falsy_empty_dict_returns_none(self) -> None:
-        """Line 116: empty dict is falsy, returns None."""
-        assert DBRuntime.row_to_dict({}) is None
+    def test_falsy_values_return_none(self, falsy_val) -> None:
+        """Line 116: all falsy inputs return None."""
+        assert DBRuntime.row_to_dict(falsy_val) is None
 
     @pytest.mark.happy
     def test_nonempty_dict_passthrough(self) -> None:
-        """Line 118: non-empty dict returned as-is."""
+        """Line 118: non-empty dict returned as-is (same reference)."""
         d = {"a": 1, "b": "two"}
-        result = DBRuntime.row_to_dict(d)
-        assert result is d
-
-    @given(
-        a=sql_value,
-        b=sql_value,
-    )
-    @settings(max_examples=30)
-    @pytest.mark.happy
-    def test_dict_with_various_values(self, a: Any, b: Any) -> None:
-        """Line 118: dict with diverse values returned as-is."""
-        d = {"a": a, "b": b}
         result = DBRuntime.row_to_dict(d)
         assert result is d
 

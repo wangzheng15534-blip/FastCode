@@ -121,28 +121,24 @@ def test_snapshot_store_lock_api_returns_fencing_token_shape():
         assert store.validate_fencing_token("index:snap:repo:1", expected_token=token)
 
 
-def test_fencing_token_increments_on_reacquire():
+def test_sqlite_fencing_token_always_one():
+    """SQLite lock implementation returns token=1 for all acquire calls (no PG-style increment)."""
     with tempfile.TemporaryDirectory(prefix="fc_fence_") as tmp:
         store = SnapshotStore(tmp)
         token1 = store.acquire_lock("index:snap:repo:1", owner_id="run1", ttl_seconds=60)
         assert token1 == 1
         token2 = store.acquire_lock("index:snap:repo:1", owner_id="run2", ttl_seconds=60)
-        assert token2 == 1  # SQLite always returns 1
+        assert token2 == 1  # SQLite always returns 1, no PG-style increment
 
 
-def test_validate_fencing_token_returns_true_on_sqlite():
-    with tempfile.TemporaryDirectory(prefix="fc_fence_") as tmp:
-        store = SnapshotStore(tmp)
-        # SQLite bypasses PG logic, always returns True
-        assert store.validate_fencing_token("nonexistent:lock", expected_token=1)
-
-
-def test_release_lock_noop_on_sqlite():
+def test_sqlite_lock_release_does_not_raise():
+    """SQLite release_lock and validate_fencing_token are no-ops but must not crash."""
     with tempfile.TemporaryDirectory(prefix="fc_fence_") as tmp:
         store = SnapshotStore(tmp)
         store.acquire_lock("index:snap:repo:1", owner_id="run1", ttl_seconds=60)
         store.release_lock("index:snap:repo:1", owner_id="run1")
-        # Should not raise
+        # validate on nonexistent lock also returns True (SQLite no-op)
+        assert store.validate_fencing_token("nonexistent:lock", expected_token=1)
 
 
 def test_enqueue_redo_task_returns_id():
@@ -156,14 +152,10 @@ def test_enqueue_redo_task_returns_id():
         assert len(task_id) > len("redo_")
 
 
-def test_claim_redo_task_returns_none_on_sqlite():
+def test_sqlite_redo_task_noops_do_not_raise():
+    """SQLite redo task methods (claim, mark_done, mark_failed) are no-ops but must not crash."""
     with tempfile.TemporaryDirectory(prefix="fc_redo_") as tmp:
         store = SnapshotStore(tmp)
         assert store.claim_redo_task() is None
-
-
-def test_mark_redo_task_done_and_failed_noop_on_sqlite():
-    with tempfile.TemporaryDirectory(prefix="fc_redo_") as tmp:
-        store = SnapshotStore(tmp)
         store.mark_redo_task_done("redo_fake")
         store.mark_redo_task_failed(task_id="redo_fake", error="test error")

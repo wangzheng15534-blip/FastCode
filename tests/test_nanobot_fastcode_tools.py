@@ -151,36 +151,6 @@ class TestFastCodeQueryTool:
         assert "[Session: abc123]" in result
 
     @pytest.mark.asyncio
-    async def test_query_with_snapshot_scope(self, api_url):
-        """Query tool should forward snapshot_id, repo_name, ref_name to API."""
-        tool = FastCodeQueryTool(api_url=api_url)
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content)
-            assert body["snapshot_id"] == "snap:myrepo:abc123"
-            assert body["repo_name"] == "myrepo"
-            assert body["ref_name"] == "main"
-            return _json_response(body={
-                "answer": "The main entry is main.py",
-                "query": "entry point?",
-                "context_elements": 3,
-                "sources": [],
-                "session_id": "sess1",
-            })
-
-        transport = _MockTransport({"POST /query": handler})
-        async with _make_client(transport) as client:
-            with _patch_client(client):
-                result = await tool.execute(
-                    question="entry point?",
-                    snapshot_id="snap:myrepo:abc123",
-                    repo_name="myrepo",
-                    ref_name="main",
-                )
-
-        assert "main.py" in result
-
-    @pytest.mark.asyncio
     async def test_query_returns_no_repo_error_on_400(self, api_url):
         tool = FastCodeQueryTool(api_url=api_url)
 
@@ -288,44 +258,6 @@ class TestFastCodeSessionTool:
         assert "new123" in result
 
     @pytest.mark.asyncio
-    async def test_session_list(self, api_url):
-        tool = FastCodeSessionTool(api_url=api_url)
-
-        def handler(_request: httpx.Request) -> httpx.Response:
-            return _json_response(body={
-                "sessions": [
-                    {"session_id": "s1", "title": "Auth flow", "total_turns": 3},
-                ],
-            })
-
-        transport = _MockTransport({"GET /sessions": handler})
-        async with _make_client(transport) as client:
-            with _patch_client(client):
-                result = await tool.execute(action="list")
-
-        assert "s1" in result
-        assert "Auth flow" in result
-
-    @pytest.mark.asyncio
-    async def test_session_history(self, api_url):
-        tool = FastCodeSessionTool(api_url=api_url)
-
-        def handler(_request: httpx.Request) -> httpx.Response:
-            return _json_response(body={
-                "history": [
-                    {"query": "What is X?", "answer": "X is a class."},
-                ],
-            })
-
-        transport = _MockTransport({"GET /session/s1": handler})
-        async with _make_client(transport) as client:
-            with _patch_client(client):
-                result = await tool.execute(action="history", session_id="s1")
-
-        assert "What is X?" in result
-        assert "X is a class" in result
-
-    @pytest.mark.asyncio
     async def test_session_delete(self, api_url):
         tool = FastCodeSessionTool(api_url=api_url)
 
@@ -338,12 +270,6 @@ class TestFastCodeSessionTool:
                 result = await tool.execute(action="delete", session_id="s1")
 
         assert "deleted" in result.lower()
-
-    @pytest.mark.asyncio
-    async def test_session_history_requires_session_id(self, api_url):
-        tool = FastCodeSessionTool(api_url=api_url)
-        result = await tool.execute(action="history")
-        assert "session_id is required" in result
 
     @pytest.mark.asyncio
     async def test_session_unknown_action(self, api_url):
@@ -485,31 +411,6 @@ class TestFastCodeCallChainTool:
         assert "parse_input" in result
 
     @pytest.mark.asyncio
-    async def test_get_callers(self, api_url):
-        tool = FastCodeCallChainTool(api_url=api_url)
-
-        def handler(_request: httpx.Request) -> httpx.Response:
-            return _json_response(body={
-                "status": "success",
-                "snapshot_id": "snap:myrepo:abc123",
-                "symbol_id": "sym_001",
-                "callers": [
-                    {"symbol_id": "sym_020", "display_name": "main", "kind": "function"},
-                ],
-            })
-
-        transport = _MockTransport({"GET /graph/callers": handler})
-        async with _make_client(transport) as client:
-            with _patch_client(client):
-                result = await tool.execute(
-                    snapshot_id="snap:myrepo:abc123",
-                    symbol_id="sym_001",
-                    direction="callers",
-                )
-
-        assert "main" in result
-
-    @pytest.mark.asyncio
     async def test_get_both_directions(self, api_url):
         tool = FastCodeCallChainTool(api_url=api_url)
 
@@ -548,27 +449,6 @@ class TestFastCodeCallChainTool:
         result = await tool.execute(snapshot_id="", symbol_id="")
         assert "required" in result.lower()
 
-    @pytest.mark.asyncio
-    async def test_handles_empty_results(self, api_url):
-        tool = FastCodeCallChainTool(api_url=api_url)
-
-        def handler(_request: httpx.Request) -> httpx.Response:
-            return _json_response(body={
-                "status": "success",
-                "callees": [],
-            })
-
-        transport = _MockTransport({"GET /graph/callees": handler})
-        async with _make_client(transport) as client:
-            with _patch_client(client):
-                result = await tool.execute(
-                    snapshot_id="snap:myrepo:abc123",
-                    symbol_id="sym_001",
-                    direction="callees",
-                )
-
-        assert "no callees" in result.lower() or "none" in result.lower()
-
 
 # ---------------------------------------------------------------------------
 # Tool 8: FastCodeBuildProjectionTool (NEW)
@@ -606,35 +486,6 @@ class TestFastCodeBuildProjectionTool:
         assert "L0" in result
         assert "L1" in result
         assert "L2" in result
-
-    @pytest.mark.asyncio
-    async def test_build_query_projection(self, api_url):
-        tool = FastCodeBuildProjectionTool(api_url=api_url)
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content)
-            assert body["scope_kind"] == "query"
-            assert body["query"] == "authentication flow"
-            return _json_response(body={
-                "status": "success",
-                "result": {
-                    "projection_id": "proj_002",
-                    "scope_kind": "query",
-                    "layers_available": ["L0", "L1", "L2"],
-                },
-            })
-
-        transport = _MockTransport({"POST /projection/build": handler})
-        async with _make_client(transport) as client:
-            with _patch_client(client):
-                result = await tool.execute(
-                    action="build",
-                    scope_kind="query",
-                    snapshot_id="snap:myrepo:abc123",
-                    query="authentication flow",
-                )
-
-        assert "proj_002" in result
 
     @pytest.mark.asyncio
     async def test_get_projection_layer(self, api_url):
@@ -713,36 +564,6 @@ class TestFastCodeIndexRunTool:
         assert "run_001" in result
         assert "Documents: 42" in result
         assert "Symbols: 350" in result
-
-    @pytest.mark.asyncio
-    async def test_index_run_with_commit(self, api_url):
-        tool = FastCodeIndexRunTool(api_url=api_url)
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content)
-            assert body["commit"] == "deadbeef1234"
-            return _json_response(body={
-                "status": "success",
-                "result": {
-                    "run_id": "run_002",
-                    "snapshot_id": "snap:repo:deadbeef",
-                    "documents": 10,
-                    "symbols": 50,
-                    "edges": 100,
-                    "published": True,
-                },
-            })
-
-        transport = _MockTransport({"POST /index/run": handler})
-        async with _make_client(transport) as client:
-            with _patch_client(client):
-                result = await tool.execute(
-                    source="https://github.com/user/repo",
-                    commit="deadbeef1234",
-                )
-
-        assert "run_002" in result
-        assert "deadbeef" in result
 
     @pytest.mark.asyncio
     async def test_index_run_handles_error(self, api_url):

@@ -91,4 +91,6 @@ markers = [
     "snapshot: syrupy snapshot contract tests",
     "happy: normal-path test (valid inputs, expected behavior)",
     "edge: edge-case test (boundary, empty, invalid, extreme inputs)",
+    "mutation: tests designed to kill mutants",
+    "integration: tests requiring real database or external service",
 ]

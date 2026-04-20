@@ -38,7 +38,7 @@ def load_scip_artifact(path: str) -> SCIPIndex:
             pb_index = ProtobufIndex()
             pb_index.ParseFromString(raw)
             return _protobuf_to_scip_index(pb_index)
-        except Exception as exc:
+        except (ImportError, OSError, ValueError) as exc:
             logger.debug("Protobuf parsing failed, trying scip CLI: %s", exc)
             # Fallback to CLI
             scip_cli = shutil.which("scip")
@@ -87,12 +87,10 @@ def _protobuf_to_scip_index(pb_index) -> SCIPIndex:
         occurrences = []
         for occ in doc.occurrences:
             r = list(occ.range) if occ.range else list(_EMPTY_RANGE)
-            roles = occ.symbol_roles
-            role = "definition" if roles & 1 else "reference"
             occurrences.append(
                 SCIPOccurrence(
                     symbol=occ.symbol,
-                    role=role,
+                    role=_symbol_role_to_str(occ.symbol_roles),
                     range=r,
                 )
             )
@@ -111,9 +109,25 @@ def _protobuf_to_scip_index(pb_index) -> SCIPIndex:
     )
 
 
+def _symbol_role_to_str(roles: int) -> str:
+    """Convert SCIP symbol_roles bitmask to a semantic role string."""
+    if roles & 1:  # Definition
+        return "definition"
+    if roles & 2:  # Import
+        return "import"
+    if roles & 4:  # WriteAccess
+        return "write_access"
+    if roles & 64:  # ForwardDefinition
+        return "forward_definition"
+    return "reference"
+
+
 def _scip_kind_to_str(kind_value: int) -> str:
     """Convert SCIP protobuf Kind enum to string."""
-    from .scip_pb2 import SymbolInformation
+    try:
+        from .scip_pb2 import SymbolInformation
+    except ImportError:
+        return "symbol"
 
     kind_map = {
         SymbolInformation.Kind.Function: "function",

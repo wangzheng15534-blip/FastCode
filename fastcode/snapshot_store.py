@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import pickle
 import uuid
@@ -836,6 +837,9 @@ class SnapshotStore:
             self.db_runtime.execute(conn, "DELETE FROM design_documents WHERE snapshot_id=?", (snapshot_id,))
             self.db_runtime.execute(conn, "DELETE FROM design_doc_mentions WHERE snapshot_id=?", (snapshot_id,))
             for chunk in chunks:
+                if not chunk.get("chunk_id"):
+                    logging.getLogger(__name__).warning("Skipping design document chunk without chunk_id: %s", chunk.get("path", "<unknown>"))
+                    continue
                 self.db_runtime.execute(
                     conn,
                     """

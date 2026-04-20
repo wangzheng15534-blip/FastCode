@@ -143,7 +143,11 @@ class FastCode:
         self.pg_retrieval_store = PgRetrievalStore(self.snapshot_store.db_runtime, self.config)
         self.retriever.set_pg_retrieval_store(self.pg_retrieval_store)
         self.doc_ingester = KeyDocIngester(self.config, self.embedder)
-        self.graph_runtime = LadybugGraphRuntime(self.config)
+        self.graph_runtime = None
+        try:
+            self.graph_runtime = LadybugGraphRuntime(self.config)
+        except ImportError:
+            self.logger.info("LadybugGraphRuntime unavailable — graph persistence disabled")
 
         self._redo_worker: Optional[RedoWorker] = None
         if self.snapshot_store.db_runtime.backend == "postgres":
@@ -418,7 +422,7 @@ class FastCode:
             parent_ids = [p.hexsha for p in commit_obj.parents]
             git_meta["parent_commit_id"] = parent_ids[0] if parent_ids else None
             git_meta["parent_commit_ids"] = parent_ids
-        except Exception as e:
+        except (ValueError, KeyError) as e:
             self.logger.warning(f"Failed to resolve commit parent metadata: {e}")
         return git_meta
 
@@ -663,6 +667,7 @@ class FastCode:
                             branch=snapshot_ref.get("branch"),
                             commit_id=snapshot_ref.get("commit_id"),
                             tree_id=snapshot_ref.get("tree_id"),
+                            language_hint="python",
                         )
                     if raw_scip_path and os.path.exists(raw_scip_path):
                         import shutil
@@ -1013,7 +1018,7 @@ class FastCode:
         processed = 0
         succeeded = 0
         failed = 0
-        while processed < max(1, int(limit)):
+        while processed < max(1, min(int(limit), 100)):
             status = self._redo_worker.process_once_status()
             if status == "none":
                 break
@@ -1058,6 +1063,7 @@ class FastCode:
         return None
 
     def get_graph_callees(self, snapshot_id: str, symbol_id: str, max_hops: int = 1) -> List[Dict[str, Any]]:
+        max_hops = max(1, min(max_hops, 20))
         ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
         if not ir_graphs:
             return []
@@ -1068,6 +1074,7 @@ class FastCode:
         return [{"symbol_id": node, "distance": d} for node, d in dist.items() if node != symbol_id]
 
     def get_graph_callers(self, snapshot_id: str, symbol_id: str, max_hops: int = 1) -> List[Dict[str, Any]]:
+        max_hops = max(1, min(max_hops, 20))
         ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
         if not ir_graphs:
             return []
@@ -1078,6 +1085,7 @@ class FastCode:
         return [{"symbol_id": node, "distance": d} for node, d in dist.items() if node != symbol_id]
 
     def get_graph_dependencies(self, snapshot_id: str, doc_id: str, max_hops: int = 1) -> List[Dict[str, Any]]:
+        max_hops = max(1, min(max_hops, 20))
         ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
         if not ir_graphs:
             return []
@@ -2601,10 +2609,11 @@ class FastCode:
 
     def shutdown(self):
         """Stop background workers."""
-        if self._redo_worker:
+        if getattr(self, "_redo_worker", None):
             self._redo_worker.stop()
-        if self.graph_runtime:
-            self.graph_runtime.close()
+        graph_rt = getattr(self, "graph_runtime", None)
+        if graph_rt is not None:
+            graph_rt.close()
     
     def _get_full_dialogue_history(self, session_id: Optional[str], enable_multi_turn: bool) -> Optional[List[Dict[str, Any]]]:
         """

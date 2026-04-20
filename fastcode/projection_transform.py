@@ -337,6 +337,13 @@ class ProjectionTransformer:
             ]:
                 for src, dst in graph.edges():
                     add_edge(src, dst, edge_type, "ir_graph")
+
+        if g.number_of_edges() == 0:
+            docs_by_path = {d.path: d.doc_id for d in snapshot.documents}
+            for s in snapshot.symbols:
+                doc_id = docs_by_path.get(s.path)
+                if doc_id and doc_id in g.nodes:
+                    g.add_edge(s.symbol_id, doc_id, weight=1.0, edge_types={"contain"}, source="fallback")
         return g
 
     def _scope_nodes(self, scope: ProjectionScope, snapshot: IRSnapshot, g: nx.Graph) -> Tuple[Set[str], Set[str]]:
@@ -824,7 +831,7 @@ class ProjectionTransformer:
         lang_counter = Counter((s.language or "") for s in symbols if s.language)
         kind_counter = Counter((s.kind or "") for s in symbols if s.kind)
         paths = [p for p in [*(s.path for s in symbols), *(d.path for d in docs)] if p]
-        common_prefix = os.path.commonprefix(paths) if paths else ""
+        common_prefix = os.path.commonpath(paths) if paths else ""
 
         edge_type_counter = Counter()
         for u, v, data in sg.edges(data=True):

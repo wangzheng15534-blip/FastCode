@@ -245,11 +245,18 @@ class IndexRunStore:
     def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(conn, "SELECT * FROM index_runs WHERE run_id=?", (run_id,)).fetchone()
-        return self.db_runtime.row_to_dict(row)
+        return self.db_runtime.row_to_dict(row) if row else None
+
+    _ALLOWED_RUN_FIELDS = frozenset({
+        "status", "started_at", "completed_at", "error_message", "warnings_json",
+    })
 
     def _set_run_fields(self, run_id: str, **fields: Any) -> None:
         if not fields:
             return
+        unknown = set(fields.keys()) - self._ALLOWED_RUN_FIELDS
+        if unknown:
+            raise ValueError(f"Unknown run fields: {unknown}")
         assignments = ", ".join(f"{k}=?" for k in fields.keys())
         values = list(fields.values()) + [run_id]
         with self.db_runtime.connect() as conn:

@@ -105,7 +105,15 @@ class PgRetrievalStore:
 
     @staticmethod
     def _vector_literal(vec: Sequence[float]) -> str:
-        return "[" + ",".join(f"{float(v):.8f}" for v in vec) + "]"
+        if not vec:
+            raise ValueError("Cannot create vector literal from empty sequence")
+        cleaned = []
+        for v in vec:
+            f = float(v)
+            if math.isnan(f) or math.isinf(f):
+                f = 0.0
+            cleaned.append(f)
+        return "[" + ",".join(f"{v:.8f}" for v in cleaned) + "]"
 
     def upsert_elements(self, snapshot_id: str, elements: List[Dict[str, Any]]) -> None:
         if not self.enabled:
@@ -134,13 +142,24 @@ class PgRetrievalStore:
                 # Strip numpy arrays and other non-serializable values from metadata
                 # before JSON encoding. Embeddings are stored separately in the
                 # embedding/embedding_arr columns.
+                def _make_json_safe(val):
+                    if isinstance(val, np.ndarray):
+                        return val.tolist()
+                    if isinstance(val, (np.integer,)):
+                        return int(val)
+                    if isinstance(val, (np.floating,)):
+                        return float(val)
+                    if isinstance(val, np.bool_):
+                        return bool(val)
+                    return val
+
                 serializable_elem = {
-                    k: (v.tolist() if isinstance(v, np.ndarray) else v)
+                    k: _make_json_safe(v)
                     for k, v in elem.items()
                 }
                 if isinstance(serializable_elem.get("metadata"), dict):
                     serializable_elem["metadata"] = {
-                        k: (v.tolist() if isinstance(v, np.ndarray) else v)
+                        k: _make_json_safe(v)
                         for k, v in serializable_elem["metadata"].items()
                     }
                 metadata_json = json.dumps(serializable_elem, ensure_ascii=False)
@@ -281,10 +300,19 @@ class PgRetrievalStore:
                 for row in rows:
                     raw_meta = row.get("metadata_json") if isinstance(row, dict) else row[0]
                     raw_score = row.get("score") if isinstance(row, dict) else row[1]
-                    meta = raw_meta if isinstance(raw_meta, dict) else json.loads(raw_meta)
+                    if isinstance(raw_meta, dict):
+                        meta = raw_meta
+                    elif raw_meta:
+                        try:
+                            meta = json.loads(raw_meta)
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+                    else:
+                        continue
                     out.append((meta, float(raw_score or 0.0)))
                 return out
-            except Exception:
+            except Exception as exc:
+                self.logger.debug("pgvector query failed, falling back to client-side cosine: %s", exc)
                 # Fallback: compute cosine with embedding_arr client-side.
                 if repo_filter and element_types:
                     cur.execute(
@@ -366,6 +394,21 @@ class PgRetrievalStore:
     ) -> List[Tuple[Dict[str, Any], float]]:
         if not self.enabled or not query.strip():
             return []
+        try:
+            return self._keyword_search_inner(snapshot_id, query, repo_filter=repo_filter, element_types=element_types, top_k=top_k)
+        except Exception as exc:
+            self.logger.warning("keyword_search failed: %s", exc)
+            return []
+
+    def _keyword_search_inner(
+        self,
+        snapshot_id: str,
+        query: str,
+        *,
+        repo_filter: Optional[List[str]] = None,
+        element_types: Optional[List[str]] = None,
+        top_k: int = 20,
+    ) -> List[Tuple[Dict[str, Any], float]]:
         with self.db_runtime.connect() as conn:
             cur = conn.cursor()
             if repo_filter and element_types:
@@ -424,6 +467,14 @@ class PgRetrievalStore:
             for row in cur.fetchall():
                 raw_meta = row.get("metadata_json") if isinstance(row, dict) else row[0]
                 raw_score = row.get("score") if isinstance(row, dict) else row[1]
-                meta = raw_meta if isinstance(raw_meta, dict) else json.loads(raw_meta)
+                if isinstance(raw_meta, dict):
+                    meta = raw_meta
+                elif raw_meta:
+                    try:
+                        meta = json.loads(raw_meta)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                else:
+                    continue
                 out.append((meta, float(raw_score or 0.0)))
             return out

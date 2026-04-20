@@ -140,6 +140,6 @@ def run_scip_for_language(
     try:
         artifact_path = run_scip_indexer(language, repo_path, output_path)
         return load_scip_artifact(artifact_path)
-    except RuntimeError as exc:
+    except (RuntimeError, FileNotFoundError, ValueError) as exc:
         logger.warning("SCIP indexer for %s unavailable: %s", language, exc)
         return None

@@ -68,7 +68,8 @@ def build_ir_from_scip(
             ext_symbol = sym.get("symbol")
             if not ext_symbol:
                 continue
-            r = sym.get("range", [None, None, None, None])
+            raw_r = sym.get("range", [None, None, None, None])
+            r = (raw_r + [None, None, None, None])[:4]
             symbol_id = f"scip:{snapshot_id}:{ext_symbol}"
             symbols.append(
                 IRSymbol(
@@ -116,7 +117,8 @@ def build_ir_from_scip(
             ext_symbol = occ.get("symbol")
             if not ext_symbol:
                 continue
-            r = occ.get("range", [0, 0, 0, 0])
+            raw_r = occ.get("range", [0, 0, 0, 0])
+            r = (raw_r + [0, 0, 0, 0])[:4]
             role = occ.get("role", "reference")
             symbol_id = f"scip:{snapshot_id}:{ext_symbol}"
             occ_id = _hid("occ", f"{snapshot_id}:{doc_id}:{ext_symbol}:{role}:{r}")
@@ -139,7 +141,7 @@ def build_ir_from_scip(
                     },
                 )
             )
-            if role in {"reference", "definition", "implementation", "type_definition"}:
+            if role in {"reference", "definition", "implementation", "type_definition", "import", "write_access", "forward_definition"}:
                 edges.append(
                     IREdge(
                         edge_id=_hid("edge", f"ref:{doc_id}:{symbol_id}:{occ_id}"),

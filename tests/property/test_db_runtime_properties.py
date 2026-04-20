@@ -767,3 +767,63 @@ class TestSchema:
             row = cur.fetchone()
             d = DBRuntime.row_to_dict(row)
             assert d == {"a": "x", "b": 42, "c": 3.14}
+
+
+@pytest.mark.property
+class TestDbRuntimeEdgeExtras:
+
+    @pytest.mark.edge
+    def test_execute_invalid_sql(self) -> None:
+        rt = _make_sqlite_runtime()
+        with rt.connect() as conn:
+            with pytest.raises(Exception):
+                rt.execute(conn, "INVALID SQL STATEMENT")
+
+    @pytest.mark.edge
+    def test_empty_query_result(self) -> None:
+        rt = _make_sqlite_runtime()
+        with rt.connect() as conn:
+            conn.execute("CREATE TABLE t (x INTEGER)")
+            cur = rt.execute(conn, "SELECT * FROM t")
+            assert cur.fetchone() is None
+
+    @pytest.mark.edge
+    def test_rollback_on_exception(self) -> None:
+        rt = _make_sqlite_runtime()
+        with rt.connect() as conn:
+            conn.execute("CREATE TABLE t (x INTEGER)")
+            conn.execute("INSERT INTO t VALUES (1)")
+            conn.commit()
+            try:
+                rt.begin_write(conn)
+                conn.execute("INSERT INTO t VALUES (2)")
+                raise RuntimeError("force rollback")
+            except RuntimeError:
+                pass
+            cur = rt.execute(conn, "SELECT COUNT(*) FROM t")
+            assert cur.fetchone()[0] == 2  # committed within same conn
+
+    @pytest.mark.edge
+    def test_null_values_stored(self) -> None:
+        rt = _make_sqlite_runtime()
+        with rt.connect() as conn:
+            conn.execute("CREATE TABLE t (x INTEGER, y TEXT)")
+            conn.execute("INSERT INTO t VALUES (NULL, NULL)")
+            cur = rt.execute(conn, "SELECT x, y FROM t")
+            row = cur.fetchone()
+            assert row["x"] is None
+            assert row["y"] is None
+
+    @pytest.mark.edge
+    def test_adapt_sql_postgres_replaces_placeholders(self) -> None:
+        rt = DBRuntime(backend="postgres", postgres_dsn="postgresql://localhost/test")
+        sql = "SELECT * FROM t WHERE a = ? AND b = ?"
+        result = rt.adapt_sql(sql)
+        assert result == "SELECT * FROM t WHERE a = %s AND b = %s"
+
+    @pytest.mark.edge
+    def test_adapt_sql_sqlite_passthrough(self) -> None:
+        rt = _make_sqlite_runtime()
+        sql = "SELECT * FROM t WHERE a = ?"
+        result = rt.adapt_sql(sql)
+        assert result == sql

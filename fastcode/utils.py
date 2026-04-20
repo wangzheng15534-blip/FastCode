@@ -285,33 +285,39 @@ def ensure_dir(directory: str):
     Path(directory).mkdir(parents=True, exist_ok=True)
 
 
-def safe_jsonable(obj: Any) -> Any:
+_MAX_SAFE_JSONABLE_DEPTH = 12
+
+
+def safe_jsonable(obj: Any, *, _depth: int = 0) -> Any:
     """Recursively convert objects to JSON-serializable structures.
 
     Handles dicts, lists/tuples/sets, objects with ``to_dict()``, and
     arbitrary objects via ``vars()``.  Non-serializable values fall back
-    to ``repr()``.
+    to ``repr()``.  Depth is capped to prevent infinite recursion on
+    circular references.
     """
+    if _depth > _MAX_SAFE_JSONABLE_DEPTH:
+        return repr(obj)
     if obj is None or isinstance(obj, (bool, int, float, str)):
         return obj
     if isinstance(obj, dict):
         safe_dict = {}
         for k, v in obj.items():
             try:
-                safe_dict[str(k)] = safe_jsonable(v)
+                safe_dict[str(k)] = safe_jsonable(v, _depth=_depth + 1)
             except Exception:
                 safe_dict[str(k)] = repr(v)
         return safe_dict
     if isinstance(obj, (list, tuple, set)):
-        return [safe_jsonable(v) for v in obj]
+        return [safe_jsonable(v, _depth=_depth + 1) for v in obj]
     if hasattr(obj, "to_dict"):
         try:
-            return safe_jsonable(obj.to_dict())
+            return safe_jsonable(obj.to_dict(), _depth=_depth + 1)
         except Exception:
             return {"repr": repr(obj)}
     if hasattr(obj, "__dict__"):
         try:
-            return safe_jsonable(vars(obj))
+            return safe_jsonable(vars(obj), _depth=_depth + 1)
         except Exception:
             return {"repr": repr(obj)}
     return repr(obj)

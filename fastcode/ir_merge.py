@@ -56,7 +56,7 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
     occ_seen: Dict[tuple, IROccurrence] = {}
     for occ in scip_snapshot.occurrences + ast_snapshot.occurrences:
         symbol_id = ast_to_canonical.get(occ.symbol_id, occ.symbol_id)
-        key = (symbol_id, occ.doc_id, occ.role, occ.start_line, occ.start_col, occ.end_line, occ.end_col)
+        key = (symbol_id, occ.doc_id, occ.role, occ.start_line or 0, occ.start_col or 0, occ.end_line or 0, occ.end_col or 0)
         if key not in occ_seen:
             occ_seen[key] = IROccurrence(
                 occurrence_id=occ.occurrence_id,
@@ -72,10 +72,15 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
             )
     merged_occurrences = list(occ_seen.values())
 
+    edge_seen: set[tuple[str, str, str]] = set()
     merged_edges = []
     for edge in ast_snapshot.edges + scip_snapshot.edges:
         src_id = ast_to_canonical.get(edge.src_id, edge.src_id)
         dst_id = ast_to_canonical.get(edge.dst_id, edge.dst_id)
+        edge_key = (src_id, dst_id, edge.edge_type)
+        if edge_key in edge_seen:
+            continue
+        edge_seen.add(edge_key)
         merged_edges.append(
             IREdge(
                 edge_id=edge.edge_id,

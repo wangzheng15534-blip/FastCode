@@ -71,7 +71,7 @@ class DocChunk:
                 "doc_type": self.doc_type,
                 "heading": self.heading,
                 "is_design_doc": True,
-                "embedding": self.embedding,
+                "embedding": list(self.embedding) if self.embedding else None,
             },
             "repo_name": self.repo_name,
             "repo_url": None,
@@ -180,15 +180,28 @@ class KeyDocIngester:
 
     @staticmethod
     def _read_text(path: str) -> str:
+        # Quick binary detection: skip common binary extensions
+        binary_exts = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
+                       ".pdf", ".zip", ".tar", ".gz", ".bz2", ".7z", ".whl", ".egg",
+                       ".pyc", ".pyo", ".so", ".dylib", ".dll", ".exe", ".bin",
+                       ".woff", ".woff2", ".ttf", ".otf", ".eot"}
+        _, ext = os.path.splitext(path)
+        if ext.lower() in binary_exts:
+            return ""
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return f.read()
-        except Exception:
+        except UnicodeDecodeError:
+            logger.debug("File not UTF-8, reading with lossy fallback: %s", path)
             try:
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
                     return f.read()
-            except Exception:
+            except OSError as exc:
+                logger.warning("Cannot read file: %s: %s", path, exc)
                 return ""
+        except OSError as exc:
+            logger.warning("Cannot read file: %s: %s", path, exc)
+            return ""
 
     def _chunk_document(self, text: str) -> List[Dict[str, Any]]:
         if not text.strip():
@@ -252,6 +265,9 @@ class KeyDocIngester:
         embedding model when provider is sentence_transformers. Falls back to
         the default Model2Vec model otherwise.
         """
+        if self._chunker is False:
+            # Previous attempt failed; retry once.
+            self._chunker = None
         if self._chunker is not None:
             return self._chunker
         cls = _get_chunker_class()
@@ -268,7 +284,7 @@ class KeyDocIngester:
             logger.warning(
                 "SemanticChunker init failed, falling back: %s", exc,
             )
-            self._chunker = None
+            self._chunker = False
         return self._chunker
 
     def _resolve_embedding_model(self):
@@ -323,6 +339,7 @@ class KeyDocIngester:
         words = sec_text.split()
         if not words:
             return []
+        effective_overlap = min(self._legacy_chunk_overlap, self._legacy_chunk_size - 1)
         pieces: List[str] = []
         i = 0
         while i < len(words):
@@ -333,7 +350,7 @@ class KeyDocIngester:
             pieces.append(piece)
             if j >= len(words):
                 break
-            i = max(0, j - self._legacy_chunk_overlap)
+            i = max(0, j - effective_overlap)
         return pieces
 
     @staticmethod
@@ -377,7 +394,7 @@ class KeyDocIngester:
         for chunk in chunks:
             text = chunk.text
             for symbol_id, name in symbols:
-                if re.search(rf"\b{re.escape(name)}\b", text):
+                if re.search(re.escape(name), text):
                     mentions.append(
                         {
                             "snapshot_id": chunk.snapshot_id,

@@ -20,7 +20,9 @@ def _esc(val: Any) -> str:
     """Escape a value for inline Cypher property strings."""
     if val is None:
         return "NULL"
-    s = str(val).replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
+    s = str(val)
+    s = s.replace("\x00", "").replace("\n", " ").replace("\r", " ")
+    s = s.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
     return f'"{s}"'
 
 
@@ -40,7 +42,7 @@ class LadybugGraphRuntime:
         try:
             from real_ladybug import Database, Connection  # type: ignore
 
-            db = Database()
+            db = Database(self.db_path)
             self._conn = Connection(database=db)
             self._create_schema()
             if self.postgres_attach_dsn:

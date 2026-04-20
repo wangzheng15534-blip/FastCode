@@ -3,11 +3,19 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
+try:
+    import google.protobuf  # noqa: F401
+    _HAS_PROTOBUF = True
+except ImportError:
+    _HAS_PROTOBUF = False
+
+requires_protobuf = pytest.mark.skipif(not _HAS_PROTOBUF, reason="protobuf not installed")
+
 
 def test_get_indexer_command_java():
     """Java indexer command is correct."""
     from fastcode.scip_indexers import get_indexer_command
-    cmd = get_indexer_command("java", "/repo", "/out/index.scip")
+    cmd = get_indexer_command("java", "/out/index.scip")
     assert cmd is not None
     assert cmd[0] == "scip-java"
     assert "--output" in cmd
@@ -16,7 +24,7 @@ def test_get_indexer_command_java():
 def test_get_indexer_command_go():
     """Go indexer command is correct."""
     from fastcode.scip_indexers import get_indexer_command
-    cmd = get_indexer_command("go", "/repo", "/out/index.scip")
+    cmd = get_indexer_command("go", "/out/index.scip")
     assert cmd is not None
     assert cmd[0] == "scip-go"
     assert "--output" in cmd
@@ -25,7 +33,7 @@ def test_get_indexer_command_go():
 def test_get_indexer_command_python():
     """Python indexer command is correct."""
     from fastcode.scip_indexers import get_indexer_command
-    cmd = get_indexer_command("python", "/repo", "/out/index.scip")
+    cmd = get_indexer_command("python", "/out/index.scip")
     assert cmd is not None
     assert cmd[0] == "scip-python"
     assert "index" in cmd
@@ -34,7 +42,7 @@ def test_get_indexer_command_python():
 def test_get_indexer_command_ruby():
     """Ruby indexer command is correct."""
     from fastcode.scip_indexers import get_indexer_command
-    cmd = get_indexer_command("ruby", "/repo", "/out/index.scip")
+    cmd = get_indexer_command("ruby", "/out/index.scip")
     assert cmd is not None
     assert cmd[0] == "scip-ruby"
 
@@ -42,7 +50,7 @@ def test_get_indexer_command_ruby():
 def test_get_indexer_command_unsupported():
     """Unsupported language returns None."""
     from fastcode.scip_indexers import get_indexer_command
-    assert get_indexer_command("brainfuck", "/repo", "/out.scip") is None
+    assert get_indexer_command("brainfuck", "/out.scip") is None
 
 
 def test_supported_languages():
@@ -122,6 +130,7 @@ def test_auto_detect_deduplicates():
         assert languages.count("java") == 1
 
 
+@requires_protobuf
 def test_run_scip_for_language_success(tmp_path):
     """run_scip_for_language orchestrates indexing and loading."""
     from fastcode.scip_indexers import run_scip_for_language

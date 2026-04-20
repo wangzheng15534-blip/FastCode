@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-_EMPTY_RANGE: list[None] = [None, None, None, None]
+_EMPTY_RANGE: tuple[None, ...] = (None, None, None, None)
 
 
 @dataclass
@@ -99,8 +99,12 @@ class SCIPIndex:
     def from_dict(cls, data: dict[str, Any]) -> SCIPIndex:
         reserved = {"documents", "indexer_name", "indexer_version"}
         metadata = {k: v for k, v in data.items() if k not in reserved}
+        raw_docs = data.get("documents") or []
+        documents = [
+            SCIPDocument.from_dict(d) for d in raw_docs if isinstance(d, dict)
+        ]
         return cls(
-            documents=[SCIPDocument.from_dict(d) for d in (data.get("documents") or [])],
+            documents=documents,
             indexer_name=data.get("indexer_name"),
             indexer_version=data.get("indexer_version"),
             metadata=metadata,
@@ -136,3 +140,14 @@ class SCIPArtifactRef:
             "checksum": self.checksum,
             "created_at": self.created_at,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SCIPArtifactRef:
+        return cls(
+            snapshot_id=str(data.get("snapshot_id") or ""),
+            indexer_name=str(data.get("indexer_name") or ""),
+            indexer_version=data.get("indexer_version"),
+            artifact_path=str(data.get("artifact_path") or ""),
+            checksum=str(data.get("checksum") or ""),
+            created_at=str(data.get("created_at") or ""),
+        )

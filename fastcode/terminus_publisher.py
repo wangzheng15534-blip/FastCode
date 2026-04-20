@@ -68,6 +68,10 @@ class TerminusPublisher:
     ) -> Dict[str, Any]:
         repo_name = snapshot.get("repo_name") or git_meta.get("repo_name")
         snapshot_id = snapshot.get("snapshot_id")
+        if not snapshot_id:
+            raise ValueError("snapshot_id is required for lineage payload")
+        if not repo_name:
+            raise ValueError("repo_name is required for lineage payload")
         branch = snapshot.get("branch") or git_meta.get("branch")
         commit_id = snapshot.get("commit_id") or git_meta.get("commit_id")
 

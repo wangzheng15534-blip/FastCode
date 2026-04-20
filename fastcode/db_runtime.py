@@ -5,9 +5,12 @@ Shared DB runtime for SQLite/PostgreSQL-backed stores.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import sqlite3
 from typing import Any, Iterator, Optional
+
+logger = logging.getLogger(__name__)
 
 try:
     import psycopg
@@ -51,6 +54,8 @@ class DBRuntime:
                     max_size=self.pool_max,
                     kwargs={"autocommit": False, "row_factory": dict_row},
                 )
+            else:
+                logger.warning("psycopg_pool not available — PostgreSQL connections will not be pooled")
         else:
             if not self.sqlite_path:
                 raise RuntimeError("sqlite backend requires sqlite_path")

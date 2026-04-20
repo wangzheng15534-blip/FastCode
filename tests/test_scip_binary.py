@@ -2,7 +2,16 @@
 
 import pytest
 
+try:
+    import google.protobuf  # noqa: F401
+    _HAS_PROTOBUF = True
+except ImportError:
+    _HAS_PROTOBUF = False
 
+requires_protobuf = pytest.mark.skipif(not _HAS_PROTOBUF, reason="protobuf not installed")
+
+
+@requires_protobuf
 def test_scip_pb2_module_importable():
     """Protobuf bindings module must be importable."""
     from fastcode.scip_pb2 import Index
@@ -10,6 +19,7 @@ def test_scip_pb2_module_importable():
     assert idx.metadata.tool_info.name == ""
 
 
+@requires_protobuf
 def test_load_binary_scip_artifact(tmp_path):
     """Binary .scip files parse without external CLI."""
     from fastcode.scip_pb2 import Index
@@ -40,6 +50,7 @@ def test_load_binary_scip_artifact(tmp_path):
     assert result.documents[0].symbols[0].name == "main"
 
 
+@requires_protobuf
 def test_binary_scip_with_occurrences(tmp_path):
     """Binary SCIP with occurrences converts correctly."""
     from fastcode.scip_pb2 import Index, SymbolInformation
@@ -93,6 +104,7 @@ def test_binary_scip_with_occurrences(tmp_path):
     assert doc_result.occurrences[1].role == "reference"
 
 
+@requires_protobuf
 def test_binary_scip_empty_index(tmp_path):
     """Empty SCIP index produces empty SCIPIndex."""
     from fastcode.scip_pb2 import Index
@@ -110,6 +122,7 @@ def test_binary_scip_empty_index(tmp_path):
     assert result.indexer_name is None or result.indexer_name == ""
 
 
+@requires_protobuf
 def test_binary_scip_to_ir_round_trip(tmp_path):
     """Binary SCIP -> SCIPIndex -> IRSnapshot produces valid IR."""
     from fastcode.scip_pb2 import Index, SymbolInformation
@@ -186,7 +199,7 @@ def test_no_run_scip_python_index_function_body():
 def test_empty_range_constant_not_duplicated():
     """_EMPTY_RANGE is defined once in scip_models."""
     from fastcode.scip_models import _EMPTY_RANGE
-    assert _EMPTY_RANGE == [None, None, None, None]
+    assert _EMPTY_RANGE == (None, None, None, None)
 
 
 def test_skip_dirs_is_frozen():

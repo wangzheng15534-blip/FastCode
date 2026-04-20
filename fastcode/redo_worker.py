@@ -43,6 +43,9 @@ class RedoWorker:
         if not task:
             return "none"
         task_id = str(task.get("task_id") or "")
+        if not task_id:
+            self.logger.warning("Redo task claimed without task_id, skipping")
+            return "none"
         try:
             self._dispatch_task(task)
             self.fastcode.snapshot_store.mark_redo_task_done(task_id)
@@ -66,7 +69,10 @@ class RedoWorker:
         if isinstance(payload, str):
             import json
 
-            payload = json.loads(payload)
+            try:
+                payload = json.loads(payload)
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise RuntimeError(f"redo task {task.get('task_id')!r} has malformed payload_json: {exc}") from exc
         if not isinstance(payload, dict):
             payload = {}
 

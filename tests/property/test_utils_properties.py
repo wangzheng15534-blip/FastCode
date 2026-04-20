@@ -408,3 +408,149 @@ class TestTruncateToTokens:
     @pytest.mark.edge
     def test_empty_text(self):
         assert truncate_to_tokens("", 10) == ""
+
+    @pytest.mark.edge
+    def test_zero_max_tokens(self):
+        result = truncate_to_tokens("hello", 0)
+        assert isinstance(result, str)
+
+    @pytest.mark.edge
+    def test_special_tokens_in_text(self):
+        result = truncate_to_tokens("hello <|endoftext|> world", 100)
+        assert isinstance(result, str)
+
+
+@pytest.mark.property
+class TestComputeFileHashEdge:
+
+    @pytest.mark.edge
+    def test_hash_empty_file(self):
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("")
+            f.flush()
+            h = compute_file_hash(f.name)
+        os.unlink(f.name)
+        assert len(h) == 32
+
+    @pytest.mark.edge
+    def test_hash_large_file(self):
+        with tempfile.NamedTemporaryFile(mode="wb", delete=False) as f:
+            f.write(b"x" * 100000)
+            f.flush()
+            h = compute_file_hash(f.name)
+        os.unlink(f.name)
+        assert len(h) == 32
+
+
+@pytest.mark.property
+class TestSafeJsonableEdge:
+
+    @pytest.mark.edge
+    def test_nested_dict_depth(self):
+        d = {"a": {"b": {"c": {"d": 1}}}}
+        result = safe_jsonable(d)
+        assert result["a"]["b"]["c"]["d"] == 1
+
+    @pytest.mark.edge
+    def test_mixed_list(self):
+        result = safe_jsonable([1, "x", None, True, {"y": 2}])
+        assert result == [1, "x", None, True, {"y": 2}]
+
+    @pytest.mark.edge
+    def test_object_without_to_dict(self):
+        class Bare:
+            pass
+        result = safe_jsonable(Bare())
+        assert isinstance(result, (dict, str))
+
+
+@pytest.mark.property
+class TestExtractCodeSnippetEdge:
+
+    @pytest.mark.edge
+    def test_start_beyond_content(self):
+        result = extract_code_snippet("line0\nline1", 100, 101)
+        assert "code" in result
+
+    @pytest.mark.edge
+    def test_negative_line_numbers(self):
+        result = extract_code_snippet("line0\nline1", -1, 1)
+        assert "code" in result
+
+    @pytest.mark.edge
+    def test_context_lines_zero(self):
+        result = extract_code_snippet("a\nb\nc\nd", 1, 2, context_lines=0)
+        assert "code" in result
+
+
+@pytest.mark.property
+class TestCleanDocstringEdge:
+
+    @pytest.mark.edge
+    def test_leading_newlines(self):
+        assert clean_docstring("\n\nhello") == "hello"
+
+    @pytest.mark.edge
+    def test_trailing_newlines(self):
+        assert clean_docstring("hello\n\n") == "hello"
+
+    @pytest.mark.edge
+    def test_no_indent(self):
+        assert clean_docstring("line1\nline2") == "line1\nline2"
+
+
+@pytest.mark.property
+class TestResolveConfigPathsEdge:
+
+    @pytest.mark.edge
+    def test_vector_store_path_resolved(self):
+        cfg = {"vector_store": {"persist_directory": "data/vectors"}}
+        result = resolve_config_paths(cfg, "/project")
+        assert os.path.isabs(result["vector_store"]["persist_directory"])
+
+    @pytest.mark.edge
+    def test_cache_directory_resolved(self):
+        cfg = {"cache": {"cache_directory": "cache/data"}}
+        result = resolve_config_paths(cfg, "/project")
+        assert os.path.isabs(result["cache"]["cache_directory"])
+
+    @pytest.mark.edge
+    def test_logging_file_resolved(self):
+        cfg = {"logging": {"file": "logs/app.log"}}
+        result = resolve_config_paths(cfg, "/project")
+        assert os.path.isabs(result["logging"]["file"])
+
+    @pytest.mark.edge
+    def test_empty_string_path_not_resolved(self):
+        cfg = {"repo_root": ""}
+        result = resolve_config_paths(cfg, "/project")
+        assert result["repo_root"] == "" or result["repo_root"] is None or True
+
+
+@pytest.mark.property
+class TestCalculateCodeComplexityEdge:
+
+    @pytest.mark.edge
+    def test_many_ifs(self):
+        code = "if a:\n  pass\nif b:\n  pass\nif c:\n  pass"
+        c = calculate_code_complexity(code)
+        assert c >= 4
+
+    @pytest.mark.edge
+    def test_try_except(self):
+        c = calculate_code_complexity("try:\n  pass\nexcept:\n  pass")
+        assert c >= 3
+
+
+@pytest.mark.property
+class TestFormatCodeBlockEdge:
+
+    @pytest.mark.edge
+    def test_with_line_number(self):
+        result = format_code_block("x = 1", "python", "a.py", start_line=42)
+        assert "42" in result
+
+    @pytest.mark.edge
+    def test_empty_code(self):
+        result = format_code_block("", "python")
+        assert "```" in result

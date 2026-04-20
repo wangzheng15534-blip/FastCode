@@ -66,6 +66,13 @@ dev = [
     "pytest-asyncio",
     "pytest-cov",
     "pytest-benchmark",
+    "pytest-xdist",
+    "hypothesis",
+    "syrupy",
+    "pip-audit",
+]
+scip = [
+    "protobuf>=6.0",
 ]
 ladybug = [
     "real_ladybug",
@@ -77,3 +84,11 @@ include = ["fastcode*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "strict"
+addopts = "-n auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "property: hypothesis property-based tests",
+    "snapshot: syrupy snapshot contract tests",
+    "happy: normal-path test (valid inputs, expected behavior)",
+    "edge: edge-case test (boundary, empty, invalid, extreme inputs)",
+]

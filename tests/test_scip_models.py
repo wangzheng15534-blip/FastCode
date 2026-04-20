@@ -1,5 +1,4 @@
 import json
-import tempfile
 
 from fastcode.adapters.scip_to_ir import build_ir_from_scip
 from fastcode.scip_loader import load_scip_artifact
@@ -28,15 +27,14 @@ def test_scip_index_round_trip_preserves_fields():
     assert out["custom_meta"] == {"x": 1}
 
 
-def test_load_scip_artifact_returns_typed_model():
+def test_load_scip_artifact_returns_typed_model(tmp_path):
     payload = {
         "indexer_name": "scip-python",
         "documents": [{"path": "x.py", "symbols": [], "occurrences": []}],
     }
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        json.dump(payload, f)
-        path = f.name
-    loaded = load_scip_artifact(path)
+    artifact = tmp_path / "index.scip.json"
+    artifact.write_text(json.dumps(payload))
+    loaded = load_scip_artifact(str(artifact))
     assert isinstance(loaded, SCIPIndex)
     assert loaded.documents[0].path == "x.py"
 
@@ -71,3 +69,65 @@ def test_scip_artifact_ref_to_dict():
     payload = ref.to_dict()
     assert payload["snapshot_id"] == "snap:repo:1"
     assert payload["checksum"] == "abc"
+
+
+import pytest
+
+
+@pytest.mark.parametrize("role", [
+    "definition", "reference", "import", "implementation",
+    "write_access", "forward_definition", "type_definition",
+])
+@pytest.mark.happy
+def test_scip_occurrence_role_roundtrip(role):
+    """HAPPY: SCIPOccurrence roundtrip preserves role for all valid roles."""
+    from fastcode.scip_models import SCIPOccurrence
+    occ = SCIPOccurrence(symbol="pkg foo.", role=role, range=[1, 0, 1, 5])
+    data = occ.to_dict()
+    restored = SCIPOccurrence.from_dict(data)
+    assert restored.role == role
+
+
+@pytest.mark.parametrize("kind", [
+    "function", "method", "class", "variable", "module",
+    "interface", "enum", "constant", "macro",
+])
+@pytest.mark.happy
+def test_scip_symbol_kind_roundtrip(kind):
+    """HAPPY: SCIPSymbol roundtrip preserves kind for all valid kinds."""
+    from fastcode.scip_models import SCIPSymbol
+    sym = SCIPSymbol(symbol="pkg foo.", name="foo", kind=kind)
+    data = sym.to_dict()
+    restored = SCIPSymbol.from_dict(data)
+    assert restored.kind == kind
+
+
+@pytest.mark.parametrize("range_vals", [
+    [1, 0, 1, 5],
+    [0, 0, 0, 0],
+    [100, 0, 200, 50],
+    [None, None, None, None],
+    [1, None, None, None],
+])
+@pytest.mark.edge
+def test_scip_occurrence_range_variants(range_vals):
+    """EDGE: SCIPOccurrence handles various range formats including None and zero."""
+    from fastcode.scip_models import SCIPOccurrence
+    occ = SCIPOccurrence(symbol="pkg foo.", range=range_vals)
+    data = occ.to_dict()
+    restored = SCIPOccurrence.from_dict(data)
+    assert restored.range == list(range_vals)
+
+
+@pytest.mark.parametrize("language", [
+    "python", "javascript", "typescript", "go", "java",
+    "rust", "c", "cpp", "c-sharp", None,
+])
+@pytest.mark.edge
+def test_scip_document_language_handling(language):
+    """EDGE: SCIPDocument handles all language values including None."""
+    from fastcode.scip_models import SCIPDocument
+    doc = SCIPDocument(path="test.py", language=language)
+    data = doc.to_dict()
+    restored = SCIPDocument.from_dict(data)
+    assert restored.language == language

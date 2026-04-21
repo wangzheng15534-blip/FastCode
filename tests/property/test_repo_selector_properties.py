@@ -33,11 +33,11 @@ names_list_st = st.lists(name_st, min_size=1, max_size=5, unique=True)
 @pytest.mark.property
 class TestNormalize:
 
-    @given(name=name_st)
+    @given(name=st.text(min_size=1, max_size=20))
     @settings(max_examples=30)
     @pytest.mark.happy
     def test_always_returns_lowercase(self, name):
-        """HAPPY: _normalize always returns lowercase."""
+        """HAPPY: _normalize always returns lowercase regardless of input case."""
         result = RepositorySelector._normalize(name)
         assert result == result.lower()
 

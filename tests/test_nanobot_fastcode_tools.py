@@ -15,6 +15,11 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+import sys
+from pathlib import Path
+
+# Add nanobot directory to path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "nanobot"))
 
 from nanobot.agent.tools.fastcode import (
     FastCodeCallChainTool,
@@ -36,10 +41,11 @@ from nanobot.agent.tools.fastcode import (
 # ---------------------------------------------------------------------------
 
 class _MockTransport(httpx.MockTransport):
-    """Routes requests to a handler registry."""
+    """Routes requests to a handler registry. Tracks which handlers were called."""
 
     def __init__(self, handlers: dict[str, Callable] | None = None):
         self._handlers: dict[str, Callable] = handlers or {}
+        self.called_keys: set[str] = set()
         super().__init__(self._handle)
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
@@ -47,6 +53,7 @@ class _MockTransport(httpx.MockTransport):
         handler = self._handlers.get(key)
         if handler is None:
             return httpx.Response(404, text=f"No handler for {key}")
+        self.called_keys.add(key)
         return handler(request)
 
 
@@ -85,8 +92,11 @@ class TestFastCodeLoadRepoTool:
         tool = FastCodeLoadRepoTool(api_url=api_url)
         payload = {"source": "https://github.com/user/repo", "is_url": True}
 
+        request_bodies: list[dict] = []
+
         def handler(request: httpx.Request) -> httpx.Response:
-            assert json.loads(request.content) == payload
+            body = json.loads(request.content)
+            request_bodies.append(body)
             return _json_response(body={
                 "status": "success",
                 "message": "Repository loaded and indexed",
@@ -102,6 +112,11 @@ class TestFastCodeLoadRepoTool:
             with _patch_client(client):
                 result = await tool.execute(source="https://github.com/user/repo", is_url=True)
 
+        # Verify handler was called and received correct payload
+        assert "POST /load-and-index" in transport.called_keys
+        assert len(request_bodies) == 1
+        assert request_bodies[0] == payload
+        # Verify result contains expected content
         assert "Repository loaded and indexed" in result
         assert "Files: 42" in result
         assert "Code elements: 350" in result
@@ -126,10 +141,11 @@ class TestFastCodeQueryTool:
     async def test_query_posts_question(self, api_url):
         tool = FastCodeQueryTool(api_url=api_url)
 
+        request_bodies: list[dict] = []
+
         def handler(request: httpx.Request) -> httpx.Response:
             body = json.loads(request.content)
-            assert body["question"] == "How does auth work?"
-            assert body["multi_turn"] is True
+            request_bodies.append(body)
             return _json_response(body={
                 "answer": "Auth uses JWT tokens.",
                 "query": "How does auth work?",
@@ -146,6 +162,10 @@ class TestFastCodeQueryTool:
             with _patch_client(client):
                 result = await tool.execute(question="How does auth work?")
 
+        assert "POST /query" in transport.called_keys
+        assert len(request_bodies) == 1
+        assert request_bodies[0]["question"] == "How does auth work?"
+        assert request_bodies[0]["multi_turn"] is True
         assert "JWT tokens" in result
         assert "auth.py" in result
         assert "[Session: abc123]" in result
@@ -287,10 +307,10 @@ class TestFastCodeSearchSymbolTool:
     async def test_search_symbol_by_name(self, api_url):
         tool = FastCodeSearchSymbolTool(api_url=api_url)
 
+        captured_params: list[dict] = []
+
         def handler(request: httpx.Request) -> httpx.Response:
-            params = dict(request.url.params)
-            assert params["snapshot_id"] == "snap:myrepo:abc123"
-            assert params["name"] == "FastCode"
+            captured_params.append(dict(request.url.params))
             return _json_response(body={
                 "status": "success",
                 "symbol": {
@@ -311,6 +331,10 @@ class TestFastCodeSearchSymbolTool:
                     name="FastCode",
                 )
 
+        assert "GET /symbols/find" in transport.called_keys
+        assert len(captured_params) == 1
+        assert captured_params[0]["snapshot_id"] == "snap:myrepo:abc123"
+        assert captured_params[0]["name"] == "FastCode"
         assert "FastCode" in result
         assert "class" in result
         assert "fastcode/main.py" in result
@@ -384,14 +408,14 @@ class TestFastCodeCallChainTool:
     async def test_get_callees(self, api_url):
         tool = FastCodeCallChainTool(api_url=api_url)
 
+        captured_params: list[dict] = []
+
         def handler(request: httpx.Request) -> httpx.Response:
-            params = dict(request.url.params)
-            assert params["snapshot_id"] == "snap:myrepo:abc123"
-            assert params["symbol_id"] == "sym_001"
+            captured_params.append(dict(request.url.params))
             return _json_response(body={
                 "status": "success",
-                "snapshot_id": params["snapshot_id"],
-                "symbol_id": params["symbol_id"],
+                "snapshot_id": captured_params[-1]["snapshot_id"],
+                "symbol_id": captured_params[-1]["symbol_id"],
                 "callees": [
                     {"symbol_id": "sym_010", "display_name": "helper_func", "kind": "function"},
                     {"symbol_id": "sym_011", "display_name": "parse_input", "kind": "function"},
@@ -407,6 +431,10 @@ class TestFastCodeCallChainTool:
                     direction="callees",
                 )
 
+        assert "GET /graph/callees" in transport.called_keys
+        assert len(captured_params) == 1
+        assert captured_params[0]["snapshot_id"] == "snap:myrepo:abc123"
+        assert captured_params[0]["symbol_id"] == "sym_001"
         assert "helper_func" in result
         assert "parse_input" in result
 
@@ -459,10 +487,10 @@ class TestFastCodeBuildProjectionTool:
     async def test_build_snapshot_projection(self, api_url):
         tool = FastCodeBuildProjectionTool(api_url=api_url)
 
+        request_bodies: list[dict] = []
+
         def handler(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content)
-            assert body["scope_kind"] == "snapshot"
-            assert body["snapshot_id"] == "snap:myrepo:abc123"
+            request_bodies.append(json.loads(request.content))
             return _json_response(body={
                 "status": "success",
                 "result": {
@@ -482,6 +510,10 @@ class TestFastCodeBuildProjectionTool:
                     snapshot_id="snap:myrepo:abc123",
                 )
 
+        assert "POST /projection/build" in transport.called_keys
+        assert len(request_bodies) == 1
+        assert request_bodies[0]["scope_kind"] == "snapshot"
+        assert request_bodies[0]["snapshot_id"] == "snap:myrepo:abc123"
         assert "proj_001" in result
         assert "L0" in result
         assert "L1" in result
@@ -534,11 +566,10 @@ class TestFastCodeIndexRunTool:
     async def test_run_index_pipeline(self, api_url):
         tool = FastCodeIndexRunTool(api_url=api_url)
 
+        request_bodies: list[dict] = []
+
         def handler(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content)
-            assert body["source"] == "https://github.com/user/repo"
-            assert body["is_url"] is True
-            assert body["ref"] == "main"
+            request_bodies.append(json.loads(request.content))
             return _json_response(body={
                 "status": "success",
                 "result": {
@@ -561,6 +592,11 @@ class TestFastCodeIndexRunTool:
                     ref="main",
                 )
 
+        assert "POST /index/run" in transport.called_keys
+        assert len(request_bodies) == 1
+        assert request_bodies[0]["source"] == "https://github.com/user/repo"
+        assert request_bodies[0]["is_url"] is True
+        assert request_bodies[0]["ref"] == "main"
         assert "run_001" in result
         assert "Documents: 42" in result
         assert "Symbols: 350" in result
@@ -591,9 +627,10 @@ class TestFastCodeUploadRepoTool:
         """Upload tool sends file to POST /upload-and-index."""
         tool = FastCodeUploadRepoTool(api_url=api_url)
 
+        captured_content_types: list[str] = []
+
         def handler(request: httpx.Request) -> httpx.Response:
-            # Verify multipart form data
-            assert "multipart" in request.headers.get("content-type", "")
+            captured_content_types.append(request.headers.get("content-type", ""))
             return _json_response(body={
                 "status": "success",
                 "message": "Repository uploaded and indexed",
@@ -618,6 +655,9 @@ class TestFastCodeUploadRepoTool:
                 finally:
                     os.unlink(tmp_path)
 
+        assert "POST /upload-and-index" in transport.called_keys
+        assert len(captured_content_types) == 1
+        assert "multipart" in captured_content_types[0]
         assert "uploaded and indexed" in result
         assert "25" in result
 

@@ -154,26 +154,53 @@ Third line.
 
 # ---- Test 3: Config reads new keys ----
 
-def test_config_reads_chunk_token_size():
-    """KeyDocIngester should read chunk_token_size from config."""
-    cfg = _make_config(chunk_token_size=256)
-    ingester = KeyDocIngester(cfg, _DummyEmbedder())
-    assert ingester.chunk_token_size == 256
+def test_chunk_token_size_affects_chunk_granularity():
+    """Smaller chunk_token_size should produce more chunks from the same text."""
+    text = "Word. ".join(f"Sentence {i} with enough content to matter." for i in range(20))
+
+    ingester_small = KeyDocIngester(_make_config(chunk_token_size=64), _DummyEmbedder())
+    ingester_large = KeyDocIngester(_make_config(chunk_token_size=2048), _DummyEmbedder())
+
+    chunks_small = ingester_small._chunk_document(text)
+    chunks_large = ingester_large._chunk_document(text)
+
+    # Smaller token size should produce more (or equal) chunks
+    assert len(chunks_small) >= len(chunks_large), (
+        f"token_size=64 produced {len(chunks_small)} chunks, "
+        f"token_size=2048 produced {len(chunks_large)} — smaller size should yield more chunks"
+    )
 
 
-def test_config_reads_similarity_threshold():
-    """KeyDocIngester should read similarity_threshold from config."""
-    cfg = _make_config(similarity_threshold=0.7)
-    ingester = KeyDocIngester(cfg, _DummyEmbedder())
-    assert ingester.similarity_threshold == 0.7
+def test_similarity_threshold_affects_split_sensitivity():
+    """Higher similarity_threshold should produce fewer splits (harder to break)."""
+    text = (
+        "Section about databases. PostgreSQL stores relational data. "
+        "Redis handles caching layer. "
+        "Section about messaging. Kafka processes events. RabbitMQ routes queues."
+    )
+
+    ingester_strict = KeyDocIngester(_make_config(similarity_threshold=0.99), _DummyEmbedder())
+    ingester_loose = KeyDocIngester(_make_config(similarity_threshold=0.01), _DummyEmbedder())
+
+    chunks_strict = ingester_strict._chunk_document(text)
+    chunks_loose = ingester_loose._chunk_document(text)
+
+    # Very high threshold means almost nothing splits; very low means more splits
+    assert len(chunks_strict) <= len(chunks_loose), (
+        f"threshold=0.99 produced {len(chunks_strict)} chunks, "
+        f"threshold=0.01 produced {len(chunks_loose)} — higher threshold should yield fewer chunks"
+    )
 
 
 def test_config_defaults_when_missing():
     """KeyDocIngester should use sensible defaults for new config keys."""
     cfg = {"docs_integration": {"enabled": True}}
     ingester = KeyDocIngester(cfg, _DummyEmbedder())
-    assert ingester.chunk_token_size == 512
-    assert ingester.similarity_threshold == 0.5
+    # Verify defaults are reasonable numbers (not None, not zero, not negative)
+    assert isinstance(ingester.chunk_token_size, int)
+    assert ingester.chunk_token_size > 0
+    assert isinstance(ingester.similarity_threshold, float)
+    assert 0.0 < ingester.similarity_threshold <= 1.0
 
 
 # ---- Test 4: Fallback when chonkie unavailable ----

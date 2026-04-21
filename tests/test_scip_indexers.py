@@ -19,6 +19,7 @@ def test_get_indexer_command_java():
     assert cmd is not None
     assert cmd[0] == "scip-java"
     assert "--output" in cmd
+    assert "/out/index.scip" in cmd
 
 
 def test_get_indexer_command_go():
@@ -28,6 +29,7 @@ def test_get_indexer_command_go():
     assert cmd is not None
     assert cmd[0] == "scip-go"
     assert "--output" in cmd
+    assert "/out/index.scip" in cmd
 
 
 def test_get_indexer_command_python():
@@ -37,6 +39,7 @@ def test_get_indexer_command_python():
     assert cmd is not None
     assert cmd[0] == "scip-python"
     assert "index" in cmd
+    assert "/out/index.scip" in cmd
 
 
 def test_get_indexer_command_ruby():
@@ -45,6 +48,7 @@ def test_get_indexer_command_ruby():
     cmd = get_indexer_command("ruby", "/out/index.scip")
     assert cmd is not None
     assert cmd[0] == "scip-ruby"
+    assert "/out/index.scip" in cmd
 
 
 def test_get_indexer_command_unsupported():

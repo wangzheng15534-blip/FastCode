@@ -161,12 +161,10 @@ class TestSCIPSymbolRoundtrip:
         assert sym.signature is None
         assert sym.range == [None, None, None, None]
 
-    @given(symbol=st.none())
-    @settings(max_examples=10)
     @pytest.mark.edge
-    def test_from_dict_none_symbol_coerced(self, symbol):
+    def test_from_dict_none_symbol_coerced(self):
         """EDGE: from_dict with None symbol coerces to empty string."""
-        sym = SCIPSymbol.from_dict({"symbol": symbol})
+        sym = SCIPSymbol.from_dict({"symbol": None})
         assert sym.symbol == ""
 
     @given(sym=scip_symbol_st)
@@ -386,24 +384,16 @@ class TestSCIPArtifactRefRoundtrip:
         assert ref.checksum == ""
         assert ref.created_at == ""
 
-    @given(
-        snapshot_id=st.none(),
-        indexer_name=st.none(),
-        artifact_path=st.none(),
-        checksum=st.none(),
-        created_at=st.none(),
-    )
-    @settings(max_examples=10)
     @pytest.mark.edge
-    def test_from_dict_none_values_coerced_to_empty(self, snapshot_id, indexer_name, artifact_path, checksum, created_at):
+    def test_from_dict_none_values_coerced_to_empty(self):
         """EDGE: from_dict with None values coerces string fields to empty string."""
         data = {
-            "snapshot_id": snapshot_id,
-            "indexer_name": indexer_name,
+            "snapshot_id": None,
+            "indexer_name": None,
             "indexer_version": None,
-            "artifact_path": artifact_path,
-            "checksum": checksum,
-            "created_at": created_at,
+            "artifact_path": None,
+            "checksum": None,
+            "created_at": None,
         }
         ref = SCIPArtifactRef.from_dict(data)
         assert ref.snapshot_id == ""

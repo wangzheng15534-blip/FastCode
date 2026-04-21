@@ -703,21 +703,17 @@ class TestSnapshotStoreRedoProperties:
         result = store.claim_redo_task()
         assert result is None
 
-    @given(task_id=st.just("redo_test123"))
-    @settings(max_examples=5)
     @pytest.mark.edge
-    def test_mark_redo_task_done_sqlite_noop(self, task_id: str):
+    def test_mark_redo_task_done_sqlite_noop(self):
         """EDGE: mark_redo_task_done is no-op on SQLite (returns None, no error)."""
         store = _make_store()
-        store.mark_redo_task_done(task_id)
+        store.mark_redo_task_done("redo_test123")
 
-    @given(task_id=st.just("redo_test123"), error=st.just("fail"), max_attempts=st.just(3))
-    @settings(max_examples=5)
     @pytest.mark.edge
-    def test_mark_redo_task_failed_sqlite_noop(self, task_id: str, error: str, max_attempts: int):
+    def test_mark_redo_task_failed_sqlite_noop(self):
         """EDGE: mark_redo_task_failed is no-op on SQLite (returns None, no error)."""
         store = _make_store()
-        store.mark_redo_task_failed(task_id, error, max_attempts=max_attempts)
+        store.mark_redo_task_failed(task_id="redo_test123", error="fail", max_attempts=3)
 
 
 # --- TestIRGraphsRoundtrip ---

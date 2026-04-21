@@ -143,8 +143,9 @@ class TestChunkSectionFallback:
         text = " ".join(f"w{i}" for i in range(n_words))
         pieces = ingester._chunk_section_fallback(text)
         assert len(pieces) >= 1
-        # All content is captured
-        assert " ".join(pieces).strip() or text.strip() == "" or True
+        # All content is captured in the pieces
+        joined = " ".join(pieces).strip()
+        assert joined == text.strip() or joined in text.strip()
 
 
 @pytest.mark.property

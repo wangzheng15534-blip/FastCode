@@ -136,7 +136,8 @@ class TestNormalizePath:
 
     @pytest.mark.happy
     def test_dots_collapsed(self):
-        assert ".." not in normalize_path("a/../b") or True  # normpath collapses
+        result = normalize_path("a/../b")
+        assert ".." not in result  # normpath collapses
 
     @given(path=st.text(alphabet="abcdefghijklmnopqrstuvwxyz/", min_size=1, max_size=20))
     @settings(max_examples=10)
@@ -524,7 +525,7 @@ class TestResolveConfigPathsEdge:
     def test_empty_string_path_not_resolved(self):
         cfg = {"repo_root": ""}
         result = resolve_config_paths(cfg, "/project")
-        assert result["repo_root"] == "" or result["repo_root"] is None or True
+        assert result["repo_root"] in ("", None)
 
 
 @pytest.mark.property

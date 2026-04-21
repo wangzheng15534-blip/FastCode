@@ -237,11 +237,12 @@ class TestScipParsingProperties:
         assert len(snap.occurrences) == 0
         assert len(snap.symbols) == 1
 
-    @given(sym=st.builds(lambda x: f"pkg {'x' * 200}.", small_text))
+    @given(text_part=small_text)
     @settings(max_examples=10)
     @pytest.mark.edge
-    def test_scip_symbol_long_symbol_string(self, sym: str):
+    def test_scip_symbol_long_symbol_string(self, text_part: str):
         """EDGE: very long symbol string handled without crash."""
+        sym = f"pkg {text_part * 50}."
         s = SCIPSymbol(symbol=sym, name="long")
         data = s.to_dict()
         restored = SCIPSymbol.from_dict(data)

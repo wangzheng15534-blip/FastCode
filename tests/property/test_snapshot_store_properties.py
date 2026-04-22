@@ -16,6 +16,7 @@ from hypothesis import given, settings, assume
 from hypothesis import strategies as st
 
 from fastcode.semantic_ir import (
+    IRAttachment,
     IRDocument,
     IREdge,
     IROccurrence,
@@ -39,7 +40,8 @@ role_st = st.sampled_from(["definition", "reference", "import", "implementation"
 
 edge_type_st = st.sampled_from(["dependency", "call", "inheritance", "reference", "contain"])
 
-source_st = st.sampled_from(["ast", "scip"])
+source_st = st.sampled_from(["ast", "fc_structure", "scip"])
+attachment_source_st = st.sampled_from(["fc_structure", "fc_embedding", "llm_annotation"])
 
 kind_st = st.sampled_from(
     ["function", "method", "class", "variable", "module", "interface", "enum", "constant"]
@@ -106,6 +108,30 @@ ir_edge_st = st.builds(
     metadata=st.dictionaries(st.text(min_size=1, max_size=10), st.integers()),
 )
 
+ir_attachment_st = st.builds(
+    IRAttachment,
+    attachment_id=st.builds(lambda x: f"att:{x}", identifier),
+    target_id=st.builds(lambda x: f"sym:{x}", identifier),
+    target_type=st.sampled_from(["document", "symbol", "snapshot"]),
+    attachment_type=st.sampled_from(["embedding", "summary", "semantic_note"]),
+    source=attachment_source_st,
+    confidence=st.sampled_from(["derived", "precise", "heuristic"]),
+    payload=st.dictionaries(
+        st.text(min_size=1, max_size=10),
+        st.one_of(
+            st.integers(),
+            st.text(min_size=0, max_size=20),
+            st.lists(st.floats(allow_nan=False, allow_infinity=False), max_size=4),
+        ),
+        max_size=3,
+    ),
+    metadata=st.dictionaries(
+        st.text(min_size=1, max_size=10),
+        st.one_of(st.integers(), st.text(min_size=0, max_size=20)),
+        max_size=3,
+    ),
+)
+
 
 def snapshot_st(
     max_docs: int = 3,
@@ -125,6 +151,7 @@ def snapshot_st(
         symbols=st.lists(ir_symbol_st, max_size=max_syms),
         occurrences=st.lists(ir_occurrence_st, max_size=max_occs),
         edges=st.lists(ir_edge_st, max_size=max_edges),
+        attachments=st.lists(ir_attachment_st, max_size=4),
         metadata=st.dictionaries(
             st.sampled_from(["source_modes", "version", "tool"]),
             st.one_of(st.just(["ast"]), st.just(["scip"]), st.just(1), st.just("fastcode")),
@@ -155,7 +182,7 @@ def connected_snapshot_st(
         docs.append(IRDocument(
             doc_id=doc_id, path=path,
             language=draw(language_st),
-            source_set={"ast"},
+            source_set={"fc_structure"},
         ))
 
         for j in range(ns):
@@ -167,8 +194,8 @@ def connected_snapshot_st(
                 display_name=f"func_{j}",
                 kind=draw(kind_st),
                 language=docs[-1].language,
-                source_priority=10,
-                source_set={"ast"},
+                source_priority=50,
+                source_set={"fc_structure"},
                 start_line=draw(st.integers(min_value=1, max_value=500)),
             ))
             occurrences.append(IROccurrence(
@@ -180,14 +207,14 @@ def connected_snapshot_st(
                 start_col=0,
                 end_line=symbols[-1].start_line or 1,
                 end_col=0,
-                source="ast",
+                source="fc_structure",
             ))
             edges.append(IREdge(
                 edge_id=f"edge:{draw(identifier)}",
                 src_id=doc_id,
                 dst_id=sym_id,
                 edge_type="contain",
-                source="ast",
+                source="fc_structure",
                 confidence="resolved",
             ))
 
@@ -200,7 +227,19 @@ def connected_snapshot_st(
         symbols=symbols,
         occurrences=occurrences,
         edges=edges,
-        metadata={"source_modes": ["ast"]},
+        attachments=[
+            IRAttachment(
+                attachment_id=f"att:{draw(identifier)}",
+                target_id=snap_id,
+                target_type="snapshot",
+                attachment_type="summary",
+                source="fc_structure",
+                confidence="derived",
+                payload={"text": "snapshot summary"},
+                metadata={},
+            )
+        ],
+        metadata={"source_modes": ["fc_structure"]},
     )
 
 
@@ -243,6 +282,7 @@ class TestSnapshotSaveLoadProperties:
         assert len(loaded.symbols) == len(snap.symbols)
         assert len(loaded.occurrences) == len(snap.occurrences)
         assert len(loaded.edges) == len(snap.edges)
+        assert len(loaded.attachments) == len(snap.attachments)
         assert loaded.metadata == snap.metadata
 
     @given(snap=snapshot_st())
@@ -301,6 +341,9 @@ class TestSnapshotSaveLoadProperties:
             assert orig.symbol_id == rest.symbol_id
             assert orig.display_name == rest.display_name
             assert orig.kind == rest.kind
+        for orig, rest in zip(snap.attachments, loaded.attachments):
+            assert orig.attachment_id == rest.attachment_id
+            assert orig.payload == rest.payload
 
     @given(snapshot_id=identifier)
     @settings(max_examples=15)

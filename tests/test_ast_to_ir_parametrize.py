@@ -52,6 +52,7 @@ def _elem(
     end_line: int = 5,
     relative_path: str = "src/a.py",
     language: str = "python",
+    summary: str | None = None,
     metadata: dict | None = None,
 ) -> CodeElement:
     """Create a single CodeElement with sensible defaults."""
@@ -67,7 +68,7 @@ def _elem(
         code=f"def {name}(): pass",
         signature=None,
         docstring=None,
-        summary=None,
+        summary=summary,
         metadata=metadata or {},
     )
 
@@ -162,23 +163,23 @@ def test_qualified_name_without_class():
 
 
 # ---------------------------------------------------------------------------
-# 3. Source set always {"ast"}
+# 3. Source set always {"fc_structure"}
 # ---------------------------------------------------------------------------
 
 def test_source_set_on_symbols():
-    """All AST-produced symbols have source_set={'ast'}."""
+    """All structure-derived symbols have source_set={'fc_structure'}."""
     elements = _make_code_elements(n=4)
     snap = _build(elements)
     for sym in snap.symbols:
-        assert sym.source_set == {"ast"}
+        assert sym.source_set == {"fc_structure"}
 
 
 def test_source_set_on_documents():
-    """All AST-produced documents have source_set={'ast'}."""
+    """All structure-derived documents have source_set={'fc_structure'}."""
     elements = _make_code_elements(n=4)
     snap = _build(elements)
     for doc in snap.documents:
-        assert "ast" in doc.source_set
+        assert "fc_structure" in doc.source_set
 
 
 # ---------------------------------------------------------------------------
@@ -220,15 +221,15 @@ def test_start_line_negative_clamps_to_one():
 
 
 # ---------------------------------------------------------------------------
-# 5. Source priority always 10
+# 5. Source priority always 50
 # ---------------------------------------------------------------------------
 
 def test_source_priority_constant():
-    """All AST symbols have source_priority == 10."""
+    """All structure-derived symbols have source_priority == 50."""
     elements = _make_code_elements(n=5)
     snap = _build(elements)
     for sym in snap.symbols:
-        assert sym.source_priority == 10
+        assert sym.source_priority == 50
 
 
 # ---------------------------------------------------------------------------
@@ -241,8 +242,8 @@ def test_symbol_metadata_contains_ast_fields():
     snap = _build(elements)
     meta = snap.symbols[0].metadata
     assert meta["ast_element_id"] == "elem_compute"
-    assert meta["source"] == "ast"
-    assert meta["confidence"] == "fallback"
+    assert meta["source"] == "fc_structure"
+    assert meta["confidence"] == "resolved"
     assert meta["extractor"] == "fastcode.adapters.ast_to_ir"
     assert meta["key1"] == "val1"
 
@@ -262,6 +263,38 @@ def test_symbol_metadata_excludes_embedding_keys():
     assert meta["visible"] is True
 
 
+def test_embedding_attachment_created_from_metadata():
+    """Embedding metadata is promoted into a first-class attachment."""
+    elements = [
+        _elem(
+            name="embed_me",
+            metadata={"embedding": [0.1, 0.2], "embedding_text": "vector text"},
+        ),
+    ]
+    snap = _build(elements)
+    assert len(snap.attachments) == 1
+    attachment = snap.attachments[0]
+    assert attachment.target_type == "symbol"
+    assert attachment.attachment_type == "embedding"
+    assert attachment.source == "fc_embedding"
+    assert attachment.payload["vector"] == [0.1, 0.2]
+    assert attachment.payload["text"] == "vector text"
+
+
+def test_summary_attachment_created_from_element_summary():
+    """Element summaries become summary attachments on the symbol."""
+    elements = [
+        _elem(name="summarized", summary="Important entry point"),
+    ]
+    snap = _build(elements)
+    assert len(snap.attachments) == 1
+    attachment = snap.attachments[0]
+    assert attachment.target_type == "symbol"
+    assert attachment.attachment_type == "summary"
+    assert attachment.source == "fc_structure"
+    assert attachment.payload["text"] == "Important entry point"
+
+
 def test_occurrence_metadata_kind():
     """Occurrence metadata records the element kind."""
     elements = [_elem(type="class", name="Foo")]
@@ -270,9 +303,9 @@ def test_occurrence_metadata_kind():
 
 
 def test_snapshot_metadata_source_modes():
-    """Snapshot metadata has source_modes=['ast']."""
+    """Snapshot metadata has source_modes=['fc_structure']."""
     snap = _build(_make_code_elements())
-    assert snap.metadata["source_modes"] == ["ast"]
+    assert snap.metadata["source_modes"] == ["fc_structure"]
 
 
 def test_contain_edge_metadata():
@@ -282,7 +315,7 @@ def test_contain_edge_metadata():
     contain_edges = [e for e in snap.edges if e.edge_type == "contain"]
     assert len(contain_edges) == 1
     assert contain_edges[0].metadata["extractor"] == "fastcode.adapters.ast_to_ir"
-    assert contain_edges[0].metadata["source"] == "ast"
+    assert contain_edges[0].metadata["source"] == "fc_structure"
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +377,7 @@ def test_contain_edge_per_symbol():
 
 
 def test_occurrence_role_always_definition():
-    """All AST-produced occurrences have role='definition'."""
+    """All structure-derived occurrences have role='definition'."""
     elements = _make_code_elements(n=3)
     snap = _build(elements)
     for occ in snap.occurrences:
@@ -352,11 +385,11 @@ def test_occurrence_role_always_definition():
 
 
 def test_occurrence_source_always_ast():
-    """All AST-produced occurrences have source='ast'."""
+    """All structure-derived occurrences have source='fc_structure'."""
     elements = _make_code_elements(n=3)
     snap = _build(elements)
     for occ in snap.occurrences:
-        assert occ.source == "ast"
+        assert occ.source == "fc_structure"
 
 
 def test_class_element_creates_inheritance_edge_from_bases():

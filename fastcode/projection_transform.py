@@ -53,6 +53,7 @@ class ProjectionTransformer:
         self.centrality_max_nodes = int(proj_cfg.get("centrality_max_nodes", 5000))
         self.steiner_prune = bool(proj_cfg.get("steiner_prune", True))
         self.aggregation_top_members = int(proj_cfg.get("aggregation_top_members", 8))
+        self.max_supporting_docs_per_cluster = int(proj_cfg.get("max_supporting_docs_per_cluster", 5))
         self.llm_enabled = bool(proj_cfg.get("llm_enabled", True))
         self.llm_timeout_seconds = int(proj_cfg.get("llm_timeout_seconds", 8))
         self.llm_max_tokens = int(proj_cfg.get("llm_max_tokens", 180))
@@ -85,6 +86,7 @@ class ProjectionTransformer:
         scope: ProjectionScope,
         snapshot: IRSnapshot,
         ir_graphs: Optional[IRGraphs] = None,
+        doc_mentions: Optional[List[Dict[str, Any]]] = None,
     ) -> ProjectionBuildResult:
         warnings: List[str] = []
         g = self._build_weighted_graph(snapshot, ir_graphs)
@@ -219,6 +221,7 @@ class ProjectionTransformer:
             representatives=representatives,
             labels=labels,
             centrality=centrality,
+            doc_mentions=doc_mentions,
         )
         l2_index = self._build_l2_index(
             projection_id=projection_id,
@@ -867,10 +870,20 @@ class ProjectionTransformer:
         representatives: Dict[str, str],
         labels: Dict[str, str],
         centrality: Dict[str, Dict[str, float]],
+        doc_mentions: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         chunks: List[Dict[str, Any]] = []
         sym_map = {s.symbol_id: s for s in snapshot.symbols}
         doc_map = {d.doc_id: d for d in snapshot.documents}
+        max_supporting = self.max_supporting_docs_per_cluster
+
+        # Pre-index doc mentions by symbol_id for fast cluster lookup
+        mentions_by_symbol: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        if doc_mentions:
+            for m in doc_mentions:
+                sid = m.get("symbol_id")
+                if sid:
+                    mentions_by_symbol[sid].append(m)
 
         for cid, members in sorted(clusters.items(), key=lambda kv: (-len(kv[1]), kv[0])):
             if len(chunks) >= self.max_chunk_count:
@@ -887,6 +900,9 @@ class ProjectionTransformer:
                 {"type": "dominant_kind", "value": agg.get("dominant_kind")},
                 {"type": "dominant_language", "value": agg.get("dominant_language")},
             ]
+            supporting_docs = self._supporting_docs_for_cluster(
+                members, mentions_by_symbol, max_supporting,
+            )
             if rep in sym_map:
                 sym = sym_map[rep]
                 snippet = f"{sym.kind} {sym.display_name} in {sym.path}"
@@ -905,6 +921,8 @@ class ProjectionTransformer:
                     "facts": facts,
                     "refs": refs,
                 }
+                if supporting_docs:
+                    content["supporting_docs"] = supporting_docs
             elif rep in doc_map:
                 doc = doc_map[rep]
                 content = {
@@ -913,8 +931,12 @@ class ProjectionTransformer:
                     "facts": facts,
                     "refs": refs,
                 }
+                if supporting_docs:
+                    content["supporting_docs"] = supporting_docs
             else:
                 content = {"snippet": f"Cluster representative {rep}", "facts": facts, "refs": refs}
+                if supporting_docs:
+                    content["supporting_docs"] = supporting_docs
             chunks.append(
                 {
                     "chunk_id": chunk_id,
@@ -935,6 +957,26 @@ class ProjectionTransformer:
                 }
             )
         return chunks
+
+    @staticmethod
+    def _supporting_docs_for_cluster(
+        members: Set[str],
+        mentions_by_symbol: Dict[str, List[Dict[str, Any]]],
+        max_docs: int,
+    ) -> List[Dict[str, str]]:
+        """Build supporting_docs list for a cluster from doc mentions."""
+        chunk_mentions: Dict[str, List[str]] = defaultdict(list)
+        for sid in members:
+            for m in mentions_by_symbol.get(sid, []):
+                cid = m.get("chunk_id")
+                if cid:
+                    chunk_mentions[cid].append(m.get("symbol_name", ""))
+        # Sort by mention count descending, take top max_docs
+        ranked = sorted(chunk_mentions.items(), key=lambda kv: -len(kv[1]))[:max_docs]
+        return [
+            {"chunk_id": cid, "mentioned_symbols": list(dict.fromkeys(names))}
+            for cid, names in ranked
+        ]
 
     def _build_l2_index(
         self,

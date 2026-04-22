@@ -68,6 +68,7 @@ class DocChunk:
             "metadata": {
                 "snapshot_id": self.snapshot_id,
                 "source": "key_docs",
+                "collection": "doc",
                 "doc_type": self.doc_type,
                 "heading": self.heading,
                 "is_design_doc": True,
@@ -399,9 +400,12 @@ class KeyDocIngester:
                         {
                             "snapshot_id": chunk.snapshot_id,
                             "chunk_id": chunk.chunk_id,
+                            "unit_id": symbol_id,
                             "symbol_id": symbol_id,
                             "symbol_name": name,
                             "confidence": "heuristic",
+                            "evidence_type": "exact_name_mention",
+                            "weight": 0.6,
                         }
                     )
         # dedupe

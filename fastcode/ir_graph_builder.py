@@ -1,5 +1,5 @@
 """
-Build graph materializations from canonical IR edges.
+Build graph materializations from canonical IR relations.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ class IRGraphBuilder:
         ref = nx.DiGraph()
         contain = nx.DiGraph()
 
-        graph_by_edge = {
+        graph_by_relation = {
             "import": dep,
             "call": call,
             "inherit": inherit,
@@ -61,17 +61,17 @@ class IRGraphBuilder:
             "contain": contain,
         }
 
-        for edge in snapshot.edges:
-            graph = graph_by_edge.get(edge.edge_type)
+        for relation in snapshot.relations:
+            graph = graph_by_relation.get(relation.relation_type)
             if graph is None:
                 continue
             graph.add_edge(
-                edge.src_id,
-                edge.dst_id,
-                edge_id=edge.edge_id,
-                source=edge.source,
-                confidence=edge.confidence,
-                metadata=edge.metadata,
+                relation.src_unit_id,
+                relation.dst_unit_id,
+                relation_id=relation.relation_id,
+                source=relation.source,
+                resolution_state=relation.resolution_state,
+                metadata=relation.metadata,
             )
 
         return IRGraphs(

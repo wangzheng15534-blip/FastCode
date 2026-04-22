@@ -1,5 +1,5 @@
 """
-Snapshot-scoped canonical symbol index and alias resolver.
+Snapshot-scoped canonical unit index and anchor resolver.
 """
 
 from __future__ import annotations
@@ -24,23 +24,28 @@ class SnapshotSymbolIndex:
 
     def register_snapshot(self, snapshot: IRSnapshot) -> None:
         maps = SnapshotSymbolMaps()
-        for symbol in snapshot.symbols:
-            canonical = symbol.symbol_id
-            maps.canonical_by_alias[canonical] = canonical
-            maps.aliases_by_canonical.setdefault(canonical, set()).add(canonical)
-            if symbol.display_name:
-                maps.symbols_by_name.setdefault(symbol.display_name, set()).add(canonical)
-            if symbol.qualified_name:
-                maps.symbols_by_name.setdefault(symbol.qualified_name, set()).add(canonical)
-            if symbol.path:
-                maps.symbols_by_path.setdefault(symbol.path, set()).add(canonical)
+        for unit in snapshot.units:
+            if unit.kind in {"file", "doc"}:
+                continue
+            canonical = unit.unit_id
+            aliases = {canonical}
+            if unit.primary_anchor_symbol_id:
+                aliases.add(unit.primary_anchor_symbol_id)
+            aliases.update(unit.anchor_symbol_ids)
+            aliases.update(unit.candidate_anchor_symbol_ids)
+            aliases.update((unit.metadata or {}).get("aliases", []))
 
-            aliases = (symbol.metadata or {}).get("aliases", []) if symbol.metadata else []
             for alias in aliases:
                 if not alias:
                     continue
-                maps.canonical_by_alias[alias] = canonical
-                maps.aliases_by_canonical.setdefault(canonical, set()).add(alias)
+                maps.canonical_by_alias[str(alias)] = canonical
+                maps.aliases_by_canonical.setdefault(canonical, set()).add(str(alias))
+
+            for name in [unit.display_name, unit.qualified_name]:
+                if name:
+                    maps.symbols_by_name.setdefault(str(name), set()).add(canonical)
+            if unit.path:
+                maps.symbols_by_path.setdefault(unit.path, set()).add(canonical)
 
         self._by_snapshot[snapshot.snapshot_id] = maps
 
@@ -57,8 +62,7 @@ class SnapshotSymbolIndex:
         maps = self._by_snapshot.get(snapshot_id)
         if maps is None:
             return []
-        aliases = maps.aliases_by_canonical.get(canonical_symbol_id, set())
-        return sorted(list(aliases))
+        return sorted(maps.aliases_by_canonical.get(canonical_symbol_id, set()))
 
     def resolve_symbol(
         self,
@@ -84,3 +88,4 @@ class SnapshotSymbolIndex:
             if candidates:
                 return sorted(candidates)[0]
         return None
+

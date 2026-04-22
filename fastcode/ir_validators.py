@@ -1,5 +1,5 @@
 """
-Validation rules for merged IR snapshots.
+Validation rules for canonical unit-grounded IR snapshots.
 """
 
 from __future__ import annotations
@@ -10,69 +10,65 @@ from .semantic_ir import IRSnapshot
 def validate_snapshot(snapshot: IRSnapshot) -> list[str]:
     errors: list[str] = []
 
-    doc_ids = {d.doc_id for d in snapshot.documents}
-    sym_ids = {s.symbol_id for s in snapshot.symbols}
-    attachment_ids = [a.attachment_id for a in snapshot.attachments]
+    unit_ids = [unit.unit_id for unit in snapshot.units]
+    support_ids = [support.support_id for support in snapshot.supports]
+    relation_ids = [relation.relation_id for relation in snapshot.relations]
+    embedding_ids = [embedding.embedding_id for embedding in snapshot.embeddings]
 
-    if not snapshot.documents:
-        errors.append("snapshot must contain at least one document")
-    if not snapshot.symbols:
-        errors.append("snapshot must contain at least one symbol")
+    if len(unit_ids) != len(set(unit_ids)):
+        errors.append("duplicate unit IDs detected")
+    if len(support_ids) != len(set(support_ids)):
+        errors.append("duplicate support IDs detected")
+    if len(relation_ids) != len(set(relation_ids)):
+        errors.append("duplicate relation IDs detected")
+    if len(embedding_ids) != len(set(embedding_ids)):
+        errors.append("duplicate embedding IDs detected")
 
-    if len(doc_ids) != len(snapshot.documents):
-        errors.append("duplicate document IDs detected")
-    doc_paths = [d.path for d in snapshot.documents]
-    if len(doc_paths) != len(set(doc_paths)):
-        dupes = [p for p in set(doc_paths) if doc_paths.count(p) > 1]
-        errors.append(f"duplicate document paths detected: {dupes}")
-    if len(sym_ids) != len(snapshot.symbols):
-        errors.append("duplicate symbol IDs detected")
-    if len(attachment_ids) != len(set(attachment_ids)):
-        errors.append("duplicate attachment IDs detected")
+    file_paths = [unit.path for unit in snapshot.units if unit.kind == "file"]
+    if len(file_paths) != len(set(file_paths)):
+        dupes = sorted(path for path in set(file_paths) if file_paths.count(path) > 1)
+        errors.append(f"duplicate file paths detected: {dupes}")
 
-    for occ in snapshot.occurrences:
-        if occ.doc_id not in doc_ids:
-            errors.append(f"occurrence references missing doc_id: {occ.doc_id}")
-        if occ.symbol_id not in sym_ids:
-            errors.append(f"occurrence references missing symbol_id: {occ.symbol_id}")
+    known_units = set(unit_ids)
+    anchor_owners: dict[str, str] = {}
+    for unit in snapshot.units:
+        if not unit.source_set:
+            errors.append(f"unit provenance missing: {unit.unit_id}")
+        if unit.parent_unit_id and unit.parent_unit_id not in known_units:
+            errors.append(f"unit parent not found: {unit.unit_id} -> {unit.parent_unit_id}")
+        if unit.primary_anchor_symbol_id:
+            existing = anchor_owners.get(unit.primary_anchor_symbol_id)
+            if existing and existing != unit.unit_id:
+                errors.append(
+                    f"primary anchor assigned to multiple units: {unit.primary_anchor_symbol_id} -> {existing}, {unit.unit_id}"
+                )
+            anchor_owners[unit.primary_anchor_symbol_id] = unit.unit_id
 
-    valid_nodes = doc_ids | sym_ids
-    for edge in snapshot.edges:
-        if edge.src_id not in valid_nodes:
-            errors.append(f"edge src not found: {edge.edge_id} -> {edge.src_id}")
-        if edge.dst_id not in valid_nodes:
-            errors.append(f"edge dst not found: {edge.edge_id} -> {edge.dst_id}")
-        if not edge.source:
-            errors.append(f"edge source missing: {edge.edge_id}")
-        if not edge.confidence:
-            errors.append(f"edge confidence missing: {edge.edge_id}")
+    for support in snapshot.supports:
+        if support.unit_id not in known_units:
+            errors.append(f"support references missing unit_id: {support.support_id} -> {support.unit_id}")
+        if not support.source:
+            errors.append(f"support source missing: {support.support_id}")
 
-    for sym in snapshot.symbols:
-        src = (sym.metadata or {}).get("source")
-        if not src and not sym.source_set:
-            errors.append(f"symbol provenance missing: {sym.symbol_id}")
+    known_supports = set(support_ids)
+    for relation in snapshot.relations:
+        if relation.src_unit_id not in known_units:
+            errors.append(f"relation src not found: {relation.relation_id} -> {relation.src_unit_id}")
+        if relation.dst_unit_id not in known_units:
+            errors.append(f"relation dst not found: {relation.relation_id} -> {relation.dst_unit_id}")
+        if not relation.relation_type:
+            errors.append(f"relation type missing: {relation.relation_id}")
+        if not relation.support_sources and not (relation.metadata or {}).get("source"):
+            errors.append(f"relation source missing: {relation.relation_id}")
+        for support_id in relation.support_ids:
+            if support_id not in known_supports:
+                errors.append(f"relation support not found: {relation.relation_id} -> {support_id}")
 
-    valid_attachment_targets = {
-        "document": doc_ids,
-        "symbol": sym_ids,
-        "snapshot": {snapshot.snapshot_id},
-    }
-    for attachment in snapshot.attachments:
-        valid_targets = valid_attachment_targets.get(attachment.target_type)
-        if valid_targets is None:
-            errors.append(
-                f"attachment target_type unsupported: {attachment.attachment_id} -> {attachment.target_type}"
-            )
-            continue
-        if attachment.target_id not in valid_targets:
-            errors.append(
-                f"attachment target not found: {attachment.attachment_id} -> {attachment.target_type}:{attachment.target_id}"
-            )
-        if not attachment.source:
-            errors.append(f"attachment source missing: {attachment.attachment_id}")
-        if not attachment.confidence:
-            errors.append(f"attachment confidence missing: {attachment.attachment_id}")
-        if not attachment.attachment_type:
-            errors.append(f"attachment type missing: {attachment.attachment_id}")
+    for embedding in snapshot.embeddings:
+        if embedding.unit_id not in known_units:
+            errors.append(f"embedding references missing unit_id: {embedding.embedding_id} -> {embedding.unit_id}")
+        if not embedding.source:
+            errors.append(f"embedding source missing: {embedding.embedding_id}")
 
     return errors
+

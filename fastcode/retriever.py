@@ -9,6 +9,7 @@ import logging
 import math
 import re
 from collections import Counter
+from dataclasses import dataclass
 from typing import List, Dict, Any, Set, Tuple, Optional, Union
 import numpy as np
 import networkx as nx
@@ -24,6 +25,15 @@ from .repo_selector import RepositorySelector
 from .utils import ensure_dir
 from .iterative_agent import IterativeAgent
 from .pg_retrieval import PgRetrievalStore
+
+
+@dataclass
+class RetrievalChannelOutput:
+    collection: str
+    semantic_results: List[Tuple[Dict[str, Any], float]]
+    keyword_results: List[Tuple[Dict[str, Any], float]]
+    pseudocode_results: List[Tuple[Dict[str, Any], float]]
+    ranked_results: List[Dict[str, Any]]
 
 
 class HybridRetriever:
@@ -211,6 +221,284 @@ class HybridRetriever:
         
         self.repo_overview_bm25 = BM25Okapi(self.repo_overview_bm25_corpus)
         self.logger.info(f"Built repo overview BM25 index with {len(self.repo_overview_bm25_corpus)} repositories")
+
+    @staticmethod
+    def _clone_result_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            k: (dict(v) if isinstance(v, dict) else list(v) if isinstance(v, list) else v)
+            for k, v in row.items()
+        }
+
+    @staticmethod
+    def _normalized_totals(results: List[Dict[str, Any]]) -> Dict[str, float]:
+        if not results:
+            return {}
+        max_score = max(float(row.get("total_score", 0.0) or 0.0) for row in results)
+        if max_score <= 0:
+            return {
+                str((row.get("element") or {}).get("id")): 1.0 / float(rank)
+                for rank, row in enumerate(results, start=1)
+                if (row.get("element") or {}).get("id")
+            }
+        return {
+            str((row.get("element") or {}).get("id")): max(0.0, min(1.0, float(row.get("total_score", 0.0) or 0.0) / max_score))
+            for row in results
+            if (row.get("element") or {}).get("id")
+        }
+
+    def _docs_enabled(self) -> bool:
+        return bool(self.config.get("docs_integration", {}).get("enabled", False))
+
+    def _retrieve_code_channel(
+        self,
+        *,
+        semantic_query: str,
+        keyword_query: str,
+        pseudocode: Optional[str],
+        repo_filter: Optional[List[str]],
+        include_docs: bool,
+    ) -> RetrievalChannelOutput:
+        code_types = ["file", "class", "function", "documentation"]
+        allowed_types = code_types if include_docs else None
+        semantic_results = self._semantic_search(
+            semantic_query,
+            top_k=20,
+            repo_filter=repo_filter,
+            element_types=allowed_types,
+        )
+        pseudocode_results: List[Tuple[Dict[str, Any], float]] = []
+        if pseudocode:
+            pseudocode_results = self._semantic_search(
+                pseudocode,
+                top_k=10,
+                repo_filter=repo_filter,
+                element_types=allowed_types,
+            )
+            self.logger.info(f"Pseudocode search found {len(pseudocode_results)} additional results")
+        keyword_results = self._keyword_search(
+            keyword_query,
+            top_k=10,
+            repo_filter=repo_filter,
+            element_types=allowed_types,
+        )
+        ranked_results = self._rerank(
+            semantic_query,
+            self._combine_results(semantic_results, keyword_results, pseudocode_results),
+        )
+        return RetrievalChannelOutput(
+            collection="code",
+            semantic_results=semantic_results,
+            keyword_results=keyword_results,
+            pseudocode_results=pseudocode_results,
+            ranked_results=ranked_results,
+        )
+
+    def _retrieve_doc_channel(
+        self,
+        *,
+        semantic_query: str,
+        keyword_query: str,
+        repo_filter: Optional[List[str]],
+    ) -> RetrievalChannelOutput:
+        doc_types = ["design_document"]
+        semantic_results = self._semantic_search(
+            semantic_query,
+            top_k=16,
+            repo_filter=repo_filter,
+            element_types=doc_types,
+        )
+        keyword_results = self._keyword_search(
+            keyword_query,
+            top_k=16,
+            repo_filter=repo_filter,
+            element_types=doc_types,
+        )
+        ranked_results = self._rerank(
+            semantic_query,
+            self._combine_results(semantic_results, keyword_results, []),
+        )
+        return RetrievalChannelOutput(
+            collection="doc",
+            semantic_results=semantic_results,
+            keyword_results=keyword_results,
+            pseudocode_results=[],
+            ranked_results=ranked_results,
+        )
+
+    @staticmethod
+    def _trace_confidence_weight(confidence: Optional[str]) -> float:
+        label = str(confidence or "").lower()
+        return {
+            "precise": 1.0,
+            "anchored": 1.0,
+            "resolved": 0.8,
+            "derived": 0.7,
+            "heuristic": 0.6,
+            "candidate": 0.5,
+        }.get(label, 0.6)
+
+    def _extract_trace_links(self, row: Dict[str, Any]) -> List[Dict[str, Any]]:
+        elem = row.get("element") or {}
+        meta = elem.get("metadata") or {}
+        raw_links = meta.get("trace_links") or meta.get("mentions") or []
+        links: List[Dict[str, Any]] = []
+        for link in raw_links:
+            if not isinstance(link, dict):
+                continue
+            unit_id = link.get("unit_id") or link.get("symbol_id") or link.get("ir_symbol_id")
+            if not unit_id:
+                continue
+            weight = float(link.get("weight") or self._trace_confidence_weight(link.get("confidence")))
+            links.append(
+                {
+                    "unit_id": str(unit_id),
+                    "weight": max(0.0, min(1.0, weight)),
+                    "evidence_type": link.get("evidence_type") or "trace_link",
+                    "chunk_id": link.get("chunk_id") or elem.get("id"),
+                    "symbol_name": link.get("symbol_name"),
+                    "confidence": link.get("confidence"),
+                }
+            )
+        return links
+
+    def _project_doc_priors(
+        self,
+        *,
+        query: str,
+        query_info: Dict[str, Any],
+        doc_results: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        alpha, _, _ = self._compute_adaptive_fusion_params(
+            query=query,
+            query_info=query_info,
+            code_results=[],
+            doc_results=doc_results,
+        )
+        p_doc = 1.0 - alpha
+        beta_max = float(self.retrieval_config.get("doc_projection_beta_max", 0.35))
+        beta = max(0.0, min(1.0, beta_max * p_doc))
+        norm_scores = self._normalized_totals(doc_results)
+
+        priors: Dict[str, float] = {}
+        evidence: Dict[str, List[Dict[str, Any]]] = {}
+        for row in doc_results:
+            elem = row.get("element") or {}
+            elem_id = str(elem.get("id") or "")
+            if not elem_id:
+                continue
+            doc_score = norm_scores.get(elem_id, 0.0)
+            if doc_score <= 0.0:
+                continue
+            for link in self._extract_trace_links(row):
+                unit_id = link["unit_id"]
+                contribution = max(0.0, min(1.0, doc_score * float(link["weight"])))
+                prior = priors.get(unit_id, 0.0)
+                priors[unit_id] = 1.0 - ((1.0 - prior) * (1.0 - contribution))
+                evidence.setdefault(unit_id, []).append(
+                    {
+                        **link,
+                        "doc_id": elem_id,
+                        "doc_score": doc_score,
+                        "contribution": contribution,
+                    }
+                )
+
+        return {
+            "p_doc": p_doc,
+            "beta": beta,
+            "priors": priors,
+            "evidence": evidence,
+        }
+
+    def _active_bm25_elements(self) -> List[CodeElement]:
+        return self.filtered_bm25_elements if self.filtered_bm25_elements else self.full_bm25_elements
+
+    def _find_code_element_for_ir_unit(
+        self,
+        unit_id: str,
+        repo_filter: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        for elem in self._active_bm25_elements():
+            if elem.type == "design_document":
+                continue
+            if repo_filter and elem.repo_name not in repo_filter:
+                continue
+            meta = elem.metadata or {}
+            if meta.get("ir_symbol_id") == unit_id or meta.get("ir_node_id") == unit_id:
+                return elem.to_dict()
+        return None
+
+    def _apply_doc_projection_to_code(
+        self,
+        *,
+        query: str,
+        query_info: Dict[str, Any],
+        code_results: List[Dict[str, Any]],
+        doc_results: List[Dict[str, Any]],
+        repo_filter: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        if not doc_results:
+            return [self._clone_result_row(row) for row in code_results]
+
+        projection = self._project_doc_priors(
+            query=query,
+            query_info=query_info,
+            doc_results=doc_results,
+        )
+        beta = float(projection["beta"])
+        priors: Dict[str, float] = projection["priors"]
+        evidence: Dict[str, List[Dict[str, Any]]] = projection["evidence"]
+        code_norm = self._normalized_totals(code_results)
+
+        seeded: Dict[str, Dict[str, Any]] = {}
+        for row in code_results:
+            materialized = self._clone_result_row(row)
+            elem = materialized.get("element") or {}
+            elem_id = str(elem.get("id") or "")
+            meta = elem.get("metadata") or {}
+            unit_id = meta.get("ir_symbol_id") or meta.get("ir_node_id")
+            retrieval_score = code_norm.get(elem_id, 0.0)
+            projected_prior = float(priors.get(str(unit_id), 0.0)) if unit_id else 0.0
+            seed_score = ((1.0 - beta) * retrieval_score) + (beta * projected_prior)
+            materialized["retrieval_score"] = materialized.get("total_score", 0.0)
+            materialized["projection_score"] = projected_prior
+            materialized["seed_score"] = seed_score
+            materialized["traceability"] = evidence.get(str(unit_id), []) if unit_id else []
+            materialized["total_score"] = seed_score
+            seeded[elem_id] = materialized
+
+        for unit_id, prior in priors.items():
+            if prior <= 0.0:
+                continue
+            if any(((row.get("element") or {}).get("metadata") or {}).get("ir_symbol_id") == unit_id for row in seeded.values()):
+                continue
+            element = self._find_code_element_for_ir_unit(unit_id, repo_filter=repo_filter)
+            if element is None:
+                continue
+            elem_id = str(element.get("id") or "")
+            seeded[elem_id] = {
+                "element": element,
+                "semantic_score": 0.0,
+                "keyword_score": 0.0,
+                "pseudocode_score": 0.0,
+                "graph_score": 0.0,
+                "retrieval_score": 0.0,
+                "projection_score": prior,
+                "seed_score": beta * float(prior),
+                "total_score": beta * float(prior),
+                "traceability": evidence.get(unit_id, []),
+                "projected_only": True,
+            }
+
+        out = list(seeded.values())
+        out.sort(key=lambda row: float(row.get("total_score", 0.0)), reverse=True)
+        debug = dict(self._last_fusion_debug or {})
+        debug["doc_projection"] = {
+            "beta": beta,
+            "projected_units": len(priors),
+        }
+        self._last_fusion_debug = debug
+        return out
     
     def retrieve(self, query: Union[str, ProcessedQuery], filters: Optional[Dict[str, Any]] = None,
                  repo_filter: Optional[List[str]] = None, enable_file_selection: bool = True,
@@ -361,60 +649,49 @@ class HybridRetriever:
         
         # Stage 1: retrieval channels
         keyword_query = " ".join(keywords) if keywords else query_str
-        doc_integration_enabled = bool(self.config.get("docs_integration", {}).get("enabled", False))
+        doc_integration_enabled = self._docs_enabled()
 
-        code_types = ["file", "class", "function", "documentation"]
-        doc_types = ["design_document"]
-
-        semantic_results = self._semantic_search(
-            search_text4semantic,
-            top_k=20,
+        code_channel = self._retrieve_code_channel(
+            semantic_query=search_text4semantic,
+            keyword_query=keyword_query,
+            pseudocode=pseudocode,
             repo_filter=repo_filter,
-            element_types=code_types if doc_integration_enabled else None,
-        )
-        pseudocode_results = []
-        if pseudocode:
-            pseudocode_results = self._semantic_search(
-                pseudocode,
-                top_k=10,
-                repo_filter=repo_filter,
-                element_types=code_types if doc_integration_enabled else None,
-            )
-            self.logger.info(f"Pseudocode search found {len(pseudocode_results)} additional results")
-        keyword_results = self._keyword_search(
-            keyword_query,
-            top_k=10,
-            repo_filter=repo_filter,
-            element_types=code_types if doc_integration_enabled else None,
+            include_docs=doc_integration_enabled,
         )
 
-        code_combined = self._combine_results(semantic_results, keyword_results, pseudocode_results)
-        if self.graph_weight > 0:
-            code_combined = self._expand_with_graph(code_combined, max_hops=2)
-        code_final = self._rerank(query_str, code_combined)
-
-        doc_final: List[Dict[str, Any]] = []
+        doc_channel = RetrievalChannelOutput(
+            collection="doc",
+            semantic_results=[],
+            keyword_results=[],
+            pseudocode_results=[],
+            ranked_results=[],
+        )
         if doc_integration_enabled:
-            doc_semantic = self._semantic_search(
-                search_text4semantic,
-                top_k=16,
+            doc_channel = self._retrieve_doc_channel(
+                semantic_query=search_text4semantic,
+                keyword_query=keyword_query,
                 repo_filter=repo_filter,
-                element_types=doc_types,
             )
-            doc_keyword = self._keyword_search(
-                keyword_query,
-                top_k=16,
-                repo_filter=repo_filter,
-                element_types=doc_types,
-            )
-            doc_final = self._rerank(query_str, self._combine_results(doc_semantic, doc_keyword, []))
 
-        if doc_integration_enabled and self.adaptive_fusion_enabled and doc_final:
+        seeded_code = self._apply_doc_projection_to_code(
+            query=query_str,
+            query_info=query_info,
+            code_results=code_channel.ranked_results,
+            doc_results=doc_channel.ranked_results,
+            repo_filter=repo_filter,
+        ) if doc_channel.ranked_results else [self._clone_result_row(row) for row in code_channel.ranked_results]
+
+        code_final = seeded_code
+        if self.graph_weight > 0:
+            code_final = self._expand_with_graph(code_final, max_hops=2)
+        code_final = self._rerank(query_str, code_final)
+
+        if doc_channel.ranked_results:
             final_results = self._adaptive_fuse_channels(
                 query=query_str,
                 query_info=query_info,
                 code_results=code_final,
-                doc_results=doc_final,
+                doc_results=doc_channel.ranked_results,
             )
         else:
             final_results = code_final

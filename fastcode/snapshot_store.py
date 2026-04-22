@@ -10,8 +10,8 @@ import logging
 import os
 import pickle
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from .db_runtime import DBRuntime
 from .scip_models import SCIPArtifactRef
@@ -20,7 +20,7 @@ from .utils import ensure_dir, utc_now
 
 
 class SnapshotStore:
-    def __init__(self, persist_dir: str, storage_cfg: Optional[Dict[str, Any]] = None):
+    def __init__(self, persist_dir: str, storage_cfg: dict[str, Any] | None = None):
         self.persist_dir = os.path.abspath(persist_dir)
         self.snapshot_root = os.path.join(self.persist_dir, "snapshots")
         ensure_dir(self.persist_dir)
@@ -364,7 +364,7 @@ class SnapshotStore:
         ensure_dir(path)
         return path
 
-    def save_snapshot(self, snapshot: IRSnapshot, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def save_snapshot(self, snapshot: IRSnapshot, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         snap_dir = self.snapshot_dir(snapshot.snapshot_id)
         ir_path = os.path.join(snap_dir, "ir_snapshot.json")
         tmp_ir_path = f"{ir_path}.tmp"
@@ -430,7 +430,7 @@ class SnapshotStore:
             "dir": snap_dir,
         }
 
-    def update_snapshot_metadata(self, snapshot_id: str, metadata: Dict[str, Any]) -> None:
+    def update_snapshot_metadata(self, snapshot_id: str, metadata: dict[str, Any]) -> None:
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,
@@ -453,7 +453,7 @@ class SnapshotStore:
             conn.commit()
         return path
 
-    def load_ir_graphs(self, snapshot_id: str) -> Optional[Any]:
+    def load_ir_graphs(self, snapshot_id: str) -> Any | None:
         row = self.get_snapshot_record(snapshot_id)
         if not row:
             return None
@@ -463,18 +463,18 @@ class SnapshotStore:
         with open(path, "rb") as f:
             return pickle.load(f)
 
-    def load_snapshot(self, snapshot_id: str) -> Optional[IRSnapshot]:
+    def load_snapshot(self, snapshot_id: str) -> IRSnapshot | None:
         row = self.get_snapshot_record(snapshot_id)
         if not row:
             return None
         ir_path = row.get("ir_path")
         if not ir_path or not os.path.exists(ir_path):
             return None
-        with open(ir_path, "r", encoding="utf-8") as f:
+        with open(ir_path, encoding="utf-8") as f:
             data = json.load(f)
         return IRSnapshot.from_dict(data)
 
-    def get_snapshot_record(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
+    def get_snapshot_record(self, snapshot_id: str) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -483,7 +483,7 @@ class SnapshotStore:
             ).fetchone()
         return self.db_runtime.row_to_dict(row)
 
-    def find_by_repo_commit(self, repo_name: str, commit_id: str) -> Optional[Dict[str, Any]]:
+    def find_by_repo_commit(self, repo_name: str, commit_id: str) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -497,7 +497,7 @@ class SnapshotStore:
             ).fetchone()
         return self.db_runtime.row_to_dict(row)
 
-    def find_by_artifact_key(self, artifact_key: str) -> Optional[Dict[str, Any]]:
+    def find_by_artifact_key(self, artifact_key: str) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -511,7 +511,7 @@ class SnapshotStore:
             ).fetchone()
         return self.db_runtime.row_to_dict(row)
 
-    def resolve_snapshot_for_ref(self, repo_name: str, branch: str) -> Optional[Dict[str, Any]]:
+    def resolve_snapshot_for_ref(self, repo_name: str, branch: str) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -530,10 +530,10 @@ class SnapshotStore:
         snapshot_id: str,
         *,
         indexer_name: str = "unknown",
-        indexer_version: Optional[str] = None,
+        indexer_version: str | None = None,
         artifact_path: str = "",
         checksum: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         created_at = utc_now()
         artifact_ref = SCIPArtifactRef(
             snapshot_id=snapshot_id,
@@ -569,7 +569,7 @@ class SnapshotStore:
             conn.commit()
         return artifact_ref.to_dict()
 
-    def get_scip_artifact_ref(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
+    def get_scip_artifact_ref(self, snapshot_id: str) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -578,7 +578,7 @@ class SnapshotStore:
             ).fetchone()
         return self.db_runtime.row_to_dict(row)
 
-    def import_git_backbone(self, snapshot: IRSnapshot, git_meta: Optional[Dict[str, Any]] = None) -> None:
+    def import_git_backbone(self, snapshot: IRSnapshot, git_meta: dict[str, Any] | None = None) -> None:
         if self.db_runtime.backend != "postgres":
             return
         git_meta = git_meta or {}
@@ -746,7 +746,7 @@ class SnapshotStore:
                 )
             conn.commit()
 
-    def stage_snapshot(self, snapshot: IRSnapshot, metadata: Optional[Dict[str, Any]] = None) -> str:
+    def stage_snapshot(self, snapshot: IRSnapshot, metadata: dict[str, Any] | None = None) -> str:
         stage_id = f"stage_{uuid.uuid4().hex[:16]}"
         if self.db_runtime.backend != "postgres":
             return stage_id
@@ -778,48 +778,34 @@ class SnapshotStore:
             )
             conn.commit()
 
-    def acquire_lock(self, lock_name: str, owner_id: str, ttl_seconds: int = 300) -> Optional[int]:
+    def acquire_lock(self, lock_name: str, owner_id: str, ttl_seconds: int = 300) -> int | None:
         if self.db_runtime.backend != "postgres":
             return 1
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expires_at = (now.timestamp() + ttl_seconds)
-        expires_iso = datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat()
+        expires_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
+        now_iso = now.isoformat()
         with self.db_runtime.connect() as conn:
+            # Atomic compare-and-swap: INSERT or UPDATE only if expired or same owner
             row = self.db_runtime.execute(
-                conn,
-                "SELECT owner_id, expires_at, fencing_token FROM resource_locks WHERE lock_name=?",
-                (lock_name,),
-            ).fetchone()
-            new_token = 1
-            if row:
-                current_exp = row["expires_at"]
-                if isinstance(current_exp, datetime):
-                    current_exp_dt = current_exp
-                elif isinstance(current_exp, str):
-                    try:
-                        current_exp_dt = datetime.fromisoformat(current_exp)
-                    except Exception:
-                        current_exp_dt = None
-                else:
-                    current_exp_dt = None
-                if current_exp_dt and current_exp_dt > now and row["owner_id"] != owner_id:
-                    return None
-                new_token = int(row.get("fencing_token") or 0) + 1
-            self.db_runtime.execute(
                 conn,
                 """
                 INSERT INTO resource_locks (lock_name, owner_id, expires_at, updated_at, fencing_token)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 1)
                 ON CONFLICT(lock_name) DO UPDATE SET
                     owner_id=excluded.owner_id,
                     expires_at=excluded.expires_at,
                     updated_at=excluded.updated_at,
-                    fencing_token=excluded.fencing_token
+                    fencing_token=resource_locks.fencing_token + 1
+                WHERE resource_locks.expires_at < ? OR resource_locks.owner_id = ?
+                RETURNING fencing_token
                 """,
-                (lock_name, owner_id, expires_iso, utc_now(), new_token),
-            )
+                (lock_name, owner_id, expires_iso, utc_now(), now_iso, owner_id),
+            ).fetchone()
             conn.commit()
-        return new_token
+        if row is None:
+            return None
+        return int(row["fencing_token"])
 
     def validate_fencing_token(self, lock_name: str, expected_token: int) -> bool:
         if self.db_runtime.backend != "postgres":
@@ -845,7 +831,7 @@ class SnapshotStore:
             )
             conn.commit()
 
-    def enqueue_redo_task(self, task_type: str, payload: Dict[str, Any], error: Optional[str] = None) -> str:
+    def enqueue_redo_task(self, task_type: str, payload: dict[str, Any], error: str | None = None) -> str:
         task_id = f"redo_{uuid.uuid4().hex[:16]}"
         if self.db_runtime.backend != "postgres":
             return task_id
@@ -867,8 +853,8 @@ class SnapshotStore:
         self,
         snapshot_id: str,
         repo_name: str,
-        chunks: List[Dict[str, Any]],
-        mentions: List[Dict[str, Any]],
+        chunks: list[dict[str, Any]],
+        mentions: list[dict[str, Any]],
     ) -> None:
         if self.db_runtime.backend != "postgres":
             return
@@ -921,7 +907,7 @@ class SnapshotStore:
                 )
             conn.commit()
 
-    def get_doc_mentions(self, snapshot_id: str) -> List[Dict[str, Any]]:
+    def get_doc_mentions(self, snapshot_id: str) -> list[dict[str, Any]]:
         """Return all design doc mentions for a snapshot."""
         with self.db_runtime.connect() as conn:
             rows = self.db_runtime.execute(
@@ -933,26 +919,26 @@ class SnapshotStore:
                 """,
                 (snapshot_id,),
             ).fetchall()
-        import json
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for r in rows:
             entry = {
-                "chunk_id": r[0],
-                "symbol_id": r[1],
-                "symbol_name": r[2],
-                "confidence": r[3],
+                "chunk_id": r["chunk_id"],
+                "symbol_id": r["symbol_id"],
+                "symbol_name": r["symbol_name"],
+                "confidence": r["confidence"],
             }
-            if r[4]:
+            metadata_json = r["metadata_json"]
+            if metadata_json:
                 try:
-                    meta = json.loads(r[4])
+                    meta = json.loads(metadata_json)
                     entry.update({k: v for k, v in meta.items() if k not in entry})
                 except (json.JSONDecodeError, TypeError):
                     pass
             results.append(entry)
         return results
 
-    def claim_redo_task(self) -> Optional[Dict[str, Any]]:
+    def claim_redo_task(self) -> dict[str, Any] | None:
         if self.db_runtime.backend != "postgres":
             return None
         now = utc_now()
@@ -1024,7 +1010,7 @@ class SnapshotStore:
                 )
             else:
                 backoff_seconds = max(1, 2 ** attempts)
-                next_attempt_at = (datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds)).isoformat()
+                next_attempt_at = (datetime.now(UTC) + timedelta(seconds=backoff_seconds)).isoformat()
                 self.db_runtime.execute(
                     conn,
                     """

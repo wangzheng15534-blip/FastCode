@@ -288,7 +288,18 @@ def _merge_unit(ast_unit: IRCodeUnit, scip_unit: IRCodeUnit, score: float) -> No
 
 def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSnapshot:
     if scip_snapshot is None:
-        return ast_snapshot
+        return IRSnapshot(
+            repo_name=ast_snapshot.repo_name,
+            snapshot_id=ast_snapshot.snapshot_id,
+            branch=ast_snapshot.branch,
+            commit_id=ast_snapshot.commit_id,
+            tree_id=ast_snapshot.tree_id,
+            units=[_clone_unit(u) for u in ast_snapshot.units],
+            supports=[_clone_support(s) for s in ast_snapshot.supports],
+            relations=[_clone_relation(r) for r in ast_snapshot.relations],
+            embeddings=[_clone_embedding(e) for e in ast_snapshot.embeddings],
+            metadata=dict(ast_snapshot.metadata),
+        )
 
     merged_units = [_clone_unit(unit) for unit in ast_snapshot.units]
     merged_supports = [_clone_support(support) for support in ast_snapshot.supports]

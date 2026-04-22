@@ -121,10 +121,12 @@ class TestMergeIrProperties:
     @given(snapshot=small_snapshot)
     @settings(max_examples=50)
     @pytest.mark.edge
-    def test_merge_with_none_returns_original(self, snapshot: IRSnapshot):
-        """EDGE: merge_ir(ast, None) returns ast unchanged (None input)."""
+    def test_merge_with_none_returns_clone(self, snapshot: IRSnapshot):
+        """EDGE: merge_ir(ast, None) returns a deep clone, not the same object."""
         result = merge_ir(snapshot, None)
-        assert result is snapshot
+        assert result is not snapshot
+        assert result.snapshot_id == snapshot.snapshot_id
+        assert len(result.symbols) == len(snapshot.symbols)
 
     @given(snapshot=small_snapshot)
     @settings(max_examples=30)

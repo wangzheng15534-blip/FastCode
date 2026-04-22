@@ -60,6 +60,18 @@ class DBRuntime:
             if not self.sqlite_path:
                 raise RuntimeError("sqlite backend requires sqlite_path")
 
+    def close(self) -> None:
+        """Close the connection pool if it exists."""
+        if self.pool is not None:
+            self.pool.close()
+            self.pool = None
+
+    def __enter__(self) -> "DBRuntime":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
+
     @classmethod
     def from_storage_config(cls, *, sqlite_path: str, storage_cfg: Optional[dict]) -> "DBRuntime":
         cfg = storage_cfg or {}
@@ -78,7 +90,11 @@ class DBRuntime:
     def adapt_sql(self, sql: str) -> str:
         if self.backend != "postgres":
             return sql
-        return sql.replace("?", "%s")
+        # Quote-aware replacement: only replace ? outside single-quoted strings
+        parts = sql.split("'")
+        for i in range(0, len(parts), 2):
+            parts[i] = parts[i].replace("?", "%s")
+        return "'".join(parts)
 
     @contextlib.contextmanager
     def connect(self) -> Iterator[Any]:
@@ -121,6 +137,5 @@ class DBRuntime:
     def begin_write(self, conn: Any) -> None:
         if self.backend == "sqlite":
             conn.execute("BEGIN IMMEDIATE")
-        else:
-            conn.execute("BEGIN")
+        # PostgreSQL with autocommit=False: transaction already implicit, no BEGIN needed
 

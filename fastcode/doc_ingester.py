@@ -391,11 +391,20 @@ class KeyDocIngester:
                 continue
             symbols.append((sym.symbol_id, name))
 
+        if not symbols:
+            return []
+
+        # Build name→ids lookup and single alternation pattern for O(S+C) matching
+        name_to_ids: Dict[str, List[str]] = {}
+        for symbol_id, name in symbols:
+            name_to_ids.setdefault(name, []).append(symbol_id)
+        pattern = re.compile("|".join(re.escape(name) for name in name_to_ids))
+
         mentions: List[Dict[str, Any]] = []
         for chunk in chunks:
-            text = chunk.text
-            for symbol_id, name in symbols:
-                if re.search(re.escape(name), text):
+            found = set(pattern.findall(chunk.text))
+            for name in found:
+                for symbol_id in name_to_ids[name]:
                     mentions.append(
                         {
                             "snapshot_id": chunk.snapshot_id,

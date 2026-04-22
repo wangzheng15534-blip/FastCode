@@ -827,8 +827,8 @@ class TestIRSnapshotProperties:
         """HAPPY: to_dict always produces the same set of top-level keys."""
         data = snap.to_dict()
         expected_keys = {
-            "repo_name", "snapshot_id", "branch", "commit_id", "tree_id",
-            "documents", "symbols", "occurrences", "edges", "attachments", "metadata",
+            "schema_version", "repo_name", "snapshot_id", "branch", "commit_id", "tree_id",
+            "units", "supports", "relations", "embeddings", "metadata",
         }
         assert set(data.keys()) == expected_keys
 
@@ -848,20 +848,21 @@ class TestIRSnapshotProperties:
     @settings(max_examples=30)
     @pytest.mark.happy
     def test_snapshot_to_dict_documents_are_dicts(self, snap: IRSnapshot):
-        """HAPPY: to_dict serializes each document as a plain dict, not a dataclass."""
+        """HAPPY: to_dict serializes each unit as a plain dict, not a dataclass."""
         data = snap.to_dict()
-        for doc_data in data["documents"]:
-            assert isinstance(doc_data, dict)
-            assert "source_set" in doc_data
-            assert isinstance(doc_data["source_set"], list)
+        for unit_data in data["units"]:
+            assert isinstance(unit_data, dict)
+            assert "source_set" in unit_data
+            assert isinstance(unit_data["source_set"], list)
 
     @given(snap=snapshot_st())
     @settings(max_examples=30)
     @pytest.mark.happy
     def test_snapshot_to_dict_symbols_are_dicts(self, snap: IRSnapshot):
-        """HAPPY: to_dict serializes each symbol as a plain dict with source_set as list."""
+        """HAPPY: to_dict serializes each unit (including symbols) as a plain dict with source_set as list."""
         data = snap.to_dict()
-        for sym_data in data["symbols"]:
+        symbol_units = [u for u in data["units"] if u.get("kind") not in ("file", "doc")]
+        for sym_data in symbol_units:
             assert isinstance(sym_data, dict)
             assert "source_set" in sym_data
             assert isinstance(sym_data["source_set"], list)

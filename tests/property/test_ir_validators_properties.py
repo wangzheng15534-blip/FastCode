@@ -247,8 +247,8 @@ class TestValidateSnapshotProperties:
     # --- EDGE cases: missing/empty collections trigger errors ---
 
     @pytest.mark.edge
-    def test_empty_documents_error(self):
-        """EDGE: snapshot with no documents reports missing document error (line 19)."""
+    def test_empty_documents_no_error(self):
+        """EDGE: snapshot with no documents is valid if units exist."""
         sym = _sym("sym:1", "a.py", "foo")
         snap = IRSnapshot(
             repo_name="repo",
@@ -257,11 +257,11 @@ class TestValidateSnapshotProperties:
             symbols=[sym],
         )
         errors = validate_snapshot(snap)
-        assert any("at least one document" in e for e in errors)
+        assert len(errors) == 0
 
     @pytest.mark.edge
-    def test_empty_symbols_error(self):
-        """EDGE: snapshot with no symbols reports missing symbol error (line 21)."""
+    def test_empty_symbols_no_error(self):
+        """EDGE: snapshot with no symbols is valid if units exist."""
         doc = _doc("d1", "a.py")
         snap = IRSnapshot(
             repo_name="repo",
@@ -270,11 +270,11 @@ class TestValidateSnapshotProperties:
             symbols=[],
         )
         errors = validate_snapshot(snap)
-        assert any("at least one symbol" in e for e in errors)
+        assert len(errors) == 0
 
     @pytest.mark.edge
     def test_duplicate_doc_ids_error(self):
-        """EDGE: duplicate document IDs are detected (line 24)."""
+        """EDGE: duplicate document IDs (as unit IDs) are detected."""
         doc1 = _doc("d1", "a.py")
         doc2 = _doc("d1", "b.py")
         sym = _sym("sym:1", "a.py", "foo")
@@ -285,11 +285,11 @@ class TestValidateSnapshotProperties:
             symbols=[sym],
         )
         errors = validate_snapshot(snap)
-        assert any("duplicate document IDs" in e for e in errors)
+        assert any("duplicate unit IDs" in e for e in errors)
 
     @pytest.mark.edge
     def test_duplicate_symbol_ids_error(self):
-        """EDGE: duplicate symbol IDs are detected (line 30)."""
+        """EDGE: duplicate symbol IDs (as unit IDs) are detected."""
         doc = _doc("d1", "a.py")
         sym1 = _sym("sym:1", "a.py", "foo")
         sym2 = _sym("sym:1", "a.py", "bar")
@@ -300,11 +300,11 @@ class TestValidateSnapshotProperties:
             symbols=[sym1, sym2],
         )
         errors = validate_snapshot(snap)
-        assert any("duplicate symbol IDs" in e for e in errors)
+        assert any("duplicate unit IDs" in e for e in errors)
 
     @pytest.mark.edge
-    def test_occurrence_missing_doc_id_error(self):
-        """EDGE: occurrence referencing nonexistent doc_id is flagged (line 34)."""
+    def test_occurrence_missing_doc_id_no_error(self):
+        """EDGE: occurrence doc_id is stored in metadata, no longer validated separately."""
         sym = _sym("sym:1", "a.py", "foo")
         occ = _occ("occ:1", "sym:1", "nonexistent_doc")
         snap = IRSnapshot(
@@ -315,11 +315,12 @@ class TestValidateSnapshotProperties:
             occurrences=[occ],
         )
         errors = validate_snapshot(snap)
-        assert any("missing doc_id" in e for e in errors)
+        # doc_id for occurrence is in support metadata, not separately validated
+        assert len(errors) == 0
 
     @pytest.mark.edge
     def test_occurrence_missing_symbol_id_error(self):
-        """EDGE: occurrence referencing nonexistent symbol_id is flagged (line 35)."""
+        """EDGE: occurrence referencing nonexistent symbol_id is flagged as support with missing unit."""
         doc = _doc("d1", "a.py")
         occ = _occ("occ:1", "nonexistent_sym", "d1")
         snap = IRSnapshot(
@@ -330,11 +331,11 @@ class TestValidateSnapshotProperties:
             occurrences=[occ],
         )
         errors = validate_snapshot(snap)
-        assert any("missing symbol_id" in e for e in errors)
+        assert any("support references missing unit_id" in e for e in errors)
 
     @pytest.mark.edge
     def test_edge_src_not_found_error(self):
-        """EDGE: edge with unknown src_id is flagged (line 41)."""
+        """EDGE: edge with unknown src_id is flagged as relation src not found."""
         doc = _doc("d1", "a.py")
         sym = _sym("sym:1", "a.py", "foo")
         edge = _edge("e:1", "unknown_src", sym.symbol_id)
@@ -346,11 +347,11 @@ class TestValidateSnapshotProperties:
             edges=[edge],
         )
         errors = validate_snapshot(snap)
-        assert any("edge src not found" in e for e in errors)
+        assert any("relation src not found" in e for e in errors)
 
     @pytest.mark.edge
     def test_edge_dst_not_found_error(self):
-        """EDGE: edge with unknown dst_id is flagged."""
+        """EDGE: edge with unknown dst_id is flagged as relation dst not found."""
         doc = _doc("d1", "a.py")
         sym = _sym("sym:1", "a.py", "foo")
         edge = _edge("e:1", sym.symbol_id, "unknown_dst")
@@ -362,11 +363,11 @@ class TestValidateSnapshotProperties:
             edges=[edge],
         )
         errors = validate_snapshot(snap)
-        assert any("edge dst not found" in e for e in errors)
+        assert any("relation dst not found" in e for e in errors)
 
     @pytest.mark.edge
     def test_edge_source_missing_error(self):
-        """EDGE: edge with empty source string is flagged."""
+        """EDGE: edge with empty source string is flagged as relation source missing."""
         doc = _doc("d1", "a.py")
         sym = _sym("sym:1", "a.py", "foo")
         edge = _edge("e:1", doc.doc_id, sym.symbol_id, source="")
@@ -378,11 +379,11 @@ class TestValidateSnapshotProperties:
             edges=[edge],
         )
         errors = validate_snapshot(snap)
-        assert any("edge source missing" in e for e in errors)
+        assert any("relation source missing" in e for e in errors)
 
     @pytest.mark.edge
-    def test_edge_confidence_missing_error(self):
-        """EDGE: edge with empty confidence string is flagged."""
+    def test_edge_confidence_mapped_to_resolution(self):
+        """EDGE: edge confidence is now derived from relation resolution_state, not separately validated."""
         doc = _doc("d1", "a.py")
         sym = _sym("sym:1", "a.py", "foo")
         edge = _edge("e:1", doc.doc_id, sym.symbol_id, confidence="")
@@ -394,7 +395,8 @@ class TestValidateSnapshotProperties:
             edges=[edge],
         )
         errors = validate_snapshot(snap)
-        assert any("edge confidence missing" in e for e in errors)
+        # Confidence is now derived from resolution_state; empty confidence maps to "structural"
+        assert len(errors) == 0
 
     @pytest.mark.edge
     def test_duplicate_doc_paths_error(self):
@@ -409,7 +411,7 @@ class TestValidateSnapshotProperties:
             symbols=[sym],
         )
         errors = validate_snapshot(snap)
-        assert any("duplicate document paths" in e for e in errors)
+        assert any("duplicate file paths" in e for e in errors)
 
     @pytest.mark.edge
     def test_symbol_provenance_missing_error(self):
@@ -453,12 +455,10 @@ class TestValidateSnapshotProperties:
     @given(snapshot=_snapshot_st(max_docs=0, max_syms=0, max_occs=0, max_edges=0))
     @settings(max_examples=20)
     @pytest.mark.edge
-    def test_empty_snapshot_always_errors(self, snapshot: IRSnapshot):
-        """EDGE: a snapshot with no documents or symbols always has errors."""
+    def test_empty_snapshot_is_valid(self, snapshot: IRSnapshot):
+        """EDGE: an empty snapshot (no units, supports, relations) has no errors."""
         errors = validate_snapshot(snapshot)
-        assert len(errors) >= 2
-        assert any("at least one document" in e for e in errors)
-        assert any("at least one symbol" in e for e in errors)
+        assert len(errors) == 0
 
     @given(
         doc_id=st.builds(lambda x: f"d{x}", small_id),
@@ -478,7 +478,7 @@ class TestValidateSnapshotProperties:
             symbols=[sym],
         )
         errors = validate_snapshot(snap)
-        assert any("duplicate document IDs" in e for e in errors)
+        assert any("duplicate unit IDs" in e for e in errors)
 
     @given(
         sym_id=st.builds(lambda x: f"sym:{x}", small_id),
@@ -497,7 +497,7 @@ class TestValidateSnapshotProperties:
             symbols=syms,
         )
         errors = validate_snapshot(snap)
-        assert any("duplicate symbol IDs" in e for e in errors)
+        assert any("duplicate unit IDs" in e for e in errors)
 
     @given(
         bad_doc_id=st.builds(lambda x: f"bad_{x}", small_id),
@@ -518,8 +518,8 @@ class TestValidateSnapshotProperties:
             occurrences=[occ],
         )
         errors = validate_snapshot(snap)
-        assert any("missing doc_id" in e for e in errors)
-        assert any("missing symbol_id" in e for e in errors)
+        # Occurrence converts to support; unit_id (= symbol_id) is checked against known units
+        assert any("support references missing unit_id" in e for e in errors)
 
     @given(
         bad_src=st.builds(lambda x: f"no_{x}", small_id),
@@ -540,8 +540,8 @@ class TestValidateSnapshotProperties:
             edges=[edge],
         )
         errors = validate_snapshot(snap)
-        assert any("edge src not found" in e for e in errors)
-        assert any("edge dst not found" in e for e in errors)
+        assert any("relation src not found" in e for e in errors)
+        assert any("relation dst not found" in e for e in errors)
 
     @given(
         doc_id=small_id,

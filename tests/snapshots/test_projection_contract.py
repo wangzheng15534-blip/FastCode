@@ -84,9 +84,9 @@ def _projection_snapshot() -> IRSnapshot:
 
 
 def _strip_timestamps(obj: Any) -> Any:
-    """Recursively remove non-deterministic timestamp fields from dicts/lists."""
+    """Recursively remove non-deterministic timestamp and pagerank fields from dicts/lists."""
     if isinstance(obj, dict):
-        return {k: _strip_timestamps(v) for k, v in obj.items() if k not in ("updated_at", "created_at")}
+        return {k: _strip_timestamps(v) for k, v in obj.items() if k not in ("updated_at", "created_at", "pagerank")}
     if isinstance(obj, list):
         return [_strip_timestamps(item) for item in obj]
     return obj

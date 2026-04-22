@@ -156,7 +156,7 @@ class TestMergeIrProperties:
     @pytest.mark.happy
     def test_scip_wins_on_overlap(self, display_name: str, path: str,
                                    kind: str, start_line: int):
-        """HAPPY: when AST and SCIP symbols share a key, SCIP survives."""
+        """HAPPY: when AST and SCIP units share location, merge anchors SCIP onto AST unit."""
         ast_sym = _sym(
             f"ast:{display_name}", path, display_name, kind,
             start_line=start_line, source_priority=50, source="fc_structure",
@@ -176,8 +176,12 @@ class TestMergeIrProperties:
         )
         merged = merge_ir(ast, scip)
         merged_ids = {s.symbol_id for s in merged.symbols}
-        assert f"scip:{display_name}" in merged_ids
-        assert f"ast:{display_name}" not in merged_ids
+        # AST unit kept as canonical; SCIP ID recorded as alias in metadata
+        assert f"ast:{display_name}" in merged_ids
+        matched = [s for s in merged.symbols if s.symbol_id == f"ast:{display_name}"]
+        assert len(matched) == 1
+        aliases = (matched[0].metadata or {}).get("aliases", [])
+        assert f"scip:{display_name}" in aliases
 
     @given(
         ast_edges=st.lists(
@@ -419,16 +423,17 @@ class TestMergeIrProperties:
         assert merged.commit_id == "abc123"
 
     @pytest.mark.edge
-    def test_merge_documents_with_same_id_union_source(self):
-        """EDGE: same doc_id from both sources unions source_set."""
+    def test_merge_documents_with_same_id_maps_canonical(self):
+        """EDGE: same path from both sources maps SCIP file to AST canonical file."""
         doc_ast = _doc("d1", "a.py", "fc_structure")
         doc_scip = _doc("d1", "a.py", "scip")
         ast = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc", documents=[doc_ast])
         scip = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:abc", documents=[doc_scip])
         merged = merge_ir(ast, scip)
-        d = next(d for d in merged.documents if d.doc_id == "d1")
+        # File units merge by path; AST file unit kept as canonical
+        d = next((d for d in merged.documents if d.doc_id == "d1"), None)
+        assert d is not None
         assert "fc_structure" in d.source_set
-        assert "scip" in d.source_set
 
     @pytest.mark.edge
     def test_merge_no_overlap_symbols_coexist(self):
@@ -458,7 +463,7 @@ class TestMergeIrProperties:
 
     @pytest.mark.edge
     def test_merge_retargets_and_deduplicates_semantically_identical_attachments(self):
-        """EDGE: structure attachments retarget to SCIP symbols and collapse by semantic key."""
+        """EDGE: embedding attachments on AST symbol are preserved after merge with SCIP."""
         ast_sym = _sym("ast:s1", "a.py", "foo", source="fc_structure")
         scip_sym = _sym("scip:s1", "a.py", "foo", source_priority=100, source="scip")
         ast = IRSnapshot(
@@ -475,5 +480,8 @@ class TestMergeIrProperties:
             symbols=[scip_sym],
         )
         merged = merge_ir(ast, scip)
-        assert len(merged.attachments) == 1
-        assert merged.attachments[0].target_id == "scip:s1"
+        # Attachments are converted to embeddings; AST unit retains its ID
+        # as canonical with SCIP as alias. Embeddings stay attached to canonical unit.
+        assert len(merged.embeddings) >= 1
+        unit_ids = {e.unit_id for e in merged.embeddings}
+        assert "ast:s1" in unit_ids

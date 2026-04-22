@@ -18,7 +18,6 @@ from hypothesis import strategies as st
 from fastcode.snapshot_store import SnapshotStore
 from fastcode.semantic_ir import (
     IRDocument,
-    IREdge,
     IROccurrence,
     IRSnapshot,
     IRSymbol,
@@ -59,7 +58,6 @@ def _build_snapshot(
     docs = []
     syms = []
     occs = []
-    edges = []
     for i in range(n_docs):
         doc_id = f"doc:f{i}"
         docs.append(IRDocument(
@@ -82,12 +80,6 @@ def _build_snapshot(
                 start_col=0, end_line=j + 1, end_col=0,
                 source="ast",
             ))
-            edges.append(IREdge(
-                edge_id=f"edge:contain:{doc_id}:{sym_id}",
-                src_id=doc_id, dst_id=sym_id,
-                edge_type="contain", source="ast",
-                confidence="resolved",
-            ))
     return IRSnapshot(
         repo_name=repo,
         snapshot_id=f"snap:{repo}:{commit}",
@@ -96,7 +88,6 @@ def _build_snapshot(
         documents=docs,
         symbols=syms,
         occurrences=occs,
-        edges=edges,
         metadata={"source_modes": ["ast"]},
     )
 

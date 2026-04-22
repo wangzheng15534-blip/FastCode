@@ -65,116 +65,153 @@
 # ---
 # name: TestIRSnapshotContract.test_ir_snapshot_empty_collections_serialization
   dict({
-    'attachments': list([
-    ]),
     'branch': None,
     'commit_id': None,
-    'documents': list([
-    ]),
-    'edges': list([
+    'embeddings': list([
     ]),
     'metadata': dict({
     }),
-    'occurrences': list([
+    'relations': list([
     ]),
     'repo_name': 'empty-repo',
+    'schema_version': 'ir.v2',
     'snapshot_id': 'snap:empty:000',
-    'symbols': list([
+    'supports': list([
     ]),
     'tree_id': None,
+    'units': list([
+    ]),
   })
 # ---
 # name: TestIRSnapshotContract.test_ir_snapshot_full_serialization
   dict({
-    'attachments': list([
-      dict({
-        'attachment_id': 'att:1',
-        'attachment_type': 'summary',
-        'confidence': 'derived',
-        'metadata': dict({
-          'ast_element_id': 'elem_main',
-        }),
-        'payload': dict({
-          'text': 'Entry point',
-        }),
-        'source': 'fc_structure',
-        'target_id': 'sym:1',
-        'target_type': 'symbol',
-      }),
-    ]),
     'branch': 'main',
     'commit_id': 'abc123',
-    'documents': list([
-      dict({
-        'blob_oid': None,
-        'content_hash': None,
-        'doc_id': 'doc:1',
-        'language': 'python',
-        'path': 'app.py',
-        'source_set': list([
-          'ast',
-        ]),
-      }),
-    ]),
-    'edges': list([
-      dict({
-        'confidence': 'resolved',
-        'doc_id': None,
-        'dst_id': 'sym:1',
-        'edge_id': 'e:1',
-        'edge_type': 'contain',
-        'metadata': dict({
-        }),
-        'source': 'ast',
-        'src_id': 'doc:1',
-      }),
+    'embeddings': list([
     ]),
     'metadata': dict({
       'source_modes': list([
         'ast',
       ]),
     }),
-    'occurrences': list([
+    'relations': list([
       dict({
-        'doc_id': 'doc:1',
-        'end_col': 0,
-        'end_line': 5,
+        'dst_unit_id': 'sym:1',
         'metadata': dict({
+          'source': 'ast',
         }),
-        'occurrence_id': 'occ:1',
-        'role': 'definition',
-        'source': 'ast',
-        'start_col': 0,
-        'start_line': 1,
-        'symbol_id': 'sym:1',
+        'relation_id': 'rel:contain:doc:1:sym:1',
+        'relation_type': 'contain',
+        'resolution_state': 'structural',
+        'src_unit_id': 'doc:1',
+        'support_ids': list([
+        ]),
+        'support_sources': list([
+          'ast',
+        ]),
+      }),
+      dict({
+        'dst_unit_id': 'sym:1',
+        'metadata': dict({
+          'doc_id': None,
+          'source': 'ast',
+        }),
+        'relation_id': 'e:1',
+        'relation_type': 'contain',
+        'resolution_state': 'structural',
+        'src_unit_id': 'doc:1',
+        'support_ids': list([
+        ]),
+        'support_sources': list([
+          'ast',
+        ]),
       }),
     ]),
     'repo_name': 'my-repo',
+    'schema_version': 'ir.v2',
     'snapshot_id': 'snap:my-repo:abc123',
-    'symbols': list([
+    'supports': list([
       dict({
-        'display_name': 'main',
+        'display_name': None,
+        'enclosing_external_id': None,
+        'end_col': 0,
+        'end_line': 5,
+        'external_id': None,
+        'metadata': dict({
+          'doc_id': 'doc:1',
+        }),
+        'path': None,
+        'qualified_name': None,
+        'role': 'definition',
+        'signature': None,
+        'source': 'ast',
+        'start_col': 0,
+        'start_line': 1,
+        'support_id': 'occ:1',
+        'support_kind': 'occurrence',
+        'unit_id': 'sym:1',
+      }),
+    ]),
+    'tree_id': None,
+    'units': list([
+      dict({
+        'anchor_coverage': 0.0,
+        'anchor_symbol_ids': list([
+        ]),
+        'candidate_anchor_symbol_ids': list([
+        ]),
+        'display_name': 'app.py',
+        'docstring': None,
         'end_col': None,
         'end_line': None,
-        'external_symbol_id': None,
+        'kind': 'file',
+        'language': 'python',
+        'metadata': dict({
+          'blob_oid': None,
+          'content_hash': None,
+        }),
+        'parent_unit_id': None,
+        'path': 'app.py',
+        'primary_anchor_symbol_id': None,
+        'qualified_name': None,
+        'signature': None,
+        'source_set': list([
+          'ast',
+        ]),
+        'start_col': None,
+        'start_line': None,
+        'summary': None,
+        'unit_id': 'doc:1',
+      }),
+      dict({
+        'anchor_coverage': 0.0,
+        'anchor_symbol_ids': list([
+        ]),
+        'candidate_anchor_symbol_ids': list([
+        ]),
+        'display_name': 'main',
+        'docstring': None,
+        'end_col': None,
+        'end_line': None,
         'kind': 'function',
         'language': 'python',
         'metadata': dict({
           'source': 'ast',
         }),
+        'parent_unit_id': None,
         'path': 'app.py',
+        'primary_anchor_symbol_id': None,
         'qualified_name': None,
         'signature': None,
-        'source_priority': 10,
         'source_set': list([
           'ast',
         ]),
         'start_col': None,
         'start_line': 1,
-        'symbol_id': 'sym:1',
+        'summary': 'Entry point',
+        'unit_id': 'sym:1',
       }),
     ]),
-    'tree_id': None,
   })
 # ---
 # name: TestIRSnapshotContract.test_ir_symbol_serialization

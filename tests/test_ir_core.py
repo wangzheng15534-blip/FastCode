@@ -1,355 +1,294 @@
 from fastcode.ir_graph_builder import IRGraphBuilder
 from fastcode.ir_merge import merge_ir
 from fastcode.ir_validators import validate_snapshot
-from fastcode.semantic_ir import IRDocument, IRAttachment, IREdge, IROccurrence, IRSnapshot, IRSymbol
+from fastcode.semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitEmbedding, IRUnitSupport
 
 
-def _doc(doc_id: str, path: str) -> IRDocument:
-    return IRDocument(doc_id=doc_id, path=path, language="python", source_set={"fc_structure"})
-
-
-def _att(
-    attachment_id: str,
-    target_id: str,
-    target_type: str = "symbol",
-    attachment_type: str = "embedding",
-    source: str = "fc_embedding",
-) -> IRAttachment:
-    payload = {"text": "hello"} if attachment_type == "summary" else {"vector": [0.1, 0.2], "text": "hello"}
-    return IRAttachment(
-        attachment_id=attachment_id,
-        target_id=target_id,
-        target_type=target_type,
-        attachment_type=attachment_type,
-        source=source,
-        confidence="derived",
-        payload=payload,
-        metadata={"producer": "test"},
+def _file(unit_id: str = "doc:snap:1:a.py", path: str = "a.py", source: str = "fc_structure") -> IRCodeUnit:
+    return IRCodeUnit(
+        unit_id=unit_id,
+        kind="file",
+        path=path,
+        language="python",
+        display_name=path,
+        source_set={source},
     )
 
 
-def test_merge_prefers_scip_symbol_and_preserves_alias():
-    ast_sym = IRSymbol(
-        symbol_id="ast:s1",
-        external_symbol_id=None,
-        path="a.py",
-        display_name="foo",
-        kind="function",
+def _structure_unit(unit_id: str = "ast:s1", path: str = "a.py", name: str = "foo", kind: str = "function") -> IRCodeUnit:
+    return IRCodeUnit(
+        unit_id=unit_id,
+        kind=kind,
+        path=path,
         language="python",
-        start_line=1,
-        source_priority=50,
+        display_name=name,
+        qualified_name=name,
+        start_line=10,
+        end_line=20,
+        parent_unit_id="doc:snap:1:a.py",
         source_set={"fc_structure"},
         metadata={"source": "fc_structure"},
     )
-    scip_sym = IRSymbol(
-        symbol_id="scip:snap:1:foo",
-        external_symbol_id="foo",
-        path="a.py",
-        display_name="foo",
-        kind="function",
+
+
+def _scip_unit(unit_id: str = "scip:snap:1:foo", path: str = "a.py", name: str = "foo", kind: str = "function") -> IRCodeUnit:
+    return IRCodeUnit(
+        unit_id=unit_id,
+        kind=kind,
+        path=path,
         language="python",
-        start_line=1,
-        source_priority=100,
+        display_name=name,
+        qualified_name=name,
+        start_line=10,
+        end_line=20,
+        parent_unit_id="doc:snap:1:a.py",
+        primary_anchor_symbol_id="pkg/foo",
+        anchor_symbol_ids=["pkg/foo"],
+        anchor_coverage=1.0,
         source_set={"scip"},
         metadata={"source": "scip"},
     )
-    ast = IRSnapshot(repo_name="r", snapshot_id="snap:1", documents=[_doc("d1", "a.py")], symbols=[ast_sym])
-    scip = IRSnapshot(repo_name="r", snapshot_id="snap:1", documents=[_doc("d1", "a.py")], symbols=[scip_sym])
-    merged = merge_ir(ast, scip)
-    assert any(s.symbol_id == "scip:snap:1:foo" for s in merged.symbols)
-    s = next(s for s in merged.symbols if s.symbol_id == "scip:snap:1:foo")
-    assert "ast:s1" in (s.metadata.get("aliases") or [])
 
 
-def test_validate_snapshot_catches_missing_nodes_and_provenance():
-    snap = IRSnapshot(
-        repo_name="r",
-        snapshot_id="s",
-        documents=[_doc("d1", "a.py")],
-        symbols=[
-            IRSymbol(
-                symbol_id="sym:1",
-                external_symbol_id=None,
-                path="a.py",
-                display_name="x",
-                kind="function",
-                language="python",
-                source_priority=0,
-                source_set=set(),
-                metadata={},
-            )
-        ],
-        occurrences=[
-            IROccurrence(
-                occurrence_id="o1",
-                symbol_id="sym:missing",
-                doc_id="d1",
-                role="reference",
-                start_line=1,
-                start_col=0,
-                end_line=1,
-                end_col=1,
-                source="fc_structure",
-                metadata={},
-            )
-        ],
-        edges=[
-            IREdge(
-                edge_id="e1",
-                src_id="d1",
-                dst_id="sym:missing",
-                edge_type="ref",
-                source="",
-                confidence="",
-            )
-        ],
-    )
-    errors = validate_snapshot(snap)
-    assert any("missing symbol_id" in e for e in errors)
-    assert any("edge dst not found" in e for e in errors)
-    assert any("edge source missing" in e for e in errors)
-
-
-def test_merge_deduplicates_occurrences_scip_wins():
-    """Rule D: when AST and SCIP produce the same occurrence, SCIP wins."""
-    doc = _doc("d1", "a.py")
-    scip_occ = IROccurrence(
-        occurrence_id="occ:scip:1",
-        symbol_id="scip:snap:1:foo",
-        doc_id="d1",
-        role="definition",
-        start_line=10,
-        start_col=0,
-        end_line=20,
-        end_col=0,
-        source="scip",
-        metadata={"source": "scip"},
-    )
-    ast_occ = IROccurrence(
-        occurrence_id="occ:ast:1",
-        symbol_id="ast:s1",
-        doc_id="d1",
-        role="definition",
-        start_line=10,
-        start_col=0,
-        end_line=20,
-        end_col=0,
-        source="fc_structure",
-        metadata={"source": "fc_structure"},
-    )
-    ast_sym = IRSymbol(
-        symbol_id="ast:s1", external_symbol_id=None, path="a.py",
-        display_name="foo", kind="function", language="python",
-        start_line=10, source_priority=50, source_set={"fc_structure"},
-        metadata={"source": "fc_structure"},
-    )
-    scip_sym = IRSymbol(
-        symbol_id="scip:snap:1:foo", external_symbol_id="foo", path="a.py",
-        display_name="foo", kind="function", language="python",
-        start_line=10, source_priority=100, source_set={"scip"},
-        metadata={"source": "scip"},
-    )
-    ast = IRSnapshot(repo_name="r", snapshot_id="snap:1", documents=[doc], symbols=[ast_sym], occurrences=[ast_occ])
-    scip = IRSnapshot(repo_name="r", snapshot_id="snap:1", documents=[doc], symbols=[scip_sym], occurrences=[scip_occ])
-    merged = merge_ir(ast, scip)
-    # After merge, both occurrences map to canonical symbol "scip:snap:1:foo"
-    # They share the same (symbol_id, doc_id, role, start_line, start_col, end_line, end_col)
-    # so only one should survive, and it should be the SCIP-sourced one
-    assert len(merged.occurrences) == 1
-    assert merged.occurrences[0].source == "scip"
-
-
-def test_merge_retargets_symbol_attachments_to_canonical_symbol():
-    ast_sym = IRSymbol(
-        symbol_id="ast:s1",
-        external_symbol_id=None,
-        path="a.py",
-        display_name="foo",
-        kind="function",
-        language="python",
-        start_line=1,
-        source_priority=50,
-        source_set={"fc_structure"},
-        metadata={"source": "fc_structure"},
-    )
-    scip_sym = IRSymbol(
-        symbol_id="scip:snap:1:foo",
-        external_symbol_id="foo",
-        path="a.py",
-        display_name="foo",
-        kind="function",
-        language="python",
-        start_line=1,
-        source_priority=100,
-        source_set={"scip"},
-        metadata={"source": "scip"},
-    )
+def test_merge_grounds_scip_anchor_onto_structure_unit():
     ast = IRSnapshot(
         repo_name="r",
         snapshot_id="snap:1",
-        documents=[_doc("d1", "a.py")],
-        symbols=[ast_sym],
-        attachments=[_att("att:ast:1", "ast:s1")],
+        units=[_file(), _structure_unit()],
+        supports=[
+            IRUnitSupport(
+                support_id="support:ast:1",
+                unit_id="ast:s1",
+                source="fc_structure",
+                support_kind="structure",
+                display_name="foo",
+                start_line=10,
+                end_line=20,
+            )
+        ],
+        embeddings=[
+            IRUnitEmbedding(
+                embedding_id="emb:1",
+                unit_id="ast:s1",
+                source="fc_embedding",
+                embedding_text="foo function",
+                vector=[0.1, 0.2],
+            )
+        ],
     )
     scip = IRSnapshot(
         repo_name="r",
         snapshot_id="snap:1",
-        documents=[_doc("d1", "a.py")],
-        symbols=[scip_sym],
+        units=[_file(unit_id="doc:snap:1:a.py", source="scip"), _scip_unit()],
+        supports=[
+            IRUnitSupport(
+                support_id="support:scip:anchor",
+                unit_id="scip:snap:1:foo",
+                source="scip",
+                support_kind="anchor",
+                external_id="pkg/foo",
+                display_name="foo",
+                start_line=10,
+                end_line=20,
+            )
+        ],
     )
+
     merged = merge_ir(ast, scip)
-    assert len(merged.attachments) == 1
-    assert merged.attachments[0].target_id == "scip:snap:1:foo"
-    assert merged.attachments[0].target_type == "symbol"
+    grounded = next(unit for unit in merged.units if unit.unit_id == "ast:s1")
+
+    assert grounded.primary_anchor_symbol_id == "pkg/foo"
+    assert grounded.source_set == {"fc_structure", "scip"}
+    assert "scip:snap:1:foo" in grounded.metadata["aliases"]
+    assert all(unit.unit_id != "scip:snap:1:foo" for unit in merged.units if unit.kind != "file")
 
 
-def test_ast_symbol_id_uses_qualified_name_and_start_col():
-    """Spec: ast:{snapshot_id}:{language}:{file_path}:{kind}:{qualified_name}:{start_line}:{start_col}"""
-    from fastcode.indexer import CodeElement
-    from fastcode.adapters.ast_to_ir import _ast_symbol_id
-
-    elem = CodeElement(
-        id="el1", name="MyClass.my_method", type="method",
-        language="python", relative_path="src/app.py",
-        file_path="/repo/src/app.py",
-        start_line=42, end_line=50,
-        code="", signature=None, docstring=None, summary=None,
-        metadata={
-            "qualified_name": "pkg.src.app.MyClass.my_method",
-            "start_col": 8,
-        },
-    )
-    sid = _ast_symbol_id("snap:abc", elem)
-    # Must contain qualified_name value and start_col, not name and end_line
-    assert "pkg.src.app.MyClass.my_method" in sid
-    assert ":42:8" in sid
-    assert ":50:" not in sid  # end_line should not appear as position
-
-
-def test_ast_symbol_id_falls_back_to_name_when_no_qualified_name():
-    """When qualified_name is absent from metadata, fall back to elem.name."""
-    from fastcode.indexer import CodeElement
-    from fastcode.adapters.ast_to_ir import _ast_symbol_id
-
-    elem = CodeElement(
-        id="el2", name="my_func", type="function",
-        language="python", relative_path="lib/util.py",
-        file_path="/repo/lib/util.py",
-        start_line=10, end_line=20,
-        code="", signature=None, docstring=None, summary=None,
-        metadata={},
-    )
-    sid = _ast_symbol_id("snap:xyz", elem)
-    assert "my_func" in sid
-    assert ":10:0" in sid  # start_col defaults to 0
-
-
-def test_validate_catches_duplicate_doc_paths():
-    """Spec: document paths must be unique inside snapshot."""
-    snap = IRSnapshot(
+def test_merge_preserves_unmatched_scip_unit_as_synthetic():
+    ast = IRSnapshot(repo_name="r", snapshot_id="snap:1", units=[_file()])
+    scip = IRSnapshot(
         repo_name="r",
-        snapshot_id="s",
-        documents=[
-            IRDocument(doc_id="d1", path="a.py", language="python", source_set={"fc_structure"}),
-            IRDocument(doc_id="d2", path="a.py", language="python", source_set={"fc_structure"}),
-        ],
-        symbols=[
-            IRSymbol(
-                symbol_id="s1", external_symbol_id=None, path="a.py",
-                display_name="x", kind="function", language="python",
-                source_priority=0, source_set={"fc_structure"}, metadata={"source": "fc_structure"},
-            )
-        ],
+        snapshot_id="snap:1",
+        units=[_file(unit_id="doc:snap:1:a.py", source="scip"), _scip_unit(name="bar")],
     )
-    errors = validate_snapshot(snap)
-    assert any("duplicate document path" in e for e in errors)
+
+    merged = merge_ir(ast, scip)
+    synthetic = next(unit for unit in merged.units if unit.unit_id == "scip:snap:1:foo")
+
+    assert synthetic.primary_anchor_symbol_id == "pkg/foo"
+    assert synthetic.parent_unit_id == "doc:snap:1:a.py"
 
 
-def test_validate_snapshot_catches_missing_attachment_target():
-    snap = IRSnapshot(
+def test_merge_deduplicates_overlapping_occurrences_on_canonical_unit():
+    ast = IRSnapshot(
         repo_name="r",
-        snapshot_id="s",
-        documents=[_doc("d1", "a.py")],
-        symbols=[
-            IRSymbol(
-                symbol_id="sym:1",
-                external_symbol_id=None,
+        snapshot_id="snap:1",
+        units=[_file(), _structure_unit()],
+        supports=[
+            IRUnitSupport(
+                support_id="occ:ast:1",
+                unit_id="ast:s1",
+                source="fc_structure",
+                support_kind="occurrence",
+                role="definition",
                 path="a.py",
-                display_name="x",
-                kind="function",
-                language="python",
-                source_priority=0,
-                source_set={"fc_structure"},
-                metadata={"source": "fc_structure"},
+                start_line=10,
+                end_line=20,
+                metadata={"doc_id": "doc:snap:1:a.py"},
             )
         ],
-        attachments=[_att("att:missing", "sym:missing")],
     )
+    scip = IRSnapshot(
+        repo_name="r",
+        snapshot_id="snap:1",
+        units=[_file(unit_id="doc:snap:1:a.py", source="scip"), _scip_unit()],
+        supports=[
+            IRUnitSupport(
+                support_id="occ:scip:1",
+                unit_id="scip:snap:1:foo",
+                source="scip",
+                support_kind="occurrence",
+                role="definition",
+                path="a.py",
+                start_line=10,
+                end_line=20,
+                metadata={"doc_id": "doc:snap:1:a.py", "source": "scip"},
+            )
+        ],
+    )
+
+    merged = merge_ir(ast, scip)
+    occurrences = merged.occurrences
+
+    assert len(occurrences) == 1
+    assert occurrences[0].symbol_id == "ast:s1"
+    assert occurrences[0].source == "scip"
+
+
+def test_validate_snapshot_catches_missing_unit_refs_and_duplicate_files():
+    snap = IRSnapshot(
+        repo_name="r",
+        snapshot_id="snap:1",
+        units=[
+            _file(unit_id="doc:1", path="a.py"),
+            _file(unit_id="doc:2", path="a.py"),
+            IRCodeUnit(
+                unit_id="u:1",
+                kind="function",
+                path="a.py",
+                language="python",
+                display_name="foo",
+                parent_unit_id="missing",
+                source_set=set(),
+            ),
+        ],
+        supports=[
+            IRUnitSupport(
+                support_id="support:1",
+                unit_id="missing",
+                source="",
+                support_kind="structure",
+            )
+        ],
+        relations=[
+            IRRelation(
+                relation_id="rel:1",
+                src_unit_id="doc:1",
+                dst_unit_id="missing",
+                relation_type="ref",
+                resolution_state="anchored",
+                support_ids=["support:missing"],
+            )
+        ],
+    )
+
     errors = validate_snapshot(snap)
-    assert any("attachment target not found" in e for e in errors)
+    assert any("duplicate file paths" in error for error in errors)
+    assert any("unit parent not found" in error for error in errors)
+    assert any("support references missing unit_id" in error for error in errors)
+    assert any("relation dst not found" in error for error in errors)
 
 
-def test_scip_edges_include_extractor_field():
-    """SCIP edges should carry extractor field for consistency with AST edges."""
+def test_legacy_attachments_project_from_summary_and_embedding():
+    snap = IRSnapshot(
+        repo_name="r",
+        snapshot_id="snap:1",
+        units=[
+            _file(),
+            IRCodeUnit(
+                unit_id="ast:s1",
+                kind="function",
+                path="a.py",
+                language="python",
+                display_name="foo",
+                summary="summary text",
+                source_set={"fc_structure"},
+            ),
+        ],
+        embeddings=[
+            IRUnitEmbedding(
+                embedding_id="emb:1",
+                unit_id="ast:s1",
+                source="fc_embedding",
+                embedding_text="foo summary",
+                vector=[0.1, 0.2],
+            )
+        ],
+    )
+
+    attachments = snap.attachments
+    assert {attachment.attachment_type for attachment in attachments} == {"summary", "embedding"}
+
+
+def test_scip_adapter_projects_ref_and_contain_edges():
     from fastcode.adapters.scip_to_ir import build_ir_from_scip
 
-    scip = {
-        "indexer_name": "scip-python",
-        "indexer_version": "0.1.0",
-        "documents": [
-            {
-                "path": "a.py",
-                "language": "python",
-                "symbols": [{"symbol": "pkg a/Foo.", "name": "Foo", "kind": "class"}],
-                "occurrences": [
-                    {"symbol": "pkg a/Foo.", "role": "reference", "range": [5, 0, 5, 3]},
-                ],
-            }
-        ],
-    }
-    snap = build_ir_from_scip(repo_name="r", snapshot_id="s:1", scip_index=scip)
-    for edge in snap.edges:
-        assert "extractor" in (edge.metadata or {}), f"missing extractor in {edge.edge_type} edge"
-        assert edge.metadata["extractor"] == "fastcode.adapters.scip_to_ir"
+    snap = build_ir_from_scip(
+        repo_name="r",
+        snapshot_id="snap:1",
+        scip_index={
+            "documents": [
+                {
+                    "path": "a.py",
+                    "language": "python",
+                    "symbols": [{"symbol": "pkg/foo", "name": "foo", "kind": "function", "range": [1, 0, 2, 0]}],
+                    "occurrences": [{"symbol": "pkg/foo", "role": "reference", "range": [5, 0, 5, 3]}],
+                }
+            ]
+        },
+    )
+
+    edge_types = {edge.edge_type for edge in snap.edges}
+    assert "contain" in edge_types
+    assert "ref" in edge_types
+    assert all("extractor" in edge.metadata for edge in snap.edges)
 
 
-def test_ir_graph_builder_routes_edge_types():
+def test_ir_graph_builder_routes_relation_types():
     snap = IRSnapshot(
         repo_name="r",
-        snapshot_id="s",
-        documents=[_doc("d1", "a.py")],
-        symbols=[
-            IRSymbol(
-                symbol_id="sym:1",
-                external_symbol_id=None,
-                path="a.py",
-                display_name="x",
-                kind="function",
-                language="python",
-                source_priority=0,
-                source_set={"fc_structure"},
-                metadata={"source": "fc_structure"},
-            )
-        ],
-        edges=[
-            IREdge(
-                edge_id="e1",
-                src_id="d1",
-                dst_id="sym:1",
-                edge_type="contain",
-                source="fc_structure",
-                confidence="resolved",
+        snapshot_id="snap:1",
+        units=[_file(unit_id="doc:1"), _structure_unit(unit_id="u:1")],
+        relations=[
+            IRRelation(
+                relation_id="rel:contain",
+                src_unit_id="doc:1",
+                dst_unit_id="u:1",
+                relation_type="contain",
+                resolution_state="structural",
+                support_sources={"fc_structure"},
             ),
-            IREdge(
-                edge_id="e2",
-                src_id="sym:1",
-                dst_id="sym:1",
-                edge_type="call",
-                source="fc_structure",
-                confidence="heuristic",
+            IRRelation(
+                relation_id="rel:call",
+                src_unit_id="u:1",
+                dst_unit_id="u:1",
+                relation_type="call",
+                resolution_state="structural",
+                support_sources={"fc_structure"},
             ),
         ],
     )
+
     graphs = IRGraphBuilder().build_graphs(snap)
     assert graphs.containment_graph.number_of_edges() == 1
     assert graphs.call_graph.number_of_edges() == 1
+

@@ -452,7 +452,7 @@ class TestImportEdges:
         for edge in import_edges:
             assert edge.edge_type == "import"
             assert edge.source == "fc_structure"
-            assert edge.confidence == "heuristic"
+            assert edge.confidence == "resolved"
 
     @given(path=file_path_st, language=language_st)
     @settings(max_examples=15)

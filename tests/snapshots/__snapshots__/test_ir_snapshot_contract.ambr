@@ -1,4 +1,24 @@
 # serializer version: 1
+# name: TestIRSnapshotContract.test_ir_attachment_serialization
+  dict({
+    'attachment_id': 'att:abc123',
+    'attachment_type': 'embedding',
+    'confidence': 'derived',
+    'metadata': dict({
+      'ast_element_id': 'elem_main',
+    }),
+    'payload': dict({
+      'text': 'Function main',
+      'vector': list([
+        0.1,
+        0.2,
+      ]),
+    }),
+    'source': 'fc_embedding',
+    'target_id': 'sym:abc123',
+    'target_type': 'symbol',
+  })
+# ---
 # name: TestIRSnapshotContract.test_ir_document_serialization
   dict({
     'blob_oid': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -45,6 +65,8 @@
 # ---
 # name: TestIRSnapshotContract.test_ir_snapshot_empty_collections_serialization
   dict({
+    'attachments': list([
+    ]),
     'branch': None,
     'commit_id': None,
     'documents': list([
@@ -64,6 +86,22 @@
 # ---
 # name: TestIRSnapshotContract.test_ir_snapshot_full_serialization
   dict({
+    'attachments': list([
+      dict({
+        'attachment_id': 'att:1',
+        'attachment_type': 'summary',
+        'confidence': 'derived',
+        'metadata': dict({
+          'ast_element_id': 'elem_main',
+        }),
+        'payload': dict({
+          'text': 'Entry point',
+        }),
+        'source': 'fc_structure',
+        'target_id': 'sym:1',
+        'target_type': 'symbol',
+      }),
+    ]),
     'branch': 'main',
     'commit_id': 'abc123',
     'documents': list([

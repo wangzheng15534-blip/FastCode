@@ -1,4 +1,4 @@
-"""Property-based tests for semantic_ir models (IRSnapshot, IRDocument, IRSymbol, IROccurrence, IREdge)."""
+"""Property-based tests for semantic_ir models."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.semantic_ir import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
+from fastcode.semantic_ir import IRAttachment, IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
 
 
 # --- Strategies (mirrored from tests/conftest.py) ---
@@ -22,7 +22,8 @@ role_st = st.sampled_from(["definition", "reference", "import", "implementation"
 
 edge_type_st = st.sampled_from(["dependency", "call", "inheritance", "reference", "contain"])
 
-source_st = st.sampled_from(["ast", "scip"])
+source_st = st.sampled_from(["ast", "fc_structure", "scip"])
+attachment_source_st = st.sampled_from(["fc_structure", "fc_embedding", "llm_annotation"])
 
 kind_st = st.sampled_from(
     ["function", "method", "class", "variable", "module", "interface", "enum", "constant"]
@@ -89,6 +90,18 @@ ir_edge_st = st.builds(
     metadata=st.dictionaries(st.text(min_size=1, max_size=10), st.integers()),
 )
 
+ir_attachment_st = st.builds(
+    IRAttachment,
+    attachment_id=st.builds(lambda x: f"att:{x}", identifier),
+    target_id=st.builds(lambda x: f"sym:{x}", identifier),
+    target_type=st.sampled_from(["document", "symbol", "snapshot"]),
+    attachment_type=st.sampled_from(["embedding", "summary", "semantic_note"]),
+    source=attachment_source_st,
+    confidence=st.sampled_from(["derived", "precise", "heuristic"]),
+    payload=st.dictionaries(st.text(min_size=1, max_size=10), st.one_of(st.integers(), st.text(min_size=0, max_size=20), st.lists(st.floats(allow_nan=False, allow_infinity=False), max_size=4)), max_size=3),
+    metadata=st.dictionaries(st.text(min_size=1, max_size=10), st.one_of(st.integers(), st.text(min_size=0, max_size=20)), max_size=3),
+)
+
 
 def snapshot_st(
     max_docs: int = 3,
@@ -108,6 +121,7 @@ def snapshot_st(
         symbols=st.lists(ir_symbol_st, max_size=max_syms),
         occurrences=st.lists(ir_occurrence_st, max_size=max_occs),
         edges=st.lists(ir_edge_st, max_size=max_edges),
+        attachments=st.lists(ir_attachment_st, max_size=4),
         metadata=st.dictionaries(
             st.sampled_from(["source_modes", "version", "tool"]),
             st.one_of(st.just(["ast"]), st.just(["scip"]), st.just(1), st.just("fastcode")),
@@ -635,6 +649,35 @@ class TestIREdgeProperties:
 
 
 @pytest.mark.property
+class TestIRAttachmentProperties:
+
+    @given(attachment=ir_attachment_st)
+    @settings(max_examples=40)
+    @pytest.mark.happy
+    def test_attachment_roundtrip(self, attachment: IRAttachment):
+        """HAPPY: IRAttachment.to_dict() -> from_dict() preserves all fields."""
+        data = attachment.to_dict()
+        restored = IRAttachment.from_dict(data)
+        assert restored.attachment_id == attachment.attachment_id
+        assert restored.target_id == attachment.target_id
+        assert restored.target_type == attachment.target_type
+        assert restored.attachment_type == attachment.attachment_type
+        assert restored.source == attachment.source
+        assert restored.confidence == attachment.confidence
+        assert restored.payload == attachment.payload
+        assert restored.metadata == attachment.metadata
+
+    @given(attachment=ir_attachment_st)
+    @settings(max_examples=30)
+    @pytest.mark.happy
+    def test_attachment_payload_is_jsonable_after_to_dict(self, attachment: IRAttachment):
+        """HAPPY: serialization normalizes payload and metadata to JSON-safe values."""
+        data = attachment.to_dict()
+        assert isinstance(data["payload"], dict)
+        assert isinstance(data["metadata"], dict)
+
+
+@pytest.mark.property
 class TestIRSnapshotProperties:
 
     @given(snap=snapshot_st())
@@ -653,6 +696,7 @@ class TestIRSnapshotProperties:
         assert len(restored.symbols) == len(snap.symbols)
         assert len(restored.occurrences) == len(snap.occurrences)
         assert len(restored.edges) == len(snap.edges)
+        assert len(restored.attachments) == len(snap.attachments)
         assert restored.metadata == snap.metadata
 
     @given(snap=snapshot_st())
@@ -693,6 +737,19 @@ class TestIRSnapshotProperties:
             assert orig.edge_type == rest.edge_type
             assert orig.confidence == rest.confidence
 
+    @given(snap=snapshot_st())
+    @settings(max_examples=30)
+    @pytest.mark.happy
+    def test_snapshot_roundtrip_attachments_preserve_fields(self, snap: IRSnapshot):
+        """HAPPY: nested IRAttachment roundtrips preserve all fields."""
+        data = snap.to_dict()
+        restored = IRSnapshot.from_dict(data)
+        for orig, rest in zip(snap.attachments, restored.attachments):
+            assert orig.attachment_id == rest.attachment_id
+            assert orig.target_id == rest.target_id
+            assert orig.attachment_type == rest.attachment_type
+            assert orig.payload == rest.payload
+
     @given(repo=identifier, snap_id=st.builds(lambda x: f"snap:{x}", identifier))
     @settings(max_examples=20)
     @pytest.mark.happy
@@ -706,6 +763,7 @@ class TestIRSnapshotProperties:
         assert snap.symbols == []
         assert snap.occurrences == []
         assert snap.edges == []
+        assert snap.attachments == []
         assert snap.metadata == {}
 
     @given(repo=identifier, snap_id=st.builds(lambda x: f"snap:{x}", identifier))
@@ -724,6 +782,7 @@ class TestIRSnapshotProperties:
         assert snap.symbols == []
         assert snap.occurrences == []
         assert snap.edges == []
+        assert snap.attachments == []
         assert snap.metadata == {}
 
     @given(repo=identifier, snap_id=st.builds(lambda x: f"snap:{x}", identifier))
@@ -738,6 +797,7 @@ class TestIRSnapshotProperties:
             "symbols": [],
             "occurrences": [],
             "edges": [],
+            "attachments": [],
             "metadata": {},
         }
         snap = IRSnapshot.from_dict(data)
@@ -745,6 +805,7 @@ class TestIRSnapshotProperties:
         assert snap.symbols == []
         assert snap.occurrences == []
         assert snap.edges == []
+        assert snap.attachments == []
 
     @given(snap=snapshot_st())
     @settings(max_examples=30)
@@ -753,9 +814,11 @@ class TestIRSnapshotProperties:
         """HAPPY: calling to_dict does not mutate the snapshot's internal lists."""
         original_doc_count = len(snap.documents)
         original_sym_count = len(snap.symbols)
+        original_attachment_count = len(snap.attachments)
         _ = snap.to_dict()
         assert len(snap.documents) == original_doc_count
         assert len(snap.symbols) == original_sym_count
+        assert len(snap.attachments) == original_attachment_count
 
     @given(snap=snapshot_st())
     @settings(max_examples=30)
@@ -765,7 +828,7 @@ class TestIRSnapshotProperties:
         data = snap.to_dict()
         expected_keys = {
             "repo_name", "snapshot_id", "branch", "commit_id", "tree_id",
-            "documents", "symbols", "occurrences", "edges", "metadata",
+            "documents", "symbols", "occurrences", "edges", "attachments", "metadata",
         }
         assert set(data.keys()) == expected_keys
 

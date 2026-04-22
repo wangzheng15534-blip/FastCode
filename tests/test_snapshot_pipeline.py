@@ -2,7 +2,7 @@ import tempfile
 
 from fastcode.index_run import IndexRunStore
 from fastcode.manifest_store import ManifestStore
-from fastcode.semantic_ir import IRSnapshot
+from fastcode.semantic_ir import IRAttachment, IRSnapshot
 from fastcode.snapshot_store import SnapshotStore
 
 
@@ -15,6 +15,18 @@ def test_snapshot_store_persists_and_loads_snapshot():
             branch="main",
             commit_id="abc",
             tree_id="tree123",
+            attachments=[
+                IRAttachment(
+                    attachment_id="att:repo:abc",
+                    target_id="snap:repo:abc",
+                    target_type="snapshot",
+                    attachment_type="summary",
+                    source="fc_structure",
+                    confidence="derived",
+                    payload={"text": "Repository summary"},
+                    metadata={"producer": "test"},
+                )
+            ],
         )
         meta = store.save_snapshot(snap, metadata={"x": 1})
         assert meta["artifact_key"].startswith("snap_")
@@ -23,6 +35,8 @@ def test_snapshot_store_persists_and_loads_snapshot():
         assert loaded is not None
         assert loaded.repo_name == "repo"
         assert loaded.branch == "main"
+        assert len(loaded.attachments) == 1
+        assert loaded.attachments[0].payload["text"] == "Repository summary"
 
 
 def test_manifest_head_points_to_latest_publish():

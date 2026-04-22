@@ -255,36 +255,36 @@ class TestSourcePriorityAndSet:
     )
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_all_symbols_have_source_priority_10(self, elements):
-        """HAPPY: all symbols created by AST adapter have source_priority=10."""
+    def test_all_symbols_have_source_priority_50(self, elements):
+        """HAPPY: all symbols created by structure adapter have source_priority=50."""
         assume(len(elements) > 0)
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         for sym in snap.symbols:
-            assert sym.source_priority == 10
+            assert sym.source_priority == 50
 
     @given(
         elements=st.lists(code_element_st, max_size=5),
     )
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_all_docs_have_ast_in_source_set(self, elements):
-        """HAPPY: all documents have 'ast' in source_set."""
+    def test_all_docs_have_fc_structure_in_source_set(self, elements):
+        """HAPPY: all documents have 'fc_structure' in source_set."""
         assume(len(elements) > 0)
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         for doc in snap.documents:
-            assert "ast" in doc.source_set
+            assert "fc_structure" in doc.source_set
 
     @given(
         elements=st.lists(code_element_st.filter(lambda e: e.type not in {"file", "documentation"}), max_size=5),
     )
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_all_symbols_have_ast_source_set(self, elements):
-        """HAPPY: all symbols have source_set={'ast'}."""
+    def test_all_symbols_have_fc_structure_source_set(self, elements):
+        """HAPPY: all symbols have source_set={'fc_structure'}."""
         assume(len(elements) > 0)
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         for sym in snap.symbols:
-            assert sym.source_set == {"ast"}
+            assert sym.source_set == {"fc_structure"}
 
 
 @pytest.mark.property
@@ -330,10 +330,10 @@ class TestMetadataConsistency:
     )
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_snapshot_metadata_source_modes_is_ast(self, elements):
-        """HAPPY: snapshot metadata always has source_modes=['ast']."""
+    def test_snapshot_metadata_source_modes_is_fc_structure(self, elements):
+        """HAPPY: snapshot metadata always has source_modes=['fc_structure']."""
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
-        assert snap.metadata.get("source_modes") == ["ast"]
+        assert snap.metadata.get("source_modes") == ["fc_structure"]
 
     @given(
         name=identifier,
@@ -355,12 +355,70 @@ class TestMetadataConsistency:
     )
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_symbol_metadata_source_is_ast(self, elements):
-        """HAPPY: all symbol metadata['source'] == 'ast'."""
+    def test_symbol_metadata_source_is_fc_structure(self, elements):
+        """HAPPY: all symbol metadata['source'] == 'fc_structure'."""
         assume(len(elements) > 0)
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         for sym in snap.symbols:
-            assert sym.metadata.get("source") == "ast"
+            assert sym.metadata.get("source") == "fc_structure"
+
+
+@pytest.mark.property
+class TestAttachments:
+
+    @given(name=identifier, path=file_path_st, language=language_st)
+    @settings(max_examples=20)
+    @pytest.mark.happy
+    def test_summary_generates_summary_attachment(self, name, path, language):
+        """HAPPY: summary-bearing symbols emit one summary attachment."""
+        element = CodeElement(
+            id=f"elem_{name}",
+            type="function",
+            name=name,
+            file_path=path,
+            relative_path=path,
+            language=language,
+            start_line=1,
+            end_line=5,
+            code="pass",
+            signature=None,
+            docstring=None,
+            summary="summary text",
+            metadata={},
+        )
+        snap = build_ir_from_ast("repo", "snap:1", [element], _repo_root)
+        assert len(snap.attachments) == 1
+        attachment = snap.attachments[0]
+        assert attachment.attachment_type == "summary"
+        assert attachment.source == "fc_structure"
+        assert attachment.target_type == "symbol"
+
+    @given(name=identifier, path=file_path_st, language=language_st)
+    @settings(max_examples=20)
+    @pytest.mark.happy
+    def test_embedding_metadata_generates_embedding_attachment(self, name, path, language):
+        """HAPPY: embedding metadata is promoted into an embedding attachment."""
+        element = CodeElement(
+            id=f"elem_{name}",
+            type="function",
+            name=name,
+            file_path=path,
+            relative_path=path,
+            language=language,
+            start_line=1,
+            end_line=5,
+            code="pass",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={"embedding": [0.1, 0.2], "embedding_text": "vector text"},
+        )
+        snap = build_ir_from_ast("repo", "snap:1", [element], _repo_root)
+        assert len(snap.attachments) == 1
+        attachment = snap.attachments[0]
+        assert attachment.attachment_type == "embedding"
+        assert attachment.source == "fc_embedding"
+        assert attachment.payload["vector"] == [0.1, 0.2]
 
 
 @pytest.mark.property
@@ -393,7 +451,7 @@ class TestImportEdges:
         # Import edge may or may not exist depending on path matching
         for edge in import_edges:
             assert edge.edge_type == "import"
-            assert edge.source == "ast"
+            assert edge.source == "fc_structure"
             assert edge.confidence == "heuristic"
 
     @given(path=file_path_st, language=language_st)
@@ -435,7 +493,7 @@ class TestInheritanceEdges:
         inherit_edges = [e for e in snap.edges if e.edge_type == "inherit"]
         assert len(inherit_edges) == 1
         assert inherit_edges[0].metadata.get("base") == base_name
-        assert inherit_edges[0].source == "ast"
+        assert inherit_edges[0].source == "fc_structure"
 
     @given(
         derived_name=identifier,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from fastcode.semantic_ir import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
+from fastcode.semantic_ir import IRDocument, IRAttachment, IREdge, IROccurrence, IRSnapshot, IRSymbol
 
 
 @pytest.mark.snapshot
@@ -70,6 +70,19 @@ class TestIRSnapshotContract:
         )
         snapshot.assert_match(edge.to_dict())
 
+    def test_ir_attachment_serialization(self, snapshot):
+        attachment = IRAttachment(
+            attachment_id="att:abc123",
+            target_id="sym:abc123",
+            target_type="symbol",
+            attachment_type="embedding",
+            source="fc_embedding",
+            confidence="derived",
+            payload={"vector": [0.1, 0.2], "text": "Function main"},
+            metadata={"ast_element_id": "elem_main"},
+        )
+        snapshot.assert_match(attachment.to_dict())
+
     def test_ir_snapshot_full_serialization(self, snapshot):
         doc = IRDocument(
             doc_id="doc:1",
@@ -109,6 +122,16 @@ class TestIRSnapshotContract:
             source="ast",
             confidence="resolved",
         )
+        attachment = IRAttachment(
+            attachment_id="att:1",
+            target_id="sym:1",
+            target_type="symbol",
+            attachment_type="summary",
+            source="fc_structure",
+            confidence="derived",
+            payload={"text": "Entry point"},
+            metadata={"ast_element_id": "elem_main"},
+        )
         snap = IRSnapshot(
             repo_name="my-repo",
             snapshot_id="snap:my-repo:abc123",
@@ -118,6 +141,7 @@ class TestIRSnapshotContract:
             symbols=[sym],
             occurrences=[occ],
             edges=[edge],
+            attachments=[attachment],
             metadata={"source_modes": ["ast"]},
         )
         snapshot.assert_match(snap.to_dict())

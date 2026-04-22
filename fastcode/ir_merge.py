@@ -4,17 +4,50 @@ Merge AST and SCIP IR snapshots.
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+import hashlib
+import json
 
-from .semantic_ir import IREdge, IROccurrence, IRSnapshot, IRSymbol
+from .semantic_ir import IRAttachment, IREdge, IROccurrence, IRSnapshot, IRSymbol
 
 
-def _symbol_key(symbol: IRSymbol) -> Tuple[str, str, str, int | None]:
+def _symbol_key(symbol: IRSymbol) -> tuple[str, str, str, int | None]:
     return (
         symbol.path or "",
         symbol.display_name or "",
         symbol.kind or "",
         symbol.start_line,
+    )
+
+
+def _attachment_id(
+    target_type: str,
+    target_id: str,
+    attachment_type: str,
+    source: str,
+    confidence: str,
+    payload: dict,
+    metadata: dict,
+) -> str:
+    payload_key = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    metadata_key = json.dumps(metadata, sort_keys=True, ensure_ascii=False)
+    digest = hashlib.blake2b(
+        f"{target_type}:{target_id}:{attachment_type}:{source}:{confidence}:{payload_key}:{metadata_key}".encode(),
+        digest_size=12,
+    ).hexdigest()[:24]
+    return f"att:{digest}"
+
+
+def _attachment_key(attachment: IRAttachment) -> tuple[str, str, str, str, str, str, str]:
+    payload_key = json.dumps(attachment.payload, sort_keys=True, ensure_ascii=False)
+    metadata_key = json.dumps(attachment.metadata, sort_keys=True, ensure_ascii=False)
+    return (
+        attachment.target_type,
+        attachment.target_id,
+        attachment.attachment_type,
+        attachment.source,
+        attachment.confidence,
+        payload_key,
+        metadata_key,
     )
 
 
@@ -32,9 +65,9 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
         else:
             merged_docs[d.doc_id] = d
 
-    canonical_symbols: Dict[str, IRSymbol] = {}
-    ast_to_canonical: Dict[str, str] = {}
-    by_key: Dict[Tuple[str, str, str, int | None], str] = {}
+    canonical_symbols: dict[str, IRSymbol] = {}
+    ast_to_canonical: dict[str, str] = {}
+    by_key: dict[tuple[str, str, str, int | None], str] = {}
 
     for s in scip_snapshot.symbols:
         canonical_symbols[s.symbol_id] = s
@@ -53,7 +86,7 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
 
     # Merge occurrences — deduplicate by (symbol_id, doc_id, role, range).
     # SCIP wins when both sources produce the same occurrence (Rule D).
-    occ_seen: Dict[tuple, IROccurrence] = {}
+    occ_seen: dict[tuple, IROccurrence] = {}
     for occ in scip_snapshot.occurrences + ast_snapshot.occurrences:
         symbol_id = ast_to_canonical.get(occ.symbol_id, occ.symbol_id)
         key = (symbol_id, occ.doc_id, occ.role, occ.start_line or 0, occ.start_col or 0, occ.end_line or 0, occ.end_col or 0)
@@ -94,6 +127,36 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
             )
         )
 
+    attachment_seen: set[tuple[str, str, str, str, str, str, str]] = set()
+    merged_attachments = []
+    for attachment in scip_snapshot.attachments + ast_snapshot.attachments:
+        target_id = attachment.target_id
+        if attachment.target_type == "symbol":
+            target_id = ast_to_canonical.get(target_id, target_id)
+        materialized = IRAttachment(
+            attachment_id=_attachment_id(
+                attachment.target_type,
+                target_id,
+                attachment.attachment_type,
+                attachment.source,
+                attachment.confidence,
+                attachment.payload,
+                attachment.metadata,
+            ),
+            target_id=target_id,
+            target_type=attachment.target_type,
+            attachment_type=attachment.attachment_type,
+            source=attachment.source,
+            confidence=attachment.confidence,
+            payload=attachment.payload,
+            metadata=attachment.metadata,
+        )
+        key = _attachment_key(materialized)
+        if key in attachment_seen:
+            continue
+        attachment_seen.add(key)
+        merged_attachments.append(materialized)
+
     return IRSnapshot(
         repo_name=ast_snapshot.repo_name,
         snapshot_id=ast_snapshot.snapshot_id,
@@ -104,12 +167,11 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
         symbols=list(canonical_symbols.values()),
         occurrences=merged_occurrences,
         edges=merged_edges,
+        attachments=merged_attachments,
         metadata={
             "source_modes": sorted(
-                list(
-                    set(ast_snapshot.metadata.get("source_modes", []))
-                    | set(scip_snapshot.metadata.get("source_modes", []))
-                )
+                set(ast_snapshot.metadata.get("source_modes", []))
+                | set(scip_snapshot.metadata.get("source_modes", []))
             )
         },
     )

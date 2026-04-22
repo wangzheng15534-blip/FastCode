@@ -4,16 +4,15 @@ Validation rules for merged IR snapshots.
 
 from __future__ import annotations
 
-from typing import List
-
 from .semantic_ir import IRSnapshot
 
 
-def validate_snapshot(snapshot: IRSnapshot) -> List[str]:
-    errors: List[str] = []
+def validate_snapshot(snapshot: IRSnapshot) -> list[str]:
+    errors: list[str] = []
 
     doc_ids = {d.doc_id for d in snapshot.documents}
     sym_ids = {s.symbol_id for s in snapshot.symbols}
+    attachment_ids = [a.attachment_id for a in snapshot.attachments]
 
     if not snapshot.documents:
         errors.append("snapshot must contain at least one document")
@@ -28,6 +27,8 @@ def validate_snapshot(snapshot: IRSnapshot) -> List[str]:
         errors.append(f"duplicate document paths detected: {dupes}")
     if len(sym_ids) != len(snapshot.symbols):
         errors.append("duplicate symbol IDs detected")
+    if len(attachment_ids) != len(set(attachment_ids)):
+        errors.append("duplicate attachment IDs detected")
 
     for occ in snapshot.occurrences:
         if occ.doc_id not in doc_ids:
@@ -50,5 +51,28 @@ def validate_snapshot(snapshot: IRSnapshot) -> List[str]:
         src = (sym.metadata or {}).get("source")
         if not src and not sym.source_set:
             errors.append(f"symbol provenance missing: {sym.symbol_id}")
+
+    valid_attachment_targets = {
+        "document": doc_ids,
+        "symbol": sym_ids,
+        "snapshot": {snapshot.snapshot_id},
+    }
+    for attachment in snapshot.attachments:
+        valid_targets = valid_attachment_targets.get(attachment.target_type)
+        if valid_targets is None:
+            errors.append(
+                f"attachment target_type unsupported: {attachment.attachment_id} -> {attachment.target_type}"
+            )
+            continue
+        if attachment.target_id not in valid_targets:
+            errors.append(
+                f"attachment target not found: {attachment.attachment_id} -> {attachment.target_type}:{attachment.target_id}"
+            )
+        if not attachment.source:
+            errors.append(f"attachment source missing: {attachment.attachment_id}")
+        if not attachment.confidence:
+            errors.append(f"attachment confidence missing: {attachment.attachment_id}")
+        if not attachment.attachment_type:
+            errors.append(f"attachment type missing: {attachment.attachment_id}")
 
     return errors

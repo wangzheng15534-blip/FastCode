@@ -247,6 +247,23 @@ class SnapshotStore:
                     )
                     """,
                 )
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    CREATE TABLE IF NOT EXISTS attachments (
+                        snapshot_id TEXT NOT NULL,
+                        attachment_id TEXT NOT NULL,
+                        target_id TEXT NOT NULL,
+                        target_type TEXT NOT NULL,
+                        attachment_type TEXT NOT NULL,
+                        source TEXT,
+                        confidence TEXT,
+                        payload_json TEXT,
+                        metadata_json TEXT,
+                        PRIMARY KEY (snapshot_id, attachment_id)
+                    )
+                    """,
+                )
                 # Staging + hardening
                 self.db_runtime.execute(
                     conn,
@@ -621,6 +638,7 @@ class SnapshotStore:
             self.db_runtime.execute(conn, "DELETE FROM symbols WHERE snapshot_id=?", (snapshot.snapshot_id,))
             self.db_runtime.execute(conn, "DELETE FROM occurrences WHERE snapshot_id=?", (snapshot.snapshot_id,))
             self.db_runtime.execute(conn, "DELETE FROM edges WHERE snapshot_id=?", (snapshot.snapshot_id,))
+            self.db_runtime.execute(conn, "DELETE FROM attachments WHERE snapshot_id=?", (snapshot.snapshot_id,))
             for doc in snapshot.documents:
                 self.db_runtime.execute(
                     conn,
@@ -703,6 +721,27 @@ class SnapshotStore:
                         edge.confidence,
                         edge.doc_id,
                         json.dumps(edge.to_dict(), ensure_ascii=False),
+                    ),
+                )
+            for attachment in snapshot.attachments:
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    INSERT INTO attachments (
+                        snapshot_id, attachment_id, target_id, target_type, attachment_type,
+                        source, confidence, payload_json, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot.snapshot_id,
+                        attachment.attachment_id,
+                        attachment.target_id,
+                        attachment.target_type,
+                        attachment.attachment_type,
+                        attachment.source,
+                        attachment.confidence,
+                        json.dumps(attachment.payload, ensure_ascii=False),
+                        json.dumps(attachment.metadata, ensure_ascii=False),
                     ),
                 )
             conn.commit()

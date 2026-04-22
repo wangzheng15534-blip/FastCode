@@ -48,7 +48,7 @@ from .projection_transform import ProjectionTransformer
 from .snapshot_symbol_index import SnapshotSymbolIndex
 from .pg_retrieval import PgRetrievalStore
 from .redo_worker import RedoWorker
-from .semantic_ir import IREdge
+from .semantic_ir import IRRelation
 from .doc_ingester import KeyDocIngester
 from .graph_runtime import LadybugGraphRuntime
 
@@ -620,16 +620,16 @@ class FastCode:
                 if not src_id or not dst_id:
                     continue
                 edge_id = f"edge:call:{hashlib.md5(f'{src_id}->{dst_id}'.encode('utf-8')).hexdigest()[:20]}"
-                ast_snapshot.edges.append(
-                    IREdge(
-                        edge_id=edge_id,
-                        src_id=src_id,
-                        dst_id=dst_id,
-                        edge_type="call",
-                        source="ast",
-                        confidence="heuristic",
-                        doc_id=None,
+                ast_snapshot.relations.append(
+                    IRRelation(
+                        relation_id=edge_id,
+                        src_unit_id=src_id,
+                        dst_unit_id=dst_id,
+                        relation_type="call",
+                        resolution_state="structural",
+                        support_sources={"fc_structure"},
                         metadata={
+                            "source": "fc_structure",
                             "extractor": "fastcode.graph_builder.call_graph_bridge",
                             "call_name": (data or {}).get("call_name"),
                             "call_type": (data or {}).get("call_type"),
@@ -749,6 +749,10 @@ class FastCode:
                     row_meta = row.get("metadata") or {}
                     row_meta["ir_symbol_id"] = ir_symbol_id
                     row["metadata"] = row_meta
+            for elem in elements:
+                ir_symbol_id = ast_id_to_ir.get(str(elem.id))
+                if ir_symbol_id:
+                    elem.metadata["ir_symbol_id"] = ir_symbol_id
             temp_store.save(artifact_key)
 
             self.index_run_store.mark_status(run_id, "persisting")
@@ -767,6 +771,17 @@ class FastCode:
             self.snapshot_store.import_git_backbone(merged_snapshot, git_meta=git_meta)
             self.snapshot_store.save_relational_facts(merged_snapshot)
             if doc_chunks_payload:
+                mentions_by_chunk: Dict[str, List[Dict[str, Any]]] = {}
+                for mention in doc_mentions_payload:
+                    chunk_id = mention.get("chunk_id")
+                    if not chunk_id:
+                        continue
+                    mentions_by_chunk.setdefault(str(chunk_id), []).append(dict(mention))
+                for elem in doc_elements_payload:
+                    chunk_id = elem.get("id")
+                    elem_meta = elem.get("metadata") or {}
+                    elem_meta["trace_links"] = mentions_by_chunk.get(str(chunk_id), [])
+                    elem["metadata"] = elem_meta
                 self.snapshot_store.save_design_documents(
                     snapshot_id=snapshot_id,
                     repo_name=repo_name,
@@ -1257,7 +1272,16 @@ class FastCode:
                         "warnings": [],
                     }
 
-        build = self.projection_transformer.build(scope=scope, snapshot=snapshot, ir_graphs=ir_graphs)
+        doc_mentions = None
+        try:
+            doc_mentions = self.snapshot_store.get_doc_mentions(resolved_snapshot_id)
+        except Exception:
+            doc_mentions = None
+
+        build = self.projection_transformer.build(
+            scope=scope, snapshot=snapshot, ir_graphs=ir_graphs,
+            doc_mentions=doc_mentions or None,
+        )
         self.projection_store.save(build, params_hash=params_hash)
         payload = build.to_dict()
         mirror_root = self._mirror_projection_artifacts(resolved_snapshot_id, payload)

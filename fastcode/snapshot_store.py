@@ -921,6 +921,37 @@ class SnapshotStore:
                 )
             conn.commit()
 
+    def get_doc_mentions(self, snapshot_id: str) -> List[Dict[str, Any]]:
+        """Return all design doc mentions for a snapshot."""
+        with self.db_runtime.connect() as conn:
+            rows = self.db_runtime.execute(
+                conn,
+                """
+                SELECT chunk_id, symbol_id, symbol_name, confidence, metadata_json
+                FROM design_doc_mentions
+                WHERE snapshot_id = ?
+                """,
+                (snapshot_id,),
+            ).fetchall()
+        import json
+
+        results: List[Dict[str, Any]] = []
+        for r in rows:
+            entry = {
+                "chunk_id": r[0],
+                "symbol_id": r[1],
+                "symbol_name": r[2],
+                "confidence": r[3],
+            }
+            if r[4]:
+                try:
+                    meta = json.loads(r[4])
+                    entry.update({k: v for k, v in meta.items() if k not in entry})
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            results.append(entry)
+        return results
+
     def claim_redo_task(self) -> Optional[Dict[str, Any]]:
         if self.db_runtime.backend != "postgres":
             return None

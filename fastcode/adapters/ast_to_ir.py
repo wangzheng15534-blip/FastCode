@@ -5,14 +5,21 @@ Adapter from FastCode AST/indexer output into canonical IR.
 from __future__ import annotations
 
 import hashlib
-from typing import List
+import json
 
 from ..indexer import CodeElement
-from ..semantic_ir import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
+from ..semantic_ir import IRAttachment, IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
+from ..utils import safe_jsonable
+
+STRUCTURE_SOURCE = "fc_structure"
+STRUCTURE_CONFIDENCE = "resolved"
+STRUCTURE_PRIORITY = 50
+STRUCTURE_EXTRACTOR = "fastcode.adapters.ast_to_ir"
 
 
 def _hash_id(prefix: str, value: str) -> str:
-    return f"{prefix}:{hashlib.md5(value.encode('utf-8')).hexdigest()[:20]}"
+    digest = hashlib.blake2b(value.encode("utf-8"), digest_size=10).hexdigest()
+    return f"{prefix}:{digest}"
 
 
 def _doc_id(snapshot_id: str, rel_path: str) -> str:
@@ -28,10 +35,85 @@ def _ast_symbol_id(snapshot_id: str, elem: CodeElement) -> str:
     )
 
 
+def _normalize_attachment_value(value: object) -> object:
+    if value is None:
+        return None
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        try:
+            value = tolist()
+        except Exception:
+            return safe_jsonable(value)
+    return safe_jsonable(value)
+
+
+def _attachment_id(
+    snapshot_id: str,
+    target_type: str,
+    target_id: str,
+    attachment_type: str,
+    source: str,
+    payload: dict,
+) -> str:
+    payload_key = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    return _hash_id(
+        "att",
+        f"{snapshot_id}:{target_type}:{target_id}:{attachment_type}:{source}:{payload_key}",
+    )
+
+
+def _build_symbol_attachments(snapshot_id: str, symbol_id: str, elem: CodeElement) -> list[IRAttachment]:
+    elem_meta = elem.metadata or {}
+    attachments: list[IRAttachment] = []
+    base_meta = {
+        "ast_element_id": elem.id,
+        "extractor": STRUCTURE_EXTRACTOR,
+        "element_type": elem.type,
+    }
+
+    if elem.summary:
+        payload = {"text": str(elem.summary)}
+        attachments.append(
+            IRAttachment(
+                attachment_id=_attachment_id(snapshot_id, "symbol", symbol_id, "summary", STRUCTURE_SOURCE, payload),
+                target_id=symbol_id,
+                target_type="symbol",
+                attachment_type="summary",
+                source=STRUCTURE_SOURCE,
+                confidence="derived",
+                payload=payload,
+                metadata=base_meta,
+            )
+        )
+
+    embedding = _normalize_attachment_value(elem_meta.get("embedding"))
+    embedding_text = _normalize_attachment_value(elem_meta.get("embedding_text"))
+    if embedding is not None or embedding_text:
+        payload = {}
+        if embedding is not None:
+            payload["vector"] = embedding
+        if embedding_text:
+            payload["text"] = embedding_text
+        attachments.append(
+            IRAttachment(
+                attachment_id=_attachment_id(snapshot_id, "symbol", symbol_id, "embedding", "fc_embedding", payload),
+                target_id=symbol_id,
+                target_type="symbol",
+                attachment_type="embedding",
+                source="fc_embedding",
+                confidence="derived",
+                payload=payload,
+                metadata=base_meta,
+            )
+        )
+
+    return attachments
+
+
 def build_ir_from_ast(
     repo_name: str,
     snapshot_id: str,
-    elements: List[CodeElement],
+    elements: list[CodeElement],
     repo_root: str,
     branch: str | None = None,
     commit_id: str | None = None,
@@ -39,9 +121,10 @@ def build_ir_from_ast(
 ) -> IRSnapshot:
     del repo_root  # reserved for future module-path resolution
     documents = {}
-    symbols: List[IRSymbol] = []
-    occurrences: List[IROccurrence] = []
-    edges: List[IREdge] = []
+    symbols: list[IRSymbol] = []
+    occurrences: list[IROccurrence] = []
+    edges: list[IREdge] = []
+    attachments: list[IRAttachment] = []
     doc_by_rel_path = {}
     class_symbols = {}
     symbols_by_name = {}
@@ -56,11 +139,11 @@ def build_ir_from_ast(
                 path=rel_path,
                 language=elem.language or "unknown",
                 content_hash=None,
-                source_set={"ast"},
+                source_set={STRUCTURE_SOURCE},
             )
             doc_by_rel_path[rel_path] = doc_id
         else:
-            documents[doc_id].source_set.add("ast")
+            documents[doc_id].source_set.add(STRUCTURE_SOURCE)
 
         if elem.type in {"file", "documentation"}:
             continue
@@ -81,17 +164,18 @@ def build_ir_from_ast(
             start_col=0,
             end_line=elem.end_line,
             end_col=0,
-            source_priority=10,
-            source_set={"ast"},
+            source_priority=STRUCTURE_PRIORITY,
+            source_set={STRUCTURE_SOURCE},
             metadata={
                 "ast_element_id": elem.id,
-                "source": "ast",
-                "confidence": "fallback",
-                "extractor": "fastcode.adapters.ast_to_ir",
+                "source": STRUCTURE_SOURCE,
+                "confidence": STRUCTURE_CONFIDENCE,
+                "extractor": STRUCTURE_EXTRACTOR,
                 **{k: v for k, v in elem_meta.items() if k not in ("embedding", "embedding_text")},
             },
         )
         symbols.append(symbol)
+        attachments.extend(_build_symbol_attachments(snapshot_id, symbol_id, elem))
         symbols_by_name.setdefault(elem.name, []).append(symbol_id)
         if elem.type == "class":
             class_symbols[(rel_path, elem.name)] = symbol_id
@@ -107,7 +191,7 @@ def build_ir_from_ast(
                 start_col=0,
                 end_line=max(elem.end_line or elem.start_line or 1, 1),
                 end_col=0,
-                source="ast",
+                source=STRUCTURE_SOURCE,
                 metadata={"kind": elem.type},
             )
         )
@@ -119,10 +203,10 @@ def build_ir_from_ast(
                 src_id=doc_id,
                 dst_id=symbol_id,
                 edge_type="contain",
-                source="ast",
-                confidence="resolved",
+                source=STRUCTURE_SOURCE,
+                confidence=STRUCTURE_CONFIDENCE,
                 doc_id=doc_id,
-                metadata={"extractor": "fastcode.adapters.ast_to_ir", "source": "ast"},
+                metadata={"extractor": STRUCTURE_EXTRACTOR, "source": STRUCTURE_SOURCE},
             )
         )
 
@@ -155,13 +239,13 @@ def build_ir_from_ast(
                         src_id=doc_id,
                         dst_id=target_doc_id,
                         edge_type="import",
-                        source="ast",
+                        source=STRUCTURE_SOURCE,
                         confidence="heuristic",
                         doc_id=doc_id,
                         metadata={
                             "module": module,
-                            "extractor": "fastcode.adapters.ast_to_ir",
-                            "source": "ast",
+                            "extractor": STRUCTURE_EXTRACTOR,
+                            "source": STRUCTURE_SOURCE,
                         },
                     )
                 )
@@ -184,13 +268,13 @@ def build_ir_from_ast(
                         src_id=src_symbol_id,
                         dst_id=target_symbol_id,
                         edge_type="inherit",
-                        source="ast",
+                        source=STRUCTURE_SOURCE,
                         confidence="heuristic",
                         doc_id=doc_id,
                         metadata={
                             "base": base,
-                            "extractor": "fastcode.adapters.ast_to_ir",
-                            "source": "ast",
+                            "extractor": STRUCTURE_EXTRACTOR,
+                            "source": STRUCTURE_SOURCE,
                         },
                     )
                 )
@@ -205,5 +289,6 @@ def build_ir_from_ast(
         symbols=symbols,
         occurrences=occurrences,
         edges=edges,
-        metadata={"source_modes": ["ast"]},
+        attachments=attachments,
+        metadata={"source_modes": [STRUCTURE_SOURCE]},
     )

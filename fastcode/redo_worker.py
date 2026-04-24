@@ -4,16 +4,17 @@ Background redo task worker.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .main import FastCode
 
 
 class RedoWorker:
-    def __init__(self, fastcode: "FastCode", poll_interval_seconds: int = 30):
+    def __init__(self, fastcode: FastCode, poll_interval_seconds: int = 30) -> None:
         self.fastcode = fastcode
         self.poll_interval_seconds = max(1, int(poll_interval_seconds))
         self.logger = logging.getLogger(__name__)
@@ -52,27 +53,30 @@ class RedoWorker:
             return "succeeded"
         except Exception as e:
             self.logger.exception("Redo task failed: %s", task_id)
-            self.fastcode.snapshot_store.mark_redo_task_failed(task_id=task_id, error=str(e))
+            self.fastcode.snapshot_store.mark_redo_task_failed(
+                task_id=task_id, error=str(e)
+            )
             return "failed"
 
     def _run_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
                 self.process_once_status()
+                self._flush_outbox()
             except Exception:
                 self.logger.exception("Redo worker loop error")
             self._stop_event.wait(self.poll_interval_seconds)
 
-    def _dispatch_task(self, task: Dict[str, Any]) -> None:
+    def _dispatch_task(self, task: dict[str, Any]) -> None:
         task_type = str(task.get("task_type") or "")
         payload = task.get("payload_json")
         if isinstance(payload, str):
-            import json
-
             try:
                 payload = json.loads(payload)
             except (json.JSONDecodeError, ValueError) as exc:
-                raise RuntimeError(f"redo task {task.get('task_id')!r} has malformed payload_json: {exc}") from exc
+                raise RuntimeError(
+                    f"redo task {task.get('task_id')!r} has malformed payload_json: {exc}"
+                ) from exc
         if not isinstance(payload, dict):
             payload = {}
 
@@ -82,4 +86,24 @@ class RedoWorker:
                 raise RuntimeError("redo task missing run_id")
             self.fastcode.retry_index_run_recovery(run_id=str(run_id), payload=payload)
             return
+        if task_type == "publish_outbox_flush":
+            self._flush_outbox()
+            return
         raise RuntimeError(f"unsupported redo task type: {task_type}")
+
+    def _flush_outbox(self) -> None:
+        """Flush the TerminusDB publish outbox."""
+        publisher = getattr(self.fastcode, "terminus_publisher", None)
+        if not publisher or not publisher.is_configured():
+            self.logger.debug(
+                "TerminusDB publisher not configured, skipping outbox flush"
+            )
+            return
+        result = publisher.flush_outbox(self.fastcode.snapshot_store)
+        if result["processed"] > 0:
+            self.logger.info(
+                "Outbox flush: processed=%d succeeded=%d failed=%d",
+                result["processed"],
+                result["succeeded"],
+                result["failed"],
+            )

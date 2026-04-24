@@ -1,0 +1,13 @@
+[default]
+extend-ignore-re = [
+    "certifi",      # npm package name in README
+    "REWRITEN",     # intentional typo reference in comment
+    "pn",           # WhatsApp protocol field name
+    "sytle",        # in comment about WhatsApp LID
+    "\\bnd\\b",     # variable name 'nd' (n_docs) in tests
+]
+
+[files]
+extend-exclude = [
+    "nanobot/",
+]

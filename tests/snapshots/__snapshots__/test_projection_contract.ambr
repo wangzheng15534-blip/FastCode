@@ -2,8 +2,8 @@
 # name: TestProjectionContract.test_l0_summary_format
   dict({
     'content': dict({
-      'importance': 0.35,
-      'summary': 'Snapshot projection over 3 nodes and 3 edges. Key communities: app/service.py cluster (3).',
+      'importance': 0.44999999999999996,
+      'summary': 'Snapshot projection over 3 nodes and 3 edges. Key communities: app/service.py cluster, create_user cluster, get_user cluster.',
       'tags': list([
         'snapshot',
         'projection',
@@ -28,14 +28,39 @@
       'hidden_edge_count': 0,
       'hierarchy_level': 0,
       'parent_reason': 'community_coarsening',
-      'projection_method': 'hierarchical_leiden',
+      'projection_method': 'leiden',
       'root_cluster': 'c0',
       'xrefs': list([
+        dict({
+          'dst': 'c1',
+          'src': 'c0',
+          'weight': 8.0,
+        }),
+        dict({
+          'dst': 'c2',
+          'src': 'c0',
+          'weight': 8.0,
+        }),
+        dict({
+          'dst': 'c2',
+          'src': 'c1',
+          'weight': 4.0,
+        }),
+        dict({
+          'dst': 'c0',
+          'src': 'c1',
+          'weight': 2.0,
+        }),
+        dict({
+          'dst': 'c0',
+          'src': 'c2',
+          'weight': 2.0,
+        }),
       ]),
     }),
     'path': '/projection/proj_932c8f76ce8fe80cf025/l0',
     'render': dict({
-      'text': 'Snapshot projection over 3 nodes and 3 edges. Key communities: app/service.py cluster (3).',
+      'text': 'Snapshot projection over 3 nodes and 3 edges. Key communities: app/service.py cluster, create_user cluster, get_user cluster.',
     }),
     'source': dict({
       'domain': 'code',
@@ -72,14 +97,14 @@
   dict({
     'content': dict({
       'decisions': list([
-        'cluster_method=hierarchical_leiden',
-        'backbone_edges=0',
+        'cluster_method=leiden',
+        'backbone_edges=2',
         'hierarchy_level=0',
         'root_cluster=c0',
       ]),
       'navigation': list([
         dict({
-          'label': 'app/service.py cluster (3)',
+          'label': 'app/service.py cluster',
           'ref': dict({
             'branch': 'main',
             'commit': 'abc',
@@ -88,6 +113,30 @@
             'path': 'app/service.py',
             'repo': 'repo',
             'type': 'file',
+          }),
+        }),
+        dict({
+          'label': 'create_user cluster',
+          'ref': dict({
+            'branch': 'main',
+            'commit': 'abc',
+            'id': 'sym:a',
+            'label': 'create_user',
+            'path': 'app/service.py',
+            'repo': 'repo',
+            'type': 'symbol',
+          }),
+        }),
+        dict({
+          'label': 'get_user cluster',
+          'ref': dict({
+            'branch': 'main',
+            'commit': 'abc',
+            'id': 'sym:b',
+            'label': 'get_user',
+            'path': 'app/service.py',
+            'repo': 'repo',
+            'type': 'symbol',
           }),
         }),
       ]),
@@ -119,19 +168,67 @@
       ]),
       'relations': dict({
         'backbone': list([
+          dict({
+            'dst': 'c1',
+            'src': 'c0',
+            'type': 'tree',
+          }),
+          dict({
+            'dst': 'c2',
+            'src': 'c0',
+            'type': 'tree',
+          }),
         ]),
         'hierarchy': list([
         ]),
         'xref': list([
+          dict({
+            'confidence': 1.0,
+            'id': 'c0->c1',
+            'title': 'c0 -> c1',
+            'type': 'xref',
+          }),
+          dict({
+            'confidence': 1.0,
+            'id': 'c0->c2',
+            'title': 'c0 -> c2',
+            'type': 'xref',
+          }),
+          dict({
+            'confidence': 1.0,
+            'id': 'c1->c2',
+            'title': 'c1 -> c2',
+            'type': 'xref',
+          }),
+          dict({
+            'confidence': 0.5,
+            'id': 'c1->c0',
+            'title': 'c1 -> c0',
+            'type': 'xref',
+          }),
+          dict({
+            'confidence': 0.5,
+            'id': 'c2->c0',
+            'title': 'c2 -> c0',
+            'type': 'xref',
+          }),
         ]),
       }),
       'sections': list([
         dict({
-          'name': 'app/service.py cluster (3)',
-          'text': '3 nodes',
+          'name': 'app/service.py cluster',
+          'text': '1 nodes',
+        }),
+        dict({
+          'name': 'create_user cluster',
+          'text': '1 nodes',
+        }),
+        dict({
+          'name': 'get_user cluster',
+          'text': '1 nodes',
         }),
       ]),
-      'summary': 'Snapshot hierarchy with 1 clusters, 0 directed backbone links, and 0 cross-links.',
+      'summary': 'Snapshot hierarchy with 3 clusters, 2 directed backbone links, and 5 cross-links.',
     }),
     'id': 'proj:proj_932c8f76ce8fe80cf025:l1',
     'kind': 'summary',
@@ -151,14 +248,39 @@
       'hidden_edge_count': 0,
       'hierarchy_level': 0,
       'parent_reason': 'backbone_arborescence',
-      'projection_method': 'hierarchical_leiden',
+      'projection_method': 'leiden',
       'root_cluster': 'c0',
       'xrefs': list([
+        dict({
+          'dst': 'c1',
+          'src': 'c0',
+          'weight': 8.0,
+        }),
+        dict({
+          'dst': 'c2',
+          'src': 'c0',
+          'weight': 8.0,
+        }),
+        dict({
+          'dst': 'c2',
+          'src': 'c1',
+          'weight': 4.0,
+        }),
+        dict({
+          'dst': 'c0',
+          'src': 'c1',
+          'weight': 2.0,
+        }),
+        dict({
+          'dst': 'c0',
+          'src': 'c2',
+          'weight': 2.0,
+        }),
       ]),
     }),
     'path': '/projection/proj_932c8f76ce8fe80cf025/l1',
     'render': dict({
-      'text': 'Snapshot hierarchy with 1 clusters, 0 directed backbone links, and 0 cross-links.',
+      'text': 'Snapshot hierarchy with 3 clusters, 2 directed backbone links, and 5 cross-links.',
     }),
     'source': dict({
       'domain': 'code',
@@ -199,19 +321,19 @@
         'facts': list([
           dict({
             'type': 'cluster_size',
-            'value': 3,
+            'value': 1,
           }),
           dict({
             'type': 'cluster_label',
-            'value': 'app/service.py cluster (3)',
+            'value': 'app/service.py cluster',
           }),
           dict({
             'type': 'dominant_kind',
-            'value': 'function',
+            'value': None,
           }),
           dict({
             'type': 'dominant_language',
-            'value': 'python',
+            'value': None,
           }),
         ]),
         'file': 'app/service.py',
@@ -235,22 +357,16 @@
         'aggregation': dict({
           'common_path_prefix': 'app/service.py',
           'doc_count': 1,
-          'dominant_kind': 'function',
-          'dominant_language': 'python',
+          'dominant_kind': None,
+          'dominant_language': None,
           'edge_type_distribution': dict({
-            'call': 1,
-            'contain': 3,
-            'import': 1,
           }),
           'kind_distribution': dict({
-            'function': 2,
           }),
-          'member_count': 3,
+          'member_count': 1,
           'representative': 'doc:1',
-          'symbol_count': 2,
+          'symbol_count': 0,
           'top_members': list([
-            'sym:b',
-            'sym:a',
             'doc:1',
           ]),
         }),
@@ -279,7 +395,191 @@
           }),
         ]),
       }),
-      'title': 'app/service.py cluster (3)',
+      'title': 'app/service.py cluster',
+      'version': 'v1',
+    }),
+    dict({
+      'chunk_id': 'c_c1',
+      'content': dict({
+        'facts': list([
+          dict({
+            'type': 'cluster_size',
+            'value': 1,
+          }),
+          dict({
+            'type': 'cluster_label',
+            'value': 'create_user cluster',
+          }),
+          dict({
+            'type': 'dominant_kind',
+            'value': 'function',
+          }),
+          dict({
+            'type': 'dominant_language',
+            'value': 'python',
+          }),
+        ]),
+        'file': 'app/service.py',
+        'range': dict({
+          'end_col': 0,
+          'end_line': 5,
+          'start_col': 0,
+          'start_line': 5,
+        }),
+        'refs': list([
+          dict({
+            'branch': 'main',
+            'commit': 'abc',
+            'id': 'sym:a',
+            'label': 'create_user',
+            'path': 'app/service.py',
+            'repo': 'repo',
+            'type': 'symbol',
+          }),
+        ]),
+        'signature': 'create_user',
+        'snippet': 'function create_user in app/service.py',
+        'symbol': 'create_user',
+      }),
+      'id': 'chunk:c_c1',
+      'kind': 'cluster_evidence',
+      'layer': 'L2',
+      'meta': dict({
+        'aggregation': dict({
+          'common_path_prefix': 'app/service.py',
+          'doc_count': 0,
+          'dominant_kind': 'function',
+          'dominant_language': 'python',
+          'edge_type_distribution': dict({
+          }),
+          'kind_distribution': dict({
+            'function': 1,
+          }),
+          'member_count': 1,
+          'representative': 'sym:a',
+          'symbol_count': 1,
+          'top_members': list([
+            'sym:a',
+          ]),
+        }),
+        'centrality': dict({
+          'betweenness': 0.0,
+          'degree': 2.0,
+          'degree_centrality': 1.0,
+        }),
+        'cluster_id': 'c1',
+      }),
+      'path': './chunks/c_c1.json',
+      'render': dict({
+        'text': 'function create_user in app/service.py',
+      }),
+      'source': dict({
+        'domain': 'code',
+        'refs': list([
+          dict({
+            'branch': 'main',
+            'commit': 'abc',
+            'id': 'sym:a',
+            'label': 'create_user',
+            'path': 'app/service.py',
+            'repo': 'repo',
+            'type': 'symbol',
+          }),
+        ]),
+      }),
+      'title': 'create_user cluster',
+      'version': 'v1',
+    }),
+    dict({
+      'chunk_id': 'c_c2',
+      'content': dict({
+        'facts': list([
+          dict({
+            'type': 'cluster_size',
+            'value': 1,
+          }),
+          dict({
+            'type': 'cluster_label',
+            'value': 'get_user cluster',
+          }),
+          dict({
+            'type': 'dominant_kind',
+            'value': 'function',
+          }),
+          dict({
+            'type': 'dominant_language',
+            'value': 'python',
+          }),
+        ]),
+        'file': 'app/service.py',
+        'range': dict({
+          'end_col': 0,
+          'end_line': 10,
+          'start_col': 0,
+          'start_line': 10,
+        }),
+        'refs': list([
+          dict({
+            'branch': 'main',
+            'commit': 'abc',
+            'id': 'sym:b',
+            'label': 'get_user',
+            'path': 'app/service.py',
+            'repo': 'repo',
+            'type': 'symbol',
+          }),
+        ]),
+        'signature': 'get_user',
+        'snippet': 'function get_user in app/service.py',
+        'symbol': 'get_user',
+      }),
+      'id': 'chunk:c_c2',
+      'kind': 'cluster_evidence',
+      'layer': 'L2',
+      'meta': dict({
+        'aggregation': dict({
+          'common_path_prefix': 'app/service.py',
+          'doc_count': 0,
+          'dominant_kind': 'function',
+          'dominant_language': 'python',
+          'edge_type_distribution': dict({
+          }),
+          'kind_distribution': dict({
+            'function': 1,
+          }),
+          'member_count': 1,
+          'representative': 'sym:b',
+          'symbol_count': 1,
+          'top_members': list([
+            'sym:b',
+          ]),
+        }),
+        'centrality': dict({
+          'betweenness': 0.0,
+          'degree': 2.0,
+          'degree_centrality': 1.0,
+        }),
+        'cluster_id': 'c2',
+      }),
+      'path': './chunks/c_c2.json',
+      'render': dict({
+        'text': 'function get_user in app/service.py',
+      }),
+      'source': dict({
+        'domain': 'code',
+        'refs': list([
+          dict({
+            'branch': 'main',
+            'commit': 'abc',
+            'id': 'sym:b',
+            'label': 'get_user',
+            'path': 'app/service.py',
+            'repo': 'repo',
+            'type': 'symbol',
+          }),
+        ]),
+      }),
+      'title': 'get_user cluster',
       'version': 'v1',
     }),
   ])
@@ -296,6 +596,24 @@
           'label': 'app/service.py',
           'path': './chunks/c_c0.json',
           'start_line': None,
+        }),
+        dict({
+          'chunk_id': 'c_c1',
+          'end_line': 5,
+          'file': 'app/service.py',
+          'kind': 'cluster_evidence',
+          'label': 'create_user',
+          'path': './chunks/c_c1.json',
+          'start_line': 5,
+        }),
+        dict({
+          'chunk_id': 'c_c2',
+          'end_line': 10,
+          'file': 'app/service.py',
+          'kind': 'cluster_evidence',
+          'label': 'get_user',
+          'path': './chunks/c_c2.json',
+          'start_line': 10,
         }),
       ]),
     }),
@@ -316,13 +634,38 @@
       ]),
       'hidden_edge_count': 0,
       'parent_reason': 'chunked_evidence',
-      'projection_method': 'hierarchical_leiden',
+      'projection_method': 'leiden',
       'xrefs': list([
+        dict({
+          'dst': 'c1',
+          'src': 'c0',
+          'weight': 8.0,
+        }),
+        dict({
+          'dst': 'c2',
+          'src': 'c0',
+          'weight': 8.0,
+        }),
+        dict({
+          'dst': 'c2',
+          'src': 'c1',
+          'weight': 4.0,
+        }),
+        dict({
+          'dst': 'c0',
+          'src': 'c1',
+          'weight': 2.0,
+        }),
+        dict({
+          'dst': 'c0',
+          'src': 'c2',
+          'weight': 2.0,
+        }),
       ]),
     }),
     'path': '/projection/proj_932c8f76ce8fe80cf025/l2',
     'render': dict({
-      'text': 'Detailed evidence available in 1 chunks.',
+      'text': 'Detailed evidence available in 3 chunks.',
     }),
     'source': dict({
       'domain': 'code',
@@ -626,19 +969,19 @@
           'facts': list([
             dict({
               'type': 'cluster_size',
-              'value': 3,
+              'value': 1,
             }),
             dict({
               'type': 'cluster_label',
-              'value': 'app/service.py cluster (3)',
+              'value': 'app/service.py cluster',
             }),
             dict({
               'type': 'dominant_kind',
-              'value': 'function',
+              'value': None,
             }),
             dict({
               'type': 'dominant_language',
-              'value': 'python',
+              'value': None,
             }),
           ]),
           'file': 'app/service.py',
@@ -662,22 +1005,16 @@
           'aggregation': dict({
             'common_path_prefix': 'app/service.py',
             'doc_count': 1,
-            'dominant_kind': 'function',
-            'dominant_language': 'python',
+            'dominant_kind': None,
+            'dominant_language': None,
             'edge_type_distribution': dict({
-              'call': 1,
-              'contain': 3,
-              'import': 1,
             }),
             'kind_distribution': dict({
-              'function': 2,
             }),
-            'member_count': 3,
+            'member_count': 1,
             'representative': 'doc:1',
-            'symbol_count': 2,
+            'symbol_count': 0,
             'top_members': list([
-              'sym:b',
-              'sym:a',
               'doc:1',
             ]),
           }),
@@ -706,14 +1043,198 @@
             }),
           ]),
         }),
-        'title': 'app/service.py cluster (3)',
+        'title': 'app/service.py cluster',
+        'version': 'v1',
+      }),
+      dict({
+        'chunk_id': 'c_c1',
+        'content': dict({
+          'facts': list([
+            dict({
+              'type': 'cluster_size',
+              'value': 1,
+            }),
+            dict({
+              'type': 'cluster_label',
+              'value': 'create_user cluster',
+            }),
+            dict({
+              'type': 'dominant_kind',
+              'value': 'function',
+            }),
+            dict({
+              'type': 'dominant_language',
+              'value': 'python',
+            }),
+          ]),
+          'file': 'app/service.py',
+          'range': dict({
+            'end_col': 0,
+            'end_line': 5,
+            'start_col': 0,
+            'start_line': 5,
+          }),
+          'refs': list([
+            dict({
+              'branch': 'main',
+              'commit': 'abc',
+              'id': 'sym:a',
+              'label': 'create_user',
+              'path': 'app/service.py',
+              'repo': 'repo',
+              'type': 'symbol',
+            }),
+          ]),
+          'signature': 'create_user',
+          'snippet': 'function create_user in app/service.py',
+          'symbol': 'create_user',
+        }),
+        'id': 'chunk:c_c1',
+        'kind': 'cluster_evidence',
+        'layer': 'L2',
+        'meta': dict({
+          'aggregation': dict({
+            'common_path_prefix': 'app/service.py',
+            'doc_count': 0,
+            'dominant_kind': 'function',
+            'dominant_language': 'python',
+            'edge_type_distribution': dict({
+            }),
+            'kind_distribution': dict({
+              'function': 1,
+            }),
+            'member_count': 1,
+            'representative': 'sym:a',
+            'symbol_count': 1,
+            'top_members': list([
+              'sym:a',
+            ]),
+          }),
+          'centrality': dict({
+            'betweenness': 0.0,
+            'degree': 2.0,
+            'degree_centrality': 1.0,
+          }),
+          'cluster_id': 'c1',
+        }),
+        'path': './chunks/c_c1.json',
+        'render': dict({
+          'text': 'function create_user in app/service.py',
+        }),
+        'source': dict({
+          'domain': 'code',
+          'refs': list([
+            dict({
+              'branch': 'main',
+              'commit': 'abc',
+              'id': 'sym:a',
+              'label': 'create_user',
+              'path': 'app/service.py',
+              'repo': 'repo',
+              'type': 'symbol',
+            }),
+          ]),
+        }),
+        'title': 'create_user cluster',
+        'version': 'v1',
+      }),
+      dict({
+        'chunk_id': 'c_c2',
+        'content': dict({
+          'facts': list([
+            dict({
+              'type': 'cluster_size',
+              'value': 1,
+            }),
+            dict({
+              'type': 'cluster_label',
+              'value': 'get_user cluster',
+            }),
+            dict({
+              'type': 'dominant_kind',
+              'value': 'function',
+            }),
+            dict({
+              'type': 'dominant_language',
+              'value': 'python',
+            }),
+          ]),
+          'file': 'app/service.py',
+          'range': dict({
+            'end_col': 0,
+            'end_line': 10,
+            'start_col': 0,
+            'start_line': 10,
+          }),
+          'refs': list([
+            dict({
+              'branch': 'main',
+              'commit': 'abc',
+              'id': 'sym:b',
+              'label': 'get_user',
+              'path': 'app/service.py',
+              'repo': 'repo',
+              'type': 'symbol',
+            }),
+          ]),
+          'signature': 'get_user',
+          'snippet': 'function get_user in app/service.py',
+          'symbol': 'get_user',
+        }),
+        'id': 'chunk:c_c2',
+        'kind': 'cluster_evidence',
+        'layer': 'L2',
+        'meta': dict({
+          'aggregation': dict({
+            'common_path_prefix': 'app/service.py',
+            'doc_count': 0,
+            'dominant_kind': 'function',
+            'dominant_language': 'python',
+            'edge_type_distribution': dict({
+            }),
+            'kind_distribution': dict({
+              'function': 1,
+            }),
+            'member_count': 1,
+            'representative': 'sym:b',
+            'symbol_count': 1,
+            'top_members': list([
+              'sym:b',
+            ]),
+          }),
+          'centrality': dict({
+            'betweenness': 0.0,
+            'degree': 2.0,
+            'degree_centrality': 1.0,
+          }),
+          'cluster_id': 'c2',
+        }),
+        'path': './chunks/c_c2.json',
+        'render': dict({
+          'text': 'function get_user in app/service.py',
+        }),
+        'source': dict({
+          'domain': 'code',
+          'refs': list([
+            dict({
+              'branch': 'main',
+              'commit': 'abc',
+              'id': 'sym:b',
+              'label': 'get_user',
+              'path': 'app/service.py',
+              'repo': 'repo',
+              'type': 'symbol',
+            }),
+          ]),
+        }),
+        'title': 'get_user cluster',
         'version': 'v1',
       }),
     ]),
     'l0': dict({
       'content': dict({
-        'importance': 0.35,
-        'summary': 'Snapshot projection over 3 nodes and 3 edges. Key communities: app/service.py cluster (3).',
+        'importance': 0.44999999999999996,
+        'summary': 'Snapshot projection over 3 nodes and 3 edges. Key communities: app/service.py cluster, create_user cluster, get_user cluster.',
         'tags': list([
           'snapshot',
           'projection',
@@ -738,14 +1259,39 @@
         'hidden_edge_count': 0,
         'hierarchy_level': 0,
         'parent_reason': 'community_coarsening',
-        'projection_method': 'hierarchical_leiden',
+        'projection_method': 'leiden',
         'root_cluster': 'c0',
         'xrefs': list([
+          dict({
+            'dst': 'c1',
+            'src': 'c0',
+            'weight': 8.0,
+          }),
+          dict({
+            'dst': 'c2',
+            'src': 'c0',
+            'weight': 8.0,
+          }),
+          dict({
+            'dst': 'c2',
+            'src': 'c1',
+            'weight': 4.0,
+          }),
+          dict({
+            'dst': 'c0',
+            'src': 'c1',
+            'weight': 2.0,
+          }),
+          dict({
+            'dst': 'c0',
+            'src': 'c2',
+            'weight': 2.0,
+          }),
         ]),
       }),
       'path': '/projection/proj_932c8f76ce8fe80cf025/l0',
       'render': dict({
-        'text': 'Snapshot projection over 3 nodes and 3 edges. Key communities: app/service.py cluster (3).',
+        'text': 'Snapshot projection over 3 nodes and 3 edges. Key communities: app/service.py cluster, create_user cluster, get_user cluster.',
       }),
       'source': dict({
         'domain': 'code',
@@ -780,14 +1326,14 @@
     'l1': dict({
       'content': dict({
         'decisions': list([
-          'cluster_method=hierarchical_leiden',
-          'backbone_edges=0',
+          'cluster_method=leiden',
+          'backbone_edges=2',
           'hierarchy_level=0',
           'root_cluster=c0',
         ]),
         'navigation': list([
           dict({
-            'label': 'app/service.py cluster (3)',
+            'label': 'app/service.py cluster',
             'ref': dict({
               'branch': 'main',
               'commit': 'abc',
@@ -796,6 +1342,30 @@
               'path': 'app/service.py',
               'repo': 'repo',
               'type': 'file',
+            }),
+          }),
+          dict({
+            'label': 'create_user cluster',
+            'ref': dict({
+              'branch': 'main',
+              'commit': 'abc',
+              'id': 'sym:a',
+              'label': 'create_user',
+              'path': 'app/service.py',
+              'repo': 'repo',
+              'type': 'symbol',
+            }),
+          }),
+          dict({
+            'label': 'get_user cluster',
+            'ref': dict({
+              'branch': 'main',
+              'commit': 'abc',
+              'id': 'sym:b',
+              'label': 'get_user',
+              'path': 'app/service.py',
+              'repo': 'repo',
+              'type': 'symbol',
             }),
           }),
         ]),
@@ -827,19 +1397,67 @@
         ]),
         'relations': dict({
           'backbone': list([
+            dict({
+              'dst': 'c1',
+              'src': 'c0',
+              'type': 'tree',
+            }),
+            dict({
+              'dst': 'c2',
+              'src': 'c0',
+              'type': 'tree',
+            }),
           ]),
           'hierarchy': list([
           ]),
           'xref': list([
+            dict({
+              'confidence': 1.0,
+              'id': 'c0->c1',
+              'title': 'c0 -> c1',
+              'type': 'xref',
+            }),
+            dict({
+              'confidence': 1.0,
+              'id': 'c0->c2',
+              'title': 'c0 -> c2',
+              'type': 'xref',
+            }),
+            dict({
+              'confidence': 1.0,
+              'id': 'c1->c2',
+              'title': 'c1 -> c2',
+              'type': 'xref',
+            }),
+            dict({
+              'confidence': 0.5,
+              'id': 'c1->c0',
+              'title': 'c1 -> c0',
+              'type': 'xref',
+            }),
+            dict({
+              'confidence': 0.5,
+              'id': 'c2->c0',
+              'title': 'c2 -> c0',
+              'type': 'xref',
+            }),
           ]),
         }),
         'sections': list([
           dict({
-            'name': 'app/service.py cluster (3)',
-            'text': '3 nodes',
+            'name': 'app/service.py cluster',
+            'text': '1 nodes',
+          }),
+          dict({
+            'name': 'create_user cluster',
+            'text': '1 nodes',
+          }),
+          dict({
+            'name': 'get_user cluster',
+            'text': '1 nodes',
           }),
         ]),
-        'summary': 'Snapshot hierarchy with 1 clusters, 0 directed backbone links, and 0 cross-links.',
+        'summary': 'Snapshot hierarchy with 3 clusters, 2 directed backbone links, and 5 cross-links.',
       }),
       'id': 'proj:proj_932c8f76ce8fe80cf025:l1',
       'kind': 'summary',
@@ -859,14 +1477,39 @@
         'hidden_edge_count': 0,
         'hierarchy_level': 0,
         'parent_reason': 'backbone_arborescence',
-        'projection_method': 'hierarchical_leiden',
+        'projection_method': 'leiden',
         'root_cluster': 'c0',
         'xrefs': list([
+          dict({
+            'dst': 'c1',
+            'src': 'c0',
+            'weight': 8.0,
+          }),
+          dict({
+            'dst': 'c2',
+            'src': 'c0',
+            'weight': 8.0,
+          }),
+          dict({
+            'dst': 'c2',
+            'src': 'c1',
+            'weight': 4.0,
+          }),
+          dict({
+            'dst': 'c0',
+            'src': 'c1',
+            'weight': 2.0,
+          }),
+          dict({
+            'dst': 'c0',
+            'src': 'c2',
+            'weight': 2.0,
+          }),
         ]),
       }),
       'path': '/projection/proj_932c8f76ce8fe80cf025/l1',
       'render': dict({
-        'text': 'Snapshot hierarchy with 1 clusters, 0 directed backbone links, and 0 cross-links.',
+        'text': 'Snapshot hierarchy with 3 clusters, 2 directed backbone links, and 5 cross-links.',
       }),
       'source': dict({
         'domain': 'code',
@@ -910,6 +1553,24 @@
             'path': './chunks/c_c0.json',
             'start_line': None,
           }),
+          dict({
+            'chunk_id': 'c_c1',
+            'end_line': 5,
+            'file': 'app/service.py',
+            'kind': 'cluster_evidence',
+            'label': 'create_user',
+            'path': './chunks/c_c1.json',
+            'start_line': 5,
+          }),
+          dict({
+            'chunk_id': 'c_c2',
+            'end_line': 10,
+            'file': 'app/service.py',
+            'kind': 'cluster_evidence',
+            'label': 'get_user',
+            'path': './chunks/c_c2.json',
+            'start_line': 10,
+          }),
         ]),
       }),
       'id': 'proj:proj_932c8f76ce8fe80cf025:l2',
@@ -929,13 +1590,38 @@
         ]),
         'hidden_edge_count': 0,
         'parent_reason': 'chunked_evidence',
-        'projection_method': 'hierarchical_leiden',
+        'projection_method': 'leiden',
         'xrefs': list([
+          dict({
+            'dst': 'c1',
+            'src': 'c0',
+            'weight': 8.0,
+          }),
+          dict({
+            'dst': 'c2',
+            'src': 'c0',
+            'weight': 8.0,
+          }),
+          dict({
+            'dst': 'c2',
+            'src': 'c1',
+            'weight': 4.0,
+          }),
+          dict({
+            'dst': 'c0',
+            'src': 'c1',
+            'weight': 2.0,
+          }),
+          dict({
+            'dst': 'c0',
+            'src': 'c2',
+            'weight': 2.0,
+          }),
         ]),
       }),
       'path': '/projection/proj_932c8f76ce8fe80cf025/l2',
       'render': dict({
-        'text': 'Detailed evidence available in 1 chunks.',
+        'text': 'Detailed evidence available in 3 chunks.',
       }),
       'source': dict({
         'domain': 'code',

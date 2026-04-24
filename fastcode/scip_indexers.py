@@ -29,8 +29,6 @@ SUPPORTED_LANGUAGES: dict[str, tuple[str, list[str]]] = {
     "cpp": ("scip-clang", ["index", "--output"]),
     "csharp": ("scip-dotnet", ["index", "--output"]),
     "rust": ("rust-analyzer", ["scip", "--output"]),
-    "php": ("scip-php", ["index", "--output"]),
-    "dart": ("scip-dart", ["index", "--output"]),
 }
 
 
@@ -105,8 +103,6 @@ _EXTENSION_MAP: dict[str, str] = {
     ".hpp": "cpp",
     ".cs": "csharp",
     ".rs": "rust",
-    ".php": "php",
-    ".dart": "dart",
 }
 
 _SKIP_DIRS = frozenset({".git", ".hg", "node_modules", "__pycache__", ".venv", "venv"})

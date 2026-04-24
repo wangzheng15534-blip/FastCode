@@ -47,14 +47,19 @@ class ProjectionTransformer:
         self.max_query_hops = int(proj_cfg.get("max_query_hops", 2))
         self.max_chunk_count = int(proj_cfg.get("max_chunk_count", 64))
         self.enable_leiden = bool(proj_cfg.get("enable_leiden", True))
-        self.hierarchical_leiden_enabled = bool(proj_cfg.get("hierarchical_leiden_enabled", False))
-        self.leiden_resolutions = [float(x) for x in (proj_cfg.get("leiden_resolutions") or [1.0])]
+        self.hierarchical_leiden_enabled = bool(
+            proj_cfg.get("hierarchical_leiden_enabled", False)
+        )
+        self.leiden_resolutions = [
+            float(x) for x in (proj_cfg.get("leiden_resolutions") or [1.0])
+        ]
         self.hierarchy_max_levels = int(proj_cfg.get("hierarchy_max_levels", 4))
         self.hierarchy_max_nodes = int(proj_cfg.get("hierarchy_max_nodes", 12000))
-        self.centrality_max_nodes = int(proj_cfg.get("centrality_max_nodes", 5000))
         self.steiner_prune = bool(proj_cfg.get("steiner_prune", True))
         self.aggregation_top_members = int(proj_cfg.get("aggregation_top_members", 8))
-        self.max_supporting_docs_per_cluster = int(proj_cfg.get("max_supporting_docs_per_cluster", 5))
+        self.max_supporting_docs_per_cluster = int(
+            proj_cfg.get("max_supporting_docs_per_cluster", 5)
+        )
         self.llm_enabled = bool(proj_cfg.get("llm_enabled", True))
         self.llm_timeout_seconds = int(proj_cfg.get("llm_timeout_seconds", 8))
         self.llm_max_tokens = int(proj_cfg.get("llm_max_tokens", 180))
@@ -65,7 +70,9 @@ class ProjectionTransformer:
         self._llm_api_key = os.getenv("OPENAI_API_KEY")
         if self.llm_enabled and OpenAI is not None and self._llm_model:
             try:
-                self._llm_client = OpenAI(api_key=self._llm_api_key, base_url=self._llm_base_url)
+                self._llm_client = OpenAI(
+                    api_key=self._llm_api_key, base_url=self._llm_base_url
+                )
             except Exception:
                 self._llm_client = None
         self.edge_weights = dict(
@@ -106,13 +113,17 @@ class ProjectionTransformer:
         hierarchy_levels, cluster_method = self._cluster_hierarchy(sg)
         clusters, selected_level = self._select_cluster_level(hierarchy_levels)
         representatives, centrality = self._pick_representatives(sg, clusters)
-        tree_edges, root_cluster = self._build_backbone_arborescence(sdg, clusters, focus_nodes)
+        tree_edges, root_cluster = self._build_backbone_arborescence(
+            sdg, clusters, focus_nodes
+        )
         xrefs = self._cross_cluster_xrefs(sdg, clusters, limit=32)
         hierarchy_links = self._hierarchy_parent_links(hierarchy_levels, selected_level)
 
         projection_id = self._projection_id(scope)
         labels = self._cluster_labels(snapshot, clusters, representatives)
-        l0_summary = self._build_l0_summary(scope, labels, sg.number_of_nodes(), sg.number_of_edges())
+        l0_summary = self._build_l0_summary(
+            scope, labels, sg.number_of_nodes(), sg.number_of_edges()
+        )
         l1_summary = self._build_l1_summary(scope, labels, tree_edges, xrefs)
         llm_l0 = self._llm_rewrite_summary("L0", scope, labels, l0_summary)
         llm_l1 = self._llm_rewrite_summary("L1", scope, labels, l1_summary)
@@ -153,12 +164,16 @@ class ProjectionTransformer:
 
         sections = []
         navigation = []
-        for cid, members in sorted(clusters.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        for cid, members in sorted(
+            clusters.items(), key=lambda kv: (-len(kv[1]), kv[0])
+        ):
             label = labels.get(cid, f"Cluster {cid}")
             sections.append({"name": label, "text": f"{len(members)} nodes"})
             rep = representatives.get(cid)
             if rep:
-                navigation.append({"label": label, "ref": self._source_ref_for_node(rep, snapshot)})
+                navigation.append(
+                    {"label": label, "ref": self._source_ref_for_node(rep, snapshot)}
+                )
         source_refs = self._source_refs(snapshot, scope)
 
         l1 = self._envelope(
@@ -189,7 +204,10 @@ class ProjectionTransformer:
                         }
                         for child, parent, level in hierarchy_links
                     ],
-                    "backbone": [{"src": src, "dst": dst, "type": "tree"} for src, dst in tree_edges],
+                    "backbone": [
+                        {"src": src, "dst": dst, "type": "tree"}
+                        for src, dst in tree_edges
+                    ],
                 },
                 "navigation": navigation,
                 "decisions": [
@@ -237,9 +255,6 @@ class ProjectionTransformer:
 
         if ig is None and self.enable_leiden:
             warnings.append("python_igraph_not_available_using_networkx_fallback")
-        if sg.number_of_nodes() > self.centrality_max_nodes:
-            warnings.append("centrality_fallback_large_graph")
-
         return ProjectionBuildResult(
             projection_id=projection_id,
             snapshot_id=scope.snapshot_id,
@@ -259,13 +274,21 @@ class ProjectionTransformer:
         )
         return f"proj_{_stable_hash(payload)[:20]}"
 
-    def _build_weighted_graph(self, snapshot: IRSnapshot, ir_graphs: IRGraphs | None) -> nx.Graph:
+    def _build_weighted_graph(
+        self, snapshot: IRSnapshot, ir_graphs: IRGraphs | None
+    ) -> nx.Graph:
         g = nx.Graph()
         docs_by_id = {d.doc_id: d for d in snapshot.documents}
         symbols_by_id = {s.symbol_id: s for s in snapshot.symbols}
 
         for d in snapshot.documents:
-            g.add_node(d.doc_id, node_kind="document", title=d.path, path=d.path, language=d.language)
+            g.add_node(
+                d.doc_id,
+                node_kind="document",
+                title=d.path,
+                path=d.path,
+                language=d.language,
+            )
         for s in snapshot.symbols:
             g.add_node(
                 s.symbol_id,
@@ -284,7 +307,13 @@ class ProjectionTransformer:
                 g[e.src_id][e.dst_id]["weight"] += wt
                 g[e.src_id][e.dst_id]["edge_types"].add(e.edge_type)
             else:
-                g.add_edge(e.src_id, e.dst_id, weight=wt, edge_types={e.edge_type}, source=e.source)
+                g.add_edge(
+                    e.src_id,
+                    e.dst_id,
+                    weight=wt,
+                    edge_types={e.edge_type},
+                    source=e.source,
+                )
 
         if ir_graphs:
             for edge_type, graph in [
@@ -302,17 +331,31 @@ class ProjectionTransformer:
                         g[src][dst]["weight"] += wt
                         g[src][dst]["edge_types"].add(edge_type)
                     else:
-                        g.add_edge(src, dst, weight=wt, edge_types={edge_type}, source="ir_graph")
+                        g.add_edge(
+                            src,
+                            dst,
+                            weight=wt,
+                            edge_types={edge_type},
+                            source="ir_graph",
+                        )
 
         if g.number_of_edges() == 0:
             docs_by_path = {d.path: d.doc_id for d in docs_by_id.values()}
             for sym in symbols_by_id.values():
                 doc_id = docs_by_path.get(sym.path)
                 if doc_id and doc_id in g.nodes:
-                    g.add_edge(sym.symbol_id, doc_id, weight=1.0, edge_types={"contain"}, source="fallback")
+                    g.add_edge(
+                        sym.symbol_id,
+                        doc_id,
+                        weight=1.0,
+                        edge_types={"contain"},
+                        source="fallback",
+                    )
         return g
 
-    def _build_directed_weighted_graph(self, snapshot: IRSnapshot, ir_graphs: IRGraphs | None) -> nx.DiGraph:
+    def _build_directed_weighted_graph(
+        self, snapshot: IRSnapshot, ir_graphs: IRGraphs | None
+    ) -> nx.DiGraph:
         g = nx.DiGraph()
         for d in snapshot.documents:
             g.add_node(d.doc_id)
@@ -347,10 +390,18 @@ class ProjectionTransformer:
             for s in snapshot.symbols:
                 doc_id = docs_by_path.get(s.path)
                 if doc_id and doc_id in g.nodes:
-                    g.add_edge(s.symbol_id, doc_id, weight=1.0, edge_types={"contain"}, source="fallback")
+                    g.add_edge(
+                        s.symbol_id,
+                        doc_id,
+                        weight=1.0,
+                        edge_types={"contain"},
+                        source="fallback",
+                    )
         return g
 
-    def _scope_nodes(self, scope: ProjectionScope, snapshot: IRSnapshot, g: nx.Graph) -> tuple[set[str], set[str]]:
+    def _scope_nodes(
+        self, scope: ProjectionScope, snapshot: IRSnapshot, g: nx.Graph
+    ) -> tuple[set[str], set[str]]:
         all_nodes = set(g.nodes())
         if scope.scope_kind == "snapshot":
             return all_nodes, set()
@@ -358,7 +409,11 @@ class ProjectionTransformer:
             focus = self._resolve_entity_node(scope.target_id, snapshot, g)
             if not focus:
                 return set(), set()
-            nodes = set(nx.single_source_shortest_path_length(g, focus, cutoff=self.max_entity_hops).keys())
+            nodes = set(
+                nx.single_source_shortest_path_length(
+                    g, focus, cutoff=self.max_entity_hops
+                ).keys()
+            )
             return nodes, {focus}
         if scope.scope_kind == "query":
             terminals = self._query_terminals(scope.query or "", snapshot, g)
@@ -366,23 +421,35 @@ class ProjectionTransformer:
                 return set(), set()
             if len(terminals) == 1:
                 focus = next(iter(terminals))
-                nodes = set(nx.single_source_shortest_path_length(g, focus, cutoff=self.max_query_hops).keys())
+                nodes = set(
+                    nx.single_source_shortest_path_length(
+                        g, focus, cutoff=self.max_query_hops
+                    ).keys()
+                )
                 return nodes, terminals
             try:
                 weighted = g.copy()
                 for src, dst, data in weighted.edges(data=True):
                     data["distance"] = 1.0 / max(0.1, float(data.get("weight", 1.0)))
-                tree = nx.approximation.steiner_tree(weighted, terminals, weight="distance")
+                tree = nx.approximation.steiner_tree(
+                    weighted, terminals, weight="distance"
+                )
                 if self.steiner_prune:
                     tree = self._prune_steiner_leaves(tree, terminals)
                 nodes = set(tree.nodes())
                 for t in list(terminals):
-                    nodes.update(nx.single_source_shortest_path_length(g, t, cutoff=1).keys())
+                    nodes.update(
+                        nx.single_source_shortest_path_length(g, t, cutoff=1).keys()
+                    )
                 return nodes, terminals
             except Exception:
                 nodes = set()
                 for t in terminals:
-                    nodes.update(nx.single_source_shortest_path_length(g, t, cutoff=self.max_query_hops).keys())
+                    nodes.update(
+                        nx.single_source_shortest_path_length(
+                            g, t, cutoff=self.max_query_hops
+                        ).keys()
+                    )
                 return nodes, terminals
         return all_nodes, set()
 
@@ -400,13 +467,19 @@ class ProjectionTransformer:
                     changed = True
         return pruned
 
-    def _resolve_entity_node(self, target_id: str | None, snapshot: IRSnapshot, g: nx.Graph) -> str | None:
+    def _resolve_entity_node(
+        self, target_id: str | None, snapshot: IRSnapshot, g: nx.Graph
+    ) -> str | None:
         if not target_id:
             return None
         if target_id in g.nodes:
             return target_id
         for sym in snapshot.symbols:
-            if sym.symbol_id == target_id or sym.display_name == target_id or sym.path == target_id:
+            if (
+                sym.symbol_id == target_id
+                or sym.display_name == target_id
+                or sym.path == target_id
+            ):
                 if sym.symbol_id in g.nodes:
                     return sym.symbol_id
         for doc in snapshot.documents:
@@ -415,7 +488,9 @@ class ProjectionTransformer:
                     return doc.doc_id
         return None
 
-    def _query_terminals(self, query: str, snapshot: IRSnapshot, g: nx.Graph) -> set[str]:
+    def _query_terminals(
+        self, query: str, snapshot: IRSnapshot, g: nx.Graph
+    ) -> set[str]:
         del snapshot
         tokens = set(_clean_words(query))
         if not tokens:
@@ -423,7 +498,11 @@ class ProjectionTransformer:
         scored: list[tuple[float, str]] = []
         for n, attrs in g.nodes(data=True):
             text = " ".join(
-                [str(attrs.get("title", "")), str(attrs.get("path", "")), str(attrs.get("symbol_kind", ""))]
+                [
+                    str(attrs.get("title", "")),
+                    str(attrs.get("path", "")),
+                    str(attrs.get("symbol_kind", "")),
+                ]
             ).lower()
             score = sum(1 for t in tokens if t in text)
             if score > 0:
@@ -450,7 +529,9 @@ class ProjectionTransformer:
                 g[n][nb]["weight"] = min(float(g[n][nb].get("weight", 1.0)), 0.5)
         return hidden
 
-    def _cluster_hierarchy(self, g: nx.Graph) -> tuple[dict[int, dict[str, set[str]]], str]:
+    def _cluster_hierarchy(
+        self, g: nx.Graph
+    ) -> tuple[dict[int, dict[str, set[str]]], str]:
         if g.number_of_nodes() == 1:
             node = next(iter(g.nodes()))
             return {0: {"c0": {node}}}, "single"
@@ -464,16 +545,27 @@ class ProjectionTransformer:
                 ig_g.add_vertices(len(nodes))
                 ig_edges = [(idx[u], idx[v]) for u, v in g.edges()]
                 ig_g.add_edges(ig_edges)
-                if not self.hierarchical_leiden_enabled and len(self.leiden_resolutions) == 1:
+                if (
+                    not self.hierarchical_leiden_enabled
+                    and len(self.leiden_resolutions) == 1
+                ):
                     resolution = self.leiden_resolutions[0]
                     part = ig_g.community_leiden(resolution_parameter=resolution)
-                    clusters = {f"c{ci}": {nodes[m] for m in members} for ci, members in enumerate(part)}
+                    clusters = {
+                        f"c{ci}": {nodes[m] for m in members}
+                        for ci, members in enumerate(part)
+                    }
                     return {0: clusters}, "leiden"
                 if self.hierarchical_leiden_enabled:
                     levels: dict[int, dict[str, set[str]]] = {}
-                    for level, resolution in enumerate(self.leiden_resolutions[: self.hierarchy_max_levels]):
+                    for level, resolution in enumerate(
+                        self.leiden_resolutions[: self.hierarchy_max_levels]
+                    ):
                         part = ig_g.community_leiden(resolution_parameter=resolution)
-                        clusters = {f"c{ci}": {nodes[m] for m in members} for ci, members in enumerate(part)}
+                        clusters = {
+                            f"c{ci}": {nodes[m] for m in members}
+                            for ci, members in enumerate(part)
+                        }
                         levels[level] = clusters
                         if len(clusters) <= 1:
                             break
@@ -486,10 +578,16 @@ class ProjectionTransformer:
     @staticmethod
     def _cluster_nodes_fallback(g: nx.Graph) -> dict[str, set[str]]:
         communities = list(nx.algorithms.community.greedy_modularity_communities(g))
-        return {f"c{i}": set(c) for i, c in enumerate(communities)} if communities else {"c0": set(g.nodes())}
+        return (
+            {f"c{i}": set(c) for i, c in enumerate(communities)}
+            if communities
+            else {"c0": set(g.nodes())}
+        )
 
     @staticmethod
-    def _select_cluster_level(hierarchy_levels: dict[int, dict[str, set[str]]]) -> tuple[dict[str, set[str]], int]:
+    def _select_cluster_level(
+        hierarchy_levels: dict[int, dict[str, set[str]]],
+    ) -> tuple[dict[str, set[str]], int]:
         target, min_count, max_count = 12, 6, 24
         selected_level = min(hierarchy_levels.keys())
         best_score = float("inf")
@@ -532,20 +630,21 @@ class ProjectionTransformer:
         centrality: dict[str, dict[str, float]] = {}
         if g.number_of_nodes() == 0:
             return reps, centrality
-        pr = nx.pagerank(g, alpha=0.85) if g.number_of_edges() else dict.fromkeys(g.nodes(), 1.0)
-        degree_cent = nx.degree_centrality(g) if g.number_of_nodes() > 1 else dict.fromkeys(g.nodes(), 0.0)
-        bt = {}
-        if g.number_of_nodes() <= self.centrality_max_nodes and g.number_of_edges() > 0:
-            try:
-                bt = nx.betweenness_centrality(g)
-            except Exception:
-                bt = {}
+        pr = (
+            nx.pagerank(g, alpha=0.85)
+            if g.number_of_edges()
+            else dict.fromkeys(g.nodes(), 1.0)
+        )
+        degree_cent = (
+            nx.degree_centrality(g)
+            if g.number_of_nodes() > 1
+            else dict.fromkeys(g.nodes(), 0.0)
+        )
         for cid, nodes in clusters.items():
             rep = max(
                 nodes,
                 key=lambda n: (
                     pr.get(n, 0.0),
-                    bt.get(n, 0.0),
                     degree_cent.get(n, 0.0),
                     g.degree(n),
                 ),
@@ -553,7 +652,6 @@ class ProjectionTransformer:
             reps[cid] = rep
             centrality[cid] = {
                 "pagerank": float(pr.get(rep, 0.0)),
-                "betweenness": float(bt.get(rep, 0.0)),
                 "degree_centrality": float(degree_cent.get(rep, 0.0)),
                 "degree": float(g.degree(rep)),
             }
@@ -610,7 +708,9 @@ class ProjectionTransformer:
                         best = (u, v)
                         best_weight = w
             if not best:
-                next_cluster = max(remaining, key=lambda c: cg.out_degree(c) + cg.in_degree(c))
+                next_cluster = max(
+                    remaining, key=lambda c: cg.out_degree(c) + cg.in_degree(c)
+                )
                 tree_edges.append((root, next_cluster))
                 visited.add(next_cluster)
                 remaining.remove(next_cluster)
@@ -674,7 +774,9 @@ class ProjectionTransformer:
                 labels[cid] = f"{labels[cid]} ({len(members)})"
         return labels
 
-    def _build_l0_summary(self, scope: ProjectionScope, labels: dict[str, str], nodes: int, edges: int) -> str:
+    def _build_l0_summary(
+        self, scope: ProjectionScope, labels: dict[str, str], nodes: int, edges: int
+    ) -> str:
         top = ", ".join(list(labels.values())[:3]) or "No clusters"
         return (
             f"{scope.scope_kind.capitalize()} projection over {nodes} nodes and {edges} edges. "
@@ -726,7 +828,9 @@ class ProjectionTransformer:
         except Exception:
             return None
 
-    def _source_refs(self, snapshot: IRSnapshot, scope: ProjectionScope) -> list[dict[str, Any]]:
+    def _source_refs(
+        self, snapshot: IRSnapshot, scope: ProjectionScope
+    ) -> list[dict[str, Any]]:
         return [
             {
                 "type": "repository",
@@ -752,7 +856,9 @@ class ProjectionTransformer:
             },
         ]
 
-    def _source_ref_for_node(self, node_id: str, snapshot: IRSnapshot) -> dict[str, Any]:
+    def _source_ref_for_node(
+        self, node_id: str, snapshot: IRSnapshot
+    ) -> dict[str, Any]:
         for s in snapshot.symbols:
             if s.symbol_id == node_id:
                 return {
@@ -860,8 +966,12 @@ class ProjectionTransformer:
             "member_count": len(members),
             "symbol_count": len(symbols),
             "doc_count": len(docs),
-            "dominant_language": lang_counter.most_common(1)[0][0] if lang_counter else None,
-            "dominant_kind": kind_counter.most_common(1)[0][0] if kind_counter else None,
+            "dominant_language": lang_counter.most_common(1)[0][0]
+            if lang_counter
+            else None,
+            "dominant_kind": kind_counter.most_common(1)[0][0]
+            if kind_counter
+            else None,
             "kind_distribution": dict(kind_counter),
             "edge_type_distribution": dict(edge_type_counter),
             "common_path_prefix": common_prefix,
@@ -892,7 +1002,9 @@ class ProjectionTransformer:
                 if sid:
                     mentions_by_symbol[sid].append(m)
 
-        for cid, members in sorted(clusters.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        for cid, members in sorted(
+            clusters.items(), key=lambda kv: (-len(kv[1]), kv[0])
+        ):
             if len(chunks) >= self.max_chunk_count:
                 break
             rep = representatives.get(cid)
@@ -900,7 +1012,9 @@ class ProjectionTransformer:
                 continue
             chunk_id = f"c_{cid}"
             refs = [self._source_ref_for_node(rep, snapshot)]
-            agg = self._aggregate_cluster_attributes(snapshot, members, sg, representative=rep)
+            agg = self._aggregate_cluster_attributes(
+                snapshot, members, sg, representative=rep
+            )
             facts = [
                 {"type": "cluster_size", "value": len(members)},
                 {"type": "cluster_label", "value": labels.get(cid)},
@@ -908,7 +1022,9 @@ class ProjectionTransformer:
                 {"type": "dominant_language", "value": agg.get("dominant_language")},
             ]
             supporting_docs = self._supporting_docs_for_cluster(
-                members, mentions_by_symbol, max_supporting,
+                members,
+                mentions_by_symbol,
+                max_supporting,
             )
             if rep in sym_map:
                 sym = sym_map[rep]
@@ -941,7 +1057,11 @@ class ProjectionTransformer:
                 if supporting_docs:
                     content["supporting_docs"] = supporting_docs
             else:
-                content = {"snippet": f"Cluster representative {rep}", "facts": facts, "refs": refs}
+                content = {
+                    "snippet": f"Cluster representative {rep}",
+                    "facts": facts,
+                    "refs": refs,
+                }
                 if supporting_docs:
                     content["supporting_docs"] = supporting_docs
             chunks.append(
@@ -1008,7 +1128,9 @@ class ProjectionTransformer:
                     "file": c_content.get("file"),
                     "start_line": c_range.get("start_line"),
                     "end_line": c_range.get("end_line"),
-                    "label": c_content.get("symbol") or c_content.get("file") or c["chunk_id"],
+                    "label": c_content.get("symbol")
+                    or c_content.get("file")
+                    or c["chunk_id"],
                 }
             )
         summary = f"Detailed evidence available in {len(chunk_rows)} chunks."

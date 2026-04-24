@@ -27,6 +27,7 @@ from .embedder import CodeEmbedder
 from .global_index_builder import GlobalIndexBuilder
 from .graph_builder import CodeGraphBuilder
 from .graph_runtime import LadybugGraphRuntime
+from .incremental_update import apply_incremental_update, diff_changed_files
 from .index_run import IndexRunStore
 from .indexer import CodeElement, CodeIndexer
 from .ir_graph_builder import IRGraphBuilder
@@ -778,6 +779,52 @@ class FastCode:
             errors = validate_snapshot(merged_snapshot)
             if errors:
                 raise RuntimeError(f"IR validation failed: {errors[:5]}")
+
+            # Incremental update: if a previous snapshot exists for this branch,
+            # diff blob_oids and merge only changed file content.
+            incremental_change_set = None
+            ref_name_for_inc = snapshot_ref.get("branch") or ref or "HEAD"
+            prev_manifest = self.manifest_store.get_branch_manifest(
+                repo_name, ref_name_for_inc
+            )
+            if prev_manifest:
+                prev_snap_id = prev_manifest.get("snapshot_id")
+                if prev_snap_id and prev_snap_id != snapshot_id:
+                    prev_snapshot = self.snapshot_store.load_snapshot(prev_snap_id)
+                    if prev_snapshot:
+                        incremental_change_set = diff_changed_files(
+                            prev_snapshot, merged_snapshot
+                        )
+                        changed_count = (
+                            len(incremental_change_set.added)
+                            + len(incremental_change_set.modified)
+                            + len(incremental_change_set.removed)
+                        )
+                        if changed_count == 0:
+                            self.logger.info(
+                                "incremental: no file changes detected vs %s",
+                                prev_snap_id,
+                            )
+                        else:
+                            self.logger.info(
+                                "incremental: %d added, %d modified, %d removed "
+                                "(%d unchanged) vs %s",
+                                len(incremental_change_set.added),
+                                len(incremental_change_set.modified),
+                                len(incremental_change_set.removed),
+                                len(incremental_change_set.unchanged),
+                                prev_snap_id,
+                            )
+                            merged_snapshot = apply_incremental_update(
+                                prev_snapshot, merged_snapshot, incremental_change_set
+                            )
+                            # Re-validate after incremental merge.
+                            errors = validate_snapshot(merged_snapshot)
+                            if errors:
+                                raise RuntimeError(
+                                    f"IR validation failed after incremental merge: {errors[:5]}"
+                                )
+
             self.snapshot_symbol_index.register_snapshot(merged_snapshot)
 
             doc_chunks_payload: list[dict[str, Any]] = []
@@ -961,7 +1008,7 @@ class FastCode:
             self.index_run_store.mark_completed(
                 run_id, status=status, warnings=warnings
             )
-            return {
+            result: dict[str, Any] = {
                 "status": status,
                 "run_id": run_id,
                 "repo_name": repo_name,
@@ -970,6 +1017,14 @@ class FastCode:
                 "manifest": manifest,
                 "warnings": warnings,
             }
+            if incremental_change_set is not None:
+                result["incremental"] = {
+                    "added": len(incremental_change_set.added),
+                    "modified": len(incremental_change_set.modified),
+                    "removed": len(incremental_change_set.removed),
+                    "unchanged": len(incremental_change_set.unchanged),
+                }
+            return result
         except Exception as e:
             self.index_run_store.mark_failed(run_id, str(e))
             self.snapshot_store.enqueue_redo_task(

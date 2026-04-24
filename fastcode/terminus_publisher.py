@@ -4,15 +4,16 @@ TerminusDB lineage publisher.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import urllib.error
 import urllib.request
-from typing import Any, Dict
+from typing import Any
 
 
 class TerminusPublisher:
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.logger = logging.getLogger(__name__)
         terminus_cfg = config.get("terminus", {})
@@ -23,12 +24,90 @@ class TerminusPublisher:
     def is_configured(self) -> bool:
         return bool(self.endpoint)
 
+    def _deterministic_event_id(self, snapshot_id: str, payload: str) -> str:
+        """Generate a deterministic event ID from snapshot_id + payload hash."""
+        h = hashlib.sha256(f"{snapshot_id}:{payload}".encode()).hexdigest()[:32]
+        return f"outbox:{snapshot_id}:{h}"
+
+    def enqueue_publish(
+        self,
+        snapshot_id: str,
+        payload: dict[str, Any],
+        snapshot_store: Any,
+        idempotency_key: str | None = None,
+    ) -> str | None:
+        """Enqueue a lineage publish event into the outbox instead of doing direct HTTP POST.
+
+        Returns the event_id if enqueued, None if outbox is not available (non-postgres).
+        The event_id is deterministic from snapshot_id + payload for idempotency.
+        """
+        payload_str = json.dumps(payload, sort_keys=True)
+        event_id = idempotency_key or self._deterministic_event_id(
+            snapshot_id, payload_str
+        )
+        inserted = snapshot_store.enqueue_outbox_event(
+            event_id=event_id,
+            event_type="lineage_publish",
+            payload=payload_str,
+            snapshot_id=snapshot_id,
+        )
+        if inserted:
+            self.logger.info(
+                "Enqueued publish event %s for snapshot %s", event_id, snapshot_id
+            )
+            return event_id
+        self.logger.info("Publish event %s already exists, skipping", event_id)
+        return event_id
+
+    def flush_outbox(self, snapshot_store: Any, limit: int = 10) -> dict[str, int]:
+        """Flush pending outbox events by attempting HTTP POST for each.
+
+        Returns {"processed": int, "succeeded": int, "failed": int}.
+        """
+        result = {"processed": 0, "succeeded": 0, "failed": 0}
+        events = snapshot_store.claim_outbox_event(limit=limit)
+        if not events:
+            return result
+        for event in events:
+            event_id = event["event_id"]
+            payload_str = event["payload"]
+            try:
+                payload = json.loads(payload_str)
+            except (json.JSONDecodeError, ValueError):
+                self.logger.error(
+                    "Outbox event %s has malformed payload, marking failed", event_id
+                )
+                snapshot_store.mark_outbox_event_failed(
+                    event_id, "malformed payload JSON"
+                )
+                result["processed"] += 1
+                result["failed"] += 1
+                continue
+            try:
+                self._do_post(payload)
+                snapshot_store.mark_outbox_event_done(event_id)
+                self.logger.info("Outbox event %s published successfully", event_id)
+                result["succeeded"] += 1
+            except Exception as e:
+                error_msg = str(e)
+                self.logger.warning(
+                    "Outbox event %s publish failed: %s", event_id, error_msg
+                )
+                snapshot_store.mark_outbox_event_failed(event_id, error_msg)
+                result["failed"] += 1
+            result["processed"] += 1
+        return result
+
+    def get_pending_count(self, snapshot_store: Any) -> int:
+        """Return count of pending + retryable failed outbox events."""
+        return snapshot_store.get_outbox_pending_count()
+
     def publish_snapshot_lineage(
         self,
-        snapshot: Dict[str, Any],
-        manifest: Dict[str, Any],
-        git_meta: Dict[str, Any],
-        previous_snapshot_symbols: Dict[str, str] | None = None,
+        snapshot: dict[str, Any],
+        manifest: dict[str, Any],
+        git_meta: dict[str, Any],
+        previous_snapshot_symbols: dict[str, str] | None = None,
         idempotency_key: str | None = None,
     ) -> None:
         if not self.endpoint:
@@ -40,8 +119,19 @@ class TerminusPublisher:
             git_meta=git_meta,
             previous_snapshot_symbols=previous_snapshot_symbols,
         )
+        self._do_post(payload, idempotency_key=idempotency_key)
+
+    def _do_post(
+        self,
+        payload: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> None:
+        """Execute the HTTP POST to TerminusDB."""
+        if not self.endpoint:
+            raise RuntimeError("Terminus endpoint is not configured")
+
         body = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
+        req = urllib.request.Request(  # noqa: S310
             self.endpoint,
             data=body,
             method="POST",
@@ -52,20 +142,20 @@ class TerminusPublisher:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                if resp.status >= 300:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
+                if resp.status >= 300:  # noqa: PLR2004
                     raise RuntimeError(f"Terminus publish failed: HTTP {resp.status}")
                 self.logger.info("Published snapshot lineage to Terminus")
         except urllib.error.URLError as e:
             raise RuntimeError(f"Terminus publish error: {e}") from e
 
-    def build_lineage_payload(
+    def build_lineage_payload(  # noqa: PLR0912, PLR0915
         self,
-        snapshot: Dict[str, Any],
-        manifest: Dict[str, Any],
-        git_meta: Dict[str, Any],
-        previous_snapshot_symbols: Dict[str, str] | None = None,
-    ) -> Dict[str, Any]:
+        snapshot: dict[str, Any],
+        manifest: dict[str, Any],
+        git_meta: dict[str, Any],
+        previous_snapshot_symbols: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         repo_name = snapshot.get("repo_name") or git_meta.get("repo_name")
         snapshot_id = snapshot.get("snapshot_id")
         if not snapshot_id:
@@ -85,7 +175,11 @@ class TerminusPublisher:
         run_node_id = f"index_run:{run_id}" if run_id else None
 
         nodes = [
-            {"id": repo_node_id, "type": "Repository", "props": {"repo_name": repo_name}},
+            {
+                "id": repo_node_id,
+                "type": "Repository",
+                "props": {"repo_name": repo_name},
+            },
             {
                 "id": snapshot_node_id,
                 "type": "Snapshot",
@@ -98,11 +192,25 @@ class TerminusPublisher:
             },
         ]
         if branch_node_id:
-            nodes.append({"id": branch_node_id, "type": "Branch", "props": {"repo_name": repo_name, "name": branch}})
+            nodes.append(
+                {
+                    "id": branch_node_id,
+                    "type": "Branch",
+                    "props": {"repo_name": repo_name, "name": branch},
+                }
+            )
         if commit_node_id:
-            nodes.append({"id": commit_node_id, "type": "Commit", "props": {"repo_name": repo_name, "commit_id": commit_id}})
+            nodes.append(
+                {
+                    "id": commit_node_id,
+                    "type": "Commit",
+                    "props": {"repo_name": repo_name, "commit_id": commit_id},
+                }
+            )
         if run_node_id:
-            nodes.append({"id": run_node_id, "type": "IndexRun", "props": {"run_id": run_id}})
+            nodes.append(
+                {"id": run_node_id, "type": "IndexRun", "props": {"run_id": run_id}}
+            )
         if manifest_node_id:
             nodes.append(
                 {
@@ -117,11 +225,21 @@ class TerminusPublisher:
                 }
             )
 
-        edges = [{"type": "repo_snapshot", "src": repo_node_id, "dst": snapshot_node_id}]
+        edges = [
+            {"type": "repo_snapshot", "src": repo_node_id, "dst": snapshot_node_id}
+        ]
         if branch_node_id:
-            edges.append({"type": "branch_head", "src": branch_node_id, "dst": snapshot_node_id})
+            edges.append(
+                {"type": "branch_head", "src": branch_node_id, "dst": snapshot_node_id}
+            )
         if commit_node_id:
-            edges.append({"type": "commit_snapshot", "src": commit_node_id, "dst": snapshot_node_id})
+            edges.append(
+                {
+                    "type": "commit_snapshot",
+                    "src": commit_node_id,
+                    "dst": snapshot_node_id,
+                }
+            )
             parent_ids = git_meta.get("parent_commit_ids") or []
             if not parent_ids and git_meta.get("parent_commit_id"):
                 parent_ids = [git_meta.get("parent_commit_id")]
@@ -136,14 +254,38 @@ class TerminusPublisher:
                         "props": {"repo_name": repo_name, "commit_id": parent_id},
                     }
                 )
-                edges.append({"type": "commit_parent", "src": commit_node_id, "dst": parent_node_id})
+                edges.append(
+                    {
+                        "type": "commit_parent",
+                        "src": commit_node_id,
+                        "dst": parent_node_id,
+                    }
+                )
         if run_node_id:
-            edges.append({"type": "index_run_for_snapshot", "src": run_node_id, "dst": snapshot_node_id})
+            edges.append(
+                {
+                    "type": "index_run_for_snapshot",
+                    "src": run_node_id,
+                    "dst": snapshot_node_id,
+                }
+            )
         if manifest_node_id:
-            edges.append({"type": "snapshot_manifest", "src": snapshot_node_id, "dst": manifest_node_id})
+            edges.append(
+                {
+                    "type": "snapshot_manifest",
+                    "src": snapshot_node_id,
+                    "dst": manifest_node_id,
+                }
+            )
             prev = manifest.get("previous_manifest_id")
             if prev:
-                edges.append({"type": "manifest_supersedes", "src": manifest_node_id, "dst": f"manifest:{prev}"})
+                edges.append(
+                    {
+                        "type": "manifest_supersedes",
+                        "src": manifest_node_id,
+                        "dst": f"manifest:{prev}",
+                    }
+                )
 
         documents = snapshot.get("documents") or []
         symbols = snapshot.get("symbols") or []
@@ -163,7 +305,13 @@ class TerminusPublisher:
                     },
                 }
             )
-            edges.append({"type": "snapshot_contains_document", "src": snapshot_node_id, "dst": node_id})
+            edges.append(
+                {
+                    "type": "snapshot_contains_document",
+                    "src": snapshot_node_id,
+                    "dst": node_id,
+                }
+            )
 
         for sym in symbols:
             symbol_id = sym.get("symbol_id")
@@ -194,7 +342,11 @@ class TerminusPublisher:
                         }
                     )
             ext_symbol = sym.get("external_symbol_id")
-            if ext_symbol and previous_snapshot_symbols and ext_symbol in previous_snapshot_symbols:
+            if (
+                ext_symbol
+                and previous_snapshot_symbols
+                and ext_symbol in previous_snapshot_symbols
+            ):
                 edges.append(
                     {
                         "type": "symbol_version_from",

@@ -20,13 +20,17 @@ from .utils import ensure_dir, utc_now
 
 
 class SnapshotStore:
-    def __init__(self, persist_dir: str, storage_cfg: dict[str, Any] | None = None):
+    def __init__(
+        self, persist_dir: str, storage_cfg: dict[str, Any] | None = None
+    ) -> None:
         self.persist_dir = os.path.abspath(persist_dir)
         self.snapshot_root = os.path.join(self.persist_dir, "snapshots")
         ensure_dir(self.persist_dir)
         ensure_dir(self.snapshot_root)
         self.db_path = os.path.join(self.persist_dir, "lineage.db")
-        self.db_runtime = DBRuntime.from_storage_config(sqlite_path=self.db_path, storage_cfg=storage_cfg)
+        self.db_runtime = DBRuntime.from_storage_config(
+            sqlite_path=self.db_path, storage_cfg=storage_cfg
+        )
         self._init_db()
 
     def _init_db(self) -> None:
@@ -46,7 +50,7 @@ class SnapshotStore:
                     created_at TEXT NOT NULL,
                     metadata_json TEXT
                 )
-                """
+                """,
             )
             if self.db_runtime.backend == "postgres":
                 self.db_runtime.execute(
@@ -91,7 +95,7 @@ class SnapshotStore:
                     checksum TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 )
-                """
+                """,
             )
             self.db_runtime.execute(
                 conn,
@@ -109,7 +113,7 @@ class SnapshotStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_snapshot_refs_repo_branch
                 ON snapshot_refs (repo_name, branch, created_at DESC)
-                """
+                """,
             )
             self.db_runtime.execute(
                 conn,
@@ -316,6 +320,30 @@ class SnapshotStore:
                 self.db_runtime.execute(
                     conn,
                     """
+                    CREATE TABLE IF NOT EXISTS publish_outbox (
+                        event_id TEXT PRIMARY KEY,
+                        event_type TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        snapshot_id TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        attempts INTEGER NOT NULL DEFAULT 0,
+                        max_attempts INTEGER NOT NULL DEFAULT 5,
+                        created_at TEXT NOT NULL,
+                        last_attempt_at TEXT,
+                        error_message TEXT
+                    )
+                    """,
+                )
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_outbox_status
+                    ON publish_outbox(status)
+                    """,
+                )
+                self.db_runtime.execute(
+                    conn,
+                    """
                     CREATE TABLE IF NOT EXISTS design_documents (
                         snapshot_id TEXT NOT NULL,
                         chunk_id TEXT NOT NULL,
@@ -356,7 +384,7 @@ class SnapshotStore:
             conn.commit()
 
     def artifact_key_for_snapshot(self, snapshot_id: str) -> str:
-        return f"snap_{hashlib.md5(snapshot_id.encode('utf-8')).hexdigest()[:20]}"
+        return f"snap_{hashlib.md5(snapshot_id.encode('utf-8')).hexdigest()[:20]}"  # noqa: S324
 
     def snapshot_dir(self, snapshot_id: str) -> str:
         safe = self.artifact_key_for_snapshot(snapshot_id)
@@ -364,7 +392,9 @@ class SnapshotStore:
         ensure_dir(path)
         return path
 
-    def save_snapshot(self, snapshot: IRSnapshot, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    def save_snapshot(
+        self, snapshot: IRSnapshot, metadata: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         snap_dir = self.snapshot_dir(snapshot.snapshot_id)
         ir_path = os.path.join(snap_dir, "ir_snapshot.json")
         tmp_ir_path = f"{ir_path}.tmp"
@@ -430,7 +460,9 @@ class SnapshotStore:
             "dir": snap_dir,
         }
 
-    def update_snapshot_metadata(self, snapshot_id: str, metadata: dict[str, Any]) -> None:
+    def update_snapshot_metadata(
+        self, snapshot_id: str, metadata: dict[str, Any]
+    ) -> None:
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,
@@ -461,7 +493,7 @@ class SnapshotStore:
         if not path or not os.path.exists(path):
             return None
         with open(path, "rb") as f:
-            return pickle.load(f)
+            return pickle.load(f)  # noqa: S301
 
     def load_snapshot(self, snapshot_id: str) -> IRSnapshot | None:
         row = self.get_snapshot_record(snapshot_id)
@@ -483,7 +515,9 @@ class SnapshotStore:
             ).fetchone()
         return self.db_runtime.row_to_dict(row)
 
-    def find_by_repo_commit(self, repo_name: str, commit_id: str) -> dict[str, Any] | None:
+    def find_by_repo_commit(
+        self, repo_name: str, commit_id: str
+    ) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -511,7 +545,9 @@ class SnapshotStore:
             ).fetchone()
         return self.db_runtime.row_to_dict(row)
 
-    def resolve_snapshot_for_ref(self, repo_name: str, branch: str) -> dict[str, Any] | None:
+    def resolve_snapshot_for_ref(
+        self, repo_name: str, branch: str
+    ) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -578,7 +614,9 @@ class SnapshotStore:
             ).fetchone()
         return self.db_runtime.row_to_dict(row)
 
-    def import_git_backbone(self, snapshot: IRSnapshot, git_meta: dict[str, Any] | None = None) -> None:
+    def import_git_backbone(
+        self, snapshot: IRSnapshot, git_meta: dict[str, Any] | None = None
+    ) -> None:
         if self.db_runtime.backend != "postgres":
             return
         git_meta = git_meta or {}
@@ -604,7 +642,13 @@ class SnapshotStore:
                         tree_id=excluded.tree_id,
                         parent_commit_id=excluded.parent_commit_id
                     """,
-                    (repo_id, snapshot.commit_id, snapshot.tree_id, git_meta.get("parent_commit_id"), now),
+                    (
+                        repo_id,
+                        snapshot.commit_id,
+                        snapshot.tree_id,
+                        git_meta.get("parent_commit_id"),
+                        now,
+                    ),
                 )
             if snapshot.tree_id:
                 self.db_runtime.execute(
@@ -634,11 +678,27 @@ class SnapshotStore:
         if self.db_runtime.backend != "postgres":
             return
         with self.db_runtime.connect() as conn:
-            self.db_runtime.execute(conn, "DELETE FROM snapshot_documents WHERE snapshot_id=?", (snapshot.snapshot_id,))
-            self.db_runtime.execute(conn, "DELETE FROM symbols WHERE snapshot_id=?", (snapshot.snapshot_id,))
-            self.db_runtime.execute(conn, "DELETE FROM occurrences WHERE snapshot_id=?", (snapshot.snapshot_id,))
-            self.db_runtime.execute(conn, "DELETE FROM edges WHERE snapshot_id=?", (snapshot.snapshot_id,))
-            self.db_runtime.execute(conn, "DELETE FROM attachments WHERE snapshot_id=?", (snapshot.snapshot_id,))
+            self.db_runtime.execute(
+                conn,
+                "DELETE FROM snapshot_documents WHERE snapshot_id=?",
+                (snapshot.snapshot_id,),
+            )
+            self.db_runtime.execute(
+                conn, "DELETE FROM symbols WHERE snapshot_id=?", (snapshot.snapshot_id,)
+            )
+            self.db_runtime.execute(
+                conn,
+                "DELETE FROM occurrences WHERE snapshot_id=?",
+                (snapshot.snapshot_id,),
+            )
+            self.db_runtime.execute(
+                conn, "DELETE FROM edges WHERE snapshot_id=?", (snapshot.snapshot_id,)
+            )
+            self.db_runtime.execute(
+                conn,
+                "DELETE FROM attachments WHERE snapshot_id=?",
+                (snapshot.snapshot_id,),
+            )
             for doc in snapshot.documents:
                 self.db_runtime.execute(
                     conn,
@@ -746,7 +806,9 @@ class SnapshotStore:
                 )
             conn.commit()
 
-    def stage_snapshot(self, snapshot: IRSnapshot, metadata: dict[str, Any] | None = None) -> str:
+    def stage_snapshot(
+        self, snapshot: IRSnapshot, metadata: dict[str, Any] | None = None
+    ) -> str:
         stage_id = f"stage_{uuid.uuid4().hex[:16]}"
         if self.db_runtime.backend != "postgres":
             return stage_id
@@ -758,7 +820,12 @@ class SnapshotStore:
                 VALUES (?, ?, 'staged', ?, ?)
                 ON CONFLICT(stage_id) DO NOTHING
                 """,
-                (stage_id, snapshot.snapshot_id, json.dumps(metadata or {}, ensure_ascii=False), utc_now()),
+                (
+                    stage_id,
+                    snapshot.snapshot_id,
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                    utc_now(),
+                ),
             )
             conn.commit()
         return stage_id
@@ -778,11 +845,13 @@ class SnapshotStore:
             )
             conn.commit()
 
-    def acquire_lock(self, lock_name: str, owner_id: str, ttl_seconds: int = 300) -> int | None:
+    def acquire_lock(
+        self, lock_name: str, owner_id: str, ttl_seconds: int = 300
+    ) -> int | None:
         if self.db_runtime.backend != "postgres":
             return 1
         now = datetime.now(UTC)
-        expires_at = (now.timestamp() + ttl_seconds)
+        expires_at = now.timestamp() + ttl_seconds
         expires_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
         now_iso = now.isoformat()
         with self.db_runtime.connect() as conn:
@@ -831,7 +900,9 @@ class SnapshotStore:
             )
             conn.commit()
 
-    def enqueue_redo_task(self, task_type: str, payload: dict[str, Any], error: str | None = None) -> str:
+    def enqueue_redo_task(
+        self, task_type: str, payload: dict[str, Any], error: str | None = None
+    ) -> str:
         task_id = f"redo_{uuid.uuid4().hex[:16]}"
         if self.db_runtime.backend != "postgres":
             return task_id
@@ -844,7 +915,15 @@ class SnapshotStore:
                     task_id, task_type, payload_json, status, attempts, last_error, next_attempt_at, created_at, updated_at
                 ) VALUES (?, ?, ?, 'pending', 0, ?, ?, ?, ?)
                 """,
-                (task_id, task_type, json.dumps(payload, ensure_ascii=False), error, now, now, now),
+                (
+                    task_id,
+                    task_type,
+                    json.dumps(payload, ensure_ascii=False),
+                    error,
+                    now,
+                    now,
+                    now,
+                ),
             )
             conn.commit()
         return task_id
@@ -859,11 +938,20 @@ class SnapshotStore:
         if self.db_runtime.backend != "postgres":
             return
         with self.db_runtime.connect() as conn:
-            self.db_runtime.execute(conn, "DELETE FROM design_documents WHERE snapshot_id=?", (snapshot_id,))
-            self.db_runtime.execute(conn, "DELETE FROM design_doc_mentions WHERE snapshot_id=?", (snapshot_id,))
+            self.db_runtime.execute(
+                conn, "DELETE FROM design_documents WHERE snapshot_id=?", (snapshot_id,)
+            )
+            self.db_runtime.execute(
+                conn,
+                "DELETE FROM design_doc_mentions WHERE snapshot_id=?",
+                (snapshot_id,),
+            )
             for chunk in chunks:
                 if not chunk.get("chunk_id"):
-                    logging.getLogger(__name__).warning("Skipping design document chunk without chunk_id: %s", chunk.get("path", "<unknown>"))
+                    logging.getLogger(__name__).warning(
+                        "Skipping design document chunk without chunk_id: %s",
+                        chunk.get("path", "<unknown>"),
+                    )
                     continue
                 self.db_runtime.execute(
                     conn,
@@ -988,7 +1076,9 @@ class SnapshotStore:
             )
             conn.commit()
 
-    def mark_redo_task_failed(self, task_id: str, error: str, max_attempts: int = 5) -> None:
+    def mark_redo_task_failed(
+        self, task_id: str, error: str, max_attempts: int = 5
+    ) -> None:
         if self.db_runtime.backend != "postgres":
             return
         with self.db_runtime.connect() as conn:
@@ -1009,8 +1099,10 @@ class SnapshotStore:
                     (error, utc_now(), task_id),
                 )
             else:
-                backoff_seconds = max(1, 2 ** attempts)
-                next_attempt_at = (datetime.now(UTC) + timedelta(seconds=backoff_seconds)).isoformat()
+                backoff_seconds = max(1, 2**attempts)
+                next_attempt_at = (
+                    datetime.now(UTC) + timedelta(seconds=backoff_seconds)
+                ).isoformat()
                 self.db_runtime.execute(
                     conn,
                     """
@@ -1021,3 +1113,133 @@ class SnapshotStore:
                     (error, next_attempt_at, utc_now(), task_id),
                 )
             conn.commit()
+
+    # --- Publish outbox methods ---
+
+    def enqueue_outbox_event(
+        self,
+        event_id: str,
+        event_type: str,
+        payload: str,
+        snapshot_id: str,
+        max_attempts: int = 5,
+    ) -> bool:
+        """Insert a publish event into the outbox. Returns True if inserted, False if duplicate."""
+        if self.db_runtime.backend != "postgres":
+            return False
+        with self.db_runtime.connect() as conn:
+            self.db_runtime.execute(
+                conn,
+                """
+                INSERT INTO publish_outbox (
+                    event_id, event_type, payload, snapshot_id, status,
+                    attempts, max_attempts, created_at
+                ) VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)
+                ON CONFLICT(event_id) DO NOTHING
+                """,
+                (event_id, event_type, payload, snapshot_id, max_attempts, utc_now()),
+            )
+            conn.commit()
+        return True
+
+    def claim_outbox_event(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Claim pending or retryable failed events from the outbox."""
+        if self.db_runtime.backend != "postgres":
+            return []
+        with self.db_runtime.connect() as conn:
+            rows = self.db_runtime.execute(
+                conn,
+                """
+                SELECT * FROM publish_outbox
+                WHERE status = 'pending'
+                   OR (status = 'failed' AND attempts < max_attempts)
+                ORDER BY created_at ASC
+                LIMIT ?
+                FOR UPDATE SKIP LOCKED
+                """,
+                (limit,),
+            ).fetchall()
+            if not rows:
+                conn.commit()
+                return []
+            claimed: list[dict[str, Any]] = []
+            for row in rows:
+                event = self.db_runtime.row_to_dict(row) or {}
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    UPDATE publish_outbox
+                    SET status = 'in_progress', last_attempt_at = ?
+                    WHERE event_id = ?
+                    """,
+                    (utc_now(), event["event_id"]),
+                )
+                event["status"] = "in_progress"
+                claimed.append(event)
+            conn.commit()
+        return claimed
+
+    def mark_outbox_event_done(self, event_id: str) -> None:
+        """Mark an outbox event as published."""
+        if self.db_runtime.backend != "postgres":
+            return
+        with self.db_runtime.connect() as conn:
+            self.db_runtime.execute(
+                conn,
+                """
+                UPDATE publish_outbox
+                SET status = 'published'
+                WHERE event_id = ?
+                """,
+                (event_id,),
+            )
+            conn.commit()
+
+    def mark_outbox_event_failed(self, event_id: str, error: str) -> None:
+        """Mark an outbox event as failed, incrementing attempts."""
+        if self.db_runtime.backend != "postgres":
+            return
+        with self.db_runtime.connect() as conn:
+            row = self.db_runtime.execute(
+                conn,
+                "SELECT attempts, max_attempts FROM publish_outbox WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            attempts = int((row or {}).get("attempts") or 0) + 1
+            max_attempts = int((row or {}).get("max_attempts") or 5)
+            if attempts >= max_attempts:
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    UPDATE publish_outbox
+                    SET status = 'dead', attempts = ?, error_message = ?
+                    WHERE event_id = ?
+                    """,
+                    (attempts, error, event_id),
+                )
+            else:
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    UPDATE publish_outbox
+                    SET status = 'failed', attempts = ?, error_message = ?
+                    WHERE event_id = ?
+                    """,
+                    (attempts, error, event_id),
+                )
+            conn.commit()
+
+    def get_outbox_pending_count(self) -> int:
+        """Return count of pending + retryable failed events."""
+        if self.db_runtime.backend != "postgres":
+            return 0
+        with self.db_runtime.connect() as conn:
+            row = self.db_runtime.execute(
+                conn,
+                """
+                SELECT COUNT(*) AS cnt FROM publish_outbox
+                WHERE status = 'pending'
+                   OR (status = 'failed' AND attempts < max_attempts)
+                """,
+            ).fetchone()
+        return int((row or {}).get("cnt") or 0)

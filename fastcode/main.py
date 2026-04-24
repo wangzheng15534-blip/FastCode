@@ -67,7 +67,7 @@ class FastCode:
     def __init__(self, config_path: str | None = None):
         """
         Initialize FastCode system
-        
+
         Args:
             config_path: Path to configuration file (default: config/config.yaml)
         """
@@ -122,7 +122,9 @@ class FastCode:
         self.parser = CodeParser(self.config)
         self.embedder = CodeEmbedder(self.config)
         self.vector_store = VectorStore(self.config)
-        self.indexer = CodeIndexer(self.config, self.loader, self.parser, self.embedder, self.vector_store)
+        self.indexer = CodeIndexer(
+            self.config, self.loader, self.parser, self.embedder, self.vector_store
+        )
         self.graph_builder = CodeGraphBuilder(self.config)
         self.ir_graph_builder = IRGraphBuilder()
 
@@ -132,9 +134,13 @@ class FastCode:
         ensure_dir(config_repo_root)
         self.logger.info(f"Configured repo_root: {config_repo_root}")
 
-        self.retriever = HybridRetriever(self.config, self.vector_store,
-                                         self.embedder, self.graph_builder,
-                                         repo_root=config_repo_root)
+        self.retriever = HybridRetriever(
+            self.config,
+            self.vector_store,
+            self.embedder,
+            self.graph_builder,
+            repo_root=config_repo_root,
+        )
         self.query_processor = QueryProcessor(self.config)
         self.answer_generator = AnswerGenerator(self.config)
         self.cache_manager = CacheManager(self.config)
@@ -148,14 +154,18 @@ class FastCode:
         self.projection_transformer = ProjectionTransformer(self.config)
         self.projection_store = ProjectionStore(self.config)
         self.snapshot_symbol_index = SnapshotSymbolIndex()
-        self.pg_retrieval_store = PgRetrievalStore(self.snapshot_store.db_runtime, self.config)
+        self.pg_retrieval_store = PgRetrievalStore(
+            self.snapshot_store.db_runtime, self.config
+        )
         self.retriever.set_pg_retrieval_store(self.pg_retrieval_store)
         self.doc_ingester = KeyDocIngester(self.config, self.embedder)
         self.graph_runtime = None
         try:
             self.graph_runtime = LadybugGraphRuntime(self.config)
         except ImportError:
-            self.logger.info("LadybugGraphRuntime unavailable — graph persistence disabled")
+            self.logger.info(
+                "LadybugGraphRuntime unavailable — graph persistence disabled"
+            )
 
         self._redo_worker: RedoWorker | None = None
         if self.snapshot_store.db_runtime.backend == "postgres":
@@ -194,10 +204,12 @@ class FastCode:
         # SCP-like git syntax, e.g. git@github.com:user/repo.git
         return bool(re.match(r"^[^@\s]+@[^:\s]+:[^\s]+$", normalized))
 
-    def load_repository(self, source: str, is_url: bool | None = None, is_zip: bool = False):
+    def load_repository(
+        self, source: str, is_url: bool | None = None, is_zip: bool = False
+    ):
         """
         Load repository from URL, local path, or ZIP file
-        
+
         Args:
             source: Repository URL, local path, or ZIP file path
             is_url: True if source is a URL, False if local path.
@@ -211,7 +223,9 @@ class FastCode:
             if not is_zip and resolved_is_url is None:
                 resolved_is_url = self._infer_is_url(source)
                 source_type = "URL" if resolved_is_url else "local path"
-                self.logger.info(f"Auto-detected source type as {source_type}: {source}")
+                self.logger.info(
+                    f"Auto-detected source type as {source_type}: {source}"
+                )
 
             if is_zip:
                 self.loader.load_from_zip(source)
@@ -233,8 +247,10 @@ class FastCode:
                 self.retriever.set_repo_root(self.loader.repo_path)
 
             self.logger.info(f"Loaded repository: {self.repo_info.get('name')}")
-            self.logger.info(f"Files: {self.repo_info.get('file_count')}, "
-                           f"Size: {self.repo_info.get('total_size_mb', 0):.2f} MB")
+            self.logger.info(
+                f"Files: {self.repo_info.get('file_count')}, "
+                f"Size: {self.repo_info.get('total_size_mb', 0):.2f} MB"
+            )
 
         except Exception as e:
             self.logger.error(f"Failed to load repository: {e}")
@@ -243,7 +259,7 @@ class FastCode:
     def index_repository(self, force: bool = False):
         """
         Index the loaded repository
-        
+
         Args:
             force: Force re-indexing even if cache exists
         """
@@ -269,7 +285,9 @@ class FastCode:
             repo_url = self.repo_info.get("url")
 
             # Index code elements with repository information
-            elements = self.indexer.extract_elements(repo_name=repo_name, repo_url=repo_url)
+            elements = self.indexer.extract_elements(
+                repo_name=repo_name, repo_url=repo_url
+            )
 
             # Initialize vector store if not already done
             if self.vector_store.dimension is None:
@@ -304,16 +322,24 @@ class FastCode:
                 self.global_index_builder = GlobalIndexBuilder(self.config)
 
                 # 2. Build global maps
-                self.logger.info(f"Building global index maps (Repo Root: {repo_root})...")
+                self.logger.info(
+                    f"Building global index maps (Repo Root: {repo_root})..."
+                )
                 self.global_index_builder.build_maps(elements, repo_root or "")
-                self.logger.info(f"  - Mapped {len(self.global_index_builder.file_map)} files")
-                self.logger.info(f"  - Mapped {len(self.global_index_builder.module_map)} modules")
+                self.logger.info(
+                    f"  - Mapped {len(self.global_index_builder.file_map)} files"
+                )
+                self.logger.info(
+                    f"  - Mapped {len(self.global_index_builder.module_map)} modules"
+                )
 
                 # 3. Create ModuleResolver
                 self.module_resolver = ModuleResolver(self.global_index_builder)
 
                 # 4. Create SymbolResolver
-                self.symbol_resolver = SymbolResolver(self.global_index_builder, self.module_resolver)
+                self.symbol_resolver = SymbolResolver(
+                    self.global_index_builder, self.module_resolver
+                )
 
                 self.logger.info("Resolvers initialized successfully")
 
@@ -321,13 +347,16 @@ class FastCode:
                 self.logger.warning(f"Resolver initialization failed: {e}")
                 self.logger.warning("Using fallback graph building (less accurate)")
                 import traceback
+
                 self.logger.error(traceback.format_exc())
                 self.module_resolver = None
                 self.symbol_resolver = None
 
             # Build code graphs with resolvers
             # This will now use the initialized resolvers to build precise graphs
-            self.graph_builder.build_graphs(elements, self.module_resolver, self.symbol_resolver)
+            self.graph_builder.build_graphs(
+                elements, self.module_resolver, self.symbol_resolver
+            )
 
             # Index for BM25
             self.retriever.index_for_bm25(elements)
@@ -343,9 +372,14 @@ class FastCode:
                 # Save BM25 and graph data
                 self.retriever.save_bm25(repo_name)
                 self.graph_builder.save(repo_name)
-                self._save_file_manifest(repo_name, self._build_file_manifest(elements, self.loader.repo_path))
+                self._save_file_manifest(
+                    repo_name,
+                    self._build_file_manifest(elements, self.loader.repo_path),
+                )
             else:
-                self.logger.info("Skipping on-disk persistence (ephemeral/evaluation mode)")
+                self.logger.info(
+                    "Skipping on-disk persistence (ephemeral/evaluation mode)"
+                )
 
             self.repo_indexed = True
             self.logger.info(f"Repository indexing complete for {repo_name}")
@@ -356,10 +390,13 @@ class FastCode:
         except Exception as e:
             self.logger.error(f"Failed to index repository: {e}")
             import traceback
+
             self.logger.error(traceback.format_exc())
             raise
 
-    def _checkout_target_ref(self, ref: str | None = None, commit: str | None = None) -> None:
+    def _checkout_target_ref(
+        self, ref: str | None = None, commit: str | None = None
+    ) -> None:
         """Checkout requested ref/commit inside loaded repository workspace."""
         target = commit or ref
         if not target or not self.loader.repo_path:
@@ -453,7 +490,9 @@ class FastCode:
         for symbol in previous_snapshot.symbols:
             if not symbol.external_symbol_id:
                 continue
-            out[symbol.external_symbol_id] = f"symbol:{previous_snapshot_id}:{symbol.symbol_id}"
+            out[symbol.external_symbol_id] = (
+                f"symbol:{previous_snapshot_id}:{symbol.symbol_id}"
+            )
         return out
 
     def _load_artifacts_by_key(self, artifact_key: str) -> bool:
@@ -507,7 +546,9 @@ class FastCode:
 
         repo_name = self.repo_info.get("name", "default")
         repo_url = self.repo_info.get("url", source)
-        snapshot_ref = self._resolve_snapshot_ref(repo_name, requested_ref=ref, requested_commit=commit)
+        snapshot_ref = self._resolve_snapshot_ref(
+            repo_name, requested_ref=ref, requested_commit=commit
+        )
         git_meta = self._build_git_meta(snapshot_ref)
         snapshot_id = snapshot_ref["snapshot_id"]
         warnings: list[str] = []
@@ -536,7 +577,12 @@ class FastCode:
             idempotency_key=idempotency_key,
         )
         existing_run = self.index_run_store.get_run(run_id)
-        if existing_run and existing_run.get("status") in {"published", "succeeded", "degraded", "publish_pending"} and not force:
+        if (
+            existing_run
+            and existing_run.get("status")
+            in {"published", "succeeded", "degraded", "publish_pending"}
+            and not force
+        ):
             existing_snapshot = self.snapshot_store.get_snapshot_record(snapshot_id)
             if existing_snapshot:
                 loaded = self._load_artifacts_by_key(existing_snapshot["artifact_key"])
@@ -551,14 +597,20 @@ class FastCode:
                 }
         self.index_run_store.mark_started(run_id)
         lock_name = f"index:{snapshot_id}"
-        fencing_token = self.snapshot_store.acquire_lock(lock_name, owner_id=run_id, ttl_seconds=600)
+        fencing_token = self.snapshot_store.acquire_lock(
+            lock_name, owner_id=run_id, ttl_seconds=600
+        )
         if fencing_token is None:
-            raise RuntimeError(f"snapshot is currently locked for indexing: {snapshot_id}")
+            raise RuntimeError(
+                f"snapshot is currently locked for indexing: {snapshot_id}"
+            )
         stage_id: str | None = None
 
         try:
             self.index_run_store.mark_status(run_id, "extracting")
-            elements = self.indexer.extract_elements(repo_name=repo_name, repo_url=repo_url)
+            elements = self.indexer.extract_elements(
+                repo_name=repo_name, repo_url=repo_url
+            )
 
             artifact_key = self.snapshot_store.artifact_key_for_snapshot(snapshot_id)
 
@@ -693,7 +745,9 @@ class FastCode:
                     if raw_scip_path and os.path.exists(raw_scip_path):
                         import shutil
 
-                        scip_dir = os.path.join(self.snapshot_store.snapshot_dir(snapshot_id), "scip")
+                        scip_dir = os.path.join(
+                            self.snapshot_store.snapshot_dir(snapshot_id), "scip"
+                        )
                         ensure_dir(scip_dir)
                         ext = os.path.splitext(raw_scip_path)[1] or ".json"
                         preserved_path = os.path.join(scip_dir, f"raw{ext}")
@@ -704,9 +758,15 @@ class FastCode:
                                 digest.update(chunk)
                         scip_artifact_ref = self.snapshot_store.save_scip_artifact_ref(
                             snapshot_id=snapshot_id,
-                            indexer_name=(scip_data.indexer_name if isinstance(scip_data, SCIPIndex) else None)
+                            indexer_name=(
+                                scip_data.indexer_name
+                                if isinstance(scip_data, SCIPIndex)
+                                else None
+                            )
                             or "scip-python",
-                            indexer_version=scip_data.indexer_version if isinstance(scip_data, SCIPIndex) else None,
+                            indexer_version=scip_data.indexer_version
+                            if isinstance(scip_data, SCIPIndex)
+                            else None,
                             artifact_path=preserved_path,
                             checksum=digest.hexdigest(),
                         )
@@ -758,7 +818,11 @@ class FastCode:
                 ast_elem_id = meta.get("ast_element_id")
                 if ast_elem_id:
                     ast_id_to_ir[str(ast_elem_id)] = sym.symbol_id
-                for alias in meta.get("aliases", []) if isinstance(meta.get("aliases", []), list) else []:
+                for alias in (
+                    meta.get("aliases", [])
+                    if isinstance(meta.get("aliases", []), list)
+                    else []
+                ):
                     # alias can be an AST symbol id; keep as an extra hint only
                     if alias:
                         ast_id_to_ir.setdefault(str(alias), sym.symbol_id)
@@ -777,7 +841,12 @@ class FastCode:
             temp_store.save(artifact_key)
 
             self.index_run_store.mark_status(run_id, "persisting")
-            if fencing_token is not None and not self.snapshot_store.validate_fencing_token(lock_name, fencing_token):
+            if (
+                fencing_token is not None
+                and not self.snapshot_store.validate_fencing_token(
+                    lock_name, fencing_token
+                )
+            ):
                 raise RuntimeError(f"stale_lock_detected_for_snapshot:{snapshot_id}")
             self.snapshot_store.save_snapshot(
                 merged_snapshot,
@@ -797,7 +866,9 @@ class FastCode:
                     chunk_id = mention.get("chunk_id")
                     if not chunk_id:
                         continue
-                    mentions_by_chunk.setdefault(str(chunk_id), []).append(dict(mention))
+                    mentions_by_chunk.setdefault(str(chunk_id), []).append(
+                        dict(mention)
+                    )
                 for elem in doc_elements_payload:
                     chunk_id = elem.get("id")
                     elem_meta = elem.get("metadata") or {}
@@ -864,14 +935,18 @@ class FastCode:
                         self.index_run_store.enqueue_publish_retry(
                             run_id=run_id,
                             snapshot_id=snapshot_id,
-                            manifest_id=manifest.get("manifest_id") if manifest else None,
+                            manifest_id=manifest.get("manifest_id")
+                            if manifest
+                            else None,
                             error_message=str(e),
                         )
                         status = "publish_pending"
                 else:
                     warnings.append("terminus_not_configured")
                 if stage_id:
-                    self.snapshot_store.promote_staged_snapshot(snapshot_id=snapshot_id, stage_id=stage_id)
+                    self.snapshot_store.promote_staged_snapshot(
+                        snapshot_id=snapshot_id, stage_id=stage_id
+                    )
 
             self.snapshot_store.update_snapshot_metadata(
                 snapshot_id,
@@ -883,7 +958,9 @@ class FastCode:
                     "fencing_token": fencing_token,
                 },
             )
-            self.index_run_store.mark_completed(run_id, status=status, warnings=warnings)
+            self.index_run_store.mark_completed(
+                run_id, status=status, warnings=warnings
+            )
             return {
                 "status": status,
                 "run_id": run_id,
@@ -917,7 +994,9 @@ class FastCode:
     def get_index_run(self, run_id: str) -> dict[str, Any] | None:
         return self.index_run_store.get_run(run_id)
 
-    def publish_index_run(self, run_id: str, ref_name: str | None = None) -> dict[str, Any]:
+    def publish_index_run(
+        self, run_id: str, ref_name: str | None = None
+    ) -> dict[str, Any]:
         run = self.index_run_store.get_run(run_id)
         if not run:
             raise RuntimeError(f"index run not found: {run_id}")
@@ -968,7 +1047,12 @@ class FastCode:
 
     def retry_pending_publishes(self, limit: int = 10) -> dict[str, Any]:
         if not self.terminus_publisher.is_configured():
-            return {"processed": 0, "succeeded": 0, "failed": 0, "message": "terminus_not_configured"}
+            return {
+                "processed": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "message": "terminus_not_configured",
+            }
 
         processed = 0
         succeeded = 0
@@ -990,7 +1074,9 @@ class FastCode:
                     raise RuntimeError(f"snapshot not found: {run['snapshot_id']}")
 
                 ref_name = run.get("branch") or "HEAD"
-                manifest = self.manifest_store.get_branch_manifest(run["repo_name"], ref_name)
+                manifest = self.manifest_store.get_branch_manifest(
+                    run["repo_name"], ref_name
+                )
                 if not manifest:
                     manifest = self.manifest_store.publish(
                         repo_name=run["repo_name"],
@@ -1032,7 +1118,9 @@ class FastCode:
             "failed": failed,
         }
 
-    def retry_index_run_recovery(self, run_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    def retry_index_run_recovery(
+        self, run_id: str, payload: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         payload = payload or {}
         source = payload.get("source")
         if not source:
@@ -1050,7 +1138,12 @@ class FastCode:
 
     def process_redo_tasks(self, limit: int = 10) -> dict[str, Any]:
         if not self._redo_worker:
-            return {"processed": 0, "succeeded": 0, "failed": 0, "message": "redo_worker_disabled"}
+            return {
+                "processed": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "message": "redo_worker_disabled",
+            }
         processed = 0
         succeeded = 0
         failed = 0
@@ -1087,7 +1180,9 @@ class FastCode:
         name: str | None = None,
         path: str | None = None,
     ) -> dict[str, Any] | None:
-        resolved = self.resolve_snapshot_symbol(snapshot_id, symbol_id=symbol_id, name=name, path=path)
+        resolved = self.resolve_snapshot_symbol(
+            snapshot_id, symbol_id=symbol_id, name=name, path=path
+        )
         if not resolved:
             return None
         snapshot = self.snapshot_store.load_snapshot(snapshot_id)
@@ -1098,7 +1193,9 @@ class FastCode:
                 return symbol.to_dict()
         return None
 
-    def get_graph_callees(self, snapshot_id: str, symbol_id: str, max_hops: int = 1) -> list[dict[str, Any]]:
+    def get_graph_callees(
+        self, snapshot_id: str, symbol_id: str, max_hops: int = 1
+    ) -> list[dict[str, Any]]:
         max_hops = max(1, min(max_hops, 20))
         ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
         if not ir_graphs:
@@ -1107,9 +1204,15 @@ class FastCode:
         if symbol_id not in g:
             return []
         dist = nx.single_source_shortest_path_length(g, symbol_id, cutoff=max_hops)
-        return [{"symbol_id": node, "distance": d} for node, d in dist.items() if node != symbol_id]
+        return [
+            {"symbol_id": node, "distance": d}
+            for node, d in dist.items()
+            if node != symbol_id
+        ]
 
-    def get_graph_callers(self, snapshot_id: str, symbol_id: str, max_hops: int = 1) -> list[dict[str, Any]]:
+    def get_graph_callers(
+        self, snapshot_id: str, symbol_id: str, max_hops: int = 1
+    ) -> list[dict[str, Any]]:
         max_hops = max(1, min(max_hops, 20))
         ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
         if not ir_graphs:
@@ -1118,9 +1221,15 @@ class FastCode:
         if symbol_id not in g:
             return []
         dist = nx.single_source_shortest_path_length(g, symbol_id, cutoff=max_hops)
-        return [{"symbol_id": node, "distance": d} for node, d in dist.items() if node != symbol_id]
+        return [
+            {"symbol_id": node, "distance": d}
+            for node, d in dist.items()
+            if node != symbol_id
+        ]
 
-    def get_graph_dependencies(self, snapshot_id: str, doc_id: str, max_hops: int = 1) -> list[dict[str, Any]]:
+    def get_graph_dependencies(
+        self, snapshot_id: str, doc_id: str, max_hops: int = 1
+    ) -> list[dict[str, Any]]:
         max_hops = max(1, min(max_hops, 20))
         ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
         if not ir_graphs:
@@ -1129,9 +1238,15 @@ class FastCode:
         if doc_id not in g:
             return []
         dist = nx.single_source_shortest_path_length(g, doc_id, cutoff=max_hops)
-        return [{"doc_id": node, "distance": d} for node, d in dist.items() if node != doc_id]
+        return [
+            {"doc_id": node, "distance": d}
+            for node, d in dist.items()
+            if node != doc_id
+        ]
 
-    def get_branch_manifest(self, repo_name: str, ref_name: str) -> dict[str, Any] | None:
+    def get_branch_manifest(
+        self, repo_name: str, ref_name: str
+    ) -> dict[str, Any] | None:
         return self.manifest_store.get_branch_manifest(repo_name, ref_name)
 
     def get_snapshot_manifest(self, snapshot_id: str) -> dict[str, Any] | None:
@@ -1178,7 +1293,9 @@ class FastCode:
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:24]
 
     @staticmethod
-    def _projection_params_hash(scope: ProjectionScope, projection_algo_version: str = "v1") -> str:
+    def _projection_params_hash(
+        scope: ProjectionScope, projection_algo_version: str = "v1"
+    ) -> str:
         payload = json.dumps(
             {
                 "scope": scope.to_dict(),
@@ -1204,10 +1321,16 @@ class FastCode:
             raise RuntimeError(f"manifest not found for {repo_name}:{ref_name}")
         return manifest["snapshot_id"]
 
-    def _mirror_projection_artifacts(self, snapshot_id: str, result: dict[str, Any]) -> str:
+    def _mirror_projection_artifacts(
+        self, snapshot_id: str, result: dict[str, Any]
+    ) -> str:
         import os
 
-        root = os.path.join(self.snapshot_store.snapshot_dir(snapshot_id), "projection", result["projection_id"])
+        root = os.path.join(
+            self.snapshot_store.snapshot_dir(snapshot_id),
+            "projection",
+            result["projection_id"],
+        )
         ensure_dir(root)
         chunk_dir = os.path.join(root, "chunks")
         ensure_dir(chunk_dir)
@@ -1221,7 +1344,9 @@ class FastCode:
             chunk_id = chunk.get("chunk_id")
             if not chunk_id:
                 continue
-            with open(os.path.join(chunk_dir, f"{chunk_id}.json"), "w", encoding="utf-8") as f:
+            with open(
+                os.path.join(chunk_dir, f"{chunk_id}.json"), "w", encoding="utf-8"
+            ) as f:
                 json.dump(chunk, f, ensure_ascii=False, indent=2)
         return root
 
@@ -1239,15 +1364,21 @@ class FastCode:
         if scope_kind not in {"snapshot", "query", "entity"}:
             raise RuntimeError("scope_kind must be one of: snapshot, query, entity")
         if not self.projection_store.enabled:
-            raise RuntimeError("projection store is not configured (set projection.postgres_dsn)")
+            raise RuntimeError(
+                "projection store is not configured (set projection.postgres_dsn)"
+            )
 
-        resolved_snapshot_id = self._resolve_snapshot_id(snapshot_id, repo_name, ref_name)
+        resolved_snapshot_id = self._resolve_snapshot_id(
+            snapshot_id, repo_name, ref_name
+        )
         snapshot_record = self.snapshot_store.get_snapshot_record(resolved_snapshot_id)
         if not snapshot_record:
             raise RuntimeError(f"snapshot not found: {resolved_snapshot_id}")
 
         if not self._load_artifacts_by_key(snapshot_record["artifact_key"]):
-            raise RuntimeError(f"failed to load artifacts for snapshot: {resolved_snapshot_id}")
+            raise RuntimeError(
+                f"failed to load artifacts for snapshot: {resolved_snapshot_id}"
+            )
 
         snapshot = self.snapshot_store.load_snapshot(resolved_snapshot_id)
         if not snapshot:
@@ -1271,11 +1402,15 @@ class FastCode:
         )
         params_hash = self._projection_params_hash(
             scope,
-            projection_algo_version=getattr(self.projection_transformer, "ALGO_VERSION", "v1"),
+            projection_algo_version=getattr(
+                self.projection_transformer, "ALGO_VERSION", "v1"
+            ),
         )
 
         if not force:
-            cached_id = self.projection_store.find_cached_projection_id(scope, params_hash)
+            cached_id = self.projection_store.find_cached_projection_id(
+                scope, params_hash
+            )
             if cached_id:
                 l0 = self.projection_store.get_layer(cached_id, "L0")
                 l1 = self.projection_store.get_layer(cached_id, "L1")
@@ -1300,7 +1435,9 @@ class FastCode:
             doc_mentions = None
 
         build = self.projection_transformer.build(
-            scope=scope, snapshot=snapshot, ir_graphs=ir_graphs,
+            scope=scope,
+            snapshot=snapshot,
+            ir_graphs=ir_graphs,
             doc_mentions=doc_mentions or None,
         )
         self.projection_store.save(build, params_hash=params_hash)
@@ -1312,7 +1449,9 @@ class FastCode:
 
     def get_projection_layer(self, projection_id: str, layer: str) -> dict[str, Any]:
         if not self.projection_store.enabled:
-            raise RuntimeError("projection store is not configured (set projection.postgres_dsn)")
+            raise RuntimeError(
+                "projection store is not configured (set projection.postgres_dsn)"
+            )
         layer_payload = self.projection_store.get_layer(projection_id, layer)
         if not layer_payload:
             raise RuntimeError(f"projection layer not found: {projection_id}:{layer}")
@@ -1326,16 +1465,78 @@ class FastCode:
 
     def get_projection_chunk(self, projection_id: str, chunk_id: str) -> dict[str, Any]:
         if not self.projection_store.enabled:
-            raise RuntimeError("projection store is not configured (set projection.postgres_dsn)")
+            raise RuntimeError(
+                "projection store is not configured (set projection.postgres_dsn)"
+            )
         chunk_payload = self.projection_store.get_chunk(projection_id, chunk_id)
         if not chunk_payload:
-            raise RuntimeError(f"projection chunk not found: {projection_id}:{chunk_id}")
+            raise RuntimeError(
+                f"projection chunk not found: {projection_id}:{chunk_id}"
+            )
         build = self.projection_store.get_build(projection_id)
         return {
             "projection_id": projection_id,
             "chunk_id": chunk_id,
             "chunk": chunk_payload,
             "build": build,
+        }
+
+    def get_session_prefix(self, snapshot_id: str) -> dict[str, Any]:
+        """Return L0+L1 projection data for system prompt injection.
+
+        Finds the most recent snapshot-scoped projection for the given
+        snapshot_id and returns L0 (architectural overview) + L1 (navigation
+        structure) as a compact combined response.
+
+        Consumption pattern: agents call this at session start and inject
+        the returned JSON into their system prompt, gaining architectural
+        awareness without any queries.
+        """
+        if not self.projection_store.enabled:
+            raise RuntimeError(
+                "projection store is not configured (set projection.postgres_dsn)"
+            )
+
+        # Look for any ready snapshot-scoped projection for this snapshot.
+        with self.projection_store._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                    SELECT projection_id
+                    FROM projection_builds
+                    WHERE snapshot_id=%s
+                      AND scope_kind='snapshot'
+                      AND status='ready'
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                (snapshot_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return {
+                    "snapshot_id": snapshot_id,
+                    "l0": None,
+                    "l1": None,
+                    "error": f"no snapshot-scoped projection found for {snapshot_id}",
+                }
+            projection_id = row[0]
+
+        l0 = self.projection_store.get_layer(projection_id, "L0")
+        l1 = self.projection_store.get_layer(projection_id, "L1")
+        if not l0 and not l1:
+            return {
+                "snapshot_id": snapshot_id,
+                "projection_id": projection_id,
+                "l0": None,
+                "l1": None,
+                "error": f"projection {projection_id} has no L0 or L1 layers",
+            }
+
+        return {
+            "snapshot_id": snapshot_id,
+            "projection_id": projection_id,
+            "l0": l0,
+            "l1": l1,
         }
 
     def query_snapshot(
@@ -1350,7 +1551,9 @@ class FastCode:
     ) -> dict[str, Any]:
         if not snapshot_id:
             if not repo_name or not ref_name:
-                raise RuntimeError("query_snapshot requires snapshot_id or repo_name+ref_name")
+                raise RuntimeError(
+                    "query_snapshot requires snapshot_id or repo_name+ref_name"
+                )
             manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
             if not manifest:
                 raise RuntimeError(f"manifest not found for {repo_name}:{ref_name}")
@@ -1381,15 +1584,22 @@ class FastCode:
         result["artifact_key"] = snapshot_record["artifact_key"]
         return result
 
-    def query(self, question: str, filters: dict[str, Any] | None = None,
-              repo_filter: list[str] | None = None,
-              session_id: str | None = None,
-              enable_multi_turn: bool | None = None,
-              use_agency_mode: bool | None = None,
-              prompt_builder: Callable[[str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str] | None = None) -> dict[str, Any]:
+    def query(
+        self,
+        question: str,
+        filters: dict[str, Any] | None = None,
+        repo_filter: list[str] | None = None,
+        session_id: str | None = None,
+        enable_multi_turn: bool | None = None,
+        use_agency_mode: bool | None = None,
+        prompt_builder: Callable[
+            [str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str
+        ]
+        | None = None,
+    ) -> dict[str, Any]:
         """
         Query the repository (or multiple repositories)
-        
+
         Args:
             question: User question
             filters: Optional filters for retrieval
@@ -1398,7 +1608,7 @@ class FastCode:
             enable_multi_turn: Override config setting for multi-turn mode
             prompt_builder: Optional callable to build a custom LLM prompt using
                 (question, prepared_context, query_info, dialogue_history)
-        
+
         Returns:
             Dictionary with answer and metadata (including summary if multi-turn)
         """
@@ -1407,10 +1617,14 @@ class FastCode:
 
         # Determine if multi-turn mode is enabled
         if enable_multi_turn is None:
-            enable_multi_turn = self.config.get("generation", {}).get("enable_multi_turn", False)
+            enable_multi_turn = self.config.get("generation", {}).get(
+                "enable_multi_turn", False
+            )
 
         if repo_filter:
-            self.logger.info(f"Processing query: {question} in repositories: {repo_filter}")
+            self.logger.info(
+                f"Processing query: {question} in repositories: {repo_filter}"
+            )
         else:
             self.logger.info(f"Processing query: {question}")
 
@@ -1418,11 +1632,17 @@ class FastCode:
         dialogue_history = []
         if enable_multi_turn and session_id:
             # Get recent summaries from cache (last 10 turns for iterative agent)
-            history_summary_rounds = self.config.get("query", {}).get("history_summary_rounds", 10)
-            dialogue_history = self.cache_manager.get_recent_summaries(session_id, history_summary_rounds)
+            history_summary_rounds = self.config.get("query", {}).get(
+                "history_summary_rounds", 10
+            )
+            dialogue_history = self.cache_manager.get_recent_summaries(
+                session_id, history_summary_rounds
+            )
 
             if dialogue_history:
-                self.logger.info(f"Retrieved {len(dialogue_history)} previous dialogue summaries")
+                self.logger.info(
+                    f"Retrieved {len(dialogue_history)} previous dialogue summaries"
+                )
 
         # NOTE: Query result caching is disabled to ensure full iterative_agent flow
         # Original cache logic (disabled):
@@ -1455,6 +1675,7 @@ class FastCode:
                     # Iterative agent will handle all query enhancement
                     # Create minimal ProcessedQuery object
                     from .query_processor import ProcessedQuery
+
                     processed_query = ProcessedQuery(
                         original=question,
                         expanded=question,
@@ -1464,15 +1685,15 @@ class FastCode:
                         filters=filters or {},
                         rewritten_query=None,
                         pseudocode_hints=None,
-                        search_strategy=None
+                        search_strategy=None,
                     )
-                    self.logger.info("Iterative mode: skipping query_processor, all enhancements handled by iterative_agent")
+                    self.logger.info(
+                        "Iterative mode: skipping query_processor, all enhancements handled by iterative_agent"
+                    )
                 else:
                     # Standard mode: use full query processing
                     processed_query = self.query_processor.process(
-                        question,
-                        dialogue_history,
-                        use_llm_enhancement=True
+                        question, dialogue_history, use_llm_enhancement=True
                     )
                     self.logger.info(f"Query intent: {processed_query.intent}")
                     self.logger.info(f"Keywords: {processed_query.keywords}")
@@ -1485,7 +1706,7 @@ class FastCode:
                     filters=filters,
                     repo_filter=repo_filter,
                     use_agency_mode=use_agency_mode,
-                    dialogue_history=dialogue_history if enable_multi_turn else None
+                    dialogue_history=dialogue_history if enable_multi_turn else None,
                 )
 
                 # Generate answer (with dialogue history for multi-turn)
@@ -1493,8 +1714,10 @@ class FastCode:
                     question,
                     retrieved,
                     query_info=processed_query.to_dict(),
-                    dialogue_history=self._get_full_dialogue_history(session_id, enable_multi_turn),
-                    prompt_builder=prompt_builder
+                    dialogue_history=self._get_full_dialogue_history(
+                        session_id, enable_multi_turn
+                    ),
+                    prompt_builder=prompt_builder,
                 )
 
             # Add repository information to result
@@ -1527,10 +1750,12 @@ class FastCode:
                     answer=result.get("answer", ""),
                     summary=summary,
                     retrieved_elements=serializable_sources,
-                    metadata=serializable_metadata
+                    metadata=serializable_metadata,
                 )
 
-                self.logger.info(f"Saved dialogue turn {turn_number} for session {session_id}")
+                self.logger.info(
+                    f"Saved dialogue turn {turn_number} for session {session_id}"
+                )
 
             # Cache result for stateless flows (including single-turn sessions)
             # NOTE: Query result caching is disabled to ensure full iterative_agent flow
@@ -1547,12 +1772,19 @@ class FastCode:
                 "error": str(e),
             }
 
-    def query_stream(self, question: str, filters: dict[str, Any] | None = None,
-                    repo_filter: list[str] | None = None,
-                    session_id: str | None = None,
-                    enable_multi_turn: bool | None = None,
-                    use_agency_mode: bool | None = None,
-                    prompt_builder: Callable[[str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str] | None = None):
+    def query_stream(
+        self,
+        question: str,
+        filters: dict[str, Any] | None = None,
+        repo_filter: list[str] | None = None,
+        session_id: str | None = None,
+        enable_multi_turn: bool | None = None,
+        use_agency_mode: bool | None = None,
+        prompt_builder: Callable[
+            [str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str
+        ]
+        | None = None,
+    ):
         """
         Query the repository with streaming response (yields answer chunks)
 
@@ -1573,25 +1805,38 @@ class FastCode:
             - Final yield: (None, {"status": "complete", "summary": ..., ...})
         """
         if not self.repo_indexed:
-            yield None, {"error": "Repository not indexed. Call index_repository() first."}
+            yield (
+                None,
+                {"error": "Repository not indexed. Call index_repository() first."},
+            )
             return
 
         # Determine if multi-turn mode is enabled
         if enable_multi_turn is None:
-            enable_multi_turn = self.config.get("generation", {}).get("enable_multi_turn", False)
+            enable_multi_turn = self.config.get("generation", {}).get(
+                "enable_multi_turn", False
+            )
 
         if repo_filter:
-            self.logger.info(f"Processing streaming query: {question} in repositories: {repo_filter}")
+            self.logger.info(
+                f"Processing streaming query: {question} in repositories: {repo_filter}"
+            )
         else:
             self.logger.info(f"Processing streaming query: {question}")
 
         # Get dialogue history if in multi-turn mode
         dialogue_history = []
         if enable_multi_turn and session_id:
-            history_summary_rounds = self.config.get("query", {}).get("history_summary_rounds", 10)
-            dialogue_history = self.cache_manager.get_recent_summaries(session_id, history_summary_rounds)
+            history_summary_rounds = self.config.get("query", {}).get(
+                "history_summary_rounds", 10
+            )
+            dialogue_history = self.cache_manager.get_recent_summaries(
+                session_id, history_summary_rounds
+            )
             if dialogue_history:
-                self.logger.info(f"Retrieved {len(dialogue_history)} previous dialogue summaries")
+                self.logger.info(
+                    f"Retrieved {len(dialogue_history)} previous dialogue summaries"
+                )
 
         try:
             # Notify start of retrieval
@@ -1605,6 +1850,7 @@ class FastCode:
 
             if use_iterative_enhancement:
                 from .query_processor import ProcessedQuery
+
                 processed_query = ProcessedQuery(
                     original=question,
                     expanded=question,
@@ -1614,14 +1860,14 @@ class FastCode:
                     filters=filters or {},
                     rewritten_query=None,
                     pseudocode_hints=None,
-                    search_strategy=None
+                    search_strategy=None,
                 )
-                self.logger.info("Iterative mode: skipping query_processor, all enhancements handled by iterative_agent")
+                self.logger.info(
+                    "Iterative mode: skipping query_processor, all enhancements handled by iterative_agent"
+                )
             else:
                 processed_query = self.query_processor.process(
-                    question,
-                    dialogue_history,
-                    use_llm_enhancement=True
+                    question, dialogue_history, use_llm_enhancement=True
                 )
                 self.logger.info(f"Query intent: {processed_query.intent}")
                 self.logger.info(f"Keywords: {processed_query.keywords}")
@@ -1632,7 +1878,7 @@ class FastCode:
                 filters=filters,
                 repo_filter=repo_filter,
                 use_agency_mode=use_agency_mode,
-                dialogue_history=dialogue_history if enable_multi_turn else None
+                dialogue_history=dialogue_history if enable_multi_turn else None,
             )
 
             # Notify start of generation
@@ -1646,8 +1892,10 @@ class FastCode:
                 question,
                 retrieved,
                 query_info=processed_query.to_dict(),
-                dialogue_history=self._get_full_dialogue_history(session_id, enable_multi_turn),
-                prompt_builder=prompt_builder
+                dialogue_history=self._get_full_dialogue_history(
+                    session_id, enable_multi_turn
+                ),
+                prompt_builder=prompt_builder,
             ):
                 if chunk:
                     full_answer_parts.append(chunk)
@@ -1664,7 +1912,9 @@ class FastCode:
                 "answer": full_answer,
                 "query": question,
                 "context_elements": len(retrieved),
-                "sources": answer_metadata.get("sources", self._extract_sources_from_elements(retrieved)),
+                "sources": answer_metadata.get(
+                    "sources", self._extract_sources_from_elements(retrieved)
+                ),
             }
 
             if summary:
@@ -1677,12 +1927,14 @@ class FastCode:
             if session_id:
                 turn_number = self._get_next_turn_number(session_id)
                 serializable_sources = safe_jsonable(result.get("sources", []))
-                serializable_metadata = safe_jsonable({
-                    "intent": getattr(processed_query, "intent", None),
-                    "keywords": getattr(processed_query, "keywords", None),
-                    "repo_filter": repo_filter,
-                    "multi_turn": enable_multi_turn,
-                })
+                serializable_metadata = safe_jsonable(
+                    {
+                        "intent": getattr(processed_query, "intent", None),
+                        "keywords": getattr(processed_query, "keywords", None),
+                        "repo_filter": repo_filter,
+                        "multi_turn": enable_multi_turn,
+                    }
+                )
 
                 self.cache_manager.save_dialogue_turn(
                     session_id=session_id,
@@ -1691,10 +1943,12 @@ class FastCode:
                     answer=full_answer,
                     summary=summary or "",
                     retrieved_elements=serializable_sources,
-                    metadata=serializable_metadata
+                    metadata=serializable_metadata,
                 )
 
-                self.logger.info(f"Saved dialogue turn {turn_number} for session {session_id}")
+                self.logger.info(
+                    f"Saved dialogue turn {turn_number} for session {session_id}"
+                )
 
             # Final yield with complete result
             yield None, result
@@ -1702,13 +1956,17 @@ class FastCode:
         except Exception as e:
             self.logger.error(f"Streaming query failed: {e}")
             import traceback
+
             error_trace = traceback.format_exc()
             self.logger.error(f"Full error traceback:\n{error_trace}")
-            yield None, {
-                "status": "error",
-                "error": str(e),
-                "query": question,
-            }
+            yield (
+                None,
+                {
+                    "status": "error",
+                    "error": str(e),
+                    "query": question,
+                },
+            )
 
     def _extract_sources_from_elements(self, elements: list) -> list[dict[str, Any]]:
         """Extract source information from retrieved elements"""
@@ -1758,7 +2016,9 @@ class FastCode:
                 # Load BM25 index
                 bm25_loaded = self.retriever.load_bm25(cache_name)
                 if not bm25_loaded:
-                    self.logger.warning("Failed to load BM25 index, will need to rebuild")
+                    self.logger.warning(
+                        "Failed to load BM25 index, will need to rebuild"
+                    )
 
                 # Build separate repo overview BM25 index
                 self.retriever.build_repo_overview_bm25()
@@ -1766,17 +2026,23 @@ class FastCode:
                 # Load graph data
                 graph_loaded = self.graph_builder.load(cache_name)
                 if not graph_loaded:
-                    self.logger.warning("Failed to load graph data, will need to rebuild")
+                    self.logger.warning(
+                        "Failed to load graph data, will need to rebuild"
+                    )
 
                 # If BM25 or graph failed to load, reconstruct from metadata
                 if not bm25_loaded or not graph_loaded:
-                    self.logger.info("Reconstructing missing components from metadata...")
+                    self.logger.info(
+                        "Reconstructing missing components from metadata..."
+                    )
                     elements = self._reconstruct_elements_from_metadata()
 
                     if elements:
                         if not bm25_loaded:
                             self.retriever.index_for_bm25(elements)
-                            self.logger.info(f"Rebuilt BM25 index with {len(elements)} elements")
+                            self.logger.info(
+                                f"Rebuilt BM25 index with {len(elements)} elements"
+                            )
 
                         if not graph_loaded:
                             # Note: Rebuilding graph from metadata is a fallback.
@@ -1822,7 +2088,7 @@ class FastCode:
         """
         Reconstruct CodeElement objects from vector store metadata
         Excludes repository_overview elements (they're in separate storage)
-        
+
         Returns:
             List of CodeElement objects
         """
@@ -1856,7 +2122,9 @@ class FastCode:
                 self.logger.warning(f"Failed to reconstruct element: {e}")
                 continue
 
-        self.logger.info(f"Reconstructed {len(elements)} elements from metadata (excluding repository_overview)")
+        self.logger.info(
+            f"Reconstructed {len(elements)} elements from metadata (excluding repository_overview)"
+        )
         return elements
 
     def _log_statistics(self):
@@ -1886,14 +2154,16 @@ class FastCode:
 
     def _has_active_doc_persistence(self) -> bool:
         """Return True when doc ingestion has at least one active sink."""
-        return (
-            self.snapshot_store.db_runtime.backend == "postgres"
-            or bool(getattr(self.graph_runtime, "enabled", False))
+        return self.snapshot_store.db_runtime.backend == "postgres" or bool(
+            getattr(self.graph_runtime, "enabled", False)
         )
 
     def _should_ingest_docs(self) -> bool:
         """Only ingest docs when the feature is enabled and results can be persisted."""
-        return bool(getattr(self.doc_ingester, "enabled", False)) and self._has_active_doc_persistence()
+        return (
+            bool(getattr(self.doc_ingester, "enabled", False))
+            and self._has_active_doc_persistence()
+        )
 
     def _sync_doc_overlay(
         self,
@@ -2001,7 +2271,7 @@ class FastCode:
     def load_multiple_repositories(self, sources: list[dict[str, Any]]):
         """
         Load and index multiple repositories (saves each repository separately)
-        
+
         Args:
             sources: List of dictionaries with 'source', 'is_url', and optionally 'is_zip' keys
                     Example: [{'source': 'https://github.com/user/repo1', 'is_url': True},
@@ -2014,18 +2284,22 @@ class FastCode:
         successfully_indexed = []
 
         for i, source_info in enumerate(sources):
-            source = source_info.get('source')
-            is_url = source_info.get('is_url')
-            is_zip = source_info.get('is_zip', False)
+            source = source_info.get("source")
+            is_url = source_info.get("is_url")
+            is_zip = source_info.get("is_zip", False)
 
             try:
-                self.logger.info(f"[{i+1}/{len(sources)}] Loading repository: {source}")
+                self.logger.info(
+                    f"[{i + 1}/{len(sources)}] Loading repository: {source}"
+                )
 
                 resolved_is_url = is_url
                 if not is_zip and resolved_is_url is None:
                     resolved_is_url = self._infer_is_url(source)
                     source_type = "URL" if resolved_is_url else "local path"
-                    self.logger.info(f"[{i+1}/{len(sources)}] Auto-detected source type as {source_type}")
+                    self.logger.info(
+                        f"[{i + 1}/{len(sources)}] Auto-detected source type as {source_type}"
+                    )
 
                 # Load repository
                 if is_zip:
@@ -2036,8 +2310,8 @@ class FastCode:
                     self.loader.load_from_path(source)
 
                 repo_info = self.loader.get_repository_info()
-                repo_name = repo_info.get('name')
-                repo_url = repo_info.get('url', source)
+                repo_name = repo_info.get("name")
+                repo_url = repo_info.get("url", source)
 
                 # Update config with repo_root for each repo (Critical for graph building)
                 if self.loader.repo_path:
@@ -2053,11 +2327,18 @@ class FastCode:
                 temp_vector_store.initialize(self.embedder.embedding_dim)
 
                 # Create a temporary indexer with the temp vector store for this repo
-                temp_indexer = CodeIndexer(self.config, self.loader, self.parser,
-                                          self.embedder, temp_vector_store)
+                temp_indexer = CodeIndexer(
+                    self.config,
+                    self.loader,
+                    self.parser,
+                    self.embedder,
+                    temp_vector_store,
+                )
 
                 # Index with repository information
-                elements = temp_indexer.extract_elements(repo_name=repo_name, repo_url=repo_url)
+                elements = temp_indexer.extract_elements(
+                    repo_name=repo_name, repo_url=repo_url
+                )
 
                 # Add to temporary vector store
                 vectors = []
@@ -2077,9 +2358,13 @@ class FastCode:
                     temp_vector_store.save(repo_name)
 
                     # Build and save BM25 index for this repository
-                    temp_retriever = HybridRetriever(self.config, temp_vector_store,
-                                                     self.embedder, self.graph_builder,
-                                                     repo_root=self.loader.repo_path)
+                    temp_retriever = HybridRetriever(
+                        self.config,
+                        temp_vector_store,
+                        self.embedder,
+                        self.graph_builder,
+                        repo_root=self.loader.repo_path,
+                    )
                     temp_retriever.index_for_bm25(elements)
                     temp_retriever.save_bm25(repo_name)
                     self.logger.info(f"Saved BM25 index for {repo_name}")
@@ -2103,37 +2388,50 @@ class FastCode:
                         temp_global_index = GlobalIndexBuilder(self.config)
                         temp_global_index.build_maps(elements, repo_root)
                         temp_module_resolver = ModuleResolver(temp_global_index)
-                        temp_symbol_resolver = SymbolResolver(temp_global_index, temp_module_resolver)
+                        temp_symbol_resolver = SymbolResolver(
+                            temp_global_index, temp_module_resolver
+                        )
                         self.logger.info(f"Resolvers initialized for {repo_name}")
                     except Exception as e:
-                        self.logger.warning(f"Failed to initialize resolvers for {repo_name}: {e}")
+                        self.logger.warning(
+                            f"Failed to initialize resolvers for {repo_name}: {e}"
+                        )
                         temp_module_resolver = None
                         temp_symbol_resolver = None
 
-                    temp_graph_builder.build_graphs(elements, temp_module_resolver, temp_symbol_resolver)
+                    temp_graph_builder.build_graphs(
+                        elements, temp_module_resolver, temp_symbol_resolver
+                    )
                     temp_graph_builder.save(repo_name)
                     self.logger.info(f"Saved graph data for {repo_name}")
 
                     successfully_indexed.append(repo_name)
 
-                    self.logger.info(f"Successfully indexed and saved {repo_name}: {len(elements)} elements")
+                    self.logger.info(
+                        f"Successfully indexed and saved {repo_name}: {len(elements)} elements"
+                    )
                 else:
                     self.logger.warning(f"No vectors generated for {repo_name}")
 
             except Exception as e:
                 self.logger.error(f"Failed to load repository {source}: {e}")
                 import traceback
+
                 self.logger.error(traceback.format_exc())
                 # Continue with next repository
                 continue
 
         if successfully_indexed:
-            self.logger.info(f"Successfully indexed {len(successfully_indexed)} repositories:")
+            self.logger.info(
+                f"Successfully indexed {len(successfully_indexed)} repositories:"
+            )
             for repo_name in successfully_indexed:
                 self.logger.info(f"  - {repo_name}")
 
             # Merge all indexed repositories into the main vector store for statistics
-            self.logger.info("Merging repositories into main vector store for statistics...")
+            self.logger.info(
+                "Merging repositories into main vector store for statistics..."
+            )
             if self.vector_store.dimension is None:
                 self.vector_store.initialize(self.embedder.embedding_dim)
 
@@ -2153,7 +2451,7 @@ class FastCode:
     def list_repositories(self) -> list[dict[str, Any]]:
         """
         List all indexed repositories
-        
+
         Returns:
             List of repository information dictionaries
         """
@@ -2163,20 +2461,22 @@ class FastCode:
         repositories = []
         for repo_name in repo_names:
             repo_info = self.loaded_repositories.get(repo_name, {})
-            repositories.append({
-                'name': repo_name,
-                'element_count': repo_counts.get(repo_name, 0),
-                'file_count': repo_info.get('file_count', 0),
-                'size_mb': repo_info.get('total_size_mb', 0),
-                'url': repo_info.get('url', 'N/A'),
-            })
+            repositories.append(
+                {
+                    "name": repo_name,
+                    "element_count": repo_counts.get(repo_name, 0),
+                    "file_count": repo_info.get("file_count", 0),
+                    "size_mb": repo_info.get("total_size_mb", 0),
+                    "url": repo_info.get("url", "N/A"),
+                }
+            )
 
         return repositories
 
     def get_repository_stats(self) -> dict[str, Any]:
         """
         Get statistics about all indexed repositories
-        
+
         Returns:
             Dictionary with repository statistics
         """
@@ -2184,30 +2484,32 @@ class FastCode:
         repo_names = self.vector_store.get_repository_names()
 
         stats = {
-            'total_repositories': len(repo_names),
-            'total_elements': self.vector_store.get_count(),
-            'repositories': []
+            "total_repositories": len(repo_names),
+            "total_elements": self.vector_store.get_count(),
+            "repositories": [],
         }
 
         for repo_name in repo_names:
             repo_info = self.loaded_repositories.get(repo_name, {})
-            stats['repositories'].append({
-                'name': repo_name,
-                'elements': repo_counts.get(repo_name, 0),
-                'files': repo_info.get('file_count', 0),
-                'size_mb': repo_info.get('total_size_mb', 0),
-            })
+            stats["repositories"].append(
+                {
+                    "name": repo_name,
+                    "elements": repo_counts.get(repo_name, 0),
+                    "files": repo_info.get("file_count", 0),
+                    "size_mb": repo_info.get("total_size_mb", 0),
+                }
+            )
 
         return stats
 
     def _load_multi_repo_cache(self, repo_names: list[str] | None = None) -> bool:
         """
         Load multi-repository index from cache by merging individual repository indices
-        
+
         Args:
             repo_names: Optional list of specific repository names to load.
                        If None, loads all available repositories.
-        
+
         Returns:
             True if successful, False otherwise
         """
@@ -2218,9 +2520,11 @@ class FastCode:
 
             if os.path.exists(persist_dir):
                 for file in os.listdir(persist_dir):
-                    if file.endswith('.faiss'):
-                        repo_name = file.replace('.faiss', '')
-                        metadata_file = os.path.join(persist_dir, f"{repo_name}_metadata.pkl")
+                    if file.endswith(".faiss"):
+                        repo_name = file.replace(".faiss", "")
+                        metadata_file = os.path.join(
+                            persist_dir, f"{repo_name}_metadata.pkl"
+                        )
                         if os.path.exists(metadata_file):
                             available_repos.append(repo_name)
 
@@ -2232,12 +2536,16 @@ class FastCode:
             if repo_names:
                 repos_to_load = [r for r in available_repos if r in repo_names]
                 if not repos_to_load:
-                    self.logger.error(f"None of the requested repositories found: {repo_names}")
+                    self.logger.error(
+                        f"None of the requested repositories found: {repo_names}"
+                    )
                     return False
             else:
                 repos_to_load = available_repos
 
-            self.logger.info(f"Found {len(repos_to_load)} repository indexes: {', '.join(repos_to_load)}")
+            self.logger.info(
+                f"Found {len(repos_to_load)} repository indexes: {', '.join(repos_to_load)}"
+            )
 
             # Always reinitialize for clean merge
             self.vector_store.initialize(self.embedder.embedding_dim)
@@ -2281,10 +2589,12 @@ class FastCode:
 
             for repo_name in repos_to_load:
                 # Try loading BM25 for each repo
-                bm25_path = os.path.join(self.retriever.persist_dir, f"{repo_name}_bm25.pkl")
+                bm25_path = os.path.join(
+                    self.retriever.persist_dir, f"{repo_name}_bm25.pkl"
+                )
                 if os.path.exists(bm25_path):
                     try:
-                        with open(bm25_path, 'rb') as f:
+                        with open(bm25_path, "rb") as f:
                             data = pickle.load(f)
                             all_bm25_corpus.extend(data["bm25_corpus"])
 
@@ -2294,7 +2604,9 @@ class FastCode:
 
                         self.logger.info(f"Loaded BM25 data for {repo_name}")
                     except Exception as e:
-                        self.logger.warning(f"Failed to load BM25 data for {repo_name}: {e}")
+                        self.logger.warning(
+                            f"Failed to load BM25 data for {repo_name}: {e}"
+                        )
 
                 # Load graph data (merge into main graph)
                 if not graphs_loaded:
@@ -2313,7 +2625,9 @@ class FastCode:
                 self.retriever.full_bm25_elements = all_bm25_elements
                 self.retriever.full_bm25_corpus = all_bm25_corpus
                 self.retriever.full_bm25 = BM25Okapi(all_bm25_corpus)
-                self.logger.info(f"Rebuilt full BM25 index with {len(all_bm25_elements)} merged elements")
+                self.logger.info(
+                    f"Rebuilt full BM25 index with {len(all_bm25_elements)} merged elements"
+                )
             else:
                 # Fallback: reconstruct from metadata
                 self.logger.info("No BM25 data found, reconstructing from metadata...")
@@ -2321,7 +2635,9 @@ class FastCode:
 
                 if elements:
                     self.retriever.index_for_bm25(elements)
-                    self.logger.info(f"Rebuilt BM25 index with {len(elements)} elements")
+                    self.logger.info(
+                        f"Rebuilt BM25 index with {len(elements)} elements"
+                    )
 
                     if not graphs_loaded:
                         self.graph_builder.build_graphs(elements)
@@ -2337,12 +2653,15 @@ class FastCode:
             self.repo_indexed = True
             self.repo_loaded = True
 
-            self.logger.info(f"Successfully loaded {len(repos_to_load)} repositories with {self.vector_store.get_count()} total vectors")
+            self.logger.info(
+                f"Successfully loaded {len(repos_to_load)} repositories with {self.vector_store.get_count()} total vectors"
+            )
             return True
 
         except Exception as e:
             self.logger.error(f"Failed to load multi-repo cache: {e}")
             import traceback
+
             self.logger.error(traceback.format_exc())
             return False
 
@@ -2469,7 +2788,9 @@ class FastCode:
             "current_lookup": current_lookup,
         }
 
-    def _collect_unchanged_elements(self, manifest, unchanged_files, existing_metadata) -> tuple:
+    def _collect_unchanged_elements(
+        self, manifest, unchanged_files, existing_metadata
+    ) -> tuple:
         """Collect element dicts and IDs for unchanged files from existing metadata."""
         unchanged_element_ids = set()
         for rel_path in unchanged_files:
@@ -2478,7 +2799,8 @@ class FastCode:
                 unchanged_element_ids.add(elem_id)
 
         unchanged_elements = [
-            meta for meta in existing_metadata
+            meta
+            for meta in existing_metadata
             if meta.get("id") in unchanged_element_ids
         ]
 
@@ -2568,23 +2890,25 @@ class FastCode:
         all_elements = []
         for meta in unchanged_elements:
             try:
-                all_elements.append(CodeElement(
-                    id=meta.get("id", ""),
-                    type=meta.get("type", ""),
-                    name=meta.get("name", ""),
-                    file_path=meta.get("file_path", ""),
-                    relative_path=meta.get("relative_path", ""),
-                    language=meta.get("language", ""),
-                    start_line=meta.get("start_line", 0),
-                    end_line=meta.get("end_line", 0),
-                    code=meta.get("code", ""),
-                    signature=meta.get("signature"),
-                    docstring=meta.get("docstring"),
-                    summary=meta.get("summary"),
-                    metadata=meta.get("metadata", {}),
-                    repo_name=meta.get("repo_name"),
-                    repo_url=meta.get("repo_url"),
-                ))
+                all_elements.append(
+                    CodeElement(
+                        id=meta.get("id", ""),
+                        type=meta.get("type", ""),
+                        name=meta.get("name", ""),
+                        file_path=meta.get("file_path", ""),
+                        relative_path=meta.get("relative_path", ""),
+                        language=meta.get("language", ""),
+                        start_line=meta.get("start_line", 0),
+                        end_line=meta.get("end_line", 0),
+                        code=meta.get("code", ""),
+                        signature=meta.get("signature"),
+                        docstring=meta.get("docstring"),
+                        summary=meta.get("summary"),
+                        metadata=meta.get("metadata", {}),
+                        repo_name=meta.get("repo_name"),
+                        repo_url=meta.get("repo_url"),
+                    )
+                )
             except Exception as e:
                 self.logger.warning(f"Failed to reconstruct element: {e}")
         all_elements.extend(new_elements)
@@ -2606,8 +2930,11 @@ class FastCode:
 
         # 9. Rebuild BM25 (temporary retriever)
         temp_retriever = HybridRetriever(
-            self.config, temp_store, self.embedder,
-            CodeGraphBuilder(self.config), repo_root=repo_path,
+            self.config,
+            temp_store,
+            self.embedder,
+            CodeGraphBuilder(self.config),
+            repo_root=repo_path,
         )
         temp_retriever.index_for_bm25(all_elements)
 
@@ -2659,14 +2986,16 @@ class FastCode:
         if graph_rt is not None:
             graph_rt.close()
 
-    def _get_full_dialogue_history(self, session_id: str | None, enable_multi_turn: bool) -> list[dict[str, Any]] | None:
+    def _get_full_dialogue_history(
+        self, session_id: str | None, enable_multi_turn: bool
+    ) -> list[dict[str, Any]] | None:
         """
         Get full dialogue history for answer generation
-        
+
         Args:
             session_id: Session ID
             enable_multi_turn: Whether multi-turn is enabled
-        
+
         Returns:
             List of dialogue turns or None
         """
@@ -2674,17 +3003,19 @@ class FastCode:
             return None
 
         context_rounds = self.config.get("generation", {}).get("context_rounds", 10)
-        history = self.cache_manager.get_dialogue_history(session_id, max_turns=context_rounds)
+        history = self.cache_manager.get_dialogue_history(
+            session_id, max_turns=context_rounds
+        )
 
         return history if history else None
 
     def _get_next_turn_number(self, session_id: str) -> int:
         """
         Get the next turn number for a session
-        
+
         Args:
             session_id: Session ID
-        
+
         Returns:
             Next turn number (1-indexed)
         """
@@ -2696,10 +3027,10 @@ class FastCode:
     def get_session_history(self, session_id: str) -> list[dict[str, Any]]:
         """
         Get dialogue history for a session
-        
+
         Args:
             session_id: Session ID
-        
+
         Returns:
             List of dialogue turns
         """
@@ -2708,16 +3039,18 @@ class FastCode:
     def delete_session(self, session_id: str) -> bool:
         """
         Delete a dialogue session
-        
+
         Args:
             session_id: Session ID
-        
+
         Returns:
             True if successful
         """
         return self.cache_manager.delete_session(session_id)
 
-    def remove_repository(self, repo_name: str, delete_source: bool = True) -> dict[str, Any]:
+    def remove_repository(
+        self, repo_name: str, delete_source: bool = True
+    ) -> dict[str, Any]:
         """
         Fully remove a repository: vector index files, BM25, graphs,
         repo overview, and optionally the cloned source code.
@@ -2750,7 +3083,7 @@ class FastCode:
                 os.remove(fpath)
                 deleted_files.append(fname)
                 freed_bytes += size
-                self.logger.info(f"Deleted {fpath} ({size / (1024*1024):.2f} MB)")
+                self.logger.info(f"Deleted {fpath} ({size / (1024 * 1024):.2f} MB)")
 
         # Remove overview entry from repo_overviews.pkl
         if self.vector_store.delete_repo_overview(repo_name):
@@ -2759,7 +3092,9 @@ class FastCode:
 
         # Remove cloned source code
         if delete_source:
-            repo_root = getattr(self.loader, "safe_repo_root", self.config.get("repo_root", "./repos"))
+            repo_root = getattr(
+                self.loader, "safe_repo_root", self.config.get("repo_root", "./repos")
+            )
             repo_dir = os.path.join(repo_root, repo_name)
             if os.path.isdir(repo_dir):
                 dir_size = sum(

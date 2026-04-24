@@ -6,25 +6,26 @@ Complete API with all features from web_app.py
 import os
 import platform
 
-if platform.system() == 'Darwin':
-    os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-    os.environ['OMP_NUM_THREADS'] = '1'
-    os.environ['OPENBLAS_NUM_THREADS'] = '1'
-    os.environ['MKL_NUM_THREADS'] = '1'
+if platform.system() == "Darwin":
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
 
-from fastapi import FastAPI, HTTPException, File, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any, List
-import uvicorn
-import logging
-from pathlib import Path
-import tempfile
-import zipfile
-import shutil
-import uuid
 import asyncio
+import logging
+import shutil
+import tempfile
+import uuid
+import zipfile
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+
+import uvicorn
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from fastcode import FastCode
 from fastcode.utils import safe_jsonable
@@ -33,51 +34,79 @@ from fastcode.utils import safe_jsonable
 # Pydantic models
 class LoadRepositoryRequest(BaseModel):
     source: str = Field(..., description="Repository URL or local path")
-    is_url: Optional[bool] = Field(
+    is_url: bool | None = Field(
         None,
-        description="True if source is URL, False if local path. If omitted, auto-detect."
+        description="True if source is URL, False if local path. If omitted, auto-detect.",
     )
 
 
 class IndexRunRequest(BaseModel):
     source: str = Field(..., description="Repository URL or local path")
-    is_url: Optional[bool] = Field(None, description="Explicit source type override")
-    ref: Optional[str] = Field(None, description="Branch/tag/ref to index")
-    commit: Optional[str] = Field(None, description="Commit hash to index")
-    force: bool = Field(False, description="Force re-index even if snapshot already exists")
+    is_url: bool | None = Field(None, description="Explicit source type override")
+    ref: str | None = Field(None, description="Branch/tag/ref to index")
+    commit: str | None = Field(None, description="Commit hash to index")
+    force: bool = Field(
+        False, description="Force re-index even if snapshot already exists"
+    )
     publish: bool = Field(True, description="Publish manifest after indexing")
     enable_scip: bool = Field(True, description="Enable SCIP extraction path")
-    scip_artifact_path: Optional[str] = Field(None, description="Optional pre-built SCIP artifact path")
+    scip_artifact_path: str | None = Field(
+        None, description="Optional pre-built SCIP artifact path"
+    )
 
 
 class QueryRequest(BaseModel):
     question: str = Field(..., description="Question to ask about the repository")
-    snapshot_id: Optional[str] = Field(None, description="Direct snapshot ID")
-    repo_name: Optional[str] = Field(None, description="Repository name (for ref resolution)")
-    ref_name: Optional[str] = Field(None, description="Branch/ref name (for ref resolution)")
-    filters: Optional[Dict[str, Any]] = Field(None, description="Optional filters")
+    snapshot_id: str | None = Field(None, description="Direct snapshot ID")
+    repo_name: str | None = Field(
+        None, description="Repository name (for ref resolution)"
+    )
+    ref_name: str | None = Field(
+        None, description="Branch/ref name (for ref resolution)"
+    )
+    filters: dict[str, Any] | None = Field(None, description="Optional filters")
     multi_turn: bool = Field(False, description="Enable multi-turn mode")
-    session_id: Optional[str] = Field(None, description="Session ID for multi-turn dialogue")
+    session_id: str | None = Field(
+        None, description="Session ID for multi-turn dialogue"
+    )
 
 
 class QuerySnapshotRequest(BaseModel):
     question: str = Field(..., description="Question to ask")
-    snapshot_id: Optional[str] = Field(None, description="Direct snapshot ID")
-    repo_name: Optional[str] = Field(None, description="Repository name (when resolving by ref)")
-    ref_name: Optional[str] = Field(None, description="Branch/ref name (when resolving by ref)")
-    filters: Optional[Dict[str, Any]] = Field(None, description="Optional retrieval filters")
+    snapshot_id: str | None = Field(None, description="Direct snapshot ID")
+    repo_name: str | None = Field(
+        None, description="Repository name (when resolving by ref)"
+    )
+    ref_name: str | None = Field(
+        None, description="Branch/ref name (when resolving by ref)"
+    )
+    filters: dict[str, Any] | None = Field(
+        None, description="Optional retrieval filters"
+    )
     multi_turn: bool = Field(False, description="Enable multi-turn mode")
-    session_id: Optional[str] = Field(None, description="Session ID for multi-turn dialogue")
+    session_id: str | None = Field(
+        None, description="Session ID for multi-turn dialogue"
+    )
 
 
 class ProjectionBuildRequest(BaseModel):
-    scope_kind: str = Field(..., description="Projection scope: snapshot | query | entity")
-    snapshot_id: Optional[str] = Field(None, description="Direct snapshot ID")
-    repo_name: Optional[str] = Field(None, description="Repository name (for ref resolution)")
-    ref_name: Optional[str] = Field(None, description="Branch/ref name (for ref resolution)")
-    query: Optional[str] = Field(None, description="Query text for query-scoped projection")
-    target_id: Optional[str] = Field(None, description="Entity ID/path for entity-scoped projection")
-    filters: Optional[Dict[str, Any]] = Field(None, description="Optional scope filters")
+    scope_kind: str = Field(
+        ..., description="Projection scope: snapshot | query | entity"
+    )
+    snapshot_id: str | None = Field(None, description="Direct snapshot ID")
+    repo_name: str | None = Field(
+        None, description="Repository name (for ref resolution)"
+    )
+    ref_name: str | None = Field(
+        None, description="Branch/ref name (for ref resolution)"
+    )
+    query: str | None = Field(
+        None, description="Query text for query-scoped projection"
+    )
+    target_id: str | None = Field(
+        None, description="Entity ID/path for entity-scoped projection"
+    )
+    filters: dict[str, Any] | None = Field(None, description="Optional scope filters")
     force: bool = Field(False, description="Force regeneration even when cached")
 
 
@@ -85,19 +114,23 @@ class QueryResponse(BaseModel):
     answer: str
     query: str
     context_elements: int
-    sources: List[Dict[str, Any]]
-    prompt_tokens: Optional[int] = None
-    completion_tokens: Optional[int] = None
-    total_tokens: Optional[int] = None
-    session_id: Optional[str] = None
+    sources: list[dict[str, Any]]
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    session_id: str | None = None
 
 
 class LoadRepositoriesRequest(BaseModel):
-    repo_names: List[str] = Field(..., description="Repository names to load from existing indexes")
+    repo_names: list[str] = Field(
+        ..., description="Repository names to load from existing indexes"
+    )
 
 
 class IndexMultipleRequest(BaseModel):
-    sources: List[LoadRepositoryRequest] = Field(..., description="Multiple repositories to load and index")
+    sources: list[LoadRepositoryRequest] = Field(
+        ..., description="Multiple repositories to load and index"
+    )
 
 
 class NewSessionResponse(BaseModel):
@@ -105,23 +138,26 @@ class NewSessionResponse(BaseModel):
 
 
 class DeleteReposRequest(BaseModel):
-    repo_names: List[str] = Field(..., description="Repository names to delete")
-    delete_source: bool = Field(True, description="Also delete cloned source code in repos/")
+    repo_names: list[str] = Field(..., description="Repository names to delete")
+    delete_source: bool = Field(
+        True, description="Also delete cloned source code in repos/"
+    )
 
 
 class StatusResponse(BaseModel):
     status: str
     repo_loaded: bool
     repo_indexed: bool
-    repo_info: Dict[str, Any]
-    graph_backend: Optional[str] = None
-    storage_backend: Optional[str] = None
-    retrieval_backend: Optional[str] = None
-    available_repositories: List[Dict[str, Any]] = Field(default_factory=list)
-    loaded_repositories: List[Dict[str, Any]] = Field(default_factory=list)
+    repo_info: dict[str, Any]
+    graph_backend: str | None = None
+    storage_backend: str | None = None
+    retrieval_backend: str | None = None
+    available_repositories: list[dict[str, Any]] = Field(default_factory=list)
+    loaded_repositories: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # Initialize FastAPI app
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -156,7 +192,7 @@ app.add_middleware(
 )
 
 # Global FastCode instance
-fastcode_instance: Optional[FastCode] = None
+fastcode_instance: FastCode | None = None
 
 # Setup logging
 log_dir = Path("./logs")
@@ -165,10 +201,7 @@ log_dir.mkdir(exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(log_dir / "api.log"),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.FileHandler(log_dir / "api.log"), logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 
@@ -180,7 +213,6 @@ def _ensure_fastcode_initialized():
         logger.info("Initializing FastCode system (lazy initialization)")
         fastcode_instance = FastCode()
     return fastcode_instance
-
 
 
 @app.get("/")
@@ -211,7 +243,9 @@ async def health_check():
         "repo_indexed": fastcode_instance.repo_indexed,
         "multi_repo_mode": fastcode_instance.multi_repo_mode,
         "storage_backend": fastcode_instance.snapshot_store.db_runtime.backend,
-        "retrieval_backend": fastcode_instance.config.get("retrieval", {}).get("backend", "legacy"),
+        "retrieval_backend": fastcode_instance.config.get("retrieval", {}).get(
+            "backend", "legacy"
+        ),
     }
 
 
@@ -225,7 +259,9 @@ async def get_status(full_scan: bool = False):
     """
     fastcode = _ensure_fastcode_initialized()
 
-    available_repos = fastcode.vector_store.scan_available_indexes(use_cache=not full_scan)
+    available_repos = fastcode.vector_store.scan_available_indexes(
+        use_cache=not full_scan
+    )
     loaded_repos = fastcode.list_repositories()
 
     return StatusResponse(
@@ -233,7 +269,9 @@ async def get_status(full_scan: bool = False):
         repo_loaded=fastcode.repo_loaded,
         repo_indexed=fastcode.repo_indexed,
         repo_info=fastcode.repo_info,
-        graph_backend=fastcode.config.get("retrieval", {}).get("graph_backend", "legacy"),
+        graph_backend=fastcode.config.get("retrieval", {}).get(
+            "graph_backend", "legacy"
+        ),
         storage_backend=fastcode.snapshot_store.db_runtime.backend,
         retrieval_backend=fastcode.config.get("retrieval", {}).get("backend", "legacy"),
         available_repositories=available_repos,
@@ -252,7 +290,9 @@ async def list_repositories(full_scan: bool = False):
     fastcode = _ensure_fastcode_initialized()
 
     try:
-        available_repos = fastcode.vector_store.scan_available_indexes(use_cache=not full_scan)
+        available_repos = fastcode.vector_store.scan_available_indexes(
+            use_cache=not full_scan
+        )
         loaded_repos = fastcode.list_repositories()
 
         return {
@@ -346,7 +386,7 @@ async def get_index_run(run_id: str):
 
 
 @app.post("/index/publish/{run_id}")
-async def publish_index_run(run_id: str, ref_name: Optional[str] = None):
+async def publish_index_run(run_id: str, ref_name: str | None = None):
     """Publish an existing index run into manifest and lineage."""
     fastcode = _ensure_fastcode_initialized()
     try:
@@ -388,7 +428,9 @@ async def load_and_index(request: LoadRepositoryRequest, force: bool = False):
 
     try:
         logger.info(f"Loading repository: {request.source}")
-        await asyncio.to_thread(fastcode.load_repository, request.source, request.is_url)
+        await asyncio.to_thread(
+            fastcode.load_repository, request.source, request.is_url
+        )
 
         logger.info("Indexing repository")
         await asyncio.to_thread(fastcode.index_repository, force=force)
@@ -419,7 +461,9 @@ async def load_repositories(request: LoadRepositoriesRequest):
         success = fastcode._load_multi_repo_cache(repo_names=request.repo_names)
 
         if not success:
-            raise HTTPException(status_code=500, detail="Failed to load repositories from cache")
+            raise HTTPException(
+                status_code=500, detail="Failed to load repositories from cache"
+            )
 
         return {
             "status": "success",
@@ -462,7 +506,7 @@ async def upload_repository_zip(file: UploadFile = File(...)):
     """Upload and extract repository ZIP file"""
     fastcode = _ensure_fastcode_initialized()
 
-    if not file.filename.endswith('.zip'):
+    if not file.filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only ZIP files are supported")
 
     file.file.seek(0, 2)
@@ -471,13 +515,16 @@ async def upload_repository_zip(file: UploadFile = File(...)):
 
     max_size = 100 * 1024 * 1024  # 100MB
     if file_size > max_size:
-        raise HTTPException(status_code=400, detail=f"File too large. Maximum size is {max_size / (1024*1024)}MB")
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size is {max_size / (1024 * 1024)}MB",
+        )
 
     try:
-        repo_name = file.filename.rsplit('.', 1)[0]
-        for suffix in ['-main', '-master', '_main', '_master']:
+        repo_name = file.filename.rsplit(".", 1)[0]
+        for suffix in ["-main", "-master", "_main", "_master"]:
             if repo_name.endswith(suffix):
-                repo_name = repo_name[:-len(suffix)]
+                repo_name = repo_name[: -len(suffix)]
                 break
 
         repo_workspace = getattr(fastcode.loader, "safe_repo_root", "./repos")
@@ -500,7 +547,7 @@ async def upload_repository_zip(file: UploadFile = File(...)):
         extract_dir.mkdir(exist_ok=True)
 
         logger.info(f"Extracting ZIP file to temporary directory: {extract_dir}")
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extractall(extract_dir)
 
         extracted_items = list(extract_dir.iterdir())
@@ -674,7 +721,7 @@ async def get_repository_summary():
     if not fastcode.repo_loaded:
         raise HTTPException(status_code=400, detail="No repository loaded")
 
-    summary_payload: Dict[str, Any] = {
+    summary_payload: dict[str, Any] = {
         "status": "success",
     }
 
@@ -734,9 +781,9 @@ async def get_scip_artifact(snapshot_id: str):
 @app.get("/symbols/find")
 async def find_symbol(
     snapshot_id: str,
-    symbol_id: Optional[str] = None,
-    name: Optional[str] = None,
-    path: Optional[str] = None,
+    symbol_id: str | None = None,
+    name: str | None = None,
+    path: str | None = None,
 ):
     fastcode = _ensure_fastcode_initialized()
     try:
@@ -761,8 +808,15 @@ async def find_symbol(
 async def get_graph_callees(snapshot_id: str, symbol_id: str, max_hops: int = 1):
     fastcode = _ensure_fastcode_initialized()
     try:
-        callees = await asyncio.to_thread(fastcode.get_graph_callees, snapshot_id, symbol_id, max_hops)
-        return {"status": "success", "snapshot_id": snapshot_id, "symbol_id": symbol_id, "callees": callees}
+        callees = await asyncio.to_thread(
+            fastcode.get_graph_callees, snapshot_id, symbol_id, max_hops
+        )
+        return {
+            "status": "success",
+            "snapshot_id": snapshot_id,
+            "symbol_id": symbol_id,
+            "callees": callees,
+        }
     except Exception as e:
         logger.error(f"Graph callees lookup failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -772,8 +826,15 @@ async def get_graph_callees(snapshot_id: str, symbol_id: str, max_hops: int = 1)
 async def get_graph_callers(snapshot_id: str, symbol_id: str, max_hops: int = 1):
     fastcode = _ensure_fastcode_initialized()
     try:
-        callers = await asyncio.to_thread(fastcode.get_graph_callers, snapshot_id, symbol_id, max_hops)
-        return {"status": "success", "snapshot_id": snapshot_id, "symbol_id": symbol_id, "callers": callers}
+        callers = await asyncio.to_thread(
+            fastcode.get_graph_callers, snapshot_id, symbol_id, max_hops
+        )
+        return {
+            "status": "success",
+            "snapshot_id": snapshot_id,
+            "symbol_id": symbol_id,
+            "callers": callers,
+        }
     except Exception as e:
         logger.error(f"Graph callers lookup failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -783,8 +844,15 @@ async def get_graph_callers(snapshot_id: str, symbol_id: str, max_hops: int = 1)
 async def get_graph_dependencies(snapshot_id: str, doc_id: str, max_hops: int = 1):
     fastcode = _ensure_fastcode_initialized()
     try:
-        deps = await asyncio.to_thread(fastcode.get_graph_dependencies, snapshot_id, doc_id, max_hops)
-        return {"status": "success", "snapshot_id": snapshot_id, "doc_id": doc_id, "dependencies": deps}
+        deps = await asyncio.to_thread(
+            fastcode.get_graph_dependencies, snapshot_id, doc_id, max_hops
+        )
+        return {
+            "status": "success",
+            "snapshot_id": snapshot_id,
+            "doc_id": doc_id,
+            "dependencies": deps,
+        }
     except Exception as e:
         logger.error(f"Graph dependencies lookup failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -817,7 +885,9 @@ async def get_projection_layer(projection_id: str, layer: str):
     """Fetch a specific projection layer (L0/L1/L2)."""
     fastcode = _ensure_fastcode_initialized()
     try:
-        result = await asyncio.to_thread(fastcode.get_projection_layer, projection_id, layer)
+        result = await asyncio.to_thread(
+            fastcode.get_projection_layer, projection_id, layer
+        )
         return {"status": "success", "result": result}
     except Exception as e:
         logger.error(f"Projection layer fetch failed: {e}")
@@ -829,15 +899,38 @@ async def get_projection_chunk(projection_id: str, chunk_id: str):
     """Fetch a single projection L2 chunk payload."""
     fastcode = _ensure_fastcode_initialized()
     try:
-        result = await asyncio.to_thread(fastcode.get_projection_chunk, projection_id, chunk_id)
+        result = await asyncio.to_thread(
+            fastcode.get_projection_chunk, projection_id, chunk_id
+        )
         return {"status": "success", "result": result}
     except Exception as e:
         logger.error(f"Projection chunk fetch failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/projection/snapshot/{snapshot_id}/prefix")
+async def get_projection_prefix(snapshot_id: str):
+    """Get L0+L1 projection as compact JSON for system prompt injection.
+
+    Returns the architectural overview (L0) and navigation structure (L1)
+    combined into a single response suitable for injecting into an AI
+    agent's system prompt at session start.
+    """
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        result = await asyncio.to_thread(fastcode.get_session_prefix, snapshot_id)
+        if result.get("error"):
+            raise HTTPException(status_code=404, detail=result["error"])
+        return {"status": "success", "result": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Session prefix fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/new-session", response_model=NewSessionResponse)
-async def new_session(clear_session_id: Optional[str] = None):
+async def new_session(clear_session_id: str | None = None):
     """Start a new conversation session"""
     fastcode = _ensure_fastcode_initialized()
 
@@ -859,7 +952,9 @@ async def list_sessions():
         for session in sessions:
             formatted_session = {
                 "session_id": session.get("session_id", ""),
-                "title": session.get("title", f"Session {session.get('session_id', '')}"),
+                "title": session.get(
+                    "title", f"Session {session.get('session_id', '')}"
+                ),
                 "total_turns": session.get("total_turns", 0),
                 "created": session.get("created", 0),
                 "last_updated": session.get("last_updated", 0),
@@ -893,7 +988,9 @@ async def delete_session(session_id: str):
     try:
         history = fastcode.get_session_history(session_id)
         if not history:
-            raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Session '{session_id}' not found"
+            )
 
         success = fastcode.delete_session(session_id)
         if success:
@@ -901,8 +998,7 @@ async def delete_session(session_id: str):
                 "status": "success",
                 "message": f"Session '{session_id}' deleted ({len(history)} turns)",
             }
-        else:
-            raise HTTPException(status_code=500, detail="Failed to delete session")
+        raise HTTPException(status_code=500, detail="Failed to delete session")
     except HTTPException:
         raise
     except Exception as e:
@@ -950,8 +1046,10 @@ async def clear_cache():
 
     if success:
         return {"status": "success", "message": "Cache cleared"}
-    else:
-        return {"status": "failed", "message": "Failed to clear cache or cache disabled"}
+    return {
+        "status": "failed",
+        "message": "Failed to clear cache or cache disabled",
+    }
 
 
 @app.get("/cache-stats")
@@ -994,7 +1092,6 @@ async def unload_repository():
     return {"status": "success", "message": "Repository unloaded"}
 
 
-
 def start_api(host: str = "0.0.0.0", port: int = 8000, reload: bool = False):
     """Start the API server"""
     logger.info(f"Starting FastCode API at http://{host}:{port}")
@@ -1006,8 +1103,12 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="FastCode API Server")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8000, help="Port to bind to (default: 8000)")
+    parser.add_argument(
+        "--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
+    )
+    parser.add_argument(
+        "--port", type=int, default=8000, help="Port to bind to (default: 8000)"
+    )
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
 
     args = parser.parse_args()

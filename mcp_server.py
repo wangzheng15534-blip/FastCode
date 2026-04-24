@@ -927,6 +927,35 @@ def find_callers(
 
 
 @mcp.tool()
+def get_session_prefix(snapshot_id: str) -> str:
+    """Get architectural overview for system prompt injection.
+
+    Returns L0+L1 projection data that should be loaded into the
+    agent's system prompt at session start. Provides architectural
+    awareness without any queries needed.
+
+    Args:
+        snapshot_id: Which snapshot to get the prefix for
+                     (e.g. "snap:myrepo:abc123").
+
+    Returns:
+        JSON with snapshot_id, projection_id, l0, l1 fields.
+    """
+    import json
+
+    fc = _get_fastcode()
+    try:
+        result = fc.get_session_prefix(snapshot_id)
+        if result.get("error"):
+            return json.dumps(
+                {"found": False, "snapshot_id": snapshot_id, "error": result["error"]}
+            )
+        return json.dumps({"found": True, **result})
+    except Exception as e:
+        return json.dumps({"found": False, "snapshot_id": snapshot_id, "error": str(e)})
+
+
+@mcp.tool()
 def reindex_repo(repo_source: str) -> str:
     """Force a full re-index of a repository.
 

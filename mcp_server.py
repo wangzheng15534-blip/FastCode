@@ -35,6 +35,14 @@ if PROJECT_ROOT not in sys.path:
 
 from mcp.server.fastmcp import FastMCP
 
+from fastcode.mcp_graph_tools import (
+    compute_directed_path,
+    compute_find_callers,
+    compute_impact_analysis,
+    compute_leiden_clusters,
+    compute_steiner_path,
+)
+
 # ---------------------------------------------------------------------------
 # Logging (file only – stdout is reserved for MCP JSON-RPC in stdio mode)
 # ---------------------------------------------------------------------------
@@ -728,67 +736,6 @@ def get_call_chain(
     return "\n".join(parts)
 
 
-_VALID_GRAPH_TYPES = {"call", "dependency", "inheritance", "reference", "containment"}
-
-_GRAPH_TYPE_MAP = {
-    "call": "call_graph",
-    "dependency": "dependency_graph",
-    "inheritance": "inheritance_graph",
-    "reference": "reference_graph",
-    "containment": "containment_graph",
-}
-
-
-def _resolve_unit_id(query: str, snapshot) -> str | None:
-    """Resolve a symbol query to a unit_id from snapshot units.
-
-    Tries exact unit_id match first, then display_name, then qualified_name.
-    Returns the first matching unit_id or None.
-    """
-    # 1. Exact unit_id
-    for unit in snapshot.units:
-        if unit.unit_id == query:
-            return unit.unit_id
-
-    # 2. Exact display_name (first match)
-    for unit in snapshot.units:
-        if unit.display_name == query:
-            return unit.unit_id
-
-    # 3. Exact qualified_name (first match)
-    for unit in snapshot.units:
-        if unit.qualified_name and unit.qualified_name == query:
-            return unit.unit_id
-
-    # 4. Case-insensitive display_name (first match)
-    query_lower = query.lower()
-    for unit in snapshot.units:
-        if unit.display_name.lower() == query_lower:
-            return unit.unit_id
-
-    return None
-
-
-def _format_path_node(unit_id: str, snapshot) -> dict[str, str | int | None]:
-    """Build a metadata dict for a node in the path."""
-    for unit in snapshot.units:
-        if unit.unit_id == unit_id:
-            return {
-                "symbol_id": unit.unit_id,
-                "display_name": unit.display_name,
-                "kind": unit.kind,
-                "path": unit.path,
-                "start_line": unit.start_line,
-            }
-    return {
-        "symbol_id": unit_id,
-        "display_name": None,
-        "kind": None,
-        "path": None,
-        "start_line": None,
-    }
-
-
 @mcp.tool()
 def directed_path(
     from_symbol: str,
@@ -815,25 +762,6 @@ def directed_path(
     """
     import json
 
-    import networkx as nx
-
-    from fastcode.ir_graph_builder import IRGraphBuilder
-
-    if graph_types is None:
-        graph_types = ["call", "dependency"]
-
-    invalid = [gt for gt in graph_types if gt not in _VALID_GRAPH_TYPES]
-    if invalid:
-        return json.dumps(
-            {
-                "found": False,
-                "path": [],
-                "path_length": 0,
-                "error": f"Invalid graph types: {invalid}. Valid: {sorted(_VALID_GRAPH_TYPES)}",
-            }
-        )
-
-    # Load snapshot
     fc = _get_fastcode()
     snapshot = fc.snapshot_store.load_snapshot(snapshot_id)
     if not snapshot:
@@ -846,123 +774,11 @@ def directed_path(
             }
         )
 
-    # Resolve symbol queries to unit IDs
-    from_id = _resolve_unit_id(from_symbol, snapshot)
-    if not from_id:
-        return json.dumps(
-            {
-                "found": False,
-                "path": [],
-                "path_length": 0,
-                "error": f"Symbol not found: {from_symbol}",
-            }
-        )
+    if graph_types is None:
+        graph_types = ["call", "dependency"]
 
-    to_id = _resolve_unit_id(to_symbol, snapshot)
-    if not to_id:
-        return json.dumps(
-            {
-                "found": False,
-                "path": [],
-                "path_length": 0,
-                "error": f"Symbol not found: {to_symbol}",
-            }
-        )
-
-    if from_id == to_id:
-        return json.dumps(
-            {
-                "found": True,
-                "path": [_format_path_node(from_id, snapshot)],
-                "path_length": 0,
-                "error": None,
-            }
-        )
-
-    # Build IR graphs and union selected types
-    graphs = IRGraphBuilder().build_graphs(snapshot)
-    combined: nx.DiGraph | None = None
-    for gt in graph_types:
-        attr = _GRAPH_TYPE_MAP[gt]
-        g: nx.DiGraph = getattr(graphs, attr)
-        if combined is None:
-            combined = g.copy()
-        else:
-            combined = nx.compose(combined, g)
-
-    if combined is None or combined.number_of_nodes() == 0:
-        return json.dumps(
-            {
-                "found": False,
-                "path": [],
-                "path_length": 0,
-                "error": "Selected graph types are empty (no nodes or edges).",
-            }
-        )
-
-    # Ensure both endpoints are in the combined graph
-    if from_id not in combined or to_id not in combined:
-        missing = []
-        if from_id not in combined:
-            missing.append(from_symbol)
-        if to_id not in combined:
-            missing.append(to_symbol)
-        return json.dumps(
-            {
-                "found": False,
-                "path": [],
-                "path_length": 0,
-                "error": f"Symbol(s) not in graph: {missing}",
-            }
-        )
-
-    # Find directed shortest path
-    try:
-        path = nx.shortest_path(combined, source=from_id, target=to_id)
-    except nx.NetworkXNoPath:
-        # Check if reverse path exists
-        try:
-            nx.shortest_path(combined, source=to_id, target=from_id)
-            return json.dumps(
-                {
-                    "found": False,
-                    "path": [],
-                    "path_length": 0,
-                    "error": (
-                        f"No directed path from '{from_symbol}' to '{to_symbol}'. "
-                        f"A reverse path exists (from '{to_symbol}' to '{from_symbol}')."
-                    ),
-                }
-            )
-        except nx.NetworkXNoPath:
-            return json.dumps(
-                {
-                    "found": False,
-                    "path": [],
-                    "path_length": 0,
-                    "error": f"No directed path between '{from_symbol}' and '{to_symbol}' in either direction.",
-                }
-            )
-
-    # Check path length against max_hops
-    if len(path) - 1 > max_hops:
-        return json.dumps(
-            {
-                "found": False,
-                "path": [],
-                "path_length": len(path) - 1,
-                "error": f"Shortest path length {len(path) - 1} exceeds max_hops={max_hops}.",
-            }
-        )
-
-    path_nodes = [_format_path_node(nid, snapshot) for nid in path]
     return json.dumps(
-        {
-            "found": True,
-            "path": path_nodes,
-            "path_length": len(path) - 1,
-            "error": None,
-        }
+        compute_directed_path(from_symbol, to_symbol, snapshot, max_hops, graph_types)
     )
 
 
@@ -990,26 +806,7 @@ def impact_analysis(
         total_count, error.
     """
     import json
-    from collections import deque
 
-    import networkx as nx
-
-    from fastcode.ir_graph_builder import IRGraphBuilder
-
-    if graph_types is None:
-        graph_types = ["call", "dependency"]
-
-    invalid = [gt for gt in graph_types if gt not in _VALID_GRAPH_TYPES]
-    if invalid:
-        return json.dumps(
-            {
-                "affected": [],
-                "total_count": 0,
-                "error": f"Invalid graph types: {invalid}. Valid: {sorted(_VALID_GRAPH_TYPES)}",
-            }
-        )
-
-    # Load snapshot
     fc = _get_fastcode()
     snapshot = fc.snapshot_store.load_snapshot(snapshot_id)
     if not snapshot:
@@ -1021,88 +818,10 @@ def impact_analysis(
             }
         )
 
-    # Resolve symbol
-    unit_id = _resolve_unit_id(symbol, snapshot)
-    if not unit_id:
-        return json.dumps(
-            {
-                "affected": [],
-                "total_count": 0,
-                "error": f"Symbol not found: {symbol}",
-            }
-        )
+    if graph_types is None:
+        graph_types = ["call", "dependency"]
 
-    # Build IR graphs and union selected types
-    graphs = IRGraphBuilder().build_graphs(snapshot)
-    combined: nx.DiGraph | None = None
-    for gt in graph_types:
-        attr = _GRAPH_TYPE_MAP[gt]
-        g: nx.DiGraph = getattr(graphs, attr)
-        if combined is None:
-            combined = g.copy()
-        else:
-            combined = nx.compose(combined, g)
-
-    if combined is None or combined.number_of_nodes() == 0:
-        return json.dumps(
-            {
-                "affected": [],
-                "total_count": 0,
-                "error": "Selected graph types are empty (no nodes or edges).",
-            }
-        )
-
-    if unit_id not in combined:
-        return json.dumps(
-            {
-                "affected": [],
-                "total_count": 0,
-                "error": f"Symbol not in graph: {symbol}",
-            }
-        )
-
-    # BFS using predecessors on the original directed graph.
-    # Predecessors of node N are symbols that have an edge TO N,
-    # meaning they call/depend on N and are affected if N changes.
-    visited: dict[str, int] = {}  # node -> distance
-    edge_types_map: dict[str, set[str]] = {}  # node -> set of edge types
-    queue = deque()
-    queue.append((unit_id, 0))
-    visited[unit_id] = 0
-
-    while queue:
-        node, dist = queue.popleft()
-        if dist >= max_hops:
-            continue
-        for pred in combined.predecessors(node):
-            if pred not in visited:
-                visited[pred] = dist + 1
-                edge_types_map[pred] = set()
-                queue.append((pred, dist + 1))
-            # Track which graph types contributed this edge
-            for gt in graph_types:
-                attr = _GRAPH_TYPE_MAP[gt]
-                g: nx.DiGraph = getattr(graphs, attr)
-                if g.has_edge(pred, node):
-                    edge_types_map.setdefault(pred, set()).add(gt)
-
-    # Build affected list (exclude the queried symbol itself)
-    affected = []
-    for nid, dist in sorted(visited.items(), key=lambda kv: kv[1]):
-        if nid == unit_id:
-            continue
-        node_info = _format_path_node(nid, snapshot)
-        node_info["distance"] = dist
-        node_info["edge_types"] = sorted(edge_types_map.get(nid, set()))
-        affected.append(node_info)
-
-    return json.dumps(
-        {
-            "affected": affected,
-            "total_count": len(affected),
-            "error": None,
-        }
-    )
+    return json.dumps(compute_impact_analysis(symbol, snapshot, max_hops, graph_types))
 
 
 @mcp.tool()
@@ -1124,8 +843,6 @@ def leiden_clusters(
     import json
 
     fc = _get_fastcode()
-
-    # Load snapshot
     snapshot = fc.snapshot_store.load_snapshot(snapshot_id)
     if not snapshot:
         return json.dumps(
@@ -1137,121 +854,7 @@ def leiden_clusters(
             }
         )
 
-    # Try to load cached projection first
-    projection_store = getattr(fc, "projection_store", None)
-    projection_transformer = getattr(fc, "projection_transformer", None)
-
-    if projection_store is not None and projection_store.enabled:
-        from fastcode.projection_models import ProjectionScope
-
-        scope = ProjectionScope(
-            scope_kind="full",
-            snapshot_id=snapshot_id,
-            scope_key="full",
-        )
-        cached_id = projection_store.find_cached_projection_id(scope, "default")
-        if cached_id:
-            l1_data = projection_store.get_layer(cached_id, "L1")
-            if l1_data:
-                return json.dumps(_extract_cluster_data(l1_data, snapshot))
-
-    # No cached projection; try to build one
-    if projection_transformer is not None:
-        try:
-            from fastcode.projection_models import ProjectionScope
-
-            scope = ProjectionScope(
-                scope_kind="full",
-                snapshot_id=snapshot_id,
-                scope_key="full",
-            )
-            result = projection_transformer.build(scope, snapshot)
-            if result and result.l1:
-                return json.dumps(_extract_cluster_data(result.l1, snapshot))
-        except Exception as exc:
-            return json.dumps(
-                {
-                    "clusters": [],
-                    "xrefs": [],
-                    "total_clusters": 0,
-                    "error": f"Failed to build projection: {exc}",
-                }
-            )
-
-    return json.dumps(
-        {
-            "clusters": [],
-            "xrefs": [],
-            "total_clusters": 0,
-            "error": "Projection store not configured and projection transformer not available.",
-        }
-    )
-
-
-def _extract_cluster_data(l1_data: dict, snapshot) -> dict:
-    """Extract structured cluster data from L1 projection data."""
-    clusters = []
-    xrefs = []
-
-    # Extract sections from content_extra
-    content_extra = l1_data.get("content_extra", {})
-    sections = content_extra.get("sections", [])
-    navigation = content_extra.get("navigation", [])
-
-    # Build a name -> label map from sections
-    label_map = {}
-    for section in sections:
-        label_map[section.get("name", "")] = section.get("text", "")
-
-    # Extract xrefs from relations
-    relations = content_extra.get("relations", {})
-    xref_list = relations.get("xref", [])
-    for xref in xref_list:
-        xref_id = xref.get("id", "")
-        parts = xref_id.split("->")
-        if len(parts) == 2:
-            xrefs.append(
-                {
-                    "from_cluster": parts[0],
-                    "to_cluster": parts[1],
-                    "weight": xref.get("confidence", 0),
-                }
-            )
-
-    # Build cluster info from projection_meta if available
-    projection_meta = l1_data.get("projection_meta", {})
-    # If we have raw cluster data in the L1, use it
-    # Otherwise synthesize from sections
-    for i, section in enumerate(sections):
-        cluster_info = {
-            "cluster_id": str(i),
-            "label": section.get("name", f"Cluster {i}"),
-            "node_count": 0,
-            "representative": None,
-            "top_members": [],
-        }
-        # Try to parse node count from text like "5 nodes"
-        text = section.get("text", "")
-        try:
-            cluster_info["node_count"] = int(text.split()[0])
-        except (ValueError, IndexError):
-            pass
-        # Check navigation for representative ref
-        if i < len(navigation):
-            nav = navigation[i]
-            rep_ref = nav.get("ref", {})
-            if rep_ref:
-                rep_display = rep_ref.get("display_name")
-                if rep_display:
-                    cluster_info["representative"] = rep_display
-        clusters.append(cluster_info)
-
-    return {
-        "clusters": clusters,
-        "xrefs": xrefs,
-        "total_clusters": len(clusters),
-        "error": None,
-    }
+    return json.dumps(compute_leiden_clusters(snapshot, fc))
 
 
 @mcp.tool()
@@ -1273,31 +876,6 @@ def steiner_path(
     """
     import json
 
-    import networkx as nx
-
-    from fastcode.ir_graph_builder import IRGraphBuilder
-
-    if not terminals or len(terminals) < 2:
-        return json.dumps(
-            {
-                "found": False,
-                "nodes": [],
-                "edges": [],
-                "error": "At least 2 terminal symbols required.",
-            }
-        )
-
-    if len(terminals) > 8:
-        return json.dumps(
-            {
-                "found": False,
-                "nodes": [],
-                "edges": [],
-                "error": "Maximum 8 terminal symbols allowed.",
-            }
-        )
-
-    # Load snapshot
     fc = _get_fastcode()
     snapshot = fc.snapshot_store.load_snapshot(snapshot_id)
     if not snapshot:
@@ -1310,152 +888,7 @@ def steiner_path(
             }
         )
 
-    # Resolve all terminal symbols
-    terminal_ids = []
-    for t in terminals:
-        tid = _resolve_unit_id(t, snapshot)
-        if not tid:
-            return json.dumps(
-                {
-                    "found": False,
-                    "nodes": [],
-                    "edges": [],
-                    "error": f"Symbol not found: {t}",
-                }
-            )
-        terminal_ids.append(tid)
-
-    # Remove duplicates
-    terminal_ids = list(dict.fromkeys(terminal_ids))
-
-    # Build IR graphs and create undirected union
-    graphs = IRGraphBuilder().build_graphs(snapshot)
-    undirected: nx.Graph | None = None
-    for attr_name in [
-        "call_graph",
-        "dependency_graph",
-        "inheritance_graph",
-        "reference_graph",
-        "containment_graph",
-    ]:
-        g: nx.DiGraph = getattr(graphs, attr_name)
-        ug = g.to_undirected()
-        if undirected is None:
-            undirected = ug.copy()
-        else:
-            undirected = nx.compose(undirected, ug)
-
-    if undirected is None or undirected.number_of_nodes() == 0:
-        return json.dumps(
-            {
-                "found": False,
-                "nodes": [],
-                "edges": [],
-                "error": "Graph is empty (no nodes or edges).",
-            }
-        )
-
-    # Check all terminals are in the graph
-    missing = [t for t, tid in zip(terminals, terminal_ids) if tid not in undirected]
-    if missing:
-        return json.dumps(
-            {
-                "found": False,
-                "nodes": [],
-                "edges": [],
-                "error": f"Symbol(s) not in graph: {missing}",
-            }
-        )
-
-    # If only one unique terminal, return just that node
-    if len(terminal_ids) == 1:
-        node = _format_path_node(terminal_ids[0], snapshot)
-        return json.dumps(
-            {
-                "found": True,
-                "nodes": [node],
-                "edges": [],
-                "error": None,
-            }
-        )
-
-    # Compute Steiner tree approximation
-    try:
-        steiner = nx.approximation.steiner_tree(undirected, terminal_ids)
-    except nx.NetworkXError as exc:
-        return json.dumps(
-            {
-                "found": False,
-                "nodes": [],
-                "edges": [],
-                "error": f"Steiner tree computation failed: {exc}",
-            }
-        )
-
-    # Prune non-terminal leaves iteratively
-    terminal_set = set(terminal_ids)
-    changed = True
-    while changed:
-        changed = False
-        leaves = [
-            n
-            for n in steiner.nodes()
-            if steiner.degree(n) == 1 and n not in terminal_set
-        ]
-        for leaf in leaves:
-            steiner.remove_node(leaf)
-            changed = True
-
-    if steiner.number_of_nodes() == 0:
-        return json.dumps(
-            {
-                "found": False,
-                "nodes": [],
-                "edges": [],
-                "error": "Steiner tree is empty after pruning.",
-            }
-        )
-
-    # Collect nodes
-    nodes = [_format_path_node(nid, snapshot) for nid in steiner.nodes()]
-
-    # Collect edges with type information from original directed graphs
-    edges = []
-    edge_type_map = {
-        "call_graph": "call",
-        "dependency_graph": "dependency",
-        "inheritance_graph": "inheritance",
-        "reference_graph": "reference",
-        "containment_graph": "containment",
-    }
-    seen_edges = set()
-    for u, v in steiner.edges():
-        edge_key = (min(u, v), max(u, v))
-        if edge_key in seen_edges:
-            continue
-        seen_edges.add(edge_key)
-        # Determine edge type from original directed graphs
-        edge_types = []
-        for attr_name, etype in edge_type_map.items():
-            g: nx.DiGraph = getattr(graphs, attr_name)
-            if g.has_edge(u, v) or g.has_edge(v, u):
-                edge_types.append(etype)
-        edges.append(
-            {
-                "from": u,
-                "to": v,
-                "type": "+".join(edge_types) if edge_types else "unknown",
-            }
-        )
-
-    return json.dumps(
-        {
-            "found": True,
-            "nodes": nodes,
-            "edges": edges,
-            "error": None,
-        }
-    )
+    return json.dumps(compute_steiner_path(terminals, snapshot))
 
 
 @mcp.tool()
@@ -1478,11 +911,7 @@ def find_callers(
         total_count, error.
     """
     import json
-    from collections import deque
 
-    from fastcode.ir_graph_builder import IRGraphBuilder
-
-    # Load snapshot
     fc = _get_fastcode()
     snapshot = fc.snapshot_store.load_snapshot(snapshot_id)
     if not snapshot:
@@ -1494,73 +923,7 @@ def find_callers(
             }
         )
 
-    # Resolve symbol
-    unit_id = _resolve_unit_id(symbol, snapshot)
-    if not unit_id:
-        return json.dumps(
-            {
-                "callers": [],
-                "total_count": 0,
-                "error": f"Symbol not found: {symbol}",
-            }
-        )
-
-    # Build call graph
-    graphs = IRGraphBuilder().build_graphs(snapshot)
-    call_g = graphs.call_graph
-
-    if call_g.number_of_nodes() == 0:
-        return json.dumps(
-            {
-                "callers": [],
-                "total_count": 0,
-                "error": "Call graph is empty.",
-            }
-        )
-
-    if unit_id not in call_g:
-        return json.dumps(
-            {
-                "callers": [],
-                "total_count": 0,
-                "error": f"Symbol not in call graph: {symbol}",
-            }
-        )
-
-    # BFS on reversed call graph (predecessors = callers)
-    visited: dict[str, int] = {}  # node -> distance
-    queue = deque()
-    queue.append((unit_id, 0))
-    visited[unit_id] = 0
-
-    while queue:
-        node, dist = queue.popleft()
-        if dist >= max_hops:
-            continue
-        # In the original graph, edge A->B means A calls B.
-        # We want callers of node, i.e. nodes that have an edge TO node.
-        # Those are predecessors of node in the original graph.
-        for pred in call_g.predecessors(node):
-            if pred not in visited:
-                visited[pred] = dist + 1
-                queue.append((pred, dist + 1))
-
-    # Build callers list (exclude the queried symbol itself)
-    callers = []
-    for nid, dist in sorted(visited.items(), key=lambda kv: kv[1]):
-        if nid == unit_id:
-            continue
-        node_info = _format_path_node(nid, snapshot)
-        node_info["distance"] = dist
-        callers.append(node_info)
-
-    return json.dumps(
-        {
-            "callers": callers,
-            "total_count": len(callers),
-            "error": None,
-        }
-    )
+    return json.dumps(compute_find_callers(symbol, snapshot, max_hops))
 
 
 @mcp.tool()

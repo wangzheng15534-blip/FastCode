@@ -123,6 +123,20 @@ ignore = [
 "tests/**/*.py" = [
     "S101",    # Allow assert in tests
     "ANN201",  # Missing return type for test functions
+    "PLR2004", # Allow magic values in test assertions
+    "PLR0913", # Allow many args in test factory functions
+]
+"mcp_server.py" = [
+    "E402",    # Module-level imports after sys.path setup (intentional)
+    "PLC0415", # Lazy imports inside tool functions (intentional)
+    "ANN001",  # Missing type annotations for MCP tool helper args
+    "ANN202",  # Missing return type for private helpers
+    "PLW0603", # Global statement for lazy singleton
+    "PLR2004", # Magic values in MCP tool bodies
+    "PLR0912", # Many branches in get_file_summary
+    "PLR0913", # Many args in _walk_call_chain
+    "RUF013",  # Implicit Optional in _walk_call_chain default
+    "RUF003",  # En-dash in docstring comment
 ]
 
 [tool.ruff.lint.flake8-pytest-style]

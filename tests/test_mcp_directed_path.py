@@ -1,16 +1,15 @@
 """Tests for the directed_path MCP tool.
 
-The tool logic in mcp_server.py uses module-level helpers (_resolve_unit_id,
-_format_path_node, etc.). Since mcp_server.py lives at the project root and
-tests may not reliably import it (xdist workers, path issues), the helpers are
-replicated here for testing. The production code is in mcp_server.py and should
-be kept in sync.
+Tests the pure compute functions from fastcode.mcp_graph_tools, which are
+the production code extracted from mcp_server.py.
 """
 
-
-import networkx as nx
-
 from fastcode.ir_graph_builder import IRGraphBuilder
+from fastcode.mcp_graph_tools import (
+    compute_directed_path,
+    format_path_node,
+    resolve_unit_id,
+)
 from fastcode.semantic_ir import IRCodeUnit, IRRelation, IRSnapshot
 
 # ---------------------------------------------------------------------------
@@ -64,167 +63,7 @@ def _snapshot(units: list[IRCodeUnit], relations: list[IRRelation]) -> IRSnapsho
 
 
 # ---------------------------------------------------------------------------
-# Replicated helpers (mirror of mcp_server.py module-level functions)
-# ---------------------------------------------------------------------------
-
-
-_VALID_GRAPH_TYPES = {"call", "dependency", "inheritance", "reference", "containment"}
-
-_GRAPH_TYPE_MAP = {
-    "call": "call_graph",
-    "dependency": "dependency_graph",
-    "inheritance": "inheritance_graph",
-    "reference": "reference_graph",
-    "containment": "containment_graph",
-}
-
-
-def _resolve_unit_id(query: str, snapshot) -> str | None:
-    for unit in snapshot.units:
-        if unit.unit_id == query:
-            return unit.unit_id
-    for unit in snapshot.units:
-        if unit.display_name == query:
-            return unit.unit_id
-    for unit in snapshot.units:
-        if unit.qualified_name and unit.qualified_name == query:
-            return unit.unit_id
-    query_lower = query.lower()
-    for unit in snapshot.units:
-        if unit.display_name.lower() == query_lower:
-            return unit.unit_id
-    return None
-
-
-def _format_path_node(unit_id: str, snapshot) -> dict[str, str | int | None]:
-    for unit in snapshot.units:
-        if unit.unit_id == unit_id:
-            return {
-                "symbol_id": unit.unit_id,
-                "display_name": unit.display_name,
-                "kind": unit.kind,
-                "path": unit.path,
-                "start_line": unit.start_line,
-            }
-    return {
-        "symbol_id": unit_id,
-        "display_name": None,
-        "kind": None,
-        "path": None,
-        "start_line": None,
-    }
-
-
-def _run_directed_path(snapshot, from_sym: str, to_sym: str, **kwargs) -> dict:
-    """Execute directed_path logic and return result dict."""
-    max_hops = kwargs.get("max_hops", 5)
-    graph_types = kwargs.get("graph_types", ["call", "dependency"])
-
-    invalid = [gt for gt in graph_types if gt not in _VALID_GRAPH_TYPES]
-    if invalid:
-        return {
-            "found": False,
-            "path": [],
-            "path_length": 0,
-            "error": f"Invalid graph types: {invalid}. Valid: {sorted(_VALID_GRAPH_TYPES)}",
-        }
-
-    from_id = _resolve_unit_id(from_sym, snapshot)
-    if not from_id:
-        return {
-            "found": False,
-            "path": [],
-            "path_length": 0,
-            "error": f"Symbol not found: {from_sym}",
-        }
-
-    to_id = _resolve_unit_id(to_sym, snapshot)
-    if not to_id:
-        return {
-            "found": False,
-            "path": [],
-            "path_length": 0,
-            "error": f"Symbol not found: {to_sym}",
-        }
-
-    if from_id == to_id:
-        return {
-            "found": True,
-            "path": [_format_path_node(from_id, snapshot)],
-            "path_length": 0,
-            "error": None,
-        }
-
-    graphs = IRGraphBuilder().build_graphs(snapshot)
-    combined = None
-    for gt in graph_types:
-        attr = _GRAPH_TYPE_MAP[gt]
-        g: nx.DiGraph = getattr(graphs, attr)
-        if combined is None:
-            combined = g.copy()
-        else:
-            combined = nx.compose(combined, g)
-
-    if combined is None or combined.number_of_nodes() == 0:
-        return {
-            "found": False,
-            "path": [],
-            "path_length": 0,
-            "error": "Selected graph types are empty (no nodes or edges).",
-        }
-
-    if from_id not in combined or to_id not in combined:
-        missing = []
-        if from_id not in combined:
-            missing.append(from_sym)
-        if to_id not in combined:
-            missing.append(to_sym)
-        return {
-            "found": False,
-            "path": [],
-            "path_length": 0,
-            "error": f"Symbol(s) not in graph: {missing}",
-        }
-
-    try:
-        path = nx.shortest_path(combined, source=from_id, target=to_id)
-    except nx.NetworkXNoPath:
-        try:
-            nx.shortest_path(combined, source=to_id, target=from_id)
-            return {
-                "found": False,
-                "path": [],
-                "path_length": 0,
-                "error": f"No directed path from '{from_sym}' to '{to_sym}'. "
-                f"A reverse path exists (from '{to_sym}' to '{from_sym}').",
-            }
-        except nx.NetworkXNoPath:
-            return {
-                "found": False,
-                "path": [],
-                "path_length": 0,
-                "error": f"No directed path between '{from_sym}' and '{to_sym}' in either direction.",
-            }
-
-    if len(path) - 1 > max_hops:
-        return {
-            "found": False,
-            "path": [],
-            "path_length": len(path) - 1,
-            "error": f"Shortest path length {len(path) - 1} exceeds max_hops={max_hops}.",
-        }
-
-    path_nodes = [_format_path_node(nid, snapshot) for nid in path]
-    return {
-        "found": True,
-        "path": path_nodes,
-        "path_length": len(path) - 1,
-        "error": None,
-    }
-
-
-# ---------------------------------------------------------------------------
-# _resolve_unit_id tests
+# resolve_unit_id tests
 # ---------------------------------------------------------------------------
 
 
@@ -234,43 +73,43 @@ class TestResolveUnitId:
             [_unit("u:1", name="foo"), _unit("u:2", name="bar")],
             [],
         )
-        assert _resolve_unit_id("u:2", snap) == "u:2"
+        assert resolve_unit_id("u:2", snap) == "u:2"
 
     def test_display_name(self):
         snap = _snapshot(
             [_unit("u:1", name="foo"), _unit("u:2", name="bar")],
             [],
         )
-        assert _resolve_unit_id("bar", snap) == "u:2"
+        assert resolve_unit_id("bar", snap) == "u:2"
 
     def test_qualified_name(self):
         snap = _snapshot(
             [_unit("u:1", name="foo", qualified_name="mod.foo")],
             [],
         )
-        assert _resolve_unit_id("mod.foo", snap) == "u:1"
+        assert resolve_unit_id("mod.foo", snap) == "u:1"
 
     def test_case_insensitive_display_name(self):
         snap = _snapshot(
             [_unit("u:1", name="MyClass")],
             [],
         )
-        assert _resolve_unit_id("myclass", snap) == "u:1"
+        assert resolve_unit_id("myclass", snap) == "u:1"
 
     def test_not_found(self):
         snap = _snapshot([_unit("u:1", name="foo")], [])
-        assert _resolve_unit_id("nonexistent", snap) is None
+        assert resolve_unit_id("nonexistent", snap) is None
 
 
 # ---------------------------------------------------------------------------
-# _format_path_node tests
+# format_path_node tests
 # ---------------------------------------------------------------------------
 
 
 class TestFormatPathNode:
     def test_known_unit(self):
         snap = _snapshot([_unit("u:1", name="foo", path="a.py", start_line=10)], [])
-        node = _format_path_node("u:1", snap)
+        node = format_path_node("u:1", snap)
         assert node["symbol_id"] == "u:1"
         assert node["display_name"] == "foo"
         assert node["kind"] == "function"
@@ -279,7 +118,7 @@ class TestFormatPathNode:
 
     def test_unknown_unit(self):
         snap = _snapshot([], [])
-        node = _format_path_node("u:missing", snap)
+        node = format_path_node("u:missing", snap)
         assert node["symbol_id"] == "u:missing"
         assert node["display_name"] is None
 
@@ -302,7 +141,7 @@ class TestDirectedPath:
             _rel("u:B", "u:C", "call"),
         ]
         snap = _snapshot(units, rels)
-        result = _run_directed_path(snap, "main", "render")
+        result = compute_directed_path("main", "render", snap)
         assert result["found"] is True
         assert result["path_length"] == 2
         assert [n["display_name"] for n in result["path"]] == [
@@ -319,7 +158,7 @@ class TestDirectedPath:
         ]
         rels = [_rel("u:A", "u:B", "call")]
         snap = _snapshot(units, rels)
-        result = _run_directed_path(snap, "caller", "callee")
+        result = compute_directed_path("caller", "callee", snap)
         assert result["found"] is True
         assert result["path_length"] == 1
         assert result["error"] is None
@@ -334,8 +173,8 @@ class TestDirectedPath:
         # C->A creates nodes in the graph, but B has no edges to/from it.
         # NetworkX graphs only have nodes that appear in edges.
         # We need an edge that touches A but not B to get "no path" vs "empty".
-        rels = [_rel("u:A", "u:C", "call")]
-        snap = _snapshot(units, rels)
+        _rels_unused = [_rel("u:A", "u:C", "call")]
+        _ = _snapshot(units, _rels_unused)  # unused; kept for documentation
         # B is not in the graph at all (no edges touch it), so this hits
         # "not in graph" rather than "no path". Test with both in graph but
         # unreachable instead.
@@ -344,7 +183,7 @@ class TestDirectedPath:
             _rel("u:B", "u:C", "call"),  # both A and B point to C, not to each other
         ]
         snap2 = _snapshot(units, rels2)
-        result = _run_directed_path(snap2, "alpha", "beta")
+        result = compute_directed_path("alpha", "beta", snap2)
         assert result["found"] is False
         assert "No directed path" in result["error"]
 
@@ -356,7 +195,7 @@ class TestDirectedPath:
         ]
         rels = [_rel("u:B", "u:A", "call")]
         snap = _snapshot(units, rels)
-        result = _run_directed_path(snap, "alpha", "beta")
+        result = compute_directed_path("alpha", "beta", snap)
         assert result["found"] is False
         assert "reverse path exists" in result["error"]
 
@@ -364,7 +203,7 @@ class TestDirectedPath:
         """from and to are the same symbol."""
         units = [_unit("u:A", name="foo")]
         snap = _snapshot(units, [])
-        result = _run_directed_path(snap, "foo", "foo")
+        result = compute_directed_path("foo", "foo", snap)
         assert result["found"] is True
         assert result["path_length"] == 0
         assert len(result["path"]) == 1
@@ -372,7 +211,7 @@ class TestDirectedPath:
     def test_symbol_not_found(self):
         """Query a symbol that does not exist."""
         snap = _snapshot([_unit("u:A", name="foo")], [])
-        result = _run_directed_path(snap, "foo", "nonexistent")
+        result = compute_directed_path("foo", "nonexistent", snap)
         assert result["found"] is False
         assert result["error"] == "Symbol not found: nonexistent"
 
@@ -390,7 +229,7 @@ class TestDirectedPath:
             _rel("u:C", "u:D", "call"),
         ]
         snap = _snapshot(units, rels)
-        result = _run_directed_path(snap, "a", "d", max_hops=2)
+        result = compute_directed_path("a", "d", snap, max_hops=2)
         assert result["found"] is False
         assert "exceeds max_hops=2" in result["error"]
         assert result["path_length"] == 3
@@ -403,7 +242,9 @@ class TestDirectedPath:
         ]
         rels = [_rel("u:A", "u:B", "import")]
         snap = _snapshot(units, rels)
-        result = _run_directed_path(snap, "mod_a", "mod_b", graph_types=["dependency"])
+        result = compute_directed_path(
+            "mod_a", "mod_b", snap, graph_types=["dependency"]
+        )
         assert result["found"] is True
         assert result["path_length"] == 1
 
@@ -420,19 +261,19 @@ class TestDirectedPath:
         ]
         snap = _snapshot(units, rels)
         # With both call and dependency
-        result = _run_directed_path(
-            snap, "entry", "target", graph_types=["call", "dependency"]
+        result = compute_directed_path(
+            "entry", "target", snap, graph_types=["call", "dependency"]
         )
         assert result["found"] is True
         assert result["path_length"] == 2
 
         # With only call (should fail since B->C is import)
-        result2 = _run_directed_path(snap, "entry", "target", graph_types=["call"])
+        result2 = compute_directed_path("entry", "target", snap, graph_types=["call"])
         assert result2["found"] is False
 
     def test_invalid_graph_type(self):
         snap = _snapshot([_unit("u:A", name="foo")], [])
-        result = _run_directed_path(snap, "foo", "foo", graph_types=["invalid_type"])
+        result = compute_directed_path("foo", "foo", snap, graph_types=["invalid_type"])
         assert result["found"] is False
         assert "Invalid graph types" in result["error"]
 
@@ -440,7 +281,7 @@ class TestDirectedPath:
         """Selecting a graph type that has no edges returns empty-graph error."""
         units = [_unit("u:A", name="foo"), _unit("u:B", name="bar")]
         snap = _snapshot(units, [])  # no relations at all
-        result = _run_directed_path(snap, "foo", "bar", graph_types=["inheritance"])
+        result = compute_directed_path("foo", "bar", snap, graph_types=["inheritance"])
         assert result["found"] is False
         assert "empty" in result["error"]
 
@@ -453,7 +294,7 @@ class TestDirectedPath:
         ]
         rels = [_rel("u:A", "u:B", "call")]
         snap = _snapshot(units, rels)
-        result = _run_directed_path(snap, "connected", "isolated")
+        result = compute_directed_path("connected", "isolated", snap)
         assert result["found"] is False
         assert "not in graph" in result["error"]
 
@@ -465,7 +306,7 @@ class TestDirectedPath:
         ]
         rels = [_rel("u:A", "u:B", "call")]
         snap = _snapshot(units, rels)
-        result = _run_directed_path(snap, "u:A", "u:B")
+        result = compute_directed_path("u:A", "u:B", snap)
         assert result["found"] is True
         assert result["path_length"] == 1
 
@@ -477,7 +318,7 @@ class TestDirectedPath:
         ]
         rels = [_rel("u:A", "u:B", "call")]
         snap = _snapshot(units, rels)
-        result = _run_directed_path(snap, "start", "end")
+        result = compute_directed_path("start", "end", snap)
         assert result["found"] is True
         path = result["path"]
         assert path[0]["symbol_id"] == "u:A"

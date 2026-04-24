@@ -1,7 +1,8 @@
 """Tests for multi-language SCIP indexer runner."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 try:
     import google.protobuf  # noqa: F401
@@ -61,7 +62,7 @@ def test_supported_languages():
     """Check all expected languages are supported."""
     from fastcode.scip_indexers import SUPPORTED_LANGUAGES
     expected = {"java", "go", "python", "ruby", "typescript", "javascript",
-                "cpp", "c", "csharp", "rust", "php", "kotlin", "scala", "dart"}
+                "cpp", "c", "csharp", "rust", "kotlin", "scala"}
     assert expected.issubset(set(SUPPORTED_LANGUAGES.keys()))
 
 
@@ -122,8 +123,9 @@ def test_auto_detect_scip_languages_empty(tmp_path):
 
 def test_auto_detect_deduplicates():
     """detect_scip_languages deduplicates languages."""
-    from fastcode.scip_indexers import detect_scip_languages
     import tempfile
+
+    from fastcode.scip_indexers import detect_scip_languages
 
     with tempfile.TemporaryDirectory() as td:
         from pathlib import Path

@@ -261,7 +261,6 @@ projection:
   hierarchy_max_levels: 4
   hierarchy_max_nodes: 12000
   steiner_prune: true
-  centrality_max_nodes: 5000
   aggregation_top_members: 8
   llm_enabled: true
   llm_timeout_seconds: 8

@@ -1,98 +1,10 @@
-[build-system]
-requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "fastcode"
-version = "2.0.0"
-description = "Repository-level code understanding system with multi-repo support"
-requires-python = ">=3.11"
-license = {text = "MIT"}
-
-dependencies = [
-    # Core
-    "python-dotenv",
-    "pyyaml",
-    "click",
-    "gitpython",
-    # Code parsing
-    "tree-sitter",
-    "tree-sitter-python",
-    "tree-sitter-javascript",
-    "tree-sitter-typescript",
-    "tree-sitter-java",
-    "tree-sitter-go",
-    "tree-sitter-c",
-    "tree-sitter-cpp",
-    "tree-sitter-rust",
-    "tree-sitter-c-sharp",
-    "libcst",
-    # Embeddings & vector store
-    "sentence-transformers",
-    "faiss-cpu",
-    # Search & retrieval
-    "rank-bm25",
-    "networkx",
-    "python-igraph",
-    # LLM integration
-    "openai",
-    "anthropic",
-    "tiktoken",
-    # API
-    "fastapi",
-    "uvicorn",
-    "pydantic",
-    "flask",
-    # Database
-    "psycopg[binary]",
-    "psycopg_pool",
-    # Utilities
-    "tqdm",
-    "numpy",
-    "pandas",
-    "pathspec",
-    # Caching
-    "diskcache",
-    "redis",
-    # MCP server
-    "mcp[cli]",
-    # Semantic chunking
-    "chonkie[semantic]>=1.6",
-    "nanobot-ai",
-]
-
-[tool.uv.sources]
-nanobot-ai = { workspace = true }
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=9.0",
-    "pytest-asyncio",
-    "pytest-cov",
-    "pytest-benchmark",
-    "pytest-xdist",
-    "hypothesis",
-    "syrupy",
-    "pip-audit",
-    "lefthook",
-]
-scip = [
-    "protobuf>=6.0",
-]
-ladybug = [
-    "real_ladybug",
-]
-
-[tool.uv]
-managed = true
-dev-dependencies = ["fastcode[dev]"]
-
 [tool.uv.workspace]
-members = ["nanobot"]
+members = ["fastcode", "nanobot"]
 
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+exclude = ["_fastcode"]
 
 [tool.ruff.lint]
 select = [
@@ -249,6 +161,14 @@ ignore = [
     "SIM102",  # Nested if statements (pre-existing)
     "PLR2004", # Magic values (pre-existing)
 ]
+"fastcode/utils/_compat.py" = [
+    "S324",    # MD5 usage (pre-existing, non-security file hashing)
+    "PLC0415", # Lazy imports (pre-existing, pathspec may not be installed)
+    "ANN001",  # Missing type annotation (pre-existing)
+    "ANN002",  # Missing type annotation for *args (pre-existing)
+    "ANN202",  # Missing return type for private functions (pre-existing)
+    "PLR0911", # Too many returns (pre-existing)
+]
 
 [tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false
@@ -267,13 +187,12 @@ reportUnknownMemberType = "error"
 reportUnknownVariableType = "error"
 reportUntypedFunctionDecorator = "error"
 
-[tool.setuptools.packages.find]
-include = ["fastcode*"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "strict"
 addopts = "-n auto"
+timeout = 30
+timeout_method = "thread"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "property: hypothesis property-based tests",

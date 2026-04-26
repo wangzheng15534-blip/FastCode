@@ -4,7 +4,6 @@ Enhanced with LLM-processed query support
 """
 
 import logging
-import math
 import os
 import pickle
 from dataclasses import dataclass
@@ -14,7 +13,9 @@ import networkx as nx
 import numpy as np
 from rank_bm25 import BM25Okapi
 
+from .core import fusion as _fusion
 from .core import scoring as _scoring
+from .core.types import FusionConfig
 from .embedder import CodeEmbedder
 from .graph_builder import CodeGraphBuilder
 from .indexer import CodeElement
@@ -386,47 +387,15 @@ class HybridRetriever:
         query_info: dict[str, Any],
         doc_results: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        alpha, _, _ = self._compute_adaptive_fusion_params(
+        return _fusion.project_doc_priors(
             query=query,
             query_info=query_info,
-            code_results=[],
             doc_results=doc_results,
+            config=FusionConfig.from_dict(self.adaptive_fusion_cfg),
+            doc_projection_beta_max=float(
+                self.retrieval_config.get("doc_projection_beta_max", 0.35)
+            ),
         )
-        p_doc = 1.0 - alpha
-        beta_max = float(self.retrieval_config.get("doc_projection_beta_max", 0.35))
-        beta = max(0.0, min(1.0, beta_max * p_doc))
-        norm_scores = self._normalized_totals(doc_results)
-
-        priors: dict[str, float] = {}
-        evidence: dict[str, list[dict[str, Any]]] = {}
-        for row in doc_results:
-            elem = row.get("element") or {}
-            elem_id = str(elem.get("id") or "")
-            if not elem_id:
-                continue
-            doc_score = norm_scores.get(elem_id, 0.0)
-            if doc_score <= 0.0:
-                continue
-            for link in self._extract_trace_links(row):
-                unit_id = link["unit_id"]
-                contribution = max(0.0, min(1.0, doc_score * float(link["weight"])))
-                prior = priors.get(unit_id, 0.0)
-                priors[unit_id] = 1.0 - ((1.0 - prior) * (1.0 - contribution))
-                evidence.setdefault(unit_id, []).append(
-                    {
-                        **link,
-                        "doc_id": elem_id,
-                        "doc_score": doc_score,
-                        "contribution": contribution,
-                    }
-                )
-
-        return {
-            "p_doc": p_doc,
-            "beta": beta,
-            "priors": priors,
-            "evidence": evidence,
-        }
 
     def _active_bm25_elements(self) -> list[CodeElement]:
         return (
@@ -459,76 +428,24 @@ class HybridRetriever:
         doc_results: list[dict[str, Any]],
         repo_filter: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        if not doc_results:
-            return [self._clone_result_row(row) for row in code_results]
-
-        projection = self._project_doc_priors(
+        bm25_elements = (
+            self.filtered_bm25_elements
+            if self.filtered_bm25_elements
+            else self.full_bm25_elements
+        )
+        return _fusion.apply_doc_projection_to_code(
             query=query,
             query_info=query_info,
+            code_results=code_results,
             doc_results=doc_results,
+            config=FusionConfig.from_dict(self.adaptive_fusion_cfg),
+            doc_projection_beta_max=float(
+                self.retrieval_config.get("doc_projection_beta_max", 0.35)
+            ),
+            bm25_elements=bm25_elements if bm25_elements else None,
+            repo_filter=repo_filter,
+            debug=self._last_fusion_debug,
         )
-        beta = float(projection["beta"])
-        priors: dict[str, float] = projection["priors"]
-        evidence: dict[str, list[dict[str, Any]]] = projection["evidence"]
-        code_norm = self._normalized_totals(code_results)
-
-        seeded: dict[str, dict[str, Any]] = {}
-        for row in code_results:
-            materialized = self._clone_result_row(row)
-            elem = materialized.get("element") or {}
-            elem_id = str(elem.get("id") or "")
-            meta = elem.get("metadata") or {}
-            unit_id = meta.get("ir_symbol_id") or meta.get("ir_node_id")
-            retrieval_score = code_norm.get(elem_id, 0.0)
-            projected_prior = float(priors.get(str(unit_id), 0.0)) if unit_id else 0.0
-            seed_score = ((1.0 - beta) * retrieval_score) + (beta * projected_prior)
-            materialized["retrieval_score"] = materialized.get("total_score", 0.0)
-            materialized["projection_score"] = projected_prior
-            materialized["seed_score"] = seed_score
-            materialized["traceability"] = (
-                evidence.get(str(unit_id), []) if unit_id else []
-            )
-            materialized["total_score"] = seed_score
-            seeded[elem_id] = materialized
-
-        for unit_id, prior in priors.items():
-            if prior <= 0.0:
-                continue
-            if any(
-                ((row.get("element") or {}).get("metadata") or {}).get("ir_symbol_id")
-                == unit_id
-                for row in seeded.values()
-            ):
-                continue
-            element = self._find_code_element_for_ir_unit(
-                unit_id, repo_filter=repo_filter
-            )
-            if element is None:
-                continue
-            elem_id = str(element.get("id") or "")
-            seeded[elem_id] = {
-                "element": element,
-                "semantic_score": 0.0,
-                "keyword_score": 0.0,
-                "pseudocode_score": 0.0,
-                "graph_score": 0.0,
-                "retrieval_score": 0.0,
-                "projection_score": prior,
-                "seed_score": beta * float(prior),
-                "total_score": beta * float(prior),
-                "traceability": evidence.get(unit_id, []),
-                "projected_only": True,
-            }
-
-        out = list(seeded.values())
-        out.sort(key=lambda row: float(row.get("total_score", 0.0)), reverse=True)
-        debug = dict(self._last_fusion_debug or {})
-        debug["doc_projection"] = {
-            "beta": beta,
-            "projected_units": len(priors),
-        }
-        self._last_fusion_debug = debug
-        return out
 
     def retrieve(
         self,
@@ -1170,71 +1087,14 @@ class HybridRetriever:
         code_results: list[dict[str, Any]],
         doc_results: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        alpha, k_code, k_doc = self._compute_adaptive_fusion_params(
+        return _fusion.adaptive_fuse_channels(
             query=query,
             query_info=query_info,
             code_results=code_results,
             doc_results=doc_results,
+            config=FusionConfig.from_dict(self.adaptive_fusion_cfg),
+            debug=self._last_fusion_debug,
         )
-        fused: dict[str, dict[str, Any]] = {}
-        for rank, row in enumerate(code_results, start=1):
-            elem = row.get("element", {})
-            elem_id = elem.get("id")
-            if not elem_id:
-                continue
-            rrf = 1.0 / (float(k_code) + float(rank))
-            entry = self._ensure_fused_entry(fused, elem_id, elem)
-            entry["semantic_score"] = max(
-                entry.get("semantic_score", 0.0), row.get("semantic_score", 0.0)
-            )
-            entry["keyword_score"] = max(
-                entry.get("keyword_score", 0.0), row.get("keyword_score", 0.0)
-            )
-            entry["pseudocode_score"] = max(
-                entry.get("pseudocode_score", 0.0), row.get("pseudocode_score", 0.0)
-            )
-            entry["graph_score"] = max(
-                entry.get("graph_score", 0.0), row.get("graph_score", 0.0)
-            )
-            entry["total_score"] += alpha * rrf
-            entry["fusion"]["code_rrf"] = rrf
-            entry["fusion"]["alpha"] = alpha
-            entry["fusion"]["k_code"] = k_code
-            entry["fusion"]["k_doc"] = k_doc
-
-        for rank, row in enumerate(doc_results, start=1):
-            elem = row.get("element", {})
-            elem_id = elem.get("id")
-            if not elem_id:
-                continue
-            rrf = 1.0 / (float(k_doc) + float(rank))
-            entry = self._ensure_fused_entry(fused, elem_id, elem)
-            entry["semantic_score"] = max(
-                entry.get("semantic_score", 0.0), row.get("semantic_score", 0.0)
-            )
-            entry["keyword_score"] = max(
-                entry.get("keyword_score", 0.0), row.get("keyword_score", 0.0)
-            )
-            entry["total_score"] += (1.0 - alpha) * rrf
-            entry["fusion"]["doc_rrf"] = rrf
-            entry["fusion"]["alpha"] = alpha
-            entry["fusion"]["k_code"] = k_code
-            entry["fusion"]["k_doc"] = k_doc
-
-        out = list(fused.values())
-        out.sort(key=lambda x: x.get("total_score", 0.0), reverse=True)
-        debug = dict(self._last_fusion_debug or {})
-        debug.update(
-            {
-                "alpha": alpha,
-                "k_code": k_code,
-                "k_doc": k_doc,
-                "code_candidates": len(code_results),
-                "doc_candidates": len(doc_results),
-            }
-        )
-        self._last_fusion_debug = debug
-        return out
 
     @staticmethod
     def _new_fused_entry(element: dict[str, Any]) -> dict[str, Any]:
@@ -1287,111 +1147,13 @@ class HybridRetriever:
         code_results: list[dict[str, Any]],
         doc_results: list[dict[str, Any]],
     ) -> tuple[float, float, float]:
-        cfg = self.adaptive_fusion_cfg or {}
-        alpha_base = float(cfg.get("alpha_base", 0.80))
-        alpha_min = float(cfg.get("alpha_min", 0.25))
-        alpha_max = float(cfg.get("alpha_max", 0.90))
-        k_base = float(cfg.get("rrf_k_base", 60))
-        k_min = float(cfg.get("rrf_k_min", 20))
-        k_max = float(cfg.get("rrf_k_max", 100))
-
-        q = query or ""
-        query_info = query_info or {}
-        intent = str(query_info.get("intent") or "")
-        keywords = query_info.get("keywords")
-        if isinstance(keywords, list):
-            keyword_text = " ".join(str(k) for k in keywords)
-        else:
-            keyword_text = ""
-
-        signal_text = " ".join([q, intent, keyword_text])
-        tokens = self._tokenize_signal(signal_text)
-        query_entropy = self._normalized_query_entropy(tokens)
-
-        doc_term_weights = {
-            "design": 1.0,
-            "architecture": 1.0,
-            "adr": 1.2,
-            "rfc": 1.2,
-            "decision": 1.0,
-            "tradeoff": 1.1,
-            "rationale": 1.1,
-            "approach": 0.8,
-            "spec": 0.9,
-            "why": 0.7,
-            "intent": 0.7,
-        }
-        code_term_weights = {
-            "function": 1.0,
-            "class": 1.0,
-            "method": 1.0,
-            "line": 0.7,
-            "call": 0.9,
-            "bug": 1.0,
-            "fix": 1.0,
-            "trace": 0.9,
-            "implementation": 1.0,
-            "stack": 0.7,
-            "runtime": 0.8,
-        }
-        doc_affinity = self._weighted_keyword_affinity(tokens, doc_term_weights)
-        code_affinity = self._weighted_keyword_affinity(tokens, code_term_weights)
-
-        code_top = (
-            float(code_results[0].get("total_score", 0.0)) if code_results else 0.0
+        return _fusion.compute_adaptive_fusion_params(
+            query=query,
+            query_info=query_info,
+            code_results=code_results,
+            doc_results=doc_results,
+            config=FusionConfig.from_dict(self.adaptive_fusion_cfg),
         )
-        doc_top = float(doc_results[0].get("total_score", 0.0)) if doc_results else 0.0
-
-        alpha = alpha_base
-        # Continuous domain affinity (replaces binary doc_hit/code_hit).
-        alpha -= 0.30 * doc_affinity
-        alpha += 0.18 * code_affinity
-
-        # Continuous confidence skew from retrieval channel strengths.
-        strength_delta = math.tanh((code_top - doc_top) * 2.2)
-        alpha += 0.12 * strength_delta
-
-        # High-entropy queries are more ambiguous, so pull alpha toward balanced blending.
-        entropy_pull = 0.22 * query_entropy
-        alpha = (1.0 - entropy_pull) * alpha + entropy_pull * 0.5
-        alpha = min(alpha_max, max(alpha_min, alpha))
-
-        code_conf = min(1.0, max(0.0, code_top))
-        doc_conf = min(1.0, max(0.0, doc_top))
-
-        # Smooth sigmoid k to avoid cliff effects from piecewise/linear shifts.
-        code_k_z = (
-            ((0.55 - code_conf) * 4.2)
-            + ((query_entropy - 0.5) * 1.4)
-            + ((doc_affinity - code_affinity) * 1.0)
-        )
-        doc_k_z = (
-            ((0.55 - doc_conf) * 4.2)
-            + ((query_entropy - 0.5) * 1.4)
-            + ((code_affinity - doc_affinity) * 1.0)
-        )
-        k_code_sig = self._sigmoid(code_k_z)
-        k_doc_sig = self._sigmoid(doc_k_z)
-        k_code = k_min + (k_max - k_min) * k_code_sig
-        k_doc = k_min + (k_max - k_min) * k_doc_sig
-
-        # Gentle pull toward configured base to keep behavior stable across repos.
-        k_code = 0.8 * k_code + 0.2 * k_base
-        k_doc = 0.8 * k_doc + 0.2 * k_base
-
-        k_code = min(k_max, max(k_min, k_code))
-        k_doc = min(k_max, max(k_min, k_doc))
-        self._last_fusion_debug = {
-            "alpha": alpha,
-            "k_code": k_code,
-            "k_doc": k_doc,
-            "query_entropy": query_entropy,
-            "doc_affinity": doc_affinity,
-            "code_affinity": code_affinity,
-            "code_top": code_top,
-            "doc_top": doc_top,
-        }
-        return alpha, k_code, k_doc
 
     def _semantic_search(
         self,

@@ -181,7 +181,9 @@ class TestDbEffectsReturnDataclasses:
     def test_db_effects_return_dataclasses_not_dicts(self) -> None:
         db_effects = (
             pathlib.Path(__file__).resolve().parent.parent
-            / "fastcode" / "effects" / "db.py"
+            / "fastcode"
+            / "effects"
+            / "db.py"
         )
         if not db_effects.exists():
             pytest.skip("effects/db.py not yet created")
@@ -198,8 +200,8 @@ class TestDbEffectsReturnDataclasses:
                     violations.append(
                         f"{node.name}: return type contains dict[str, Any]"
                     )
-        assert violations == [], (
-            "Rule 2 violations in effects/db.py:\n" + "\n".join(violations)
+        assert violations == [], "Rule 2 violations in effects/db.py:\n" + "\n".join(
+            violations
         )
 
 

@@ -5,6 +5,7 @@ Rule 2: Database Trusts Dataclasses.
 Every function maps DB rows into frozen dataclasses before returning.
 No dict[str, Any] returns.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -40,6 +41,11 @@ def save_snapshot_record(conn: Any, record: SnapshotRecord) -> None:
         "INSERT OR REPLACE INTO snapshots "
         "(snapshot_id, repo_name, branch, commit_id, tree_id) "
         "VALUES (?, ?, ?, ?, ?)",
-        (record.snapshot_id, record.repo_name, record.branch,
-         record.commit_id, record.tree_id),
+        (
+            record.snapshot_id,
+            record.repo_name,
+            record.branch,
+            record.commit_id,
+            record.tree_id,
+        ),
     )

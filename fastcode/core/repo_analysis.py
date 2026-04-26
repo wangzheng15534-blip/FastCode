@@ -1,4 +1,5 @@
 """Pure repo analysis functions — extracted from repo_overview.py."""
+
 from __future__ import annotations
 
 import os
@@ -99,7 +100,9 @@ def generate_structure_based_overview(
     # Infer project type from key files
     project_type = infer_project_type(key_files, languages)
 
-    summary = f"{repo_name} is a {primary_lang} {project_type} with {total_files} files. "
+    summary = (
+        f"{repo_name} is a {primary_lang} {project_type} with {total_files} files. "
+    )
 
     if len(languages) > 1:
         lang_list = ", ".join(languages.keys())

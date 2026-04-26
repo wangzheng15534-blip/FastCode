@@ -1,5 +1,6 @@
 # fastcode/core/graph_build.py
 """Pure graph payload construction — extracted from terminus_publisher.py."""
+
 from __future__ import annotations
 
 import hashlib

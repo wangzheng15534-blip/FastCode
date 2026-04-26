@@ -1,9 +1,10 @@
 # tests/test_effects_fs.py
 """Tests for FS effects — verify thin file I/O wrappers."""
+
 import os
 import tempfile
 
-from fastcode.effects.fs import read_file, write_file, file_exists
+from fastcode.effects.fs import file_exists, read_file, write_file
 
 
 class TestReadWriteFile:

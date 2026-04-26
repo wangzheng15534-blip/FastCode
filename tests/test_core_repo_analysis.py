@@ -1,4 +1,5 @@
 """Tests for pure repo analysis functions."""
+
 from fastcode.core.repo_analysis import (
     format_file_structure,
     generate_structure_based_overview,
@@ -86,7 +87,9 @@ class TestInferProjectType:
         assert "Python" in infer_project_type(["setup.py"], {})
 
     def test_django(self):
-        assert "Django" in infer_project_type(["requirements.txt", "django_settings.py"], {})
+        assert "Django" in infer_project_type(
+            ["requirements.txt", "django_settings.py"], {}
+        )
 
     def test_flask(self):
         assert "Flask" in infer_project_type(["requirements.txt", "flask_app.py"], {})
@@ -96,7 +99,9 @@ class TestInferProjectType:
 
     def test_ios(self):
         # Actual impl checks "swift" in key_files_str, so key file must contain "swift"
-        assert "iOS" in infer_project_type(["Podfile", "ios/SwiftAppDelegate.swift"], {})
+        assert "iOS" in infer_project_type(
+            ["Podfile", "ios/SwiftAppDelegate.swift"], {}
+        )
 
     def test_ios_via_swift_in_key_files(self):
         # Also triggers when a file named with "swift" is in key files

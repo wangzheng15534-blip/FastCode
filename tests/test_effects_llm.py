@@ -1,4 +1,5 @@
 """Tests for LLM effects — verify thin wrapper behavior."""
+
 from unittest.mock import MagicMock
 
 from fastcode.effects.llm import chat_completion
@@ -13,6 +14,9 @@ class TestChatCompletion:
         mock_client.chat.completions.create.return_value = mock_response
 
         result = chat_completion(
-            mock_client, model="test-model", messages=[], max_tokens=100,
+            mock_client,
+            model="test-model",
+            messages=[],
+            max_tokens=100,
         )
         assert result == "test response"

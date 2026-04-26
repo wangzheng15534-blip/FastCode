@@ -1,8 +1,8 @@
 # fastcode Internal Reorganization & Test Infrastructure
 
-**Goal:** Reorganize `fastcode/` internally — extract `schema/` and `utils/` from `core/`, archive original as `_fastcode/`. Single package, single `pyproject.toml`. Add pytest-timeout + pytest-subprocess.
+**Goal:** Reorganize `fastcode/` internally — extract `schema/` and `utils/` from `core/`, archive original as `_fastcode/`, add local `fastcode/pyproject.toml` (Cargo-style). Add pytest-timeout + pytest-subprocess.
 
-**Approach:** Archive `fastcode/` → `_fastcode/`, create new `fastcode/` with reorganized internal layout. All imports stay `from fastcode.xxx`. No package rename, no workspace splitting. `fastcode` is the main workspace. `nanobot` is a vendored upstream dep, unrelated.
+**Approach:** Root `pyproject.toml` becomes virtual workspace root. `fastcode/pyproject.toml` holds the package config. `nanobot` is a vendored upstream dep, unrelated. All imports stay `from fastcode.xxx`. No package rename, no workspace splitting beyond what already exists.
 
 **Constraint:** Do NOT run original `tests/` suite during implementation. Only run `tests/fastcore/`.
 

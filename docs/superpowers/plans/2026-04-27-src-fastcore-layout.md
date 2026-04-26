@@ -2,23 +2,24 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Reorganize `fastcode/` internally — extract schema/, utils/ from core/, archive original as `_fastcode/` to avoid interpreter ambiguity. Single package, single `pyproject.toml`. Add pytest-timeout + pytest-subprocess.
+**Goal:** Reorganize `fastcode/` internally — extract schema/, utils/ from core/, archive original as `_fastcode/`, add local `fastcode/pyproject.toml` (Cargo-style: each package has its own config). Root becomes virtual workspace root. Add pytest-timeout + pytest-subprocess.
 
-**Architecture:** Archive `fastcode/` → `_fastcode/`, create new `fastcode/` with reorganized internal layout. All imports stay `from fastcode.xxx` — no package rename, no workspace splitting. `fastcode` IS the main workspace. `nanobot` is a vendored upstream dep (already a workspace member), unrelated to this reorganization.
+**Architecture:** Root `pyproject.toml` becomes virtual workspace root (no `[project]`). `fastcode/pyproject.toml` holds the package config. Setuptools uses `where = [".."]` to discover `fastcode/` as the package — no double nesting. `nanobot` is a vendored upstream dep, unrelated.
 
-**Tech Stack:** Python 3.11+, uv, setuptools, pytest-timeout, pytest-subprocess
+**Tech Stack:** Python 3.11+, uv workspace, setuptools, pytest-timeout, pytest-subprocess
 
-**Constraint:** Do NOT run the full `tests/` suite during implementation. Only run `libs/core/tests/` → `tests/fastcore/` to verify.
+**Constraint:** Do NOT run the full `tests/` suite during implementation. Only run `tests/fastcore/` to verify.
 
 ---
 
 ## Final Directory Structure
 
 ```
-pyproject.toml                    # Single package config (fastcode)
+pyproject.toml                    # Virtual workspace root (no [project])
 uv.lock                           # Single lockfile
 _fastcode/                        # Archived original (prefix _ excludes from Python)
-fastcode/                         # Reorganized package
+fastcode/                         # Package directory + workspace member
+  pyproject.toml                  # [project] name = "fastcode" — package config
   __init__.py
   schema/                         # NEW: all frozen dataclasses + IR types
     __init__.py
@@ -52,10 +53,9 @@ fastcode/                         # Reorganized package
   main.py                         # App modules (unchanged)
   retriever.py                    # (imports updated)
   iterative_agent.py              # (imports updated)
-  answer_generator.py             # (imports updated)
-  terminus_publisher.py           # (imports updated)
   ...all other app modules...
-nanobot/                          # Vendored upstream dep (unrelated)
+nanobot/                          # Vendored upstream dep
+  pyproject.toml                  # [project] name = "nanobot-ai"
 tests/
   fastcore/                       # NEW: tests for schema/core/utils/effects
     schema/
@@ -75,6 +75,17 @@ tests/
       test_fs.py
   ...existing app tests...
 ```
+
+### How setuptools discovers the package (no double nesting)
+
+`fastcode/pyproject.toml` uses:
+```toml
+[tool.setuptools.packages.find]
+where = [".."]              # Look in parent (workspace root)
+include = ["fastcode*"]     # Find fastcode/ and its subpackages
+```
+
+This makes setuptools discover `fastcode/` from the workspace root — `schema/` becomes `fastcode.schema`, `core/` becomes `fastcode.core`, etc. No `fastcode/fastcode/` double nesting.
 
 ---
 
@@ -102,8 +113,9 @@ All other `from fastcode.core.X import Y` imports stay the same — the modules 
 ## Task 1: Archive & Scaffold
 
 **Files:**
+- Create: `fastcode/pyproject.toml`
 - Create: `fastcode/schema/`, `fastcode/utils/` directories
-- Modify: `pyproject.toml`
+- Modify: `pyproject.toml` (becomes virtual workspace root)
 
 - [ ] **Step 1: Archive original `fastcode/` as `_fastcode/`**
 
@@ -111,7 +123,7 @@ All other `from fastcode.core.X import Y` imports stay the same — the modules 
 git mv fastcode/ _fastcode/
 ```
 
-- [ ] **Step 2: Create new `fastcode/` with all app files minus core/ and effects/ dirs**
+- [ ] **Step 2: Create new `fastcode/` with all app files**
 
 ```bash
 mkdir -p fastcode/schema fastcode/utils
@@ -138,42 +150,166 @@ find fastcode/ -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null
 """fastcode.utils — domain-independent utilities (copy-paste test)."""
 ```
 
-- [ ] **Step 4: Update `pyproject.toml` — add pytest plugins and timeout config**
+- [ ] **Step 4: Create `fastcode/pyproject.toml` — the package config**
 
-Add to dev deps:
+Move the package definition here from root. Root keeps workspace + tool config.
+
 ```toml
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fastcode"
+version = "2.0.0"
+description = "Repository-level code understanding system with multi-repo support"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+dependencies = [
+    # Core
+    "python-dotenv",
+    "pyyaml",
+    "click",
+    "gitpython",
+    # Code parsing
+    "tree-sitter",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-java",
+    "tree-sitter-go",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-rust",
+    "tree-sitter-c-sharp",
+    "libcst",
+    # Embeddings & vector store
+    "sentence-transformers",
+    "faiss-cpu",
+    # Search & retrieval
+    "rank-bm25",
+    "networkx",
+    "python-igraph",
+    # LLM integration
+    "openai",
+    "anthropic",
+    "tiktoken",
+    # API
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "flask",
+    # Database
+    "psycopg[binary]",
+    "psycopg_pool",
+    # Utilities
+    "tqdm",
+    "numpy",
+    "pandas",
+    "pathspec",
+    # Caching
+    "diskcache",
+    "redis",
+    # MCP server
+    "mcp[cli]",
+    # Semantic chunking
+    "chonkie[semantic]>=1.6",
+    "nanobot-ai",
+]
+
+[tool.uv.sources]
+nanobot-ai = { workspace = true }
+
 [project.optional-dependencies]
 dev = [
-    # ... existing entries ...
+    "pytest>=9.0",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-benchmark",
+    "pytest-xdist",
+    "hypothesis",
+    "syrupy",
+    "pip-audit",
+    "lefthook",
     "pytest-timeout",
     "pytest-subprocess",
 ]
+scip = [
+    "protobuf>=6.0",
+]
+ladybug = [
+    "real_ladybug",
+]
+
+[tool.uv]
+managed = true
+dev-dependencies = ["fastcode[dev]"]
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["fastcode*"]
 ```
 
-Add to pytest config:
+- [ ] **Step 5: Update root `pyproject.toml` — virtual workspace root**
+
+Remove `[project]`, `[build-system]`, `[tool.setuptools.*]`, `[tool.uv.sources]`, `[tool.uv]` sections — those moved to `fastcode/pyproject.toml`. Keep only:
+
 ```toml
+[tool.uv.workspace]
+members = ["fastcode", "nanobot"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+# ... keep all existing ruff lint config ...
+
+[tool.ruff.lint.per-file-ignores]
+# ... keep all existing per-file-ignores ...
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+mark-parentheses = false
+parametrize-names-type = "tuple"
+
+[tool.pyright]
+include = ["fastcode", "tests"]
+typeCheckingMode = "strict"
+# ... keep all existing pyright config ...
+
 [tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "strict"
+addopts = "-n auto"
 timeout = 30
 timeout_method = "thread"
-# ... keep existing testpaths, asyncio_mode, addopts, markers ...
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "property: hypothesis property-based tests",
+    "snapshot: syrupy snapshot contract tests",
+    "happy: normal-path test (valid inputs, expected behavior)",
+    "edge: edge-case test (boundary, empty, invalid, extreme inputs)",
+    "mutation: tests designed to kill mutants",
+    "integration: tests requiring real database or external service",
+]
 ```
 
-No workspace changes needed — `fastcode` is already the main package.
-
-- [ ] **Step 5: Run `uv sync` and verify**
+- [ ] **Step 6: Run `uv sync` and verify**
 
 ```bash
 uv sync
 uv run python -c "import fastcode; print(fastcode.__file__)"
 ```
 
-Expected: prints path to new `fastcode/__init__.py`
+Expected: prints path to `fastcode/__init__.py`
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add _fastcode/ fastcode/ pyproject.toml uv.lock
-git commit -m "chore: archive fastcode/ to _fastcode/, scaffold new fastcode/ with schema/ and utils/ subpackages"
+git commit -m "chore: archive fastcode/ to _fastcode/, add fastcode/pyproject.toml, root becomes virtual workspace"
 ```
 
 ---

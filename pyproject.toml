@@ -123,6 +123,7 @@ ignore = [
 "tests/**/*.py" = [
     "S101",    # Allow assert in tests
     "ANN201",  # Missing return type for test functions
+    "ANN003",  # Missing type annotation for **kwargs in test factories
     "PLR2004", # Allow magic values in test assertions
     "PLR0913", # Allow many args in test factory functions
 ]
@@ -224,6 +225,10 @@ ignore = [
 ]
 "fastcode/core/snapshot.py" = [
     "S324",    # SHA1 usage (non-security cache key hashing, matches main.py)
+]
+"fastcode/core/combination.py" = [
+    "PLR0913", # Too many arguments: combine_results needs all params
+    "PLR0912", # Too many branches: merge logic for 3 result types
 ]
 "fastcode/core/repo_analysis.py" = [
     "PLR0911", # Too many returns: infer_project_type if-chain (extracted verbatim)

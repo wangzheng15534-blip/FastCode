@@ -13,6 +13,7 @@ import networkx as nx
 import numpy as np
 from rank_bm25 import BM25Okapi
 
+from .core import combination as _combination
 from .core import filtering as _filtering
 from .core import fusion as _fusion
 from .core import scoring as _scoring
@@ -1329,86 +1330,13 @@ class HybridRetriever:
         pseudocode_results: list[tuple[dict[str, Any], float]] | None = None,
     ) -> list[dict[str, Any]]:
         """Combine semantic, keyword, and pseudocode search results"""
-        # Create a dictionary to merge results by element ID
-        combined = {}
-
-        # Pseudocode weight (slightly lower than semantic)
-        pseudocode_weight = 0.4 if pseudocode_results else 0.0
-
-        # Add semantic results
-        for metadata, score in semantic_results:
-            elem_id = metadata.get("id")
-            if elem_id:
-                combined[elem_id] = {
-                    "element": metadata,
-                    "semantic_score": score * self.semantic_weight,
-                    "keyword_score": 0.0,
-                    "pseudocode_score": 0.0,
-                    "graph_score": 0.0,
-                    "total_score": score * self.semantic_weight,
-                }
-
-        # Add pseudocode results (for implementation queries)
-        if pseudocode_results:
-            for metadata, score in pseudocode_results:
-                elem_id = metadata.get("id")
-                if elem_id:
-                    pseudocode_contrib = score * pseudocode_weight
-
-                    if elem_id in combined:
-                        combined[elem_id]["pseudocode_score"] = pseudocode_contrib
-                        combined[elem_id]["total_score"] += pseudocode_contrib
-                    else:
-                        combined[elem_id] = {
-                            "element": metadata,
-                            "semantic_score": 0.0,
-                            "keyword_score": 0.0,
-                            "pseudocode_score": pseudocode_contrib,
-                            "graph_score": 0.0,
-                            "total_score": pseudocode_contrib,
-                        }
-
-        # Add keyword results
-        # Normalize BM25 scores to 0-1 range
-        if keyword_results:
-            max_bm25 = max(score for _, score in keyword_results)
-            if max_bm25 > 0:
-                for metadata, score in keyword_results:
-                    elem_id = metadata.get("id")
-                    if elem_id:
-                        normalized_score = (score / max_bm25) * self.keyword_weight
-
-                        if elem_id in combined:
-                            combined[elem_id]["keyword_score"] = normalized_score
-                            combined[elem_id]["total_score"] += normalized_score
-                        else:
-                            combined[elem_id] = {
-                                "element": metadata,
-                                "semantic_score": 0.0,
-                                "keyword_score": normalized_score,
-                                "pseudocode_score": 0.0,
-                                "graph_score": 0.0,
-                                "total_score": normalized_score,
-                            }
-
-        # Convert to list and sort by total score
-        results = list(combined.values())
-
-        # Source-aware boost: prefer precise/SCIP-derived facts.
-        for result in results:
-            elem = result.get("element", {})
-            meta = elem.get("metadata", {}) if isinstance(elem, dict) else {}
-            source_priority = meta.get("source_priority", 0)
-            try:
-                source_priority = float(source_priority)
-            except Exception:
-                source_priority = 0.0
-            boost = 1.0 + min(max(source_priority, 0.0), 100.0) / 200.0
-            result["total_score"] *= boost
-
-        results.sort(key=lambda x: x["total_score"], reverse=True)
-
-        return results
+        return _combination.combine_results(
+            semantic_results,
+            keyword_results,
+            pseudocode_results,
+            semantic_weight=self.semantic_weight,
+            keyword_weight=self.keyword_weight,
+        )
 
     def _expand_with_graph(
         self, results: list[dict[str, Any]], max_hops: int = 2

@@ -11,6 +11,7 @@ import urllib.request
 from typing import Any
 
 from .core import graph_build as _graph_build
+from .utils.hashing import deterministic_event_id
 
 
 class TerminusPublisher:
@@ -27,7 +28,7 @@ class TerminusPublisher:
 
     def _deterministic_event_id(self, snapshot_id: str, payload: str) -> str:
         """Generate a deterministic event ID from snapshot_id + payload hash."""
-        return _graph_build.deterministic_event_id(snapshot_id, payload)
+        return deterministic_event_id(snapshot_id, payload)
 
     def enqueue_publish(
         self,

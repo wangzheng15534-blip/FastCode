@@ -12,6 +12,7 @@ from openai import OpenAI
 
 from .core import repo_analysis as _repo_analysis
 from .llm_utils import openai_chat_completion
+from .utils._compat import get_language_from_extension
 
 
 class RepositoryOverviewGenerator:
@@ -26,8 +27,8 @@ class RepositoryOverviewGenerator:
         load_dotenv()
 
         # LLM settings for overview generation
-        self.provider = self.gen_config.get("provider", "openai")
-        self.model = os.getenv("MODEL")
+        self.provider: str = self.gen_config.get("provider", "openai")
+        self.model: str | None = os.getenv("MODEL")
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         self.base_url = os.getenv("BASE_URL")
@@ -36,9 +37,9 @@ class RepositoryOverviewGenerator:
         self.max_tokens = 1000  # Longer for overview generation
 
         # Initialize LLM client
-        self.llm_client = self._initialize_client()
+        self.llm_client: Any = self._initialize_client()
 
-    def _initialize_client(self):
+    def _initialize_client(self) -> Any:
         """Initialize LLM client"""
         try:
             if self.provider == "openai":
@@ -155,7 +156,7 @@ class RepositoryOverviewGenerator:
         Returns:
             Structured representation of repository
         """
-        structure = {
+        structure: dict[str, Any] = {
             "total_files": len(files),
             "languages": {},
             "directories": {},
@@ -165,8 +166,8 @@ class RepositoryOverviewGenerator:
         }
 
         for file_info in files:
-            rel_path = file_info["relative_path"]
-            extension = file_info["extension"]
+            rel_path: str = file_info.get("relative_path", "")
+            extension: str = file_info.get("extension", "")
             structure["all_files"].append(rel_path)
 
             # Count by extension
@@ -175,7 +176,7 @@ class RepositoryOverviewGenerator:
             structure["file_types"][extension] += 1
 
             # Count by language (simple heuristic)
-            language = self._get_language_from_extension(extension)
+            language = get_language_from_extension(extension)
             if language != "unknown":
                 if language not in structure["languages"]:
                     structure["languages"][language] = 0
@@ -194,29 +195,12 @@ class RepositoryOverviewGenerator:
                     if i == len(dir_parts) - 1:  # This is the file's direct parent
                         if file_name not in structure["directories"][partial_dir]:
                             structure["directories"][partial_dir].append(file_name)
-            # else:
-            #     root_key = repo_path
-
-            #     if root_key not in structure["directories"]:
-            #         structure["directories"][root_key] = []
-
-            #     file_name = os.path.basename(rel_path)
-            #     if file_name not in structure["directories"][root_key]:
-            #         structure["directories"][root_key].append(file_name)
 
             # Identify key files
-            if self._is_key_file(rel_path):
+            if _repo_analysis.is_key_file(rel_path):
                 structure["key_files"].append(rel_path)
 
         return structure
-
-    def _get_language_from_extension(self, ext: str) -> str:
-        """Get programming language from extension"""
-        return _repo_analysis.get_language_from_extension(ext)
-
-    def _is_key_file(self, file_path: str) -> bool:
-        """Check if file is a key/important file"""
-        return _repo_analysis.is_key_file(file_path)
 
     def _summarize_readme_with_llm(
         self, repo_name: str, readme_content: str, file_structure: dict[str, Any]
@@ -259,14 +243,15 @@ Summary:"""
                 )
                 return response.choices[0].message.content.strip()
 
-            if self.provider == "anthropic":
+            if self.provider == "anthropic" and self.llm_client is not None:
                 response = self.llm_client.messages.create(
-                    model=self.model,
+                    model=self.model or "claude-sonnet-4-6",
                     max_tokens=self.max_tokens,
                     temperature=self.temperature,
                     messages=[{"role": "user", "content": prompt}],
                 )
-                return response.content[0].text.strip()
+                text_block = response.content[0]
+                return str(text_block.text).strip()
 
         except Exception as e:
             self.logger.error(f"LLM summarization failed: {e}")

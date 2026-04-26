@@ -12,7 +12,7 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .embedder import CodeEmbedder
 from .semantic_ir import IRSnapshot
@@ -21,24 +21,22 @@ logger = logging.getLogger(__name__)
 
 # Sentinel indicating the chunker class has not been loaded yet.
 _UNSET = object()
+_chunker_class_cache: list[Any] = [_UNSET]
 
 
 def _get_chunker_class() -> Any:
     """Import and cache the SemanticChunker class; return None on failure."""
-    if _get_chunker_class._cached is _UNSET:
+    if _chunker_class_cache[0] is _UNSET:
         try:
             from chonkie import SemanticChunker
 
-            _get_chunker_class._cached = SemanticChunker
+            _chunker_class_cache[0] = SemanticChunker
         except Exception as exc:
             logger.warning(
                 "chonkie import failed, falling back to word-based chunking: %s", exc
             )
-            _get_chunker_class._cached = None
-    return _get_chunker_class._cached
-
-
-_get_chunker_class._cached = _UNSET  # type: ignore[attr-defined]
+            _chunker_class_cache[0] = None
+    return _chunker_class_cache[0]
 
 
 @dataclass
@@ -89,7 +87,7 @@ class KeyDocIngester:
     def __init__(self, config: dict[str, Any], embedder: CodeEmbedder) -> None:
         self.config = config
         self.embedder = embedder
-        cfg = config.get("docs_integration", {}) or {}
+        cfg = cast(dict[str, Any], config.get("docs_integration") or {})
         self.enabled = bool(cfg.get("enabled", False))
         self.curated_paths = list(
             cfg.get("curated_paths")
@@ -403,7 +401,7 @@ class KeyDocIngester:
     def _embed(self, text: str) -> list[float] | None:
         try:
             v = self.embedder.embed_text(text)
-            if v is None:
+            if len(v) == 0:
                 return None
             return [float(x) for x in v]
         except Exception:
@@ -427,7 +425,7 @@ class KeyDocIngester:
     def _extract_mentions(
         self, snapshot: IRSnapshot, chunks: Iterable[DocChunk]
     ) -> list[dict[str, Any]]:
-        symbols = []
+        symbols: list[tuple[str, str]] = []
         for sym in snapshot.symbols:
             name = (sym.display_name or "").strip()
             if len(name) < 3:
@@ -461,7 +459,7 @@ class KeyDocIngester:
                         }
                     )
         # dedupe
-        dedup = {}
+        dedup: dict[tuple[str, str], dict[str, Any]] = {}
         for m in mentions:
             dedup[(m["chunk_id"], m["symbol_id"])] = m
         return list(dedup.values())

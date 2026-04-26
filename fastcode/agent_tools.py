@@ -84,7 +84,7 @@ class AgentTools:
             }
 
         try:
-            result = {"success": True, "path": path, "contents": []}
+            result: dict[str, Any] = {"success": True, "path": path, "contents": []}
 
             # List directory contents
             for item in sorted(os.listdir(full_path)):
@@ -96,7 +96,7 @@ class AgentTools:
                 rel_path = os.path.relpath(item_path, self.repo_root)
                 is_dir = os.path.isdir(item_path)
 
-                item_info = {
+                item_info: dict[str, Any] = {
                     "name": item,
                     "path": rel_path,
                     "type": "directory" if is_dir else "file",
@@ -180,7 +180,9 @@ class AgentTools:
             else:
                 # Intelligently handle OR operation
                 if "|" in search_term:
-                    terms = [re.escape(t.strip()) for t in search_term.split("|")]
+                    terms: list[str] = [
+                        re.escape(t.strip()) for t in search_term.split("|")
+                    ]
                     pattern_str = "|".join(terms)
                 else:
                     pattern_str = re.escape(search_term)
@@ -196,7 +198,7 @@ class AgentTools:
             def _compile_glob(pattern: str) -> re.Pattern[str]:
                 # Convert glob (**/*.py) to regex
                 parts = pattern.split("**")
-                regex_parts = []
+                regex_parts: list[str] = []
                 for i, part in enumerate(parts):
                     if part:
                         # Use fnmatch to convert each part
@@ -218,7 +220,7 @@ class AgentTools:
                     )
                     # file_matcher remains None, will be handled with fallback in loop
 
-            results = []
+            results: list[dict[str, Any]] = []
             files_searched = 0
 
             # 3. Traverse files
@@ -310,7 +312,7 @@ class AgentTools:
                         with open(file_path, encoding="utf-8", errors="ignore") as f:
                             content = f.read()
 
-                        file_matches = []
+                        file_matches: list[dict[str, Any]] = []
                         lines = content.split("\n")
 
                         for i, line in enumerate(lines, 1):
@@ -484,14 +486,14 @@ class AgentTools:
 
         try:
             with open(full_path, encoding="utf-8", errors="ignore") as f:
-                lines = []
+                lines: list[str] = []
                 for i, line in enumerate(f):
                     if i >= max_lines:
                         break
-                    lines.append(line.rstrip())
+                    lines.append(str(line).rstrip())
 
             # Extract structure (simple pattern matching)
-            structure = {
+            structure: dict[str, Any] = {
                 "success": True,
                 "path": file_path,
                 "total_lines_scanned": len(lines),

@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from diskcache import Cache as DiskCache
+from diskcache import Cache as DiskCache  # type: ignore[import-untyped]
 
 
 class CacheManager:
@@ -35,7 +35,7 @@ class CacheManager:
             "dialogue_ttl", 2592000
         )  # 30 days in seconds
 
-        self.cache = None
+        self.cache: Any = None
 
         if self.enabled:
             self._initialize_cache()
@@ -82,7 +82,7 @@ class CacheManager:
 
         try:
             if self.backend == "disk":
-                value = self.cache.get(key)
+                value: Any = self.cache.get(key)
                 if value is not None:
                     self.logger.debug(f"Cache hit: {key}")
                 return value
@@ -91,7 +91,7 @@ class CacheManager:
                 value = self.cache.get(key)
                 if value:
                     self.logger.debug(f"Cache hit: {key}")
-                    return pickle.loads(value)
+                    return pickle.loads(value)  # type: ignore[arg-type]
                 return None
 
         except Exception as e:
@@ -112,12 +112,14 @@ class CacheManager:
                 return True
 
             if self.backend == "redis":
-                self.cache.setex(key, ttl, pickle.dumps(value))
+                self.cache.setex(key, ttl, pickle.dumps(value))  # type: ignore[arg-type]
                 return True
 
         except Exception as e:
             self.logger.warning(f"Cache set error: {e}")
             return False
+
+        return False
 
     def delete(self, key: str) -> bool:
         """Delete key from cache"""
@@ -126,12 +128,14 @@ class CacheManager:
 
         try:
             if self.backend == "disk":
-                return self.cache.delete(key)
+                return bool(self.cache.delete(key))
             if self.backend == "redis":
                 return bool(self.cache.delete(key))
         except Exception as e:
             self.logger.warning(f"Cache delete error: {e}")
             return False
+
+        return False
 
     def clear(self) -> bool:
         """Clear all cache"""
@@ -144,12 +148,14 @@ class CacheManager:
                 self.logger.info("Cleared disk cache")
                 return True
             if self.backend == "redis":
-                self.cache.flushdb()
+                self.cache.flushdb()  # type: ignore[union-attr]
                 self.logger.info("Cleared Redis cache")
                 return True
         except Exception as e:
             self.logger.error(f"Cache clear error: {e}")
             return False
+
+        return False
 
     def get_embedding(self, text: str) -> Any | None:
         """Get cached embedding"""
@@ -193,16 +199,18 @@ class CacheManager:
                     "items": len(self.cache),
                 }
             if self.backend == "redis":
-                info = self.cache.info()
+                info: Any = self.cache.info()  # type: ignore[union-attr]
                 return {
                     "enabled": True,
                     "backend": "redis",
                     "size": info.get("used_memory", 0),
-                    "items": self.cache.dbsize(),
+                    "items": self.cache.dbsize(),  # type: ignore[union-attr]
                 }
         except Exception as e:
             self.logger.error(f"Failed to get cache stats: {e}")
             return {"enabled": True, "error": str(e)}
+
+        return {"enabled": False}
 
     # ===== Multi-turn Dialogue Session Cache Methods =====
 
@@ -306,7 +314,7 @@ class CacheManager:
             if not session_index:
                 return []
 
-            total_turns = session_index.get("total_turns", 0)
+            total_turns: int = session_index.get("total_turns", 0)
             if total_turns == 0:
                 return []
 
@@ -317,7 +325,7 @@ class CacheManager:
                 start_turn = total_turns - max_turns + 1
 
             # Retrieve turns
-            history = []
+            history: list[dict[str, Any]] = []
             for turn_num in range(start_turn, total_turns + 1):
                 turn_data = self.get_dialogue_turn(session_id, turn_num)
                 if turn_data:
@@ -348,7 +356,7 @@ class CacheManager:
         try:
             history = self.get_dialogue_history(session_id, max_turns=num_rounds)
 
-            summaries = []
+            summaries: list[dict[str, Any]] = []
             for turn in history:
                 summaries.append(
                     {
@@ -370,7 +378,7 @@ class CacheManager:
         """Update session index with new turn"""
         try:
             key = f"dialogue_session_{session_id}_index"
-            session_index = self.get(key) or {
+            session_index: dict[str, Any] = self.get(key) or {
                 "session_id": session_id,
                 "created_at": time.time(),
                 "total_turns": 0,
@@ -419,7 +427,7 @@ class CacheManager:
             if not session_index:
                 return False
 
-            total_turns = session_index.get("total_turns", 0)
+            total_turns: int = session_index.get("total_turns", 0)
 
             # Delete all turns
             for turn_num in range(1, total_turns + 1):
@@ -448,7 +456,7 @@ class CacheManager:
             return []
 
         try:
-            sessions = []
+            sessions: list[dict[str, Any]] = []
 
             if self.backend == "disk":
                 # Scan for session index keys

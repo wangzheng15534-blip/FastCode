@@ -7,7 +7,7 @@ plus fastcode.core.scoring and fastcode.core.types.
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, cast
 
 from fastcode.schema.core_types import FusionConfig
 
@@ -28,29 +28,33 @@ from .scoring import (
 
 def extract_trace_links(row: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract grounded trace links from a retrieval result row."""
-    elem = row.get("element") or {}
-    meta = elem.get("metadata") or {}
-    raw_links = meta.get("trace_links") or meta.get("mentions") or []
+    elem = cast(dict[str, Any], row.get("element") or {})
+    meta = cast(dict[str, Any], elem.get("metadata") or {})
+    raw_links: list[Any] = meta.get("trace_links") or meta.get("mentions") or []
     links: list[dict[str, Any]] = []
     for link in raw_links:
         if not isinstance(link, dict):
             continue
+        link_dict = cast(dict[str, Any], link)
         unit_id = (
-            link.get("unit_id") or link.get("symbol_id") or link.get("ir_symbol_id")
+            link_dict.get("unit_id")
+            or link_dict.get("symbol_id")
+            or link_dict.get("ir_symbol_id")
         )
         if not unit_id:
             continue
         weight = float(
-            link.get("weight") or trace_confidence_weight(link.get("confidence"))
+            link_dict.get("weight")
+            or trace_confidence_weight(link_dict.get("confidence"))
         )
         links.append(
             {
                 "unit_id": str(unit_id),
                 "weight": max(0.0, min(1.0, weight)),
-                "evidence_type": link.get("evidence_type") or "trace_link",
-                "chunk_id": link.get("chunk_id") or elem.get("id"),
-                "symbol_name": link.get("symbol_name"),
-                "confidence": link.get("confidence"),
+                "evidence_type": link_dict.get("evidence_type") or "trace_link",
+                "chunk_id": link_dict.get("chunk_id") or elem.get("id"),
+                "symbol_name": link_dict.get("symbol_name"),
+                "confidence": link_dict.get("confidence"),
             }
         )
     return links
@@ -71,18 +75,10 @@ def _find_code_element_for_ir_unit(
             continue
         if repo_filter and elem.repo_name not in repo_filter:
             continue
-        meta = elem.metadata or {}
+        meta = cast(dict[str, Any], elem.metadata or {})
         if meta.get("ir_symbol_id") == unit_id or meta.get("ir_node_id") == unit_id:
             return elem.to_dict()
     return None
-
-
-def _active_bm25_elements(
-    filtered: list[Any],
-    full: list[Any],
-) -> list[Any]:
-    """Return filtered elements if available, otherwise full."""
-    return filtered if filtered else full
 
 
 def _new_fused_entry(element: dict[str, Any]) -> dict[str, Any]:
@@ -141,7 +137,7 @@ def compute_adaptive_fusion_params(
     intent = str(qi.get("intent") or "")
     keywords = qi.get("keywords")
     if isinstance(keywords, list):
-        keyword_text = " ".join(str(k) for k in keywords)
+        keyword_text = " ".join(str(k) for k in cast(list[Any], keywords))
     else:
         keyword_text = ""
 
@@ -334,7 +330,7 @@ def project_doc_priors(
     priors: dict[str, float] = {}
     evidence: dict[str, list[dict[str, Any]]] = {}
     for row in doc_results:
-        elem = row.get("element") or {}
+        elem = cast(dict[str, Any], row.get("element") or {})
         elem_id = str(elem.get("id") or "")
         if not elem_id:
             continue
@@ -398,9 +394,9 @@ def apply_doc_projection_to_code(
     seeded: dict[str, dict[str, Any]] = {}
     for row in code_results:
         materialized = clone_result_row(row)
-        elem = materialized.get("element") or {}
+        elem = cast(dict[str, Any], materialized.get("element") or {})
         elem_id = str(elem.get("id") or "")
-        meta = elem.get("metadata") or {}
+        meta = cast(dict[str, Any], elem.get("metadata") or {})
         unit_id = meta.get("ir_symbol_id") or meta.get("ir_node_id")
         retrieval_score = code_norm.get(elem_id, 0.0)
         projected_prior = float(priors.get(str(unit_id), 0.0)) if unit_id else 0.0
@@ -415,11 +411,13 @@ def apply_doc_projection_to_code(
     for unit_id, prior in priors.items():
         if prior <= 0.0:
             continue
-        if any(
-            ((row.get("element") or {}).get("metadata") or {}).get("ir_symbol_id")
-            == unit_id
-            for row in seeded.values()
-        ):
+
+        def _row_has_unit_id(row: dict[str, Any], uid: str) -> bool:
+            elem = cast(dict[str, Any], row.get("element") or {})
+            meta = cast(dict[str, Any], elem.get("metadata") or {})
+            return meta.get("ir_symbol_id") == uid
+
+        if any(_row_has_unit_id(row, unit_id) for row in seeded.values()):
             continue
         if bm25_elements is None:
             continue

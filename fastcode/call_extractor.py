@@ -4,12 +4,22 @@ Provides precise function call extraction for call graph construction
 """
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 import tree_sitter
 from tree_sitter import Query, QueryCursor
 
 from .tree_sitter_parser import TSParser
+
+
+def _node_text(node: tree_sitter.Node | None) -> str:
+    """Safely decode a tree-sitter node's text, returning empty string if None."""
+    if node is None:
+        return ""
+    text = node.text
+    if text is None:
+        return ""
+    return text.decode("utf-8")
 
 
 class CallExtractor:
@@ -40,9 +50,9 @@ class CallExtractor:
         self._builtin_functions = self._get_builtin_functions()
 
         # Initialize queries (will be compiled when needed)
-        self._call_query = None
-        self._scope_query = None
-        self._init_type_query = None
+        self._call_query: Query | None = None
+        self._scope_query: Query | None = None
+        self._init_type_query: Query | None = None
         self._init_queries()
 
     def _get_builtin_functions(self) -> set[str]:
@@ -261,19 +271,21 @@ class CallExtractor:
         """
         try:
             cursor = QueryCursor(query)
-            captures = cursor.captures(node)
+            captures: Any = cursor.captures(node)
 
             # Handle different tree-sitter versions
             # Older versions return dict, newer versions return list
             if isinstance(captures, dict):
                 # Convert dict format to list of (node, capture_name) tuples
-                result = []
-                for capture_name, nodes in captures.items():
+                captures_dict = cast(dict[str, list[Any]], captures)
+                result: list[tuple[Any, str]] = []
+                for capture_name, nodes in captures_dict.items():
+                    capture_name_str = str(capture_name)
                     for cap_node in nodes:
-                        result.append((cap_node, capture_name))
+                        result.append((cap_node, capture_name_str))
                 return result
             # Newer versions already return list format
-            return captures
+            return list(captures)
 
         except Exception as e:
             self.logger.error(f"Failed to execute query: {e}")
@@ -289,9 +301,11 @@ class CallExtractor:
         Returns:
             List of scope information with ranges
         """
-        scopes = []
+        scopes: list[dict[str, Any]] = []
 
         # Execute scope query
+        if self._scope_query is None:
+            return scopes
         captures = self._execute_query(self._scope_query, tree.root_node)
         if not captures:
             return scopes
@@ -305,7 +319,7 @@ class CallExtractor:
                     scopes.append(
                         {
                             "type": "function",
-                            "name": func_name_node.text.decode("utf-8"),
+                            "name": _node_text(func_name_node),
                             "range": {
                                 "start_byte": node.start_byte,
                                 "end_byte": node.end_byte,
@@ -322,7 +336,7 @@ class CallExtractor:
                     scopes.append(
                         {
                             "type": "class",
-                            "name": class_name_node.text.decode("utf-8"),
+                            "name": _node_text(class_name_node),
                             "range": {
                                 "start_byte": node.start_byte,
                                 "end_byte": node.end_byte,
@@ -333,7 +347,7 @@ class CallExtractor:
                     )
 
         # Sort scopes by start position for proper nesting detection
-        scopes.sort(key=lambda s: s["range"]["start_byte"])
+        scopes.sort(key=lambda s: cast(dict[str, Any], s["range"])["start_byte"])
 
         return scopes
 
@@ -351,9 +365,11 @@ class CallExtractor:
         Returns:
             List of call information with scope context
         """
-        calls = []
+        calls: list[dict[str, Any]] = []
 
         # Execute call query
+        if self._call_query is None:
+            return calls
         captures = self._execute_query(self._call_query, tree.root_node)
         if not captures:
             return calls
@@ -408,7 +424,7 @@ class CallExtractor:
                 "start_point": call_node.start_point,
                 "end_point": call_node.end_point,
             },
-            "node_text": call_node.text.decode("utf-8"),
+            "node_text": _node_text(call_node),
         }
 
     def _extract_call_details(
@@ -425,7 +441,7 @@ class CallExtractor:
         """
         if function_node.type == "identifier":
             # Simple function call: func()
-            call_name = function_node.text.decode("utf-8")
+            call_name = _node_text(function_node)
             return {"call_name": call_name, "call_type": "simple"}
 
         if function_node.type == "attribute":
@@ -435,8 +451,8 @@ class CallExtractor:
             attribute_node = function_node.child_by_field_name("attribute")
 
             if object_node and attribute_node:
-                base_object = object_node.text.decode("utf-8")
-                call_name = attribute_node.text.decode("utf-8")
+                base_object = _node_text(object_node)
+                call_name = _node_text(attribute_node)
 
                 return {
                     "call_name": call_name,
@@ -565,6 +581,8 @@ class CallExtractor:
             )
             return {}
 
+        scoped_types: dict[str, dict[str, list[str]]] = {}
+
         # Parse the code
         tree = self.parser.parse(code)
         if tree is None:
@@ -573,10 +591,6 @@ class CallExtractor:
 
         # 1. Extract scopes first to know where we are
         scopes = self._extract_scopes(tree)
-
-        # Initialize result with a 'global' scope
-        # structure: { "function::name": { "var": ["Type"] } }
-        scoped_types: dict[str, dict[str, list[str]]] = {}
 
         captures = self._execute_query(self._init_type_query, tree.root_node)
 
@@ -628,10 +642,10 @@ class CallExtractor:
             return
 
         # --- FIX: Capture full name (e.g., 'self.loader') ---
-        var_name = attr_node.text.decode("utf-8")
+        var_name = _node_text(attr_node)
         obj_node = left_node.child_by_field_name("object")
         if obj_node:
-            obj_name = obj_node.text.decode("utf-8")
+            obj_name = _node_text(obj_node)
             var_name = f"{obj_name}.{var_name}"
         # ----------------------------------------------------
 
@@ -645,7 +659,7 @@ class CallExtractor:
         if not func_node or func_node.type != "identifier":
             return
 
-        class_name = func_node.text.decode("utf-8")
+        class_name = _node_text(func_node)
 
         # Add to instance_types dictionary
         if var_name not in instance_types:
@@ -674,10 +688,10 @@ class CallExtractor:
             return
 
         # --- FIX: Capture full name ---
-        var_name = attr_node.text.decode("utf-8")
+        var_name = _node_text(attr_node)
         obj_node = target_node.child_by_field_name("object")
         if obj_node:
-            obj_name = obj_node.text.decode("utf-8")
+            obj_name = _node_text(obj_node)
             var_name = f"{obj_name}.{var_name}"
         # ------------------------------
 
@@ -715,7 +729,7 @@ class CallExtractor:
         if not attr_node:
             return
 
-        var_name = attr_node.text.decode("utf-8")
+        var_name = _node_text(attr_node)
 
         # Extract class name from type annotation (support both 'annotation' and 'type' field names)
         annotation_node = node.child_by_field_name("annotation")
@@ -744,7 +758,7 @@ class CallExtractor:
         """
         # Handle simple identifier: ClassName
         if annotation_node.type == "identifier":
-            return annotation_node.text.decode("utf-8")
+            return _node_text(annotation_node)
 
         # Handle type wrapper node (common in newer tree-sitter-python versions)
         # This fixes the bug where 'type' nodes containing the identifier were being ignored
@@ -761,7 +775,7 @@ class CallExtractor:
             # Get the last attribute in the chain
             attr_node = annotation_node.child_by_field_name("attribute")
             if attr_node and attr_node.type == "identifier":
-                return attr_node.text.decode("utf-8")
+                return _node_text(attr_node)
 
         # Handle other complex types (for future enhancement)
         # Could handle generics like List[ClassName], Optional[ClassName], etc.
@@ -781,7 +795,7 @@ class CallExtractor:
         if not left_node or left_node.type != "identifier":
             return
 
-        var_name = left_node.text.decode("utf-8")
+        var_name = _node_text(left_node)
 
         # Extract class name from the function being called
         right_node = node.child_by_field_name("right")
@@ -792,7 +806,7 @@ class CallExtractor:
         if not func_node or func_node.type != "identifier":
             return
 
-        class_name = func_node.text.decode("utf-8")
+        class_name = _node_text(func_node)
 
         # Add to types dictionary
         if var_name not in instance_types:

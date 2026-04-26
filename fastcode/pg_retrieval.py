@@ -8,7 +8,7 @@ import json
 import logging
 import math
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -108,7 +108,7 @@ class PgRetrievalStore:
     def _vector_literal(vec: Sequence[float]) -> str:
         if not vec:
             raise ValueError("Cannot create vector literal from empty sequence")
-        cleaned = []
+        cleaned: list[float] = []
         for v in vec:
             f = float(v)
             if math.isnan(f) or math.isinf(f):
@@ -125,9 +125,11 @@ class PgRetrievalStore:
                 element_id = str(elem.get("id") or "")
                 if not element_id:
                     continue
-                meta = elem.get("metadata") or {}
-                embedding = meta.get("embedding")
-                repo_name = elem.get("repo_name") or meta.get("repo_name")
+                meta = cast(dict[str, Any], elem.get("metadata") or {})
+                embedding: Any = meta.get("embedding")
+                repo_name: str = cast(
+                    str, elem.get("repo_name") or meta.get("repo_name")
+                )
                 relative_path = elem.get("relative_path")
                 language = elem.get("language")
                 element_type = elem.get("type")
@@ -147,12 +149,12 @@ class PgRetrievalStore:
                 def _make_json_safe(val: Any) -> Any:
                     if isinstance(val, np.ndarray):
                         return val.tolist()
-                    if isinstance(val, (np.integer,)):
-                        return int(val)
-                    if isinstance(val, (np.floating,)):
-                        return float(val)
-                    if isinstance(val, np.bool_):
-                        return bool(val)
+                    if isinstance(val, np.integer):  # type: ignore[arg-type]
+                        return int(cast(Any, val))
+                    if isinstance(val, np.floating):  # type: ignore[arg-type]
+                        return float(cast(Any, val))
+                    if isinstance(val, np.bool_):  # type: ignore[arg-type]
+                        return bool(cast(Any, val))
                     return val
 
                 serializable_elem = {k: _make_json_safe(v) for k, v in elem.items()}
@@ -163,10 +165,10 @@ class PgRetrievalStore:
                     }
                 metadata_json = json.dumps(serializable_elem, ensure_ascii=False)
 
-                vector_literal = None
-                embedding_arr = None
+                vector_literal: str | None = None
+                embedding_arr: list[float] | None = None
                 if isinstance(embedding, (list, tuple)) and embedding:
-                    embedding_arr = [float(x) for x in embedding]
+                    embedding_arr = [float(x) for x in cast(list[Any], embedding)]
                     vector_literal = self._vector_literal(embedding_arr)
                 if isinstance(embedding, np.ndarray) and embedding.size > 0:
                     embedding_arr = [float(x) for x in embedding.tolist()]
@@ -239,7 +241,7 @@ class PgRetrievalStore:
         element_types: list[str] | None = None,
         top_k: int = 20,
     ) -> list[tuple[dict[str, Any], float]]:
-        if not self.enabled or query_embedding is None:
+        if not self.enabled or not query_embedding:
             return []
         vector_literal = self._vector_literal(query_embedding)
 
@@ -314,17 +316,23 @@ class PgRetrievalStore:
                         (vector_literal, snapshot_id, vector_literal, top_k),
                     )
                 rows = cur.fetchall()
-                out = []
+                out: list[tuple[dict[str, Any], float]] = []
                 for row in rows:
-                    raw_meta = (
-                        row.get("metadata_json") if isinstance(row, dict) else row[0]
+                    raw_meta: Any = (
+                        cast(dict[str, Any], row).get("metadata_json")
+                        if isinstance(row, dict)
+                        else row[0]
                     )
-                    raw_score = row.get("score") if isinstance(row, dict) else row[1]
+                    raw_score: Any = (
+                        cast(dict[str, Any], row).get("score")
+                        if isinstance(row, dict)
+                        else row[1]
+                    )
                     if isinstance(raw_meta, dict):
-                        meta = raw_meta
+                        meta = cast(dict[str, Any], raw_meta)
                     elif raw_meta:
                         try:
-                            meta = json.loads(raw_meta)
+                            meta = cast(dict[str, Any], json.loads(str(raw_meta)))
                         except (json.JSONDecodeError, TypeError):
                             continue
                     else:
@@ -382,7 +390,7 @@ class PgRetrievalStore:
                     )
                 q = np.array(query_embedding, dtype=np.float32)
                 q_norm = float(np.linalg.norm(q)) or 1.0
-                scored = []
+                scored: list[tuple[dict[str, Any], float]] = []
                 allowed_types = set(element_types) if element_types else None
                 allowed_repos = set(repo_filter) if repo_filter else None
                 for row in cur.fetchall():
@@ -392,15 +400,20 @@ class PgRetrievalStore:
                     emb = np.array(emb_arr, dtype=np.float32)
                     denom = (float(np.linalg.norm(emb)) or 1.0) * q_norm
                     score = float(np.dot(emb, q) / denom)
-                    meta = (
-                        meta_raw if isinstance(meta_raw, dict) else json.loads(meta_raw)
+                    meta = cast(
+                        dict[str, Any],
+                        meta_raw
+                        if isinstance(meta_raw, dict)
+                        else json.loads(meta_raw),
                     )
                     if allowed_types:
-                        meta_type = meta.get("type") or meta.get("element_type")
+                        meta_type: str | None = meta.get("type") or meta.get(
+                            "element_type"
+                        )
                         if meta_type not in allowed_types:
                             continue
                     if allowed_repos:
-                        meta_repo = meta.get("repo_name")
+                        meta_repo: str | None = meta.get("repo_name")
                         if meta_repo not in allowed_repos:
                             continue
                     scored.append((meta, score))
@@ -493,15 +506,23 @@ class PgRetrievalStore:
                     """,
                     (query, snapshot_id, query, top_k),
                 )
-            out = []
+            out: list[tuple[dict[str, Any], float]] = []
             for row in cur.fetchall():
-                raw_meta = row.get("metadata_json") if isinstance(row, dict) else row[0]
-                raw_score = row.get("score") if isinstance(row, dict) else row[1]
+                raw_meta: Any = (
+                    cast(dict[str, Any], row).get("metadata_json")
+                    if isinstance(row, dict)
+                    else row[0]
+                )
+                raw_score: Any = (
+                    cast(dict[str, Any], row).get("score")
+                    if isinstance(row, dict)
+                    else row[1]
+                )
                 if isinstance(raw_meta, dict):
-                    meta = raw_meta
+                    meta = cast(dict[str, Any], raw_meta)
                 elif raw_meta:
                     try:
-                        meta = json.loads(raw_meta)
+                        meta = cast(dict[str, Any], json.loads(str(raw_meta)))
                     except (json.JSONDecodeError, TypeError):
                         continue
                 else:

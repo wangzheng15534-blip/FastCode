@@ -619,7 +619,7 @@ class CodeGraphBuilder:
             return None
 
         try:
-            _sp = getattr(nx, "shortest_path")
+            _sp = nx.shortest_path
             result: Any = _sp(graph, source_id, target_id)
             return list(result)
         except (nx.NodeNotFound, nx.NetworkXNoPath):

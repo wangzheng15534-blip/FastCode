@@ -22,7 +22,7 @@ def _normalize_set(values: list[str] | set[str] | tuple[str, ...] | None) -> set
     return {str(v) for v in values if v}
 
 
-def _resolution_to_confidence(resolution_state: str) -> str:
+def resolution_to_confidence(resolution_state: str) -> str:
     return {
         "anchored": "precise",
         "structural": "resolved",

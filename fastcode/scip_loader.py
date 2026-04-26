@@ -9,6 +9,7 @@ import logging
 import os
 import shutil
 import subprocess
+from typing import Any, cast
 
 from fastcode.core import scip_transform as _scip_transform
 
@@ -33,12 +34,12 @@ def load_scip_artifact(path: str) -> SCIPIndex:
     if ext == ".scip":
         # Try protobuf parsing first (no external CLI needed)
         try:
-            from .scip_pb2 import Index as ProtobufIndex
+            from .scip_pb2 import Index as ProtobufIndex  # type: ignore[import-untyped]
 
             with open(path, "rb") as f:
                 raw = f.read()
-            pb_index = ProtobufIndex()
-            pb_index.ParseFromString(raw)
+            pb_index: Any = ProtobufIndex()  # type: ignore[call-arg]
+            pb_index.ParseFromString(raw)  # type: ignore[attribute-access]
             return _protobuf_to_scip_index(pb_index)
         except (ImportError, OSError, ValueError) as exc:
             logger.debug("Protobuf parsing failed, trying scip CLI: %s", exc)
@@ -74,33 +75,40 @@ def run_scip_python_index(repo_path: str, output_path: str) -> str:
     return run_scip_indexer("python", repo_path, output_path)
 
 
-def _protobuf_to_scip_index(pb_index) -> SCIPIndex:
-    from .scip_models import _EMPTY_RANGE, SCIPDocument, SCIPOccurrence, SCIPSymbol
+def _protobuf_to_scip_index(pb_index: Any) -> SCIPIndex:
+    from .scip_models import SCIPDocument, SCIPOccurrence, SCIPSymbol
 
-    documents = []
+    # Use a list as the empty range fallback (protobuf fields are unknown type)
+    _empty_range: list[int] = [0, 0, 0, 0]
+
+    documents: list[SCIPDocument] = []
     for doc in pb_index.documents:
-        symbols = []
+        symbols: list[SCIPSymbol] = []
         for sym in doc.symbols:
             symbols.append(
                 SCIPSymbol(
-                    symbol=sym.symbol,
+                    symbol=str(sym.symbol),
                     name=sym.display_name or None,
                     kind=_scip_kind_to_str(sym.kind),
                 )
             )
-        occurrences = []
+        occurrences: list[SCIPOccurrence] = []
         for occ in doc.occurrences:
-            r = list(occ.range) if occ.range else list(_EMPTY_RANGE)
+            r: list[int | None] = (
+                cast(list[int | None], list(occ.range))
+                if occ.range
+                else list(_empty_range)
+            )
             occurrences.append(
                 SCIPOccurrence(
-                    symbol=occ.symbol,
+                    symbol=str(occ.symbol),
                     role=_symbol_role_to_str(occ.symbol_roles),
                     range=r,
                 )
             )
         documents.append(
             SCIPDocument(
-                path=doc.relative_path,
+                path=str(doc.relative_path),
                 language=doc.language or None,
                 symbols=symbols,
                 occurrences=occurrences,
@@ -113,9 +121,9 @@ def _protobuf_to_scip_index(pb_index) -> SCIPIndex:
     )
 
 
-def _symbol_role_to_str(roles: int) -> str:
-    return _scip_transform.symbol_role_to_str(roles)
+def _symbol_role_to_str(roles: Any) -> str:
+    return _scip_transform.symbol_role_to_str(int(roles))
 
 
-def _scip_kind_to_str(kind_value: int) -> str:
-    return _scip_transform.scip_kind_to_str(kind_value)
+def _scip_kind_to_str(kind_value: Any) -> str:
+    return _scip_transform.scip_kind_to_str(int(kind_value))

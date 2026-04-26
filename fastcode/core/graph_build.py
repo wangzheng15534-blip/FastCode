@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
-from fastcode.schema.ir import _resolution_to_confidence
+from fastcode.schema.ir import resolution_to_confidence
 
 
 def build_code_graph_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -17,19 +17,20 @@ def build_code_graph_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
     full resolution metadata so downstream consumers can apply confidence
     bands.
     """
-    snapshot_id = snapshot.get("snapshot_id")
+    snapshot_id: str = snapshot.get("snapshot_id") or ""
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
 
-    for unit in snapshot.get("units") or []:
-        kind = unit.get("kind", "")
+    for unit in cast(list[Any], snapshot.get("units") or []):
+        unit = cast(dict[str, Any], unit)
+        kind: str = unit.get("kind") or ""
         if kind in ("file", "doc"):
             continue
-        unit_id = unit.get("unit_id")
+        unit_id: str = unit.get("unit_id") or ""
         if not unit_id:
             continue
         node_id = f"sym:{snapshot_id}:{unit_id}"
-        source_set = unit.get("source_set") or []
+        source_set: list[Any] = unit.get("source_set") or []
         nodes.append(
             {
                 "id": node_id,
@@ -44,35 +45,32 @@ def build_code_graph_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
                     "end_line": unit.get("end_line"),
                     "qualified_name": unit.get("qualified_name"),
                     "scip_symbol": unit.get("primary_anchor_symbol_id"),
-                    "source_set": source_set
-                    if isinstance(source_set, list)
-                    else list(source_set),
+                    "source_set": list(source_set),
                 },
             }
         )
 
-    for rel in snapshot.get("relations") or []:
-        rel_id = rel.get("relation_id")
+    for rel in cast(list[Any], snapshot.get("relations") or []):
+        rel = cast(dict[str, Any], rel)
+        rel_id: str = rel.get("relation_id") or ""
         if not rel_id:
             continue
-        src_id = rel.get("src_unit_id")
-        dst_id = rel.get("dst_unit_id")
+        src_id: str = rel.get("src_unit_id") or ""
+        dst_id: str = rel.get("dst_unit_id") or ""
         if not src_id or not dst_id:
             continue
-        support_sources = rel.get("support_sources") or []
+        support_sources: list[Any] = rel.get("support_sources") or []
         edges.append(
             {
                 "id": f"rel:{snapshot_id}:{rel_id}",
-                "type": rel.get("relation_type", ""),
+                "type": rel.get("relation_type") or "",
                 "src": f"sym:{snapshot_id}:{src_id}",
                 "dst": f"sym:{snapshot_id}:{dst_id}",
-                "confidence": _resolution_to_confidence(
-                    rel.get("resolution_state", "")
+                "confidence": resolution_to_confidence(
+                    rel.get("resolution_state") or ""
                 ),
-                "resolution_state": rel.get("resolution_state", ""),
-                "source_set": support_sources
-                if isinstance(support_sources, list)
-                else list(support_sources),
+                "resolution_state": rel.get("resolution_state") or "",
+                "source_set": list(support_sources),
             }
         )
 

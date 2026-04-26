@@ -7,10 +7,11 @@ Uses LadybugDB's Cypher-like query language for graph storage.
 
 from __future__ import annotations
 
+import builtins
 import logging
 import re
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -30,20 +31,27 @@ class LadybugGraphRuntime:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.logger = logging.getLogger(__name__)
-        graph_cfg = (config.get("graph", {}) or {}).get("ladybug", {}) or {}
-        self.enabled = bool(graph_cfg.get("enabled", False))
-        self.db_path = graph_cfg.get("db_path", "./data/ladybug/fastcode.lb")
-        self.postgres_attach_dsn = graph_cfg.get("postgres_attach_dsn", "")
-        self._conn = None
+        graph_cfg = cast(dict[str, Any], config.get("graph") or {})
+        ladybug_cfg = cast(dict[str, Any], graph_cfg.get("ladybug") or {})
+        self.enabled = bool(ladybug_cfg.get("enabled", False))
+        self.db_path: str = str(
+            ladybug_cfg.get("db_path", "./data/ladybug/fastcode.lb")
+        )
+        self.postgres_attach_dsn: str = str(ladybug_cfg.get("postgres_attach_dsn", ""))
+        self._conn: Any = None
         if self.enabled:
             self._init()
 
     def _init(self) -> None:
         try:
-            from real_ladybug import Connection, Database  # type: ignore
+            import real_ladybug  # type: ignore[import-untyped]
 
-            db = Database(self.db_path)
-            self._conn = Connection(database=db)
+            # ruff-format: off
+            _Database: Any = builtins.getattr(real_ladybug, "Database")  # noqa: B009
+            _Connection: Any = builtins.getattr(real_ladybug, "Connection")  # noqa: B009
+            # ruff-format: on
+            db: Any = _Database(self.db_path)
+            self._conn = _Connection(database=db)
             self._create_schema()
             if self.postgres_attach_dsn:
                 self._attach_postgres(self.postgres_attach_dsn)
@@ -124,7 +132,7 @@ class LadybugGraphRuntime:
             return False
         try:
             for c in chunks:
-                chunk_id = c.get("chunk_id", "")
+                chunk_id: str = c.get("chunk_id", "")
                 # Upsert: delete old node then create new one
                 self._conn.execute(
                     f"MATCH (d:design_documents {{chunk_id: {_esc(chunk_id)}}}) DELETE d"
@@ -170,7 +178,7 @@ class LadybugGraphRuntime:
                 f"MATCH (d:design_documents {{snapshot_id: {_esc(snapshot_id)}}}) "
                 "RETURN d.chunk_id, d.heading, d.doc_type, d.content"
             )
-            rows = []
+            rows: list[dict[str, Any]] = []
             for row in result:
                 rows.append(
                     {

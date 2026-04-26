@@ -3,6 +3,29 @@
 
 from __future__ import annotations
 
+# Manual mapping from protobuf Kind enum int values to strings.
+# Avoids importing the protobuf module (no type stubs) at type-check time.
+_KIND_MAP: dict[int, str] = {
+    1: "function",
+    2: "method",
+    3: "class",
+    4: "interface",
+    5: "enum",
+    6: "enum_member",
+    7: "variable",
+    8: "constant",
+    9: "property",
+    10: "type",
+    11: "macro",
+    12: "module",
+    13: "namespace",
+    14: "package",
+    15: "parameter",
+    16: "type_parameter",
+    17: "constructor",
+    18: "struct",
+}
+
 
 def symbol_role_to_str(roles: int) -> str:
     """Convert SCIP symbol_roles bitmask to a semantic role string."""
@@ -19,29 +42,4 @@ def symbol_role_to_str(roles: int) -> str:
 
 def scip_kind_to_str(kind_value: int) -> str:
     """Convert SCIP protobuf Kind enum to string."""
-    try:
-        from fastcode.scip_pb2 import SymbolInformation
-    except ImportError:
-        return "symbol"
-
-    kind_map = {
-        SymbolInformation.Kind.Function: "function",
-        SymbolInformation.Kind.Method: "method",
-        SymbolInformation.Kind.Class: "class",
-        SymbolInformation.Kind.Interface: "interface",
-        SymbolInformation.Kind.Enum: "enum",
-        SymbolInformation.Kind.EnumMember: "enum_member",
-        SymbolInformation.Kind.Variable: "variable",
-        SymbolInformation.Kind.Constant: "constant",
-        SymbolInformation.Kind.Property: "property",
-        SymbolInformation.Kind.Type: "type",
-        SymbolInformation.Kind.Macro: "macro",
-        SymbolInformation.Kind.Module: "module",
-        SymbolInformation.Kind.Namespace: "namespace",
-        SymbolInformation.Kind.Package: "package",
-        SymbolInformation.Kind.Parameter: "parameter",
-        SymbolInformation.Kind.TypeParameter: "type_parameter",
-        SymbolInformation.Kind.Constructor: "constructor",
-        SymbolInformation.Kind.Struct: "struct",
-    }
-    return kind_map.get(kind_value, "symbol")
+    return _KIND_MAP.get(kind_value, "symbol")

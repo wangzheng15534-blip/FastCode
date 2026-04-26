@@ -13,9 +13,7 @@ from fastcode.core.fusion import (
 from fastcode.core.types import FusionConfig
 
 
-def _mk_row(
-    elem_id: str, elem_type: str, total: float, **extra: Any
-) -> dict[str, Any]:
+def _mk_row(elem_id: str, elem_type: str, total: float, **extra: Any) -> dict[str, Any]:
     row = {
         "element": {"id": elem_id, "type": elem_type, "name": elem_id},
         "semantic_score": total,

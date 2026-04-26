@@ -1,5 +1,6 @@
 # tests/test_effects_db.py
 """Tests for DB effects — verify frozen dataclass returns."""
+
 import sqlite3
 from dataclasses import FrozenInstanceError
 

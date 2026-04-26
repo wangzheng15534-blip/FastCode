@@ -1,6 +1,5 @@
 """Tests for pure prompt formatting functions."""
 
-
 from fastcode.core.prompts import (
     format_elements_with_metadata,
     format_tool_call_history,

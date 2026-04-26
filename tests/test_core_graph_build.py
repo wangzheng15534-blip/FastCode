@@ -1,8 +1,9 @@
 # tests/test_core_graph_build.py
 """Tests for pure graph payload construction."""
+
 from fastcode.core.graph_build import (
-    deterministic_event_id,
     build_code_graph_payload,
+    deterministic_event_id,
 )
 
 
@@ -53,8 +54,13 @@ class TestBuildCodeGraphPayload:
             "snapshot_id": "snap:test:abc",
             "units": [],
             "relations": [
-                {"relation_id": "r1", "src_unit_id": "a", "dst_unit_id": "b",
-                 "relation_type": "calls", "resolution_state": "anchored"},
+                {
+                    "relation_id": "r1",
+                    "src_unit_id": "a",
+                    "dst_unit_id": "b",
+                    "relation_type": "calls",
+                    "resolution_state": "anchored",
+                },
             ],
         }
         result = build_code_graph_payload(snapshot)
@@ -80,8 +86,13 @@ class TestBuildCodeGraphPayload:
             "snapshot_id": "snap:test:abc",
             "units": [],
             "relations": [
-                {"relation_id": "r1", "src_unit_id": "a", "dst_unit_id": "b",
-                 "relation_type": "calls", "resolution_state": "anchored"},
+                {
+                    "relation_id": "r1",
+                    "src_unit_id": "a",
+                    "dst_unit_id": "b",
+                    "relation_type": "calls",
+                    "resolution_state": "anchored",
+                },
             ],
         }
         result = build_code_graph_payload(snapshot)
@@ -94,8 +105,13 @@ class TestBuildCodeGraphPayload:
             "snapshot_id": "snap:test:abc",
             "units": [],
             "relations": [
-                {"relation_id": "r1", "src_unit_id": "a", "dst_unit_id": "b",
-                 "relation_type": "calls", "resolution_state": ""},
+                {
+                    "relation_id": "r1",
+                    "src_unit_id": "a",
+                    "dst_unit_id": "b",
+                    "relation_type": "calls",
+                    "resolution_state": "",
+                },
             ],
         }
         result = build_code_graph_payload(snapshot)
@@ -107,13 +123,17 @@ class TestBuildCodeGraphPayload:
         snapshot = {
             "snapshot_id": "snap:test:abc",
             "units": [
-                {"kind": "function", "unit_id": "sym1",
-                 "source_set": ("scip",)},
+                {"kind": "function", "unit_id": "sym1", "source_set": ("scip",)},
             ],
             "relations": [
-                {"relation_id": "r1", "src_unit_id": "a", "dst_unit_id": "b",
-                 "relation_type": "calls", "resolution_state": "anchored",
-                 "support_sources": ("scip",)},
+                {
+                    "relation_id": "r1",
+                    "src_unit_id": "a",
+                    "dst_unit_id": "b",
+                    "relation_type": "calls",
+                    "resolution_state": "anchored",
+                    "support_sources": ("scip",),
+                },
             ],
         }
         result = build_code_graph_payload(snapshot)

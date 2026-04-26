@@ -15,8 +15,7 @@ from fastcode.scip_loader import (
     _symbol_role_to_str,
     load_scip_artifact,
 )
-from fastcode.scip_models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
-
+from fastcode.scip_models import SCIPIndex
 
 # --- Strategies ---
 

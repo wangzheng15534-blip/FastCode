@@ -2,12 +2,11 @@
 Agent Tools - Read-only tools for code exploration by agents
 """
 
+import fnmatch
+import logging
 import os
 import re
-import logging
-from typing import List, Dict, Any, Optional
-from pathlib import Path
-import fnmatch
+from typing import Any
 
 from .path_utils import PathUtils
 
@@ -28,7 +27,7 @@ class AgentTools:
         # Initialize path utilities
         self.path_utils = PathUtils(repo_root)
 
-    def _resolve_path(self, path: str) -> Optional[str]:
+    def _resolve_path(self, path: str) -> str | None:
         """
         Intelligently resolve path, specifically handling the case where
         repo_root ends with the same folder that path starts with.
@@ -44,9 +43,9 @@ class AgentTools:
         Delegates to PathUtils.is_safe_path()
         """
         return self.path_utils.is_safe_path(path)
-    
-    def list_directory(self, path: str = ".", 
-                      include_hidden: bool = False) -> Dict[str, Any]:
+
+    def list_directory(self, path: str = ".",
+                      include_hidden: bool = False) -> dict[str, Any]:
         """
         List directory contents (read-only, secure)
         
@@ -61,13 +60,13 @@ class AgentTools:
         # Security check
         if not self._is_safe_path(path):
             return {"success": False, "error": "Access denied: path outside repository root", "path": path}
-        
+
         # Resolve path intelligently
         full_path = self._resolve_path(path)
-        
+
         if full_path is None:
             return {"success": False, "error": f"Path does not exist: {path}", "path": path}
-        
+
         if not os.path.isdir(full_path):
             return {"success": False, "error": f"Path is not a directory: {path}", "path": path}
 
@@ -83,32 +82,32 @@ class AgentTools:
                 item_path = os.path.join(full_path, item)
                 rel_path = os.path.relpath(item_path, self.repo_root)
                 is_dir = os.path.isdir(item_path)
-                
+
                 item_info = {
                     "name": item,
                     "path": rel_path,
                     "type": "directory" if is_dir else "file"
                 }
-                
+
                 # Add file size for files
                 if not is_dir:
                     try:
                         item_info["size"] = os.path.getsize(item_path)
                     except:
                         item_info["size"] = 0
-                
+
                 result["contents"].append(item_info)
-            
+
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Error listing directory {path}: {e}")
             return {"success": False, "error": str(e), "path": path}
 
-    def search_codebase(self, search_term: str, file_pattern: str = "*", 
+    def search_codebase(self, search_term: str, file_pattern: str = "*",
                        root_path: str = ".", max_results: int = 30,
                        case_sensitive: bool = False,
-                       use_regex: bool = False) -> Dict[str, Any]:
+                       use_regex: bool = False) -> dict[str, Any]:
         """
         Search for files containing specific strings or patterns
         
@@ -132,13 +131,13 @@ class AgentTools:
         if not self._is_safe_path(root_path):
             return {
                 "success": False,
-                "error": f"Access denied: path outside repository root",
+                "error": "Access denied: path outside repository root",
                 "search_term": search_term
             }
-        
+
         # Resolve path intelligently
         search_root = self._resolve_path(root_path)
-        
+
         if search_root is None:
             return {
                 "success": False,
@@ -200,9 +199,9 @@ class AgentTools:
             # -------------------------------------------------
             for root, dirs, files in os.walk(search_root):
                 # Filter directories
-                dirs[:] = [d for d in dirs if not d.startswith('.') and 
+                dirs[:] = [d for d in dirs if not d.startswith('.') and
                         d not in ['__pycache__', 'node_modules', '.git', 'dist', 'build', 'venv']]
-                
+
                 for file in files:
                     if file.startswith('.'):
                         continue
@@ -223,11 +222,7 @@ class AgentTools:
                         match_file = True
                     elif file_matcher:
                         # Try Regex matching first (match full path)
-                        if file_matcher.match(rel_to_search):
-                            match_file = True
-                        # [Key fix]: If full path doesn't match, try matching just the filename
-                        # This solves the case where user inputs "*.py" but rel_path is "subdir/file.py" (fnmatch usually handles this, but may be lost after regex conversion)
-                        elif file_matcher.match(file):
+                        if file_matcher.match(rel_to_search) or file_matcher.match(file):
                             match_file = True
 
                     # If regex conversion failed or no match, and no matcher, try original fnmatch as fallback
@@ -246,19 +241,18 @@ class AgentTools:
                     if use_regex:
                         if content_pattern.search(file) or content_pattern.search(rel_to_search):
                             filename_match = True
+                    elif case_sensitive:
+                        if search_term in file or search_term in rel_to_search:
+                            filename_match = True
                     else:
-                        if case_sensitive:
-                            if search_term in file or search_term in rel_to_search:
-                                filename_match = True
-                        else:
-                            search_lower = search_term.lower()
-                            if search_lower in file.lower() or search_lower in rel_to_search.lower():
-                                filename_match = True
+                        search_lower = search_term.lower()
+                        if search_lower in file.lower() or search_lower in rel_to_search.lower():
+                            filename_match = True
 
                     # 5b. Content search
                     # -------------------------------------------------
                     try:
-                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        with open(file_path, encoding='utf-8', errors='ignore') as f:
                             content = f.read()
 
                         file_matches = []
@@ -296,10 +290,10 @@ class AgentTools:
                             if len(results) >= max_results:
                                 break
                         continue
-                
+
                 if len(results) >= max_results:
                     break
-                
+
                 # Auto-retry with recursive pattern if no results found
                 # and pattern looks like it should be recursive (e.g., "dir/*.py" -> "dir/**/*.py")
             if len(results) == 0 and file_pattern != "*":
@@ -311,10 +305,10 @@ class AgentTools:
                     if len(parts) == 2:
                         dir_part, file_part = parts
                         recursive_pattern = f"{dir_part}/**/{file_part}"
-                        
+
                         self.logger.info(f"No results with pattern '{file_pattern}', "
                                     f"auto-retrying with recursive pattern '{recursive_pattern}'")
-                        
+
                         # Recursively call with the new pattern (only once, to avoid infinite loop)
                         return self.search_codebase(
                             search_term=search_term,
@@ -324,7 +318,7 @@ class AgentTools:
                             case_sensitive=case_sensitive,
                             use_regex=use_regex
                         )
-                
+
             # Add debug info if still no results found
             debug_info = {}
             if len(results) == 0:
@@ -334,7 +328,7 @@ class AgentTools:
                     debug_info["hint"] = "No files matched the file_pattern even after auto-retry with recursive pattern"
                 else:
                     debug_info["hint"] = "Files were searched but no content matches found. Check search_term."
-            
+
             return {
                 "success": True,
                 "search_term": search_term,
@@ -344,7 +338,7 @@ class AgentTools:
                 "results": results,
                 **debug_info
             }
-            
+
         except Exception as e:
             self.logger.error(f"Error searching codebase: {e}")
             return {
@@ -352,8 +346,8 @@ class AgentTools:
                 "error": str(e),
                 "search_term": search_term
             }
-    
-    def get_file_info(self, file_path: str) -> Dict[str, Any]:
+
+    def get_file_info(self, file_path: str) -> dict[str, Any]:
         """
         Get basic file information without reading full content
         
@@ -367,21 +361,21 @@ class AgentTools:
         if not self._is_safe_path(file_path):
             return {
                 "success": False,
-                "error": f"Access denied: path outside repository root"
+                "error": "Access denied: path outside repository root"
             }
-        
+
         # Resolve path intelligently
         full_path = self._resolve_path(file_path)
-        
+
         if full_path is None:
             return {
                 "success": False,
                 "error": f"File does not exist: {file_path}"
             }
-        
+
         try:
             stat = os.stat(full_path)
-            
+
             return {
                 "success": True,
                 "path": file_path,
@@ -390,14 +384,14 @@ class AgentTools:
                 "is_directory": os.path.isdir(full_path),
                 "extension": os.path.splitext(file_path)[1]
             }
-            
+
         except Exception as e:
             return {
                 "success": False,
                 "error": str(e)
             }
-    
-    def get_file_structure_summary(self, file_path: str, max_lines: int = 100) -> Dict[str, Any]:
+
+    def get_file_structure_summary(self, file_path: str, max_lines: int = 100) -> dict[str, Any]:
         """
         Get file structure summary (classes, functions) without full source code
         
@@ -412,26 +406,26 @@ class AgentTools:
         if not self._is_safe_path(file_path):
             return {
                 "success": False,
-                "error": f"Access denied: path outside repository root"
+                "error": "Access denied: path outside repository root"
             }
-        
+
         # Resolve path intelligently
         full_path = self._resolve_path(file_path)
-        
+
         if full_path is None:
             return {
                 "success": False,
                 "error": f"File does not exist: {file_path}"
             }
-        
+
         try:
-            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(full_path, encoding='utf-8', errors='ignore') as f:
                 lines = []
                 for i, line in enumerate(f):
                     if i >= max_lines:
                         break
                     lines.append(line.rstrip())
-            
+
             # Extract structure (simple pattern matching)
             structure = {
                 "success": True,
@@ -441,10 +435,10 @@ class AgentTools:
                 "functions": [],
                 "imports": []
             }
-            
+
             for i, line in enumerate(lines, 1):
                 stripped = line.strip()
-                
+
                 # Detect classes (Python, Java, etc.)
                 if stripped.startswith('class '):
                     # Extract class name
@@ -454,7 +448,7 @@ class AgentTools:
                             "name": match.group(1),
                             "line": i
                         })
-                
+
                 # Detect functions (Python, JavaScript, etc.)
                 elif stripped.startswith('def ') or stripped.startswith('function '):
                     # Extract function name
@@ -464,7 +458,7 @@ class AgentTools:
                             "name": match.group(1),
                             "line": i
                         })
-                
+
                 # Detect async functions
                 elif 'async' in stripped and ('def ' in stripped or 'function ' in stripped):
                     match = re.search(r'(?:def|function)\s+(\w+)', stripped)
@@ -474,23 +468,23 @@ class AgentTools:
                             "line": i,
                             "is_async": True
                         })
-                
+
                 # Detect imports
                 elif stripped.startswith('import ') or stripped.startswith('from '):
                     structure["imports"].append({
                         "line": i,
                         "statement": stripped[:100]  # Truncate long imports
                     })
-            
+
             return structure
-            
+
         except Exception as e:
             return {
                 "success": False,
                 "error": str(e)
             }
-    
-    def read_file_content(self, file_path: str, max_chars: int = 50000) -> Dict[str, Any]:
+
+    def read_file_content(self, file_path: str, max_chars: int = 50000) -> dict[str, Any]:
         """
         Read full file content (for including in retrieval results)
         
@@ -505,27 +499,27 @@ class AgentTools:
         if not self._is_safe_path(file_path):
             return {
                 "success": False,
-                "error": f"Access denied: path outside repository root",
+                "error": "Access denied: path outside repository root",
                 "content": ""
             }
-        
+
         # Resolve path intelligently
         full_path = self._resolve_path(file_path)
-        
+
         if full_path is None:
             return {
                 "success": False,
                 "error": f"File does not exist: {file_path}",
                 "content": ""
             }
-        
+
         try:
-            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(full_path, encoding='utf-8', errors='ignore') as f:
                 content = f.read(max_chars)
-            
+
             # Count lines
             lines = content.split('\n')
-            
+
             return {
                 "success": True,
                 "path": file_path,
@@ -533,7 +527,7 @@ class AgentTools:
                 "total_lines": len(lines),
                 "truncated": len(content) >= max_chars
             }
-            
+
         except Exception as e:
             return {
                 "success": False,

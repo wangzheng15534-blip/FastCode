@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import pytest
-from hypothesis import given, settings, assume
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fastcode.adapters.scip_to_ir import build_ir_from_scip
-from fastcode.scip_models import SCIPOccurrence, SCIPSymbol, SCIPDocument, SCIPIndex
-
+from fastcode.scip_models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
 
 # --- Strategies ---
 

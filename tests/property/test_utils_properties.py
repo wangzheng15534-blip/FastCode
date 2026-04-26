@@ -30,7 +30,6 @@ from fastcode.utils import (
     utc_now,
 )
 
-
 # --- Helpers ---
 
 small_text = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789", min_size=1, max_size=20)

@@ -4,7 +4,8 @@ Provides precise function call extraction for call graph construction
 """
 
 import logging
-from typing import Dict, List, Any, Optional, Set
+from typing import Any
+
 import tree_sitter
 from tree_sitter import Query, QueryCursor
 
@@ -20,7 +21,7 @@ class CallExtractor:
     accurate call graphs.
     """
 
-    def __init__(self, parser: Optional[TSParser] = None):
+    def __init__(self, parser: TSParser | None = None):
         """
         Initialize CallExtractor with optional TSParser dependency injection.
 
@@ -44,7 +45,7 @@ class CallExtractor:
         self._init_type_query = None
         self._init_queries()
 
-    def _get_builtin_functions(self) -> Set[str]:
+    def _get_builtin_functions(self) -> set[str]:
         """
         Get set of Python built-in function names to filter out.
 
@@ -66,7 +67,7 @@ class CallExtractor:
             'super', 'tuple', 'type', 'vars', 'zip',
 
             # Common built-in types (when used as constructors)
-            'type', 'isinstance', 'issubclass'
+            'isinstance'
         }
 
         return builtins
@@ -152,7 +153,7 @@ class CallExtractor:
             self._scope_query = None
             self._init_type_query = None
 
-    def extract_calls(self, code: str, file_path: str) -> List[Dict[str, Any]]:
+    def extract_calls(self, code: str, file_path: str) -> list[dict[str, Any]]:
         """
         Extract function calls from Python code with scope tracking.
 
@@ -186,7 +187,7 @@ class CallExtractor:
         self.logger.debug(f"Extracted {len(calls)} calls from {file_path}")
         return calls
 
-    def _execute_query(self, query: Query, node: tree_sitter.Node) -> List[Any]:
+    def _execute_query(self, query: Query, node: tree_sitter.Node) -> list[Any]:
         """
         Execute Tree-sitter query and return captures in standardized format.
 
@@ -210,15 +211,14 @@ class CallExtractor:
                     for node in nodes:
                         result.append((node, capture_name))
                 return result
-            else:
-                # Newer versions already return list format
-                return captures
+            # Newer versions already return list format
+            return captures
 
         except Exception as e:
             self.logger.error(f"Failed to execute query: {e}")
             return []
 
-    def _extract_scopes(self, tree: tree_sitter.Tree) -> List[Dict[str, Any]]:
+    def _extract_scopes(self, tree: tree_sitter.Tree) -> list[dict[str, Any]]:
         """
         Extract function and class definitions for scope tracking.
 
@@ -272,7 +272,7 @@ class CallExtractor:
 
         return scopes
 
-    def _extract_calls_with_scopes(self, tree: tree_sitter.Tree, scopes: List[Dict[str, Any]], file_path: str) -> List[Dict[str, Any]]:
+    def _extract_calls_with_scopes(self, tree: tree_sitter.Tree, scopes: list[dict[str, Any]], file_path: str) -> list[dict[str, Any]]:
         """
         Extract function calls and assign them to appropriate scopes.
 
@@ -300,7 +300,7 @@ class CallExtractor:
 
         return calls
 
-    def _process_call_node(self, call_node: tree_sitter.Node, scopes: List[Dict[str, Any]], file_path: str) -> Optional[Dict[str, Any]]:
+    def _process_call_node(self, call_node: tree_sitter.Node, scopes: list[dict[str, Any]], file_path: str) -> dict[str, Any] | None:
         """
         Process a single call node and extract call information.
 
@@ -344,7 +344,7 @@ class CallExtractor:
 
         return result
 
-    def _extract_call_details(self, function_node: tree_sitter.Node) -> Optional[Dict[str, Any]]:
+    def _extract_call_details(self, function_node: tree_sitter.Node) -> dict[str, Any] | None:
         """
         Extract details about the function being called.
 
@@ -362,7 +362,7 @@ class CallExtractor:
                 'call_type': 'simple'
             }
 
-        elif function_node.type == 'attribute':
+        if function_node.type == 'attribute':
             # Attribute access: obj.method() or module.function()
             # Extract object and attribute names
             object_node = function_node.child_by_field_name('object')
@@ -386,7 +386,7 @@ class CallExtractor:
         # For other node types, skip
         return None
 
-    def _find_scope_for_call(self, call_node: tree_sitter.Node, scopes: List[Dict[str, Any]]) -> Optional[str]:
+    def _find_scope_for_call(self, call_node: tree_sitter.Node, scopes: list[dict[str, Any]]) -> str | None:
         """
         Find which scope (function/class) contains this call.
 
@@ -409,7 +409,7 @@ class CallExtractor:
         # No containing scope found (module-level call)
         return None
 
-    def _get_scope_type_from_id(self, scope_id: Optional[str]) -> Optional[str]:
+    def _get_scope_type_from_id(self, scope_id: str | None) -> str | None:
         """
         Get scope type from scope ID.
 
@@ -429,7 +429,7 @@ class CallExtractor:
 
         return None
 
-    def _should_filter_call(self, call_info: Dict[str, Any]) -> bool:
+    def _should_filter_call(self, call_info: dict[str, Any]) -> bool:
         """
         Determine if a call should be filtered out (e.g., built-in functions).
 
@@ -453,7 +453,7 @@ class CallExtractor:
         # Could add more filtering logic here
         return False
 
-    def get_extraction_stats(self, total_calls: int, filtered_calls: int) -> Dict[str, Any]:
+    def get_extraction_stats(self, total_calls: int, filtered_calls: int) -> dict[str, Any]:
         """
         Get statistics about the extraction process.
 
@@ -472,7 +472,7 @@ class CallExtractor:
             'filter_rate': filtered_calls / total_calls if total_calls > 0 else 0
         }
 
-    def extract_instance_types(self, code: str) -> Dict[str, Dict[str, List[str]]]:
+    def extract_instance_types(self, code: str) -> dict[str, dict[str, list[str]]]:
         """
         Extract potential class types for instance variables from Python code.
 
@@ -504,23 +504,23 @@ class CallExtractor:
 
         # 1. Extract scopes first to know where we are
         scopes = self._extract_scopes(tree)
-        
+
         # Initialize result with a 'global' scope
         # structure: { "function::name": { "var": ["Type"] } }
-        scoped_types: Dict[str, Dict[str, List[str]]] = {}
+        scoped_types: dict[str, dict[str, list[str]]] = {}
 
         captures = self._execute_query(self._init_type_query, tree.root_node)
-        
+
         for node, tag in captures:
             # Find which scope this assignment belongs to
             scope_id = self._find_scope_for_call(node, scopes) or "global"
-            
+
             if scope_id not in scoped_types:
                 scoped_types[scope_id] = {}
-                
+
             # Pass the specific scope dict to the processors
             target_dict = scoped_types[scope_id]
-            
+
             try:
                 if tag == 'constructor_assign':
                     self._process_constructor_assignment(node, target_dict)
@@ -535,7 +535,7 @@ class CallExtractor:
 
         return scoped_types
 
-    def _process_constructor_assignment(self, node: tree_sitter.Node, instance_types: Dict[str, List[str]]):
+    def _process_constructor_assignment(self, node: tree_sitter.Node, instance_types: dict[str, list[str]]):
         """
         Process constructor assignment pattern: self.variable = ClassName(...)
 
@@ -580,7 +580,7 @@ class CallExtractor:
             instance_types[var_name] = []
         instance_types[var_name].append(class_name)
 
-    def _process_type_hint(self, node: tree_sitter.Node, instance_types: Dict[str, List[str]]):
+    def _process_type_hint(self, node: tree_sitter.Node, instance_types: dict[str, list[str]]):
         """
         Process type hint pattern: self.variable: ClassName
 
@@ -620,7 +620,7 @@ class CallExtractor:
                 instance_types[var_name] = []
             instance_types[var_name].append(class_name)
 
-    def _process_type_hint_assignment(self, node: tree_sitter.Node, instance_types: Dict[str, List[str]]):
+    def _process_type_hint_assignment(self, node: tree_sitter.Node, instance_types: dict[str, list[str]]):
         """
         Process type hint with assignment pattern: self.variable: ClassName = ...
 
@@ -654,7 +654,7 @@ class CallExtractor:
                 instance_types[var_name] = []
             instance_types[var_name].append(class_name)
 
-    def _extract_type_from_annotation(self, annotation_node: tree_sitter.Node) -> Optional[str]:
+    def _extract_type_from_annotation(self, annotation_node: tree_sitter.Node) -> str | None:
         """
         Extract class name from type annotation node.
 
@@ -670,7 +670,7 @@ class CallExtractor:
 
         # Handle type wrapper node (common in newer tree-sitter-python versions)
         # This fixes the bug where 'type' nodes containing the identifier were being ignored
-        elif annotation_node.type == 'type':
+        if annotation_node.type == 'type':
             # Iterate through children to find the meaningful type content
             for child in annotation_node.children:
                 # Recurse to handle identifier, attribute, or other nested structures
@@ -689,8 +689,8 @@ class CallExtractor:
         # Could handle generics like List[ClassName], Optional[ClassName], etc.
 
         return None
-    
-    def _process_local_constructor_assignment(self, node: tree_sitter.Node, instance_types: Dict[str, List[str]]):
+
+    def _process_local_constructor_assignment(self, node: tree_sitter.Node, instance_types: dict[str, list[str]]):
         """
         Process local assignment pattern: variable = ClassName(...)
         """
@@ -698,9 +698,9 @@ class CallExtractor:
         left_node = node.child_by_field_name('left') or node.child_by_field_name('target')
         if not left_node or left_node.type != 'identifier':
             return
-            
+
         var_name = left_node.text.decode('utf-8')
-        
+
         # Extract class name from the function being called
         right_node = node.child_by_field_name('right')
         if not right_node or right_node.type != 'call':
@@ -709,9 +709,9 @@ class CallExtractor:
         func_node = right_node.child_by_field_name('function')
         if not func_node or func_node.type != 'identifier':
             return
-            
+
         class_name = func_node.text.decode('utf-8')
-        
+
         # Add to types dictionary
         if var_name not in instance_types:
             instance_types[var_name] = []

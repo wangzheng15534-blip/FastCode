@@ -10,12 +10,11 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fastcode.path_utils import (
+    PathUtils,
     file_path_to_module_path,
     is_valid_python_file,
     normalize_repo_root,
-    PathUtils,
 )
-
 
 # --- Strategies ---
 

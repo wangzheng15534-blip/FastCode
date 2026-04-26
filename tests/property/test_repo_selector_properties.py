@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-import logging
 from fastcode.repo_selector import RepositorySelector
 
 

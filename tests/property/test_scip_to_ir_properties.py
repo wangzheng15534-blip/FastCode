@@ -15,7 +15,6 @@ from fastcode.adapters.scip_to_ir import build_ir_from_scip
 from fastcode.scip_models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
 from fastcode.semantic_ir import IRSnapshot
 
-
 # --- Strategies (mirrored from tests/conftest.py) ---
 
 identifier = st.text(

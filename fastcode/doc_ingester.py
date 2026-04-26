@@ -9,9 +9,10 @@ import hashlib
 import logging
 import os
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any
 
 from .embedder import CodeEmbedder
 from .semantic_ir import IRSnapshot
@@ -42,14 +43,14 @@ class DocChunk:
     snapshot_id: str
     path: str
     title: str
-    heading: Optional[str]
+    heading: str | None
     doc_type: str
     text: str
     start_line: int
     end_line: int
-    embedding: Optional[List[float]]
+    embedding: list[float] | None
 
-    def to_element(self) -> Dict[str, Any]:
+    def to_element(self) -> dict[str, Any]:
         name = self.title if not self.heading else f"{self.title} - {self.heading}"
         summary = (self.text[:240] + "...") if len(self.text) > 240 else self.text
         return {
@@ -80,7 +81,7 @@ class DocChunk:
 
 
 class KeyDocIngester:
-    def __init__(self, config: Dict[str, Any], embedder: CodeEmbedder):
+    def __init__(self, config: dict[str, Any], embedder: CodeEmbedder):
         self.config = config
         self.embedder = embedder
         cfg = config.get("docs_integration", {}) or {}
@@ -114,12 +115,12 @@ class KeyDocIngester:
         repo_name: str,
         snapshot_id: str,
         snapshot: IRSnapshot,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if not self.enabled or not repo_path or not os.path.isdir(repo_path):
             return {"chunks": [], "mentions": [], "elements": []}
 
         selected_files = self._discover_files(repo_path)
-        chunks: List[DocChunk] = []
+        chunks: list[DocChunk] = []
         for rel_path in selected_files:
             abs_path = os.path.join(repo_path, rel_path)
             text = self._read_text(abs_path)
@@ -150,8 +151,8 @@ class KeyDocIngester:
         elements = [c.to_element() for c in chunks]
         return {"chunks": chunks, "mentions": mentions, "elements": elements}
 
-    def _discover_files(self, repo_path: str) -> List[str]:
-        out: List[str] = []
+    def _discover_files(self, repo_path: str) -> list[str]:
+        out: list[str] = []
         patterns = list(self.curated_paths)
         patterns.extend(self.allow_paths)
         for p in Path(repo_path).rglob("*"):
@@ -190,12 +191,12 @@ class KeyDocIngester:
         if ext.lower() in binary_exts:
             return ""
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 return f.read()
         except UnicodeDecodeError:
             logger.debug("File not UTF-8, reading with lossy fallback: %s", path)
             try:
-                with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                with open(path, encoding="utf-8", errors="ignore") as f:
                     return f.read()
             except OSError as exc:
                 logger.warning("Cannot read file: %s: %s", path, exc)
@@ -204,15 +205,15 @@ class KeyDocIngester:
             logger.warning("Cannot read file: %s: %s", path, exc)
             return ""
 
-    def _chunk_document(self, text: str) -> List[Dict[str, Any]]:
+    def _chunk_document(self, text: str) -> list[dict[str, Any]]:
         if not text.strip():
             return []
 
         lines = text.splitlines()
-        sections: List[Tuple[Optional[str], int, int, str]] = []
-        current_heading: Optional[str] = None
+        sections: list[tuple[str | None, int, int, str]] = []
+        current_heading: str | None = None
         start = 1
-        buf: List[str] = []
+        buf: list[str] = []
         for idx, line in enumerate(lines, start=1):
             if re.match(r"^\s*#{1,6}\s+", line):
                 if buf:
@@ -225,7 +226,7 @@ class KeyDocIngester:
         if buf:
             sections.append((current_heading, start, len(lines), "\n".join(buf)))
 
-        chunks: List[Dict[str, Any]] = []
+        chunks: list[dict[str, Any]] = []
         chunker = self._ensure_chunker()
 
         for heading, s_line, e_line, sec_text in sections:
@@ -335,13 +336,13 @@ class KeyDocIngester:
         # Last resort: lightweight Model2Vec model
         return "minishlab/potion-base-32M"
 
-    def _chunk_section_fallback(self, sec_text: str) -> List[str]:
+    def _chunk_section_fallback(self, sec_text: str) -> list[str]:
         """Word-based sliding window fallback when SemanticChunker is unavailable."""
         words = sec_text.split()
         if not words:
             return []
         effective_overlap = min(self._legacy_chunk_overlap, self._legacy_chunk_size - 1)
-        pieces: List[str] = []
+        pieces: list[str] = []
         i = 0
         while i < len(words):
             j = min(len(words), i + self._legacy_chunk_size)
@@ -359,7 +360,7 @@ class KeyDocIngester:
         payload = f"{snapshot_id}:{rel_path}:{idx}"
         return f"docchunk:{hashlib.md5(payload.encode('utf-8')).hexdigest()[:24]}"
 
-    def _embed(self, text: str) -> Optional[List[float]]:
+    def _embed(self, text: str) -> list[float] | None:
         try:
             v = self.embedder.embed_text(text)
             if v is None:
@@ -383,7 +384,7 @@ class KeyDocIngester:
             return "readme"
         return "doc"
 
-    def _extract_mentions(self, snapshot: IRSnapshot, chunks: Iterable[DocChunk]) -> List[Dict[str, Any]]:
+    def _extract_mentions(self, snapshot: IRSnapshot, chunks: Iterable[DocChunk]) -> list[dict[str, Any]]:
         symbols = []
         for sym in snapshot.symbols:
             name = (sym.display_name or "").strip()
@@ -395,12 +396,12 @@ class KeyDocIngester:
             return []
 
         # Build name→ids lookup and single alternation pattern for O(S+C) matching
-        name_to_ids: Dict[str, List[str]] = {}
+        name_to_ids: dict[str, list[str]] = {}
         for symbol_id, name in symbols:
             name_to_ids.setdefault(name, []).append(symbol_id)
         pattern = re.compile("|".join(re.escape(name) for name in name_to_ids))
 
-        mentions: List[Dict[str, Any]] = []
+        mentions: list[dict[str, Any]] = []
         for chunk in chunks:
             found = set(pattern.findall(chunk.text))
             for name in found:

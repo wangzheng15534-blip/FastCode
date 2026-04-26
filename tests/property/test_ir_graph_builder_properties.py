@@ -9,7 +9,6 @@ from hypothesis import strategies as st
 from fastcode.ir_graph_builder import IRGraphBuilder, IRGraphs
 from fastcode.semantic_ir import IREdge, IRSnapshot
 
-
 # --- Helpers ---
 
 def _edge(edge_id: str, src: str, dst: str, edge_type: str = "call") -> IREdge:

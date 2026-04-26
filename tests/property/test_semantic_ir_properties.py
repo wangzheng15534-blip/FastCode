@@ -6,8 +6,14 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.semantic_ir import IRAttachment, IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
-
+from fastcode.semantic_ir import (
+    IRAttachment,
+    IRDocument,
+    IREdge,
+    IROccurrence,
+    IRSnapshot,
+    IRSymbol,
+)
 
 # --- Strategies (mirrored from tests/conftest.py) ---
 

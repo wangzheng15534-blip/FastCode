@@ -6,10 +6,9 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.semantic_ir import IRDocument, IREdge, IRSnapshot, IRSymbol
-from fastcode.projection_transform import ProjectionTransformer
 from fastcode.projection_models import ProjectionScope
-
+from fastcode.projection_transform import ProjectionTransformer
+from fastcode.semantic_ir import IRDocument, IREdge, IRSnapshot, IRSymbol
 
 # --- Helpers ---
 

@@ -5,6 +5,7 @@ Run: pytest tests/bench_graph_projection.py -v --benchmark-only
 """
 
 import pytest
+
 from fastcode.ir_graph_builder import IRGraphBuilder
 from fastcode.projection_models import ProjectionScope
 from fastcode.projection_transform import ProjectionTransformer

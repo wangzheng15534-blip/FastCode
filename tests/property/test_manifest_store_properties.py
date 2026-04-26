@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import pytest
-from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fastcode.db_runtime import DBRuntime
 from fastcode.manifest_store import ManifestStore
 
-
 # --- Helpers ---
 
 def _make_store() -> ManifestStore:
-    import tempfile, os, uuid
+    import os
+    import tempfile
+    import uuid
     tmpdir = tempfile.mkdtemp(prefix=f"mfst_{uuid.uuid4().hex[:12]}_")
     path = os.path.join(tmpdir, "test.db")
     return ManifestStore(path)
@@ -102,7 +102,8 @@ class TestManifestStoreProperties:
     @pytest.mark.edge
     def test_init_with_string_path(self):
         """EDGE: ManifestStore accepts string path (not just DBRuntime)."""
-        import tempfile, os
+        import os
+        import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.db")
             store = ManifestStore(path)

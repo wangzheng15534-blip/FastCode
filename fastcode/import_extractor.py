@@ -3,9 +3,11 @@ Import Extractor using Tree-sitter Query (S-expressions)
 Extracts import information from Python code efficiently using pattern matching.
 """
 
-from typing import List, Dict, Any, Optional
 import logging
+from typing import Any
+
 from tree_sitter import Node, Query, QueryCursor
+
 from .tree_sitter_parser import TSParser
 
 
@@ -26,7 +28,7 @@ class ImportExtractor:
         (wildcard_import) @from.item)
     """
 
-    def __init__(self, parser: Optional[TSParser] = None):
+    def __init__(self, parser: TSParser | None = None):
         self.logger = logging.getLogger(__name__)
         self.ts_parser = parser or TSParser()
 
@@ -35,7 +37,7 @@ class ImportExtractor:
 
         self.query = Query(self.ts_parser.language, self.IMPORT_QUERY_SCM)
 
-    def extract_imports(self, code: str) -> List[Dict[str, Any]]:
+    def extract_imports(self, code: str) -> list[dict[str, Any]]:
         tree = self.ts_parser.parse(code)
         if not tree:
             return []
@@ -93,7 +95,7 @@ class ImportExtractor:
 
         return imports
 
-    def _parse_aliased_import(self, node: Node, code: str) -> tuple[str, Optional[str]]:
+    def _parse_aliased_import(self, node: Node, code: str) -> tuple[str, str | None]:
         """Parse name or aliased_import"""
         def get_text(n):
             return code[n.start_byte:n.end_byte]

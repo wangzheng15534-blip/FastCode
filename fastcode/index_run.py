@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .db_runtime import DBRuntime
 from .utils import utc_now
@@ -84,9 +84,9 @@ class IndexRunStore:
         self,
         repo_name: str,
         snapshot_id: str,
-        branch: Optional[str],
-        commit_id: Optional[str],
-        idempotency_key: Optional[str] = None,
+        branch: str | None,
+        commit_id: str | None,
+        idempotency_key: str | None = None,
     ) -> str:
         if idempotency_key:
             with self.db_runtime.connect() as conn:
@@ -118,7 +118,7 @@ class IndexRunStore:
     def mark_status(self, run_id: str, status: str) -> None:
         self._set_run_fields(run_id, status=status)
 
-    def mark_completed(self, run_id: str, status: str = "succeeded", warnings: Optional[list] = None) -> None:
+    def mark_completed(self, run_id: str, status: str = "succeeded", warnings: list | None = None) -> None:
         self._set_run_fields(
             run_id,
             status=status,
@@ -133,7 +133,7 @@ class IndexRunStore:
         self,
         run_id: str,
         snapshot_id: str,
-        manifest_id: Optional[str],
+        manifest_id: str | None,
         error_message: str,
     ) -> str:
         now = utc_now()
@@ -192,7 +192,7 @@ class IndexRunStore:
             )
             conn.commit()
 
-    def claim_next_publish_task(self) -> Optional[Dict[str, Any]]:
+    def claim_next_publish_task(self) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
             if self.db_runtime.backend == "postgres":
                 row = self.db_runtime.execute(
@@ -242,7 +242,7 @@ class IndexRunStore:
             )
             conn.commit()
 
-    def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(conn, "SELECT * FROM index_runs WHERE run_id=?", (run_id,)).fetchone()
         return self.db_runtime.row_to_dict(row) if row else None
@@ -257,7 +257,7 @@ class IndexRunStore:
         unknown = set(fields.keys()) - self._ALLOWED_RUN_FIELDS
         if unknown:
             raise ValueError(f"Unknown run fields: {unknown}")
-        assignments = ", ".join(f"{k}=?" for k in fields.keys())
+        assignments = ", ".join(f"{k}=?" for k in fields)
         values = list(fields.values()) + [run_id]
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(conn, f"UPDATE index_runs SET {assignments} WHERE run_id=?", tuple(values))

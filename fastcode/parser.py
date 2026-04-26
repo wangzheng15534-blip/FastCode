@@ -4,15 +4,13 @@ Code Parser - AST-based code parsing for multiple languages
 
 import ast
 import logging
-from typing import Dict, List, Any, Optional
-from dataclasses import dataclass, asdict
-import libcst as cst
+from dataclasses import asdict, dataclass
+from typing import Any
 
 from .utils import (
-    get_language_from_extension,
-    get_file_extension,
-    calculate_code_complexity,
     clean_docstring,
+    get_file_extension,
+    get_language_from_extension,
 )
 
 
@@ -22,16 +20,16 @@ class FunctionInfo:
     name: str
     start_line: int
     end_line: int
-    docstring: Optional[str]
-    parameters: List[str]
-    return_type: Optional[str]
+    docstring: str | None
+    parameters: list[str]
+    return_type: str | None
     is_async: bool
     is_method: bool
-    class_name: Optional[str]
-    decorators: List[str]
+    class_name: str | None
+    decorators: list[str]
     complexity: int
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -41,12 +39,12 @@ class ClassInfo:
     name: str
     start_line: int
     end_line: int
-    docstring: Optional[str]
-    bases: List[str]
-    methods: List[FunctionInfo]  # <--- CHANGED: List[str] to List[FunctionInfo]
-    decorators: List[str]
-    
-    def to_dict(self) -> Dict[str, Any]:
+    docstring: str | None
+    bases: list[str]
+    methods: list[FunctionInfo]  # <--- CHANGED: List[str] to List[FunctionInfo]
+    decorators: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -54,12 +52,12 @@ class ClassInfo:
 class ImportInfo:
     """Import statement information"""
     module: str
-    names: List[str]
+    names: list[str]
     is_from: bool
     line: int
     level: int = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -68,15 +66,15 @@ class FileParseResult:
     """Result of parsing a file"""
     file_path: str
     language: str
-    classes: List[ClassInfo]
-    functions: List[FunctionInfo]
-    imports: List[ImportInfo]
-    module_docstring: Optional[str]
+    classes: list[ClassInfo]
+    functions: list[FunctionInfo]
+    imports: list[ImportInfo]
+    module_docstring: str | None
     total_lines: int
     code_lines: int
     comment_lines: int
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         return {
             "file_path": self.file_path,
             "language": self.language,
@@ -92,21 +90,21 @@ class FileParseResult:
 
 class CodeParser:
     """Parse code files and extract structured information"""
-    
-    def __init__(self, config: Dict[str, Any]):
+
+    def __init__(self, config: dict[str, Any]):
         self.config = config
         self.parser_config = config.get("parser", {})
         self.logger = logging.getLogger(__name__)
-        
+
         self.extract_docstrings = self.parser_config.get("extract_docstrings", True)
         self.extract_comments = self.parser_config.get("extract_comments", True)
         self.extract_imports = self.parser_config.get("extract_imports", True)
         self.compute_complexity = self.parser_config.get("compute_complexity", True)
         self.max_function_lines = self.parser_config.get("max_function_lines", 1000)
-        
+
         # self._skipped_node_log_count = 0
-    
-    def parse_file(self, file_path: str, content: str) -> Optional[FileParseResult]:
+
+    def parse_file(self, file_path: str, content: str) -> FileParseResult | None:
         """
         Parse a code file
 
@@ -123,20 +121,19 @@ class CodeParser:
         # Route to appropriate parser
         if language == "python":
             return self._parse_python(file_path, content)
-        elif language == "javascript":
+        if language == "javascript":
             return self._parse_javascript(file_path, content, language)
-        elif language == "typescript":
+        if language == "typescript":
             return self._parse_typescript(file_path, content, language)
-        elif language in ["c", "cpp"]:
+        if language in ["c", "cpp"]:
             return self._parse_c_cpp(file_path, content, language)
-        elif language == "rust":
+        if language == "rust":
             return self._parse_rust(file_path, content)
-        elif language == "csharp":
+        if language == "csharp":
             return self._parse_csharp(file_path, content)
-        else:
-            # For unsupported languages, return basic info
-            return self._parse_generic(file_path, content, language)
-    
+        # For unsupported languages, return basic info
+        return self._parse_generic(file_path, content, language)
+
     def _fix_common_syntax_errors(self, content: str) -> str:
         """
         Fix common syntax errors in generated code.
@@ -151,7 +148,7 @@ class CodeParser:
             Content with common syntax errors fixed
         """
         import re
-        
+
         # Fix duplicate 'as' clause in except statements
         # Pattern: except SomeException as var as var:
         content = re.sub(
@@ -159,9 +156,9 @@ class CodeParser:
             r'except \1 as \2:',
             content
         )
-        
+
         return content
-    
+
     def _strip_markdown_code_fences(self, content: str) -> str:
         """
         Strip markdown code fences from file content.
@@ -176,11 +173,11 @@ class CodeParser:
             Content with markdown fences removed
         """
         lines = content.split('\n')
-        
+
         # Check if first line is a markdown code fence (e.g., ```python, ```javascript)
         if lines and lines[0].strip().startswith('```'):
             lines = lines[1:]
-        
+
         # Remove trailing lines that are markdown fences or empty
         # Work backwards from the end to handle cases where ``` is not the last line
         while lines:
@@ -189,18 +186,18 @@ class CodeParser:
                 lines = lines[:-1]
             else:
                 break
-        
+
         return '\n'.join(lines)
 
-    
-    def _parse_python(self, file_path: str, content: str) -> Optional[FileParseResult]:
+
+    def _parse_python(self, file_path: str, content: str) -> FileParseResult | None:
         """Parse Python file using AST"""
         # Fix common syntax errors in generated code
         content = self._fix_common_syntax_errors(content)
-        
+
         # Strip markdown code fences if present
         content = self._strip_markdown_code_fences(content)
-        
+
         try:
             tree = ast.parse(content)
         except SyntaxError as e:
@@ -209,35 +206,35 @@ class CodeParser:
         except Exception as e:
             self.logger.error(f"Failed to parse {file_path}: {e}")
             return None
-        
+
         classes = []
         functions = []
         imports = []
         module_docstring = ast.get_docstring(tree)
-        
+
         # Extract imports
         if self.extract_imports:
             imports = self._extract_python_imports(tree)
-        
+
         # Extract classes and functions
         # for node in tree.body:
         #     if isinstance(node, ast.ClassDef):
         #         class_info = self._extract_python_class(node)
         #         if class_info:
         #             classes.append(class_info)
-            
+
         #     elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         #         func_info = self._extract_python_function(node)
         #         if func_info:
         #             functions.append(func_info)
-        
-        # # fastest version 
+
+        # # fastest version
         # for node in tree.body:
         #     if isinstance(node, ast.ClassDef):
         #         class_info = self._extract_python_class(node)
         #         if class_info:
         #             classes.append(class_info)
-            
+
         #     elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         #         func_info = self._extract_python_function(node)
         #         if func_info:
@@ -251,14 +248,14 @@ class CodeParser:
         #                     if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         #                         name = getattr(child, 'name', 'unknown')
         #                         hidden_defs.append(f"{type(child).__name__}:{name}")
-                        
+
         #                 if hidden_defs:
         #                     self.logger.warning(
         #                         f"[EDGE LOSS INVESTIGATION] In {file_path}: Skipped top-level node '{type(node).__name__}' (Line {node.lineno}). "
         #                         f"It contains {len(hidden_defs)} definitions that Code B is ignoring: {hidden_defs}"
         #                     )
         #                     self._skipped_node_log_count += 1
-                            
+
         #                     if self._skipped_node_log_count == 100:
         #                         self.logger.warning("[EDGE LOSS INVESTIGATION] Limit reached (100 logs). Further skip warnings will be suppressed.")
 
@@ -273,9 +270,9 @@ class CodeParser:
                     class_info = self._extract_python_class(node)
                     if class_info:
                         classes.append(class_info)
-                    # We do NOT drill into classes here because _extract_python_class 
+                    # We do NOT drill into classes here because _extract_python_class
                     # already handles its internal methods.
-                
+
                 # 2. Capture Function Definitions
                 elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     # Option: Pass 'parent_scope' if you want to track nesting
@@ -285,16 +282,16 @@ class CodeParser:
                     # We do NOT drill into functions (avoiding nested functions)
                     # UNLESS you specifically want to support them like Code A did.
                     # Current logic: Top-level definitions only (including those in If/Try).
-                
+
                 # 3. Smart Drill-down (The Fix for compatibility.py)
                 elif isinstance(node, (ast.If, ast.Try, ast.With, ast.AsyncWith, ast.For, ast.While)):
                     # Drill down into the body of these blocks
                     _visit_nodes(node.body, parent_scope)
-                    
+
                     # Handle 'else' blocks for If/Try/For/While
                     if hasattr(node, 'orelse') and node.orelse:
                         _visit_nodes(node.orelse, parent_scope)
-                    
+
                     # Handle 'finalbody' for Try
                     if hasattr(node, 'finalbody') and node.finalbody:
                         _visit_nodes(node.finalbody, parent_scope)
@@ -308,7 +305,7 @@ class CodeParser:
         total_lines = len(lines)
         code_lines = sum(1 for line in lines if line.strip() and not line.strip().startswith("#"))
         comment_lines = sum(1 for line in lines if line.strip().startswith("#"))
-        
+
         return FileParseResult(
             file_path=file_path,
             language="python",
@@ -320,8 +317,8 @@ class CodeParser:
             code_lines=code_lines,
             comment_lines=comment_lines,
         )
-    
-    def _extract_python_imports(self, tree: ast.AST) -> List[ImportInfo]:
+
+    def _extract_python_imports(self, tree: ast.AST) -> list[ImportInfo]:
         """Extract import statements from Python AST"""
         imports = []
 
@@ -348,12 +345,12 @@ class CodeParser:
                 ))
 
         return imports
-    
-    def _extract_python_class(self, node: ast.ClassDef) -> Optional[ClassInfo]:
+
+    def _extract_python_class(self, node: ast.ClassDef) -> ClassInfo | None:
         """Extract class information from Python AST node"""
         try:
             docstring = ast.get_docstring(node)
-            
+
             # Extract base classes
             bases = []
             for base in node.bases:
@@ -361,7 +358,7 @@ class CodeParser:
                     bases.append(base.id)
                 elif isinstance(base, ast.Attribute):
                     bases.append(f"{base.value.id}.{base.attr}" if hasattr(base.value, 'id') else base.attr)
-            
+
             # Extract methods (FULL INFO)
             methods = []
             for item in node.body:
@@ -373,11 +370,11 @@ class CodeParser:
                         methods.append(func_info)
                     else:
                         self.logger.debug(f"[DEBUG PARSER] Found method '{item.name}' in class '{node.name}'")
-            
-            self.logger.debug((f"[DEBUG PARSER] Class '{node.name}' extracted with {len(methods)} methods"))
+
+            self.logger.debug(f"[DEBUG PARSER] Class '{node.name}' extracted with {len(methods)} methods")
             if methods:
                 self.logger.debug(f"[DEBUG PARSER] Method type: {type(methods[0])} (Should be FunctionInfo)")
-            
+
             # Extract decorators
             decorators = []
             for dec in node.decorator_list:
@@ -385,7 +382,7 @@ class CodeParser:
                     decorators.append(dec.id)
                 elif isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name):
                     decorators.append(dec.func.id)
-            
+
             return ClassInfo(
                 name=node.name,
                 start_line=node.lineno,
@@ -398,18 +395,18 @@ class CodeParser:
         except Exception as e:
             self.logger.warning(f"Failed to extract class info: {e}")
             return None
-    
-    def _extract_python_function(self, node: ast.FunctionDef, 
-                                  class_name: Optional[str] = None) -> Optional[FunctionInfo]:
+
+    def _extract_python_function(self, node: ast.FunctionDef,
+                                  class_name: str | None = None) -> FunctionInfo | None:
         """Extract function information from Python AST node"""
         try:
             # Skip if too long
             if node.end_lineno and (node.end_lineno - node.lineno) > self.max_function_lines:
                 self.logger.debug(f"Skipping long function: {node.name}")
                 return None
-            
+
             docstring = ast.get_docstring(node)
-            
+
             # Extract parameters
             parameters = []
             for arg in node.args.args:
@@ -418,7 +415,7 @@ class CodeParser:
                     # Try to get type annotation
                     param_name += f": {ast.unparse(arg.annotation)}"
                 parameters.append(param_name)
-            
+
             # Extract return type
             return_type = None
             if node.returns:
@@ -426,7 +423,7 @@ class CodeParser:
                     return_type = ast.unparse(node.returns)
                 except Exception:
                     pass
-            
+
             # Extract decorators
             decorators = []
             for dec in node.decorator_list:
@@ -434,12 +431,12 @@ class CodeParser:
                     decorators.append(dec.id)
                 elif isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name):
                     decorators.append(dec.func.id)
-            
+
             # Calculate complexity
             complexity = 1
             if self.compute_complexity:
                 complexity = self._calculate_python_complexity(node)
-            
+
             return FunctionInfo(
                 name=node.name,
                 start_line=node.lineno,
@@ -456,25 +453,21 @@ class CodeParser:
         except Exception as e:
             self.logger.warning(f"Failed to extract function info: {e}")
             return None
-    
+
     def _calculate_python_complexity(self, node: ast.FunctionDef) -> int:
         """Calculate cyclomatic complexity for Python function"""
         complexity = 1
-        
+
         for child in ast.walk(node):
-            if isinstance(child, (ast.If, ast.While, ast.For, ast.AsyncFor)):
+            if isinstance(child, (ast.If, ast.While, ast.For, ast.AsyncFor)) or isinstance(child, ast.ExceptHandler) or isinstance(child, (ast.And, ast.Or)):
                 complexity += 1
-            elif isinstance(child, ast.ExceptHandler):
-                complexity += 1
-            elif isinstance(child, (ast.And, ast.Or)):
-                complexity += 1
-        
+
         return complexity
-    
-    def _parse_javascript(self, file_path: str, content: str, language: str) -> Optional[FileParseResult]:
+
+    def _parse_javascript(self, file_path: str, content: str, language: str) -> FileParseResult | None:
         """Parse JavaScript/TypeScript file using tree-sitter"""
+
         from .tree_sitter_parser import TSParser
-        from tree_sitter import Query
 
         # Strip markdown code fences if present
         content = self._strip_markdown_code_fences(content)
@@ -527,7 +520,7 @@ class CodeParser:
             self.logger.warning(f"Failed to parse {file_path} with tree-sitter: {e}")
             return self._parse_generic(file_path, content, language)
 
-    def _extract_js_module_docstring(self, content: str, root_node) -> Optional[str]:
+    def _extract_js_module_docstring(self, content: str, root_node) -> str | None:
         """Extract module-level documentation from JavaScript file"""
         # Look for leading comment blocks
         code_bytes = content.encode('utf-8')
@@ -537,12 +530,12 @@ class CodeParser:
                 # Clean up comment markers
                 if comment_text.startswith('//'):
                     return comment_text[2:].strip()
-                elif comment_text.startswith('/*') and comment_text.endswith('*/'):
+                if comment_text.startswith('/*') and comment_text.endswith('*/'):
                     return comment_text[2:-2].strip()
                 return comment_text
         return None
 
-    def _extract_js_imports(self, root_node, content: str) -> List[ImportInfo]:
+    def _extract_js_imports(self, root_node, content: str) -> list[ImportInfo]:
         """Extract import statements from JavaScript AST"""
         imports = []
         code_bytes = content.encode('utf-8')
@@ -584,7 +577,7 @@ class CodeParser:
         visit_node(root_node)
         return imports
 
-    def _extract_js_classes_and_functions(self, root_node, content: str, classes: List, functions: List):
+    def _extract_js_classes_and_functions(self, root_node, content: str, classes: list, functions: list):
         """Extract classes and functions from JavaScript AST"""
         code_bytes = content.encode('utf-8')
 
@@ -613,7 +606,7 @@ class CodeParser:
 
         visit_node(root_node)
 
-    def _extract_js_class(self, node, content: str, code_bytes: bytes) -> Optional[ClassInfo]:
+    def _extract_js_class(self, node, content: str, code_bytes: bytes) -> ClassInfo | None:
         """Extract class information from JavaScript AST node"""
         try:
             # Get class name
@@ -662,7 +655,7 @@ class CodeParser:
             self.logger.warning(f"Failed to extract JS class: {e}")
             return None
 
-    def _extract_js_function(self, node, content: str, code_bytes: bytes, class_name: Optional[str] = None) -> Optional[FunctionInfo]:
+    def _extract_js_function(self, node, content: str, code_bytes: bytes, class_name: str | None = None) -> FunctionInfo | None:
         """Extract function information from JavaScript AST node"""
         try:
             # Get function name
@@ -709,7 +702,7 @@ class CodeParser:
             self.logger.warning(f"Failed to extract JS function: {e}")
             return None
 
-    def _extract_js_method(self, node, content: str, code_bytes: bytes, class_name: Optional[str]) -> Optional[FunctionInfo]:
+    def _extract_js_method(self, node, content: str, code_bytes: bytes, class_name: str | None) -> FunctionInfo | None:
         """Extract method information from JavaScript class"""
         try:
             # Get method name
@@ -756,7 +749,7 @@ class CodeParser:
             self.logger.warning(f"Failed to extract JS method: {e}")
             return None
 
-    def _extract_js_docstring(self, node, content: str, code_bytes: bytes) -> Optional[str]:
+    def _extract_js_docstring(self, node, content: str, code_bytes: bytes) -> str | None:
         """Extract JSDoc comment before a node"""
         # Look for comment node immediately before this node
         parent = node.parent
@@ -772,14 +765,14 @@ class CodeParser:
                 # Clean up JSDoc comment markers
                 if comment_text.startswith('/**') and comment_text.endswith('*/'):
                     return comment_text[3:-2].strip()
-                elif comment_text.startswith('/*') and comment_text.endswith('*/'):
+                if comment_text.startswith('/*') and comment_text.endswith('*/'):
                     return comment_text[2:-2].strip()
-                elif comment_text.startswith('//'):
+                if comment_text.startswith('//'):
                     return comment_text[2:].strip()
 
         return None
 
-    def _parse_typescript(self, file_path: str, content: str, language: str) -> Optional[FileParseResult]:
+    def _parse_typescript(self, file_path: str, content: str, language: str) -> FileParseResult | None:
         """Parse TypeScript file using tree-sitter"""
         from .tree_sitter_parser import TSParser
 
@@ -835,7 +828,7 @@ class CodeParser:
             self.logger.warning(f"Failed to parse {file_path} with tree-sitter: {e}")
             return self._parse_generic(file_path, content, language)
 
-    def _extract_ts_classes_and_functions(self, root_node, content: str, classes: List, functions: List):
+    def _extract_ts_classes_and_functions(self, root_node, content: str, classes: list, functions: list):
         """Extract classes, interfaces, and functions from TypeScript AST"""
         code_bytes = content.encode('utf-8')
 
@@ -864,7 +857,7 @@ class CodeParser:
 
         visit_node(root_node)
 
-    def _extract_ts_class(self, node, content: str, code_bytes: bytes) -> Optional[ClassInfo]:
+    def _extract_ts_class(self, node, content: str, code_bytes: bytes) -> ClassInfo | None:
         """Extract class/interface information from TypeScript AST node"""
         try:
             # Get class/interface name
@@ -913,7 +906,7 @@ class CodeParser:
             self.logger.warning(f"Failed to extract TS class/interface: {e}")
             return None
 
-    def _parse_c_cpp(self, file_path: str, content: str, language: str) -> Optional[FileParseResult]:
+    def _parse_c_cpp(self, file_path: str, content: str, language: str) -> FileParseResult | None:
         """Parse C/C++ file using tree-sitter"""
         from .tree_sitter_parser import TSParser
 
@@ -969,7 +962,7 @@ class CodeParser:
             self.logger.warning(f"Failed to parse {file_path} with tree-sitter: {e}")
             return self._parse_generic(file_path, content, language)
 
-    def _extract_c_module_docstring(self, content: str, root_node) -> Optional[str]:
+    def _extract_c_module_docstring(self, content: str, root_node) -> str | None:
         """Extract module-level documentation from C/C++ file"""
         code_bytes = content.encode('utf-8')
         for child in root_node.children:
@@ -978,12 +971,12 @@ class CodeParser:
                 # Clean up comment markers
                 if comment_text.startswith('//'):
                     return comment_text[2:].strip()
-                elif comment_text.startswith('/*') and comment_text.endswith('*/'):
+                if comment_text.startswith('/*') and comment_text.endswith('*/'):
                     return comment_text[2:-2].strip()
                 return comment_text
         return None
 
-    def _extract_c_includes(self, root_node, content: str) -> List[ImportInfo]:
+    def _extract_c_includes(self, root_node, content: str) -> list[ImportInfo]:
         """Extract #include statements from C/C++ AST"""
         imports = []
         code_bytes = content.encode('utf-8')
@@ -1009,7 +1002,7 @@ class CodeParser:
         visit_node(root_node)
         return imports
 
-    def _extract_c_classes_and_functions(self, root_node, content: str, classes: List, functions: List, language: str):
+    def _extract_c_classes_and_functions(self, root_node, content: str, classes: list, functions: list, language: str):
         """Extract classes/structs and functions from C/C++ AST"""
         code_bytes = content.encode('utf-8')
 
@@ -1034,7 +1027,7 @@ class CodeParser:
 
         visit_node(root_node)
 
-    def _extract_c_class(self, node, content: str, code_bytes: bytes, language: str) -> Optional[ClassInfo]:
+    def _extract_c_class(self, node, content: str, code_bytes: bytes, language: str) -> ClassInfo | None:
         """Extract class/struct information from C/C++ AST node"""
         try:
             # Get class/struct name
@@ -1084,7 +1077,7 @@ class CodeParser:
             self.logger.warning(f"Failed to extract C/C++ class: {e}")
             return None
 
-    def _extract_c_function(self, node, content: str, code_bytes: bytes, class_name: Optional[str] = None) -> Optional[FunctionInfo]:
+    def _extract_c_function(self, node, content: str, code_bytes: bytes, class_name: str | None = None) -> FunctionInfo | None:
         """Extract function information from C/C++ AST node"""
         try:
             # Get function name from declarator
@@ -1142,7 +1135,7 @@ class CodeParser:
             self.logger.warning(f"Failed to extract C/C++ function: {e}")
             return None
 
-    def _extract_c_docstring(self, node, content: str, code_bytes: bytes) -> Optional[str]:
+    def _extract_c_docstring(self, node, content: str, code_bytes: bytes) -> str | None:
         """Extract Doxygen/comment before a C/C++ node"""
         parent = node.parent
         if parent:
@@ -1157,16 +1150,16 @@ class CodeParser:
                 # Clean up Doxygen/regular comment markers
                 if comment_text.startswith('/**') and comment_text.endswith('*/'):
                     return comment_text[3:-2].strip()
-                elif comment_text.startswith('/*') and comment_text.endswith('*/'):
+                if comment_text.startswith('/*') and comment_text.endswith('*/'):
                     return comment_text[2:-2].strip()
-                elif comment_text.startswith('///'):
+                if comment_text.startswith('///'):
                     return comment_text[3:].strip()
-                elif comment_text.startswith('//'):
+                if comment_text.startswith('//'):
                     return comment_text[2:].strip()
 
         return None
 
-    def _parse_rust(self, file_path: str, content: str) -> Optional[FileParseResult]:
+    def _parse_rust(self, file_path: str, content: str) -> FileParseResult | None:
         """Parse Rust file using tree-sitter"""
         from .tree_sitter_parser import TSParser
 
@@ -1221,22 +1214,20 @@ class CodeParser:
             self.logger.warning(f"Failed to parse {file_path} with tree-sitter: {e}")
             return self._parse_generic(file_path, content, 'rust')
 
-    def _extract_rust_module_docstring(self, content: str, root_node) -> Optional[str]:
+    def _extract_rust_module_docstring(self, content: str, root_node) -> str | None:
         """Extract module-level documentation from Rust file"""
         code_bytes = content.encode('utf-8')
         for child in root_node.children:
             if child.type in ('line_comment', 'block_comment'):
                 comment_text = code_bytes[child.start_byte:child.end_byte].decode('utf-8')
                 # Rust doc comments start with /// or //!
-                if comment_text.startswith('//!'):
+                if comment_text.startswith('//!') or comment_text.startswith('///'):
                     return comment_text[3:].strip()
-                elif comment_text.startswith('///'):
-                    return comment_text[3:].strip()
-                elif comment_text.startswith('/*') and comment_text.endswith('*/'):
+                if comment_text.startswith('/*') and comment_text.endswith('*/'):
                     return comment_text[2:-2].strip()
         return None
 
-    def _extract_rust_imports(self, root_node, content: str) -> List[ImportInfo]:
+    def _extract_rust_imports(self, root_node, content: str) -> list[ImportInfo]:
         """Extract 'use' statements from Rust AST"""
         imports = []
         code_bytes = content.encode('utf-8')
@@ -1261,7 +1252,7 @@ class CodeParser:
         visit_node(root_node)
         return imports
 
-    def _extract_rust_items(self, root_node, content: str, classes: List, functions: List):
+    def _extract_rust_items(self, root_node, content: str, classes: list, functions: list):
         """Extract structs, traits, impls, and functions from Rust AST"""
         code_bytes = content.encode('utf-8')
 
@@ -1286,7 +1277,7 @@ class CodeParser:
 
         visit_node(root_node)
 
-    def _extract_rust_type(self, node, content: str, code_bytes: bytes) -> Optional[ClassInfo]:
+    def _extract_rust_type(self, node, content: str, code_bytes: bytes) -> ClassInfo | None:
         """Extract struct/trait/impl information from Rust AST node"""
         try:
             # Get type name
@@ -1335,7 +1326,7 @@ class CodeParser:
             self.logger.warning(f"Failed to extract Rust type: {e}")
             return None
 
-    def _extract_rust_function(self, node, content: str, code_bytes: bytes, class_name: Optional[str] = None) -> Optional[FunctionInfo]:
+    def _extract_rust_function(self, node, content: str, code_bytes: bytes, class_name: str | None = None) -> FunctionInfo | None:
         """Extract function information from Rust AST node"""
         try:
             # Get function name
@@ -1384,7 +1375,7 @@ class CodeParser:
             self.logger.warning(f"Failed to extract Rust function: {e}")
             return None
 
-    def _extract_rust_docstring(self, node, content: str, code_bytes: bytes) -> Optional[str]:
+    def _extract_rust_docstring(self, node, content: str, code_bytes: bytes) -> str | None:
         """Extract Rust doc comment before a node"""
         parent = node.parent
         if parent:
@@ -1397,18 +1388,16 @@ class CodeParser:
             if prev_sibling and prev_sibling.type in ('line_comment', 'block_comment'):
                 comment_text = code_bytes[prev_sibling.start_byte:prev_sibling.end_byte].decode('utf-8')
                 # Clean up Rust doc comment markers
-                if comment_text.startswith('///'):
+                if comment_text.startswith('///') or comment_text.startswith('//!'):
                     return comment_text[3:].strip()
-                elif comment_text.startswith('//!'):
-                    return comment_text[3:].strip()
-                elif comment_text.startswith('/*') and comment_text.endswith('*/'):
+                if comment_text.startswith('/*') and comment_text.endswith('*/'):
                     return comment_text[2:-2].strip()
-                elif comment_text.startswith('//'):
+                if comment_text.startswith('//'):
                     return comment_text[2:].strip()
 
         return None
 
-    def _parse_csharp(self, file_path: str, content: str) -> Optional[FileParseResult]:
+    def _parse_csharp(self, file_path: str, content: str) -> FileParseResult | None:
         """Parse C# file using tree-sitter"""
         from .tree_sitter_parser import TSParser
 
@@ -1463,7 +1452,7 @@ class CodeParser:
             self.logger.warning(f"Failed to parse {file_path} with tree-sitter: {e}")
             return self._parse_generic(file_path, content, 'csharp')
 
-    def _extract_csharp_module_docstring(self, content: str, root_node) -> Optional[str]:
+    def _extract_csharp_module_docstring(self, content: str, root_node) -> str | None:
         """Extract module-level documentation from C# file"""
         code_bytes = content.encode('utf-8')
         for child in root_node.children:
@@ -1472,13 +1461,13 @@ class CodeParser:
                 # Clean up comment markers
                 if comment_text.startswith('///'):
                     return comment_text[3:].strip()
-                elif comment_text.startswith('//'):
+                if comment_text.startswith('//'):
                     return comment_text[2:].strip()
-                elif comment_text.startswith('/*') and comment_text.endswith('*/'):
+                if comment_text.startswith('/*') and comment_text.endswith('*/'):
                     return comment_text[2:-2].strip()
         return None
 
-    def _extract_csharp_imports(self, root_node, content: str) -> List[ImportInfo]:
+    def _extract_csharp_imports(self, root_node, content: str) -> list[ImportInfo]:
         """Extract 'using' statements from C# AST"""
         imports = []
         code_bytes = content.encode('utf-8')
@@ -1502,7 +1491,7 @@ class CodeParser:
         visit_node(root_node)
         return imports
 
-    def _extract_csharp_items(self, root_node, content: str, classes: List, functions: List):
+    def _extract_csharp_items(self, root_node, content: str, classes: list, functions: list):
         """Extract classes, interfaces, and methods from C# AST"""
         code_bytes = content.encode('utf-8')
 
@@ -1527,7 +1516,7 @@ class CodeParser:
 
         visit_node(root_node)
 
-    def _extract_csharp_class(self, node, content: str, code_bytes: bytes) -> Optional[ClassInfo]:
+    def _extract_csharp_class(self, node, content: str, code_bytes: bytes) -> ClassInfo | None:
         """Extract class/interface/struct information from C# AST node"""
         try:
             # Get class name
@@ -1585,7 +1574,7 @@ class CodeParser:
             self.logger.warning(f"Failed to extract C# class: {e}")
             return None
 
-    def _extract_csharp_method(self, node, content: str, code_bytes: bytes, class_name: Optional[str] = None) -> Optional[FunctionInfo]:
+    def _extract_csharp_method(self, node, content: str, code_bytes: bytes, class_name: str | None = None) -> FunctionInfo | None:
         """Extract method information from C# AST node"""
         try:
             # Get method name
@@ -1644,7 +1633,7 @@ class CodeParser:
             self.logger.warning(f"Failed to extract C# method: {e}")
             return None
 
-    def _extract_csharp_docstring(self, node, content: str, code_bytes: bytes) -> Optional[str]:
+    def _extract_csharp_docstring(self, node, content: str, code_bytes: bytes) -> str | None:
         """Extract XML doc comment before a C# node"""
         parent = node.parent
         if parent:
@@ -1659,9 +1648,9 @@ class CodeParser:
                 # Clean up XML doc comment markers
                 if comment_text.startswith('///'):
                     return comment_text[3:].strip()
-                elif comment_text.startswith('//'):
+                if comment_text.startswith('//'):
                     return comment_text[2:].strip()
-                elif comment_text.startswith('/*') and comment_text.endswith('*/'):
+                if comment_text.startswith('/*') and comment_text.endswith('*/'):
                     return comment_text[2:-2].strip()
 
         return None
@@ -1671,14 +1660,14 @@ class CodeParser:
         """Generic parsing for unsupported languages"""
         # Strip markdown code fences if present
         content = self._strip_markdown_code_fences(content)
-        
+
         lines = content.split("\n")
         total_lines = len(lines)
-        
+
         # Simple heuristics for code vs comment lines
         code_lines = 0
         comment_lines = 0
-        
+
         for line in lines:
             stripped = line.strip()
             if not stripped:
@@ -1687,7 +1676,7 @@ class CodeParser:
                 comment_lines += 1
             else:
                 code_lines += 1
-        
+
         return FileParseResult(
             file_path=file_path,
             language=language,

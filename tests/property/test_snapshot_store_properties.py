@@ -7,12 +7,10 @@ staging, and relational fact no-op paths on SQLite backend.
 
 from __future__ import annotations
 
-import pickle
 import tempfile
-from typing import Any
 
 import pytest
-from hypothesis import given, settings, assume
+from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from fastcode.semantic_ir import (
@@ -24,7 +22,6 @@ from fastcode.semantic_ir import (
     IRSymbol,
 )
 from fastcode.snapshot_store import SnapshotStore
-
 
 # --- Strategies (mirrored from tests/conftest.py) ---
 

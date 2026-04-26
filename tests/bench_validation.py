@@ -7,7 +7,7 @@ Run: pytest tests/bench_validation.py -v --benchmark-only
 import pytest
 
 from fastcode.ir_validators import validate_snapshot
-from fastcode.semantic_ir import IREdge, IRDocument, IROccurrence, IRSnapshot, IRSymbol
+from fastcode.semantic_ir import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
 
 
 def _make_snapshot(num_symbols: int, num_occurrences: int) -> IRSnapshot:

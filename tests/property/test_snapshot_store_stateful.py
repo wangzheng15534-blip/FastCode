@@ -11,15 +11,14 @@ upsert semantics hold for repeated saves.
 from __future__ import annotations
 
 import tempfile
-import os
 
 import pytest
 from hypothesis import given, settings
-from hypothesis.stateful import rule, invariant, RuleBasedStateMachine, initialize
 from hypothesis import strategies as st
+from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, rule
 
-from fastcode.snapshot_store import SnapshotStore
 from fastcode.semantic_ir import IRSnapshot
+from fastcode.snapshot_store import SnapshotStore
 
 # --- Strategies (self-contained) ---
 

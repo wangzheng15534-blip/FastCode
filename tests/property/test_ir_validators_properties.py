@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from hypothesis import given, settings, assume
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fastcode.ir_validators import validate_snapshot
@@ -14,6 +14,7 @@ from fastcode.semantic_ir import (
     IRSnapshot,
     IRSymbol,
 )
+
 # --- Local strategies (reused from conftest patterns) ---
 
 edge_type_st = st.sampled_from(["dependency", "call", "inheritance", "reference", "contain"])

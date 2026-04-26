@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from fastcode.semantic_ir import IRDocument, IRAttachment, IREdge, IROccurrence, IRSnapshot, IRSymbol
+from fastcode.semantic_ir import (
+    IRAttachment,
+    IRDocument,
+    IREdge,
+    IROccurrence,
+    IRSnapshot,
+    IRSymbol,
+)
 
 
 @pytest.mark.snapshot

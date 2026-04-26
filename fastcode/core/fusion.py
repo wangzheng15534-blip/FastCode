@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from fastcode.schema.core_types import FusionConfig
+
 from .scoring import (
     clone_result_row,
     normalized_query_entropy,
@@ -18,7 +20,6 @@ from .scoring import (
     trace_confidence_weight,
     weighted_keyword_affinity,
 )
-from fastcode.schema.core_types import FusionConfig
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from hypothesis import given, settings, assume
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fastcode.ir_merge import merge_ir
@@ -15,7 +15,6 @@ from fastcode.semantic_ir import (
     IRSnapshot,
     IRSymbol,
 )
-
 
 # --- Helpers ---
 

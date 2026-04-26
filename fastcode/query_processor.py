@@ -2,14 +2,15 @@
 Query Processor - Process and enhance user queries with LLM-based understanding
 """
 
-import re
 import logging
-from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass
 import os
-from openai import OpenAI
+import re
+from dataclasses import dataclass
+from typing import Any
+
 from anthropic import Anthropic
 from dotenv import load_dotenv
+from openai import OpenAI
 
 from .llm_utils import openai_chat_completion
 
@@ -19,16 +20,16 @@ class ProcessedQuery:
     """Processed query with extracted information"""
     original: str
     expanded: str
-    keywords: List[str]
+    keywords: list[str]
     intent: str  # 'how', 'what', 'where', 'debug', 'explain', 'find', 'implement'
-    subqueries: List[str]
-    filters: Dict[str, Any]
-    rewritten_query: Optional[str] = None  # LLM-rewritten query for semantic search
+    subqueries: list[str]
+    filters: dict[str, Any]
+    rewritten_query: str | None = None  # LLM-rewritten query for semantic search
     # repo_matching_terms: Optional[List[str]] = None  # Terms specifically for matching repository overviews/summaries
-    pseudocode_hints: Optional[str] = None  # Pseudocode for implementation queries
-    search_strategy: Optional[str] = None  # Recommended search strategy
-    
-    def to_dict(self) -> Dict[str, Any]:
+    pseudocode_hints: str | None = None  # Pseudocode for implementation queries
+    search_strategy: str | None = None  # Recommended search strategy
+
+    def to_dict(self) -> dict[str, Any]:
         return {
             "original": self.original,
             "expanded": self.expanded,
@@ -45,19 +46,19 @@ class ProcessedQuery:
 
 class QueryProcessor:
     """Process user queries to improve retrieval with LLM-based enhancement"""
-    
-    def __init__(self, config: Dict[str, Any]):
+
+    def __init__(self, config: dict[str, Any]):
         self.config = config
         self.query_config = config.get("query", {})
         self.gen_config = config.get("generation", {})
         self.logger = logging.getLogger(__name__)
-        
+
         self.expand_query = self.query_config.get("expand_query", True)
         self.decompose_complex = self.query_config.get("decompose_complex", True)
         self.max_subqueries = self.query_config.get("max_subqueries", 3)
         self.extract_keywords = self.query_config.get("extract_keywords", True)
         self.detect_intent = self.query_config.get("detect_intent", True)
-        
+
         # NEW: LLM-based enhancement settings
         self.use_llm_enhancement = self.query_config.get("use_llm_enhancement", True)
         self.llm_enhancement_mode = self.query_config.get("llm_enhancement_mode", "adaptive")  # adaptive, always, off
@@ -72,7 +73,7 @@ class QueryProcessor:
         self.model = os.getenv("MODEL")
         self.temperature = 0.3  # Slightly higher for creative query expansion
         self.max_tokens = 2000  # Shorter responses for query processing
-        
+
         # Initialize LLM client
         if self.use_llm_enhancement:
             self.api_key = os.getenv("OPENAI_API_KEY")
@@ -81,7 +82,7 @@ class QueryProcessor:
             self.llm_client = self._initialize_llm_client()
         else:
             self.llm_client = None
-        
+
         # Intent keywords
         self.intent_patterns = {
             "how": ["how", "implement", "create", "build", "make"],
@@ -92,7 +93,7 @@ class QueryProcessor:
             "find": ["find", "search", "locate", "show me", "list"],
             "implement": ["implement", "write", "code", "develop", "algorithm"],
         }
-        
+
         # Code-related keywords
         self.code_keywords = {
             "function", "method", "class", "module", "variable", "parameter",
@@ -101,7 +102,7 @@ class QueryProcessor:
             "authentication", "auth", "login", "user", "session",
             "test", "unittest", "spec", "testing",
         }
-    
+
     def _initialize_llm_client(self):
         """Initialize LLM client for query enhancement"""
         try:
@@ -111,26 +112,25 @@ class QueryProcessor:
                     self.logger.warning("OPENAI_API_KEY not set, LLM enhancement disabled")
                     return None
                 return OpenAI(api_key=api_key, base_url=self.base_url)
-            
-            elif self.provider == "anthropic":
+
+            if self.provider == "anthropic":
                 api_key = self.anthropic_api_key
                 if not api_key:
                     self.logger.warning("ANTHROPIC_API_KEY not set, LLM enhancement disabled")
                     return None
                 return Anthropic(api_key=api_key, base_url=self.base_url)
-            
-            else:
-                self.logger.warning(f"Unknown provider: {self.provider}, LLM enhancement disabled")
-                return None
+
+            self.logger.warning(f"Unknown provider: {self.provider}, LLM enhancement disabled")
+            return None
         except Exception as e:
             self.logger.warning(f"Failed to initialize LLM client: {e}, LLM enhancement disabled")
             return None
-    
+
     def process(
         self,
         query: str,
-        dialogue_history: Optional[List[Dict[str, Any]]] = None,
-        use_llm_enhancement: Optional[bool] = None
+        dialogue_history: list[dict[str, Any]] | None = None,
+        use_llm_enhancement: bool | None = None
     ) -> ProcessedQuery:
         """
         Process user query with LLM-based enhancement
@@ -199,11 +199,11 @@ class QueryProcessor:
                 self.logger.info(f"selected_keywords: {llm_enhancements.get('selected_keywords')}")
                 self.logger.info(f"query: {query}")
                 self.logger.info(f"keywords: {keywords}")
-                
+
                 # Refine intent if LLM provides better classification
                 if llm_enhancements.get("refined_intent"):
                     intent = llm_enhancements["refined_intent"]
-                
+
                 # Enhance keywords with LLM-suggested terms
                 selected_keywords = llm_enhancements["selected_keywords"]
                 if selected_keywords:
@@ -214,11 +214,11 @@ class QueryProcessor:
                     # Remove duplicates while preserving order
                     seen = set()
                     keywords = [k for k in keywords if not (k in seen or seen.add(k))]
-                
+
                 self.logger.info(f"LLM enhancement applied for query: {query[:50]}...")
             except Exception as e:
                 self.logger.warning(f"LLM enhancement failed, using rule-based only: {e}")
-        
+
         return ProcessedQuery(
             original=query,
             expanded=expanded,
@@ -231,17 +231,17 @@ class QueryProcessor:
             pseudocode_hints=pseudocode_hints,
             search_strategy=search_strategy,
         )
-    
+
     def _detect_intent(self, query: str) -> str:
         """Detect query intent"""
         query_lower = query.lower()
-        
+
         # Check for each intent
         intent_scores = {}
         for intent, patterns in self.intent_patterns.items():
             score = sum(1 for pattern in patterns if pattern in query_lower)
             intent_scores[intent] = score
-        
+
         # Get intent with highest score
         if intent_scores:
             max_score = max(intent_scores.values())
@@ -250,10 +250,10 @@ class QueryProcessor:
                     if score == max_score:
                         self.logger.debug(f"Detected intent: {intent}")
                         return intent
-        
+
         return "general"
-    
-    def _extract_keywords(self, query: str) -> List[str]:
+
+    def _extract_keywords(self, query: str) -> list[str]:
         """Extract important keywords from query"""
         # Remove common words
         stopwords = {
@@ -263,27 +263,27 @@ class QueryProcessor:
             "would", "could", "should", "may", "might", "can", "this", "that",
             "these", "those", "i", "you", "he", "she", "it", "we", "they",
         }
-        
+
         # Tokenize and filter
         words = re.findall(r'\b\w+\b', query.lower())
         keywords = [w for w in words if w not in stopwords and len(w) > 2]
-        
+
         # Prioritize code-related keywords
         prioritized = [k for k in keywords if k in self.code_keywords]
         other = [k for k in keywords if k not in self.code_keywords]
-        
+
         return prioritized + other
-    
-    def _extract_filters(self, query: str) -> Dict[str, Any]:
+
+    def _extract_filters(self, query: str) -> dict[str, Any]:
         """Extract filters from query (file type, language, etc.)"""
         filters = {}
-        
+
         # Extract file types
         file_type_pattern = r'\.(py|js|ts|java|go|cpp|c|rs|rb|php|cs)\b'
         file_types = re.findall(file_type_pattern, query.lower())
         if file_types:
             filters["extension"] = f".{file_types[0]}"
-        
+
         # Extract language mentions with STRICT context-aware patterns
         # Only match when language name appears in specific contexts to avoid false positives
         # This prevents matching repo names like "Django", "requests", "go-kit", etc.
@@ -331,22 +331,22 @@ class QueryProcessor:
                 r'\busing\s+rust\b',
             ],
         }
-        
+
         query_lower = query.lower()
         for lang, patterns in language_context_patterns.items():
             if any(re.search(pattern, query_lower) for pattern in patterns):
                 filters["language"] = lang
                 break
-        
+
         # Extract file path mentions
         # Look for quoted strings that might be paths
         path_pattern = r'["\']([a-zA-Z0-9_/\.-]+)["\']'
         paths = re.findall(path_pattern, query)
         if paths:
             filters["file_path"] = paths[0]
-        
+
         return filters
-    
+
     def _expand_query(self, query: str) -> str:
         """Expand query with synonyms and related terms"""
         # Simple expansion with common synonyms
@@ -360,17 +360,17 @@ class QueryProcessor:
             "auth": ["authentication", "authorization", "auth", "login"],
             "test": ["test", "unittest", "spec", "testing"],
         }
-        
+
         expanded_terms = []
         words = query.lower().split()
-        
+
         for word in words:
             if word in expansions:
                 # Add original and expansions
                 expanded_terms.extend(expansions[word])
             else:
                 expanded_terms.append(word)
-        
+
         # Remove duplicates while preserving order
         seen = set()
         unique_terms = []
@@ -378,60 +378,60 @@ class QueryProcessor:
             if term not in seen:
                 seen.add(term)
                 unique_terms.append(term)
-        
+
         expanded = " ".join(unique_terms)
-        
+
         if expanded != query.lower():
             self.logger.debug(f"Expanded query: {expanded}")
-        
+
         return expanded
-    
-    def _decompose_query(self, query: str) -> List[str]:
+
+    def _decompose_query(self, query: str) -> list[str]:
         """Decompose complex queries into sub-queries"""
         # Check if query is complex (contains multiple clauses)
         if len(query.split()) < 10:
             return []  # Too short to decompose
-        
+
         subqueries = []
-        
+
         # Split by common separators
         separators = [" and ", " or ", ", ", "; "]
         parts = [query]
-        
+
         for sep in separators:
             new_parts = []
             for part in parts:
                 new_parts.extend(part.split(sep))
             parts = new_parts
-        
+
         # Filter and clean subqueries
         for part in parts:
             part = part.strip()
             if len(part) > 15 and part != query:  # Must be substantial
                 subqueries.append(part)
-        
+
         # Limit number of subqueries
         subqueries = subqueries[:self.max_subqueries]
-        
+
         if subqueries:
             self.logger.debug(f"Decomposed into {len(subqueries)} sub-queries")
-        
+
         return subqueries
-    
+
     def is_code_query(self, query: str) -> bool:
         """Check if query is asking about code"""
         query_lower = query.lower()
-        
+
         # Check for code-related keywords
         code_indicators = [
             "function", "class", "method", "variable", "code",
             "implementation", "how to", "algorithm", "logic",
             "file", "module", "import", "api", "endpoint",
         ]
-        
+
         return any(indicator in query_lower for indicator in code_indicators)
-    
-    def extract_code_entity(self, query: str) -> Optional[Tuple[str, str]]:
+
+    def extract_code_entity(self, query: str) -> tuple[str, str] | None:
         """
         Extract code entity mention from query
         
@@ -446,17 +446,17 @@ class QueryProcessor:
             (r'[\"\'](\w+)[\"\']?\s+function', 'function'),
             (r'[\"\'](\w+)[\"\']?\s+class', 'class'),
         ]
-        
+
         query_lower = query.lower()
-        
+
         for pattern, entity_type in patterns:
             match = re.search(pattern, query_lower)
             if match:
                 entity_name = match.group(1)
                 return (entity_type, entity_name)
-        
+
         return None
-    
+
     def _should_use_llm_enhancement(self, query: str, intent: str) -> bool:
         """
         Determine if LLM enhancement should be used for this query
@@ -470,47 +470,47 @@ class QueryProcessor:
         """
         if not self.use_llm_enhancement or self.llm_client is None:
             return False
-        
+
         # Mode: always use LLM
         if self.llm_enhancement_mode == "always":
             return True
-        
+
         # Mode: never use LLM
         if self.llm_enhancement_mode == "off":
             return False
-        
+
         # Mode: adaptive - use LLM for complex or implementation queries
         # Use LLM for:
         # 1. Implementation/how-to queries (benefit from pseudocode)
         # 2. Complex queries (multiple clauses or technical depth)
         # 3. Ambiguous queries (short and vague)
-        
+
         query_lower = query.lower()
-        
+
         # Check for implementation intent
         implementation_indicators = [
             "implement", "how to", "write", "create", "build", "develop",
             "algorithm", "logic", "code for", "function that", "method that"
         ]
         is_implementation = any(ind in query_lower for ind in implementation_indicators)
-        
+
         # Check for complexity (multiple technical terms)
         tech_term_count = sum(1 for keyword in self.code_keywords if keyword in query_lower)
         is_complex = tech_term_count >= 3 or len(query.split()) >= 15
-        
+
         # Check for ambiguity (short and vague)
         is_ambiguous = len(query.split()) <= 5 and tech_term_count <= 1
-        
+
         should_enhance = is_implementation or is_complex or is_ambiguous
-        
+
         if should_enhance:
             self.logger.debug(f"LLM enhancement enabled: impl={is_implementation}, "
                             f"complex={is_complex}, ambiguous={is_ambiguous}")
-        
+
         return should_enhance
-    
-    def _enhance_with_llm(self, query: str, intent: str, 
-                         keywords: List[str], filters: Dict[str, Any]) -> Dict[str, Any]:
+
+    def _enhance_with_llm(self, query: str, intent: str,
+                         keywords: list[str], filters: dict[str, Any]) -> dict[str, Any]:
         """
         Use LLM to enhance query understanding and expansion
         
@@ -524,7 +524,7 @@ class QueryProcessor:
             Dictionary with enhancement information
         """
         prompt = self._build_enhancement_prompt(query, intent, keywords, filters)
-        
+
         try:
             if self.provider == "openai":
                 response = self._call_openai(prompt)
@@ -534,19 +534,19 @@ class QueryProcessor:
                 return {}
 
             print(f"LLM response of _enhance_with_llm: {response}")
-            
+
             # Parse LLM response
             enhancements = self._parse_llm_response(response, intent)
             return enhancements
-            
+
         except Exception as e:
             self.logger.error(f"LLM enhancement error: {e}")
             return {}
-    
+
     def _build_enhancement_prompt(self, query: str, intent: str,
-                                  keywords: List[str], filters: Dict[str, Any]) -> str:
+                                  keywords: list[str], filters: dict[str, Any]) -> str:
         """Build prompt for LLM query enhancement"""
-        
+
         # Standard mode (backward compatible)
         prompt = f"""You are a code search query analyzer. Analyze this query to help retrieve relevant code. 
 
@@ -586,9 +586,9 @@ IMPORTANT FORMATTING RULES:
 - For PSEUDOCODE_HINTS, you can use multiple lines but do not wrap in code blocks (no ```)
 
 Be concise and focus on improving code retrieval accuracy."""
-        
+
         return prompt
-    
+
     def _call_openai(self, prompt: str) -> str:
         """Call OpenAI API for query enhancement"""
         response = openai_chat_completion(
@@ -599,7 +599,7 @@ Be concise and focus on improving code retrieval accuracy."""
             max_tokens=self.max_tokens,
         )
         return response.choices[0].message.content
-    
+
     def _call_anthropic(self, prompt: str) -> str:
         """Call Anthropic API for query enhancement"""
         response = self.llm_client.messages.create(
@@ -609,8 +609,8 @@ Be concise and focus on improving code retrieval accuracy."""
             messages=[{"role": "user", "content": prompt}]
         )
         return response.content[0].text
-    
-    def _parse_llm_response(self, response: str, original_intent: str) -> Dict[str, Any]:
+
+    def _parse_llm_response(self, response: str, original_intent: str) -> dict[str, Any]:
         """
         Parse LLM response to extract enhancements
         
@@ -622,7 +622,7 @@ Be concise and focus on improving code retrieval accuracy."""
             Dictionary with parsed enhancements
         """
         enhancements = {}
-        
+
         def clean_markdown(text: str) -> str:
             """Remove markdown formatting from text"""
             # Remove bold markers
@@ -636,11 +636,11 @@ Be concise and focus on improving code retrieval accuracy."""
             # Remove leading/trailing asterisks
             text = text.strip('*').strip()
             return text
-        
+
         try:
             # Debug: log the response for troubleshooting
-            self.logger.debug(f"Raw response (repr): {repr(response)}")
-            
+            self.logger.debug(f"Raw response (repr): {response!r}")
+
             # Parse REFINED_INTENT
             # Handle variations: **REFINED_INTENT:** **Code QA** or REFINED_INTENT: Code QA or **REFINED_INTENT:** Code QA
             refined_intent_match = re.search(r'\*{0,2}REFINED_INTENT\*{0,2}:\s*(.+?)(?:\n|$)', response, re.IGNORECASE)
@@ -659,7 +659,7 @@ Be concise and focus on improving code retrieval accuracy."""
                     "cross-repo": "cross_repo",
                 }
                 enhancements["refined_intent"] = intent_mapping.get(intent, intent.replace(" ", "_"))
-            
+
             # Parse REWRITTEN_QUERY (note: handle both REWRITTEN and REWRITEN typo)
             # Match until next field (look ahead for next uppercase field) - use DOTALL for multi-line
             rewritten_match = re.search(r'\*{0,2}REWRIT(?:T|)EN_QUERY\*{0,2}:\s*(.+?)(?=\n\s*\*{0,2}[A-Z_]+\*{0,2}:|$)', response, re.IGNORECASE | re.DOTALL)
@@ -675,7 +675,7 @@ Be concise and focus on improving code retrieval accuracy."""
                     enhancements["rewritten_query"] = rewritten
             else:
                 self.logger.debug("Failed to match REWRITTEN_QUERY")
-            
+
             # Parse SELECTED_KEYWORDS
             # Handle both single-line and potential multi-line keywords with backticks
             # Match from SELECTED_KEYWORDS to the next field or end
@@ -694,8 +694,8 @@ Be concise and focus on improving code retrieval accuracy."""
                 enhancements["selected_keywords"] = keywords[:10]  # Limit to 10 additional keywords
             else:
                 self.logger.debug("Failed to match SELECTED_KEYWORDS")
-            
-            
+
+
             # Parse PSEUDOCODE_HINTS
             # Handle both single-line and multi-line code blocks with triple backticks
             pseudocode_match = re.search(r'\*{0,2}PSEUDOCODE_HINTS\*{0,2}:\s*(.+?)(?=\n\s*\*{0,2}[A-Z_]+\*{0,2}:|$)', response, re.IGNORECASE | re.DOTALL)
@@ -718,15 +718,15 @@ Be concise and focus on improving code retrieval accuracy."""
                         enhancements["pseudocode_hints"] = pseudocode
             else:
                 self.logger.debug("Failed to match PSEUDOCODE_HINTS")
-            
+
             self.logger.debug(f"Parsed LLM enhancements: {list(enhancements.keys())}")
-            
+
         except Exception as e:
             self.logger.warning(f"Error parsing LLM response: {e}")
-        
+
         return enhancements
-    
-    def _resolve_references_and_rewrite(self, query: str, dialogue_history: List[Dict[str, Any]]) -> str:
+
+    def _resolve_references_and_rewrite(self, query: str, dialogue_history: list[dict[str, Any]]) -> str:
         """
         Resolve references and rewrite query based on dialogue history
         
@@ -740,14 +740,14 @@ Be concise and focus on improving code retrieval accuracy."""
         if not self.llm_client:
             self.logger.warning("LLM client not available, skipping reference resolution")
             return query
-        
+
         try:
             # Get recent summaries (limited by history_summary_rounds)
             recent_summaries = dialogue_history[-self.history_summary_rounds:] if len(dialogue_history) > self.history_summary_rounds else dialogue_history
-            
+
             # Build prompt for reference resolution
             prompt = self._build_reference_resolution_prompt(query, recent_summaries)
-            
+
             # Call LLM
             if self.provider == "openai":
                 response = self._call_openai(prompt)
@@ -755,36 +755,36 @@ Be concise and focus on improving code retrieval accuracy."""
                 response = self._call_anthropic(prompt)
             else:
                 return query
-            
+
             # Parse rewritten query
             rewritten_query = self._parse_rewritten_query(response)
-            
+
             return rewritten_query if rewritten_query else query
-            
+
         except Exception as e:
             self.logger.error(f"Reference resolution failed: {e}")
             return query
-    
-    def _build_reference_resolution_prompt(self, query: str, recent_summaries: List[Dict[str, Any]]) -> str:
+
+    def _build_reference_resolution_prompt(self, query: str, recent_summaries: list[dict[str, Any]]) -> str:
         """Build prompt for reference resolution and query rewriting"""
-        
+
         prompt_parts = [
             "You are a query rewriting assistant for a code search system.",
             "Your task is to resolve references and rewrite the user's current query based on conversation history.",
             "",
             "**Conversation History (Recent Summaries):**"
         ]
-        
+
         for summary_data in recent_summaries:
             turn_num = summary_data.get("turn_number", 0)
             prev_query = summary_data.get("query", "")
             summary = summary_data.get("summary", "")
-            
+
             prompt_parts.append(f"\nTurn {turn_num}:")
             prompt_parts.append(f"Query: {prev_query}")
             if summary:
                 prompt_parts.append(f"Summary: {summary}")
-        
+
         prompt_parts.extend([
             "",
             f"**Current Query:** {query}",
@@ -799,30 +799,28 @@ Be concise and focus on improving code retrieval accuracy."""
             "",
             "Rewritten Query:"
         ])
-        
+
         return "\n".join(prompt_parts)
-    
-    def _parse_rewritten_query(self, response: str) -> Optional[str]:
+
+    def _parse_rewritten_query(self, response: str) -> str | None:
         """Parse LLM response to extract rewritten query"""
         # Clean up the response
         rewritten = response.strip()
-        
+
         # Remove common prefixes if present
         prefixes_to_remove = [
             "rewritten query:",
             "rewritten:",
             "query:",
         ]
-        
+
         for prefix in prefixes_to_remove:
             if rewritten.lower().startswith(prefix):
                 rewritten = rewritten[len(prefix):].strip()
-        
+
         # Remove quotes if present
-        if rewritten.startswith('"') and rewritten.endswith('"'):
+        if (rewritten.startswith('"') and rewritten.endswith('"')) or (rewritten.startswith("'") and rewritten.endswith("'")):
             rewritten = rewritten[1:-1]
-        elif rewritten.startswith("'") and rewritten.endswith("'"):
-            rewritten = rewritten[1:-1]
-        
+
         return rewritten if rewritten else None
 

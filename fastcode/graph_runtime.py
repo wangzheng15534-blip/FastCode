@@ -8,9 +8,9 @@ Uses LadybugDB's Cypher-like query language for graph storage.
 from __future__ import annotations
 
 import logging
-import os
 import re
-from typing import Any, Dict, Iterable, List
+from collections.abc import Iterable
+from typing import Any
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ def _esc(val: Any) -> str:
 
 
 class LadybugGraphRuntime:
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         self.config = config
         self.logger = logging.getLogger(__name__)
         graph_cfg = (config.get("graph", {}) or {}).get("ladybug", {}) or {}
@@ -40,7 +40,7 @@ class LadybugGraphRuntime:
 
     def _init(self) -> None:
         try:
-            from real_ladybug import Database, Connection  # type: ignore
+            from real_ladybug import Connection, Database  # type: ignore
 
             db = Database(self.db_path)
             self._conn = Connection(database=db)
@@ -99,9 +99,8 @@ class LadybugGraphRuntime:
             parsed = urlparse(raw)
             if parsed.scheme not in {"postgres", "postgresql"}:
                 raise ValueError("unsupported postgres attach dsn scheme")
-        else:
-            if not re.fullmatch(r"[A-Za-z0-9_\-.:/@?&=%+, ]+", raw):
-                raise ValueError("unsupported postgres attach dsn format")
+        elif not re.fullmatch(r"[A-Za-z0-9_\-.:/@?&=%+, ]+", raw):
+            raise ValueError("unsupported postgres attach dsn format")
         # Escape single quotes for SQL literal context.
         return raw.replace("'", "''")
 
@@ -117,8 +116,8 @@ class LadybugGraphRuntime:
     def sync_docs(
         self,
         *,
-        chunks: Iterable[Dict[str, Any]],
-        mentions: Iterable[Dict[str, Any]],
+        chunks: Iterable[dict[str, Any]],
+        mentions: Iterable[dict[str, Any]],
     ) -> bool:
         """Sync doc chunks and mentions to LadybugDB as graph nodes."""
         if not self.enabled or not self._conn:
@@ -162,7 +161,7 @@ class LadybugGraphRuntime:
             self.logger.warning(f"Ladybug sync failed: {e}")
             return False
 
-    def query_docs(self, *, snapshot_id: str) -> List[Dict[str, Any]]:
+    def query_docs(self, *, snapshot_id: str) -> list[dict[str, Any]]:
         """Query doc chunks from LadybugDB by snapshot_id."""
         if not self.enabled or not self._conn:
             return []

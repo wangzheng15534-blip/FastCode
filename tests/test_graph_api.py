@@ -1,5 +1,4 @@
 import sys
-import os
 from pathlib import Path
 
 # api.py is a root-level module, not in the fastcode package

@@ -3,11 +3,13 @@ Definition Extractor using Tree-sitter Query
 Extracts class and function definitions with positions and parent relationships.
 """
 
-from typing import List, Dict, Any, Optional
 import logging
 import os
 import re
+from typing import Any
+
 from tree_sitter import Node, Query, QueryCursor
+
 from .tree_sitter_parser import TSParser
 
 
@@ -23,7 +25,7 @@ class DefinitionExtractor:
     (class_definition) @class.def
     """
 
-    def __init__(self, parser: Optional[TSParser] = None):
+    def __init__(self, parser: TSParser | None = None):
         self.logger = logging.getLogger(__name__)
         self.ts_parser = parser or TSParser()
 
@@ -32,7 +34,7 @@ class DefinitionExtractor:
 
         self.query = Query(self.ts_parser.language, self.DEFINITION_QUERY_SCM)
 
-    def extract_definitions(self, code: str, file_path: str) -> List[Dict[str, Any]]:
+    def extract_definitions(self, code: str, file_path: str) -> list[dict[str, Any]]:
         """
         Extract all class and function definitions from the given code.
 
@@ -78,7 +80,7 @@ class DefinitionExtractor:
 
         return definitions
 
-    def _process_definition_node(self, node: Node, capture_name: str, code: str, file_path: str) -> Optional[Dict[str, Any]]:
+    def _process_definition_node(self, node: Node, capture_name: str, code: str, file_path: str) -> dict[str, Any] | None:
         """Process a single definition node and extract information."""
 
         # Determine definition type and get name node
@@ -152,7 +154,7 @@ class DefinitionExtractor:
         # We use \basync\b to ensure it's a standalone async keyword
         return bool(re.search(r'\basync\b\s*$', preceding_context.strip()))
 
-    def _find_parent_scope(self, node: Node, code: str) -> Optional[str]:
+    def _find_parent_scope(self, node: Node, code: str) -> str | None:
         """
         Find parent class scope using upward backtracking (O(Depth) complexity).
 
@@ -207,7 +209,7 @@ class DefinitionExtractor:
         # Return the most substantial line (usually the one with the actual definition)
         if len(lines) == 1:
             return lines[0]
-        elif lines:
+        if lines:
             # Find the line that contains the actual definition
             for line in lines:
                 if any(keyword in line for keyword in ['def ', 'async def ', 'class ']):
@@ -216,7 +218,7 @@ class DefinitionExtractor:
 
         return header
 
-    def _extract_class_bases(self, class_node: Node, code: str) -> List[str]:
+    def _extract_class_bases(self, class_node: Node, code: str) -> list[str]:
         """
         Extract base class names from a class definition node.
 

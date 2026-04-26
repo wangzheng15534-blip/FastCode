@@ -8,21 +8,19 @@ multi-snapshot queries, and metadata variant roundtrips.
 from __future__ import annotations
 
 import json
-import pickle
 import tempfile
 
 import pytest
-from hypothesis import given, settings, assume
+from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-from fastcode.snapshot_store import SnapshotStore
 from fastcode.semantic_ir import (
     IRDocument,
     IROccurrence,
     IRSnapshot,
     IRSymbol,
 )
-
+from fastcode.snapshot_store import SnapshotStore
 
 # --- Strategies (self-contained, matching conftest patterns) ---
 

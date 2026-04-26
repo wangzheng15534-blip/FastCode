@@ -1,4 +1,4 @@
-from typing import Optional
+
 from fastcode.global_index_builder import GlobalIndexBuilder
 
 
@@ -20,7 +20,7 @@ class ModuleResolver:
         """
         self.index = index
 
-    def resolve_import(self, current_module_path: str, import_name: str, level: int, is_package: bool = False) -> Optional[str]:
+    def resolve_import(self, current_module_path: str, import_name: str, level: int, is_package: bool = False) -> str | None:
         """
         Resolve import to target file ID.
 
@@ -35,11 +35,10 @@ class ModuleResolver:
             # Pass the is_package flag to the relative import handler
             result = self._resolve_relative_import(current_module_path, import_name, level, is_package)
             return result
-        else:
-            result = self._resolve_absolute_import(import_name)
-            return result
+        result = self._resolve_absolute_import(import_name)
+        return result
 
-    def _resolve_relative_import(self, current_module_path: str, import_name: str, level: int, is_package: bool = False) -> Optional[str]:
+    def _resolve_relative_import(self, current_module_path: str, import_name: str, level: int, is_package: bool = False) -> str | None:
         """
         Resolve relative import by navigating up the module hierarchy.
         """
@@ -83,7 +82,7 @@ class ModuleResolver:
 
         return None
 
-    def _resolve_absolute_import(self, import_name: str) -> Optional[str]:
+    def _resolve_absolute_import(self, import_name: str) -> str | None:
         """
         Resolve absolute import by direct lookup in module_map.
 

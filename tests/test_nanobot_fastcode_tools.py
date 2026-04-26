@@ -10,20 +10,21 @@ Uses httpx.MockTransport for lightweight mocking — no running backend required
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+import sys
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-import sys
-from pathlib import Path
 
 # Add nanobot directory to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "nanobot"))
 
 from nanobot.agent.tools.fastcode import (
-    FastCodeCallChainTool,
     FastCodeBuildProjectionTool,
+    FastCodeCallChainTool,
     FastCodeIndexRunTool,
     FastCodeListReposTool,
     FastCodeLoadRepoTool,
@@ -34,7 +35,6 @@ from nanobot.agent.tools.fastcode import (
     FastCodeUploadRepoTool,
     create_all_tools,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -645,8 +645,8 @@ class TestFastCodeUploadRepoTool:
         async with _make_client(transport) as client:
             with _patch_client(client):
                 # Use a real temp file for the upload
-                import tempfile
                 import os
+                import tempfile
                 with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as f:
                     f.write(b"PK" + b"\x00" * 100)
                     tmp_path = f.name

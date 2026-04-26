@@ -10,7 +10,6 @@ from hypothesis import strategies as st
 
 from fastcode.redo_worker import RedoWorker
 
-
 # --- Helpers ---
 
 class _FakeSnapshotStore:

@@ -8,7 +8,6 @@ from hypothesis import strategies as st
 
 from fastcode.graph_runtime import LadybugGraphRuntime, _esc
 
-
 # --- Strategies ---
 
 text_st = st.text(

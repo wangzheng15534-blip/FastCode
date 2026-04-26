@@ -5,12 +5,12 @@ Projection-layer models for L0/L1/L2 artifacts.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass
@@ -18,11 +18,11 @@ class ProjectionScope:
     scope_kind: str
     snapshot_id: str
     scope_key: str
-    query: Optional[str] = None
-    target_id: Optional[str] = None
-    filters: Dict[str, Any] = field(default_factory=dict)
+    query: str | None = None
+    target_id: str | None = None
+    filters: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "scope_kind": self.scope_kind,
             "snapshot_id": self.snapshot_id,
@@ -39,14 +39,14 @@ class ProjectionBuildResult:
     snapshot_id: str
     scope_kind: str
     scope_key: str
-    l0: Dict[str, Any]
-    l1: Dict[str, Any]
-    l2_index: Dict[str, Any]
-    chunks: List[Dict[str, Any]]
-    warnings: List[str] = field(default_factory=list)
+    l0: dict[str, Any]
+    l1: dict[str, Any]
+    l2_index: dict[str, Any]
+    chunks: list[dict[str, Any]]
+    warnings: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=utc_now_iso)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "projection_id": self.projection_id,
             "snapshot_id": self.snapshot_id,

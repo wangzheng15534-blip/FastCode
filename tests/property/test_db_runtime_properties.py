@@ -7,16 +7,14 @@ Uses real SQLite in-memory backend, not mocks.
 from __future__ import annotations
 
 import logging
-import os
 import sqlite3
-from typing import Any, Optional
+from typing import Any
 
 import pytest
-from hypothesis import given, settings, assume
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fastcode.db_runtime import DBRuntime
-
 
 # --- Strategies ---
 
@@ -314,10 +312,9 @@ class TestConnect:
         """Lines 105-106: connection closed on exception exit."""
         rt = _make_sqlite_runtime()
         conn_ref = None
-        with pytest.raises(ValueError):
-            with rt.connect() as conn:
-                conn_ref = conn
-                raise ValueError("boom")
+        with pytest.raises(ValueError), rt.connect() as conn:
+            conn_ref = conn
+            raise ValueError("boom")
         assert conn_ref is not None
         with pytest.raises(Exception):
             conn_ref.execute("SELECT 1")
@@ -345,9 +342,8 @@ class TestConnect:
         with rt.connect() as conn1:
             conn1.execute("CREATE TABLE t (x INTEGER)")
             conn1.execute("INSERT INTO t VALUES (42)")
-        with rt.connect() as conn2:
-            with pytest.raises(sqlite3.OperationalError):
-                conn2.execute("SELECT * FROM t")
+        with rt.connect() as conn2, pytest.raises(sqlite3.OperationalError):
+            conn2.execute("SELECT * FROM t")
 
 
 # --- execute() tests ---
@@ -433,9 +429,8 @@ class TestExecute:
     @pytest.mark.edge
     def test_execute_bad_sql_raises(self) -> None:
         rt = _make_sqlite_runtime()
-        with rt.connect() as conn:
-            with pytest.raises(sqlite3.OperationalError):
-                rt.execute(conn, "SELECT * FROM nonexistent_table")
+        with rt.connect() as conn, pytest.raises(sqlite3.OperationalError):
+            rt.execute(conn, "SELECT * FROM nonexistent_table")
 
     @pytest.mark.edge
     def test_execute_duplicate_primary_key_raises(self) -> None:
@@ -749,9 +744,8 @@ class TestDbRuntimeEdgeExtras:
     @pytest.mark.edge
     def test_execute_invalid_sql(self) -> None:
         rt = _make_sqlite_runtime()
-        with rt.connect() as conn:
-            with pytest.raises(Exception):
-                rt.execute(conn, "INVALID SQL STATEMENT")
+        with rt.connect() as conn, pytest.raises(Exception):
+            rt.execute(conn, "INVALID SQL STATEMENT")
 
     @pytest.mark.edge
     def test_empty_query_result(self) -> None:

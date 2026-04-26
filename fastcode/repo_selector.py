@@ -3,40 +3,41 @@ Repository Selector - LLM-based repository and file selection for multi-repo sce
 """
 
 import logging
-from typing import List, Dict, Any, Optional
 import os
-from openai import OpenAI
+import re
+from typing import Any
+
 from anthropic import Anthropic
 from dotenv import load_dotenv
-import re
+from openai import OpenAI
 
 from .llm_utils import openai_chat_completion
 
 
 class RepositorySelector:
     """Use LLM to select relevant repositories and files based on user query"""
-    
-    def __init__(self, config: Dict[str, Any]):
+
+    def __init__(self, config: dict[str, Any]):
         self.config = config
         self.gen_config = config.get("generation", {})
         self.logger = logging.getLogger(__name__)
-        
+
         # Load environment variables
         load_dotenv()
-        
+
         # LLM settings
         self.provider = self.gen_config.get("provider", "openai")
         self.model = os.getenv("MODEL")
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         self.base_url = os.getenv("BASE_URL")
-        
+
         self.temperature = 0.2  # Low temperature for precise selection
         self.max_tokens = 2000
-        
+
         # Initialize LLM client
         self.llm_client = self._initialize_client()
-    
+
     def _initialize_client(self):
         """Initialize LLM client"""
         try:
@@ -45,27 +46,26 @@ class RepositorySelector:
                     self.logger.warning("OPENAI_API_KEY not set")
                     return None
                 return OpenAI(api_key=self.api_key, base_url=self.base_url)
-            
-            elif self.provider == "anthropic":
+
+            if self.provider == "anthropic":
                 if not self.anthropic_api_key:
                     self.logger.warning("ANTHROPIC_API_KEY not set")
                     return None
                 return Anthropic(api_key=self.anthropic_api_key, base_url=self.base_url)
-            
-            else:
-                self.logger.warning(f"Unknown provider: {self.provider}")
-                return None
+
+            self.logger.warning(f"Unknown provider: {self.provider}")
+            return None
         except Exception as e:
             self.logger.warning(f"Failed to initialize LLM client: {e}")
             return None
-    
+
     def select_relevant_files(
         self,
         query: str,
-        repo_overviews: List[Dict[str, Any]],
+        repo_overviews: list[dict[str, Any]],
         max_files: int = 10,
         scenario_mode: str = "multi",
-    ) -> List[Dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """
         Select most relevant files from repositories based on user query
         
@@ -82,14 +82,14 @@ class RepositorySelector:
         if not self.llm_client:
             self.logger.warning("LLM client not available, cannot select files")
             return []
-        
+
         self.logger.info(f"Selecting relevant files for query: {query[:50]}...")
-        
+
         # Build prompt with repository information
         prompt = self._build_file_selection_prompt(
             query, repo_overviews, max_files, scenario_mode
         )
-        
+
         try:
             # Call LLM
             if self.provider == "openai":
@@ -98,23 +98,23 @@ class RepositorySelector:
                 response = self._call_anthropic(prompt)
             else:
                 return []
-            
+
             self.logger.info(f"fallback to LLM response of select_relevant_files: {response}")
-            
+
             # Parse response to extract selected files
             selected_files = self._parse_file_selection_response(response, repo_overviews)
-            
+
             self.logger.info(f"Selected {len(selected_files)} relevant files")
             return selected_files
-            
+
         except Exception as e:
             self.logger.error(f"File selection failed: {e}")
             return []
-    
+
     def _build_file_selection_prompt(
         self,
         query: str,
-        repo_overviews: List[Dict[str, Any]],
+        repo_overviews: list[dict[str, Any]],
         max_files: int,
         scenario_mode: str,
     ) -> str:
@@ -134,20 +134,20 @@ class RepositorySelector:
             f"\nUser Query: \"{query}\"\n",
             "\nRepository Information:\n",
         ]
-        
+
         # Add repository overviews
         for i, overview in enumerate(repo_overviews, 1):
             repo_name = overview.get("repo_name", "Unknown")
             summary = overview.get("summary", "No summary available")
             structure_text = overview.get("structure_text", "")
-            
+
             prompt_parts.append(f"\n{'='*60}")
             prompt_parts.append(f"\nRepository #{i}: {repo_name}")
             prompt_parts.append(f"\nSummary: {summary}")
-            prompt_parts.append(f"\nFile Structure:")
+            prompt_parts.append("\nFile Structure:")
             prompt_parts.append(structure_text[:])  # Limit structure text
             prompt_parts.append("\n")
-        
+
         prompt_parts.append(f"\n{'='*60}\n")
 
         # task_prefix = (
@@ -173,19 +173,19 @@ class RepositorySelector:
         )
 
         prompt_parts.append(f"\n{task_prefix}")
-        
+
         prompt_parts.append("\nFor each selected file, provide:")
         prompt_parts.append("\n1. Repository name")
         prompt_parts.append("\n2. File path")
-        
+
         prompt_parts.append("\nFormat your response EXACTLY as:")
         prompt_parts.append("\nFILE: <repo_name>::<file_path>")
         prompt_parts.append("\nREASON: <brief reason>")
 
         # print(f"Prompt parts: {''.join(prompt_parts)}")
-        
+
         return "".join(prompt_parts)
-    
+
     def _call_openai(self, prompt: str) -> str:
         """Call OpenAI API"""
         response = openai_chat_completion(
@@ -196,7 +196,7 @@ class RepositorySelector:
             max_tokens=self.max_tokens,
         )
         return response.choices[0].message.content
-    
+
     def _call_anthropic(self, prompt: str) -> str:
         """Call Anthropic API"""
         response = self.llm_client.messages.create(
@@ -206,9 +206,9 @@ class RepositorySelector:
             messages=[{"role": "user", "content": prompt}]
         )
         return response.content[0].text
-    
+
     def _parse_file_selection_response(self, response: str,
-                                      repo_overviews: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+                                      repo_overviews: list[dict[str, Any]]) -> list[dict[str, str]]:
         """
         Parse LLM response to extract selected files
         
@@ -220,23 +220,23 @@ class RepositorySelector:
             List of dictionaries with repo_name, file_path, and reason
         """
         selected_files = []
-        
+
         # Get valid repo names for validation
         valid_repos = {ov.get("repo_name") for ov in repo_overviews}
-        
+
         # Parse FILE: and REASON: pairs with flexible markdown support
         # Handles: FILE:, **FILE:**, and optional repo prefix
         file_pattern = r'\*{0,2}FILE:\*{0,2}\s*(?:(.+?)::)?(.+?)(?:\n|$)'
         reason_pattern = r'\*{0,2}REASON:\*{0,2}\s*(.+?)(?:\n|$)'
-        
+
         file_matches = re.findall(file_pattern, response, re.MULTILINE)
         reason_matches = re.findall(reason_pattern, response, re.MULTILINE)
-        
+
         # Match files with reasons
         for i, (repo_name, file_path) in enumerate(file_matches):
             repo_name = (repo_name or "").strip()
             file_path = file_path.strip()
-            
+
             # Clean markdown formatting from both repo_name and file_path
             # Remove backticks: `filename`
             repo_name = re.sub(r'^`+|`+$', '', repo_name)
@@ -247,7 +247,7 @@ class RepositorySelector:
             # Strip again after removing markdown
             repo_name = repo_name.strip()
             file_path = file_path.strip()
-            
+
             # Infer repo name when missing or invalid
             if repo_name not in valid_repos:
                 inferred_repo = ""
@@ -266,23 +266,23 @@ class RepositorySelector:
                     self.logger.debug(f"Skipping invalid repo: {repo_name or '<missing>'}")
                     continue
                 repo_name = inferred_repo
-            
+
             reason = reason_matches[i].strip() if i < len(reason_matches) else "No reason provided"
-            
+
             selected_files.append({
                 "repo_name": repo_name,
                 "file_path": file_path,
                 "reason": reason
             })
-        
+
         return selected_files
-    
+
     def select_relevant_repos(
         self,
         query: str,
-        repo_overviews: Dict[str, Dict[str, Any]],
+        repo_overviews: dict[str, dict[str, Any]],
         max_repos: int = 5,
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Use LLM to select relevant repositories from all available overviews.
 
@@ -362,7 +362,7 @@ class RepositorySelector:
         name = name.strip().strip("`").strip("*").strip("'").strip('"')
         return name.lower()
 
-    def _fuzzy_match_repo(self, candidate: str, available: List[str]) -> Optional[str]:
+    def _fuzzy_match_repo(self, candidate: str, available: list[str]) -> str | None:
         """
         Try to match *candidate* (the string the LLM returned) to one of the
         *available* repository names using several heuristics, from strict to
@@ -418,14 +418,14 @@ class RepositorySelector:
         return None
 
     def _parse_repo_selection_response(
-        self, response: str, available_names: List[str]
-    ) -> List[str]:
+        self, response: str, available_names: list[str]
+    ) -> list[str]:
         """
         Parse the LLM response and robustly match each name to available repos.
         """
         self.logger.info(f"Parsing repo selection response ({len(response)} chars), "
                          f"available repos: {available_names}")
-        selected: List[str] = []
+        selected: list[str] = []
         seen: set = set()
 
         for line in response.splitlines():
@@ -455,7 +455,7 @@ class RepositorySelector:
         return selected
 
     def enhance_query_with_file_hints(self, query: str,
-                                     selected_files: List[Dict[str, str]]) -> str:
+                                     selected_files: list[dict[str, str]]) -> str:
         """
         Enhance query with file hints for better retrieval
         
@@ -468,12 +468,12 @@ class RepositorySelector:
         """
         if not selected_files:
             return query
-        
+
         # Add file paths as context to query
         file_hints = []
         for sf in selected_files[:5]:  # Limit to top 5
             file_hints.append(f"{sf['repo_name']}/{sf['file_path']}")
-        
+
         enhanced = f"{query} [Relevant files: {', '.join(file_hints)}]"
         return enhanced
 

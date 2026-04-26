@@ -15,7 +15,6 @@ from fastcode.scip_indexers import (
     get_indexer_command,
 )
 
-
 # --- Strategies ---
 
 language_st = st.sampled_from(list(SUPPORTED_LANGUAGES.keys()))

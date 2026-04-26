@@ -7,7 +7,8 @@ from __future__ import annotations
 import json
 import logging
 import math
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
@@ -15,7 +16,7 @@ from .db_runtime import DBRuntime
 
 
 class PgRetrievalStore:
-    def __init__(self, db_runtime: DBRuntime, config: Dict[str, Any]):
+    def __init__(self, db_runtime: DBRuntime, config: dict[str, Any]):
         self.db_runtime = db_runtime
         self.config = config
         self.logger = logging.getLogger(__name__)
@@ -115,7 +116,7 @@ class PgRetrievalStore:
             cleaned.append(f)
         return "[" + ",".join(f"{v:.8f}" for v in cleaned) + "]"
 
-    def upsert_elements(self, snapshot_id: str, elements: List[Dict[str, Any]]) -> None:
+    def upsert_elements(self, snapshot_id: str, elements: list[dict[str, Any]]) -> None:
         if not self.enabled:
             return
         with self.db_runtime.connect() as conn:
@@ -236,10 +237,10 @@ class PgRetrievalStore:
         snapshot_id: str,
         query_embedding: Sequence[float],
         *,
-        repo_filter: Optional[List[str]] = None,
-        element_types: Optional[List[str]] = None,
+        repo_filter: list[str] | None = None,
+        element_types: list[str] | None = None,
         top_k: int = 20,
-    ) -> List[Tuple[Dict[str, Any], float]]:
+    ) -> list[tuple[dict[str, Any], float]]:
         if not self.enabled or query_embedding is None:
             return []
         vector_literal = self._vector_literal(query_embedding)
@@ -388,10 +389,10 @@ class PgRetrievalStore:
         snapshot_id: str,
         query: str,
         *,
-        repo_filter: Optional[List[str]] = None,
-        element_types: Optional[List[str]] = None,
+        repo_filter: list[str] | None = None,
+        element_types: list[str] | None = None,
         top_k: int = 20,
-    ) -> List[Tuple[Dict[str, Any], float]]:
+    ) -> list[tuple[dict[str, Any], float]]:
         if not self.enabled or not query.strip():
             return []
         try:
@@ -405,10 +406,10 @@ class PgRetrievalStore:
         snapshot_id: str,
         query: str,
         *,
-        repo_filter: Optional[List[str]] = None,
-        element_types: Optional[List[str]] = None,
+        repo_filter: list[str] | None = None,
+        element_types: list[str] | None = None,
         top_k: int = 20,
-    ) -> List[Tuple[Dict[str, Any], float]]:
+    ) -> list[tuple[dict[str, Any], float]]:
         with self.db_runtime.connect() as conn:
             cur = conn.cursor()
             if repo_filter and element_types:

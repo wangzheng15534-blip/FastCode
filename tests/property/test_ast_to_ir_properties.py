@@ -8,12 +8,11 @@ edge generation, and metadata consistency.
 from __future__ import annotations
 
 import pytest
-from hypothesis import given, settings, assume
+from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from fastcode.adapters.ast_to_ir import build_ir_from_ast
 from fastcode.indexer import CodeElement
-from fastcode.semantic_ir import IRSnapshot
 
 # --- Strategies (self-contained, no conftest import) ---
 

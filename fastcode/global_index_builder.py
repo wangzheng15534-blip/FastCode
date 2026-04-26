@@ -6,8 +6,8 @@ Creates lookup tables to resolve "who在哪" (who is where) problems.
 """
 
 import logging
-from typing import Dict, List, Optional, Any
 import os
+from typing import Any
 
 from .indexer import CodeElement
 from .path_utils import file_path_to_module_path, normalize_repo_root
@@ -23,7 +23,7 @@ class GlobalIndexBuilder:
     - export_map: module_dotted_path -> {symbol_name: node_id}
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         """
         Initialize the GlobalIndexBuilder
 
@@ -34,9 +34,9 @@ class GlobalIndexBuilder:
         self.logger = logging.getLogger(__name__)
 
         # Main lookup maps
-        self.file_map: Dict[str, str] = {}      # abs_path -> file_id
-        self.module_map: Dict[str, str] = {}    # dotted.module.path -> file_id
-        self.export_map: Dict[str, Dict[str, str]] = {}  # module_path -> {symbol_name: node_id}
+        self.file_map: dict[str, str] = {}      # abs_path -> file_id
+        self.module_map: dict[str, str] = {}    # dotted.module.path -> file_id
+        self.export_map: dict[str, dict[str, str]] = {}  # module_path -> {symbol_name: node_id}
 
         # Statistics
         self.stats = {
@@ -46,7 +46,7 @@ class GlobalIndexBuilder:
             "errors": 0
         }
 
-    def build_maps(self, elements: List[CodeElement], repo_root: str) -> None:
+    def build_maps(self, elements: list[CodeElement], repo_root: str) -> None:
         """
         Build file_map, module_map, and export_map from indexed elements
 
@@ -116,7 +116,7 @@ class GlobalIndexBuilder:
         else:
             self.logger.debug(f"Could not create module path for {element.file_path}")
 
-    def get_file_id_by_path(self, abs_path: str) -> Optional[str]:
+    def get_file_id_by_path(self, abs_path: str) -> str | None:
         """
         Get file_id from absolute file path
 
@@ -130,7 +130,7 @@ class GlobalIndexBuilder:
         norm_path = os.path.abspath(abs_path)
         return self.file_map.get(norm_path)
 
-    def get_file_id_by_module(self, module_path: str) -> Optional[str]:
+    def get_file_id_by_module(self, module_path: str) -> str | None:
         """
         Get file_id from dotted module path
 
@@ -142,7 +142,7 @@ class GlobalIndexBuilder:
         """
         return self.module_map.get(module_path)
 
-    def get_all_file_ids(self) -> List[str]:
+    def get_all_file_ids(self) -> list[str]:
         """
         Get all file IDs
 
@@ -151,7 +151,7 @@ class GlobalIndexBuilder:
         """
         return list(self.file_map.values())
 
-    def get_all_modules(self) -> List[str]:
+    def get_all_modules(self) -> list[str]:
         """
         Get all module paths
 
@@ -185,7 +185,7 @@ class GlobalIndexBuilder:
         """
         return module_path in self.module_map
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         Get statistics about the built maps
 
@@ -199,7 +199,7 @@ class GlobalIndexBuilder:
             "module_coverage": self.stats["modules_created"] / max(1, self.stats["files_processed"])
         }
 
-    def validate_maps(self) -> List[str]:
+    def validate_maps(self) -> list[str]:
         """
         Validate the consistency of built maps
 
@@ -227,7 +227,7 @@ class GlobalIndexBuilder:
 
         return errors
 
-    def _build_export_symbol_map(self, elements: List[CodeElement]) -> None:
+    def _build_export_symbol_map(self, elements: list[CodeElement]) -> None:
         """
         Build export symbol map from class and function elements
         Maps: module_dotted_path -> {symbol_name: node_id}
@@ -249,7 +249,7 @@ class GlobalIndexBuilder:
 
                     # Add symbol to export map
                     self.export_map[module_path][element.name] = element.id
-                    
+
                     # --- [CRITICAL FIX] Export Class.Method for methods ---
                     if element.type == 'function':
                         class_name = element.metadata.get('class_name')
@@ -258,7 +258,7 @@ class GlobalIndexBuilder:
                             self.export_map[module_path][full_name] = element.id
                             self.logger.debug(f"Exported method: {full_name}")
                     # ------------------------------------------------------
-                    
+
                     self.stats["symbols_exported"] += 1
 
             except Exception as e:
@@ -267,7 +267,7 @@ class GlobalIndexBuilder:
 
         self.logger.info(f"Built export map with {self.stats['symbols_exported']} symbols from {len(self.export_map)} modules")
 
-    def _get_module_path_for_element(self, element: CodeElement) -> Optional[str]:
+    def _get_module_path_for_element(self, element: CodeElement) -> str | None:
         """
         Get module path for a code element
 
@@ -292,7 +292,7 @@ class GlobalIndexBuilder:
 
         return None
 
-    def get_exported_symbol_id(self, module_path: str, symbol_name: str) -> Optional[str]:
+    def get_exported_symbol_id(self, module_path: str, symbol_name: str) -> str | None:
         """
         Get the node ID of an exported symbol
 
@@ -305,7 +305,7 @@ class GlobalIndexBuilder:
         """
         return self.export_map.get(module_path, {}).get(symbol_name)
 
-    def get_module_exports(self, module_path: str) -> Dict[str, str]:
+    def get_module_exports(self, module_path: str) -> dict[str, str]:
         """
         Get all exported symbols for a module
 

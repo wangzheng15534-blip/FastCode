@@ -5,7 +5,7 @@ Published manifest storage for branch/ref -> snapshot mapping.
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .db_runtime import DBRuntime
 from .utils import utc_now
@@ -85,7 +85,7 @@ class ManifestStore:
         snapshot_id: str,
         index_run_id: str,
         status: str = "published",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         manifest_id = f"manifest_{uuid.uuid4().hex[:16]}"
         now = utc_now()
 
@@ -145,7 +145,7 @@ class ManifestStore:
             "status": status,
         }
 
-    def get_branch_manifest(self, repo_name: str, ref_name: str) -> Optional[Dict[str, Any]]:
+    def get_branch_manifest(self, repo_name: str, ref_name: str) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -158,7 +158,7 @@ class ManifestStore:
             ).fetchone()
         return self.db_runtime.row_to_dict(row)
 
-    def get_snapshot_manifest(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
+    def get_snapshot_manifest(self, snapshot_id: str) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,

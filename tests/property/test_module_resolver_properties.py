@@ -8,7 +8,6 @@ from hypothesis import strategies as st
 
 from fastcode.module_resolver import ModuleResolver
 
-
 # --- Helpers ---
 
 segment_st = st.text(

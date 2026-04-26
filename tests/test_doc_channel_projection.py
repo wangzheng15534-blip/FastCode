@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 
 from fastcode.indexer import CodeElement
 from fastcode.retriever import HybridRetriever

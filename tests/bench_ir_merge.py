@@ -5,10 +5,11 @@ Run: pytest tests/bench_ir_merge.py -v --tb=short --benchmark-only
 """
 
 import pytest
+
 from fastcode.adapters.ast_to_ir import build_ir_from_ast
 from fastcode.adapters.scip_to_ir import build_ir_from_scip
-from fastcode.ir_merge import merge_ir
 from fastcode.indexer import CodeElement
+from fastcode.ir_merge import merge_ir
 
 
 def _make_code_elements(count: int) -> list:

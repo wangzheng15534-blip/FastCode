@@ -16,7 +16,7 @@ from .agent_tools import AgentTools
 from .core import iteration as _iteration
 from .core import parsing as _parsing
 from .core import prompts as _prompts
-from .core.types import IterationConfig
+from .schema.core_types import IterationConfig
 from .llm_utils import openai_chat_completion
 from .path_utils import PathUtils
 

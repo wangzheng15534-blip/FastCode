@@ -18,7 +18,7 @@ from .scoring import (
     trace_confidence_weight,
     weighted_keyword_affinity,
 )
-from .types import FusionConfig
+from fastcode.schema.core_types import FusionConfig
 
 # ---------------------------------------------------------------------------
 # Helpers

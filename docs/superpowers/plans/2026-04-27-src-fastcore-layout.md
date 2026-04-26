@@ -1,14 +1,111 @@
-# src/fastcore Layout Migration Implementation Plan
+# Cargo-Style Workspace Migration Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Extract the FP core into an independent `src/fastcore` package with schema/core/utils/effects separation, move tests to mirror src, add pytest-timeout + pytest-subprocess.
+**Goal:** Extract the FP core into a `fastcode-core` workspace member (Cargo-style monorepo), archive the original `fastcode/` to `_fastcode/`, restructure tests to mirror src inside each workspace member, add pytest-timeout + pytest-subprocess.
 
-**Architecture:** Move-and-rewrite-imports. Code from `fastcode/core/` and `fastcode/effects/` is copied to `src/fastcore/` with import path adjustments. Utility functions extracted by the copy-paste test. Original `fastcode/` delegation files get import path updates. Old `fastcode/core/` and `fastcode/effects/` directories are deleted.
+**Architecture:** Cargo-style uv workspace monorepo. Root `pyproject.toml` is the workspace root AND the `fastcode` app. `libs/core/` is a workspace member (`fastcode-core`) with schema/core/utils/effects separation. Tests live inside each workspace member, mirroring its `src/` layout. No `pkgutil.extend_path` — package names are different (`fastcode` vs `fastcode_core`), so no ambiguity.
 
-**Tech Stack:** Python 3.11+, uv workspace, pytest-timeout, pytest-subprocess
+**Tech Stack:** Python 3.11+, uv workspace, setuptools, pytest-timeout, pytest-subprocess
 
-**Constraint:** Do NOT run the full `tests/` suite. Only run `tests/fastcore/` to verify.
+**Constraint:** Do NOT run the full `tests/` suite during implementation. Only run `libs/core/tests/` to verify the extracted core.
+
+---
+
+## Cargo ↔ uv Workspace Analogy
+
+| Feature | Rust (Cargo) | Modern Python (uv) |
+|---------|-------------|-------------------|
+| Root Config | `Cargo.toml` (`[workspace]`) | `pyproject.toml` (`[tool.uv.workspace]`) |
+| Lockfile | Single `Cargo.lock` | Single `uv.lock` |
+| Package Config | `Cargo.toml` in every crate | `pyproject.toml` in every package |
+| Local Dep | `{ path = "../libs/core" }` | `dependencies = ["fastcode-core"]` (uv resolves locally) |
+
+## Final Directory Structure
+
+```
+pyproject.toml                    # Workspace root + fastcode app
+uv.lock                           # Single lockfile
+_fastcode/                        # Archived original (prefixed _ to exclude from Python)
+  core/                           # (original, kept for reference)
+  effects/                        # (original, kept for reference)
+  ...all original app files...
+fastcode/                         # NEW root app package (copied from _fastcode/ minus core/ + effects/)
+  __init__.py
+  main.py
+  retriever.py                    # imports from fastcode_core
+  iterative_agent.py              # imports from fastcode_core
+  ...all other app modules...
+nanobot/                          # Existing workspace member
+libs/
+  core/                           # Workspace member: fastcode-core
+    pyproject.toml                # name = "fastcode-core"
+    src/
+      fastcode_core/
+        __init__.py
+        schema/
+          __init__.py
+          core_types.py           # Hit, FusionConfig, IterationState, etc.
+          ir.py                   # IRSnapshot, IRSymbol, IREdge, etc.
+        core/
+          __init__.py
+          scoring.py
+          fusion.py
+          filtering.py
+          combination.py
+          iteration.py
+          prompts.py
+          context.py
+          summary.py
+          graph_build.py
+          snapshot.py
+          repo_analysis.py
+          scip_transform.py
+          boundary.py
+        utils/
+          __init__.py
+          json.py                 # safe_jsonable + LLM JSON parsing
+          hashing.py              # projection_params_hash, deterministic_event_id
+          paths.py                # get_language_from_extension, projection_scope_key
+        effects/
+          __init__.py
+          db.py
+          llm.py
+          fs.py
+    tests/                        # Tests mirror src/ inside the workspace member
+      __init__.py
+      schema/
+        __init__.py
+        test_core_types.py
+        test_ir.py
+      core/
+        __init__.py
+        test_scoring.py
+        test_fusion.py
+        test_filtering.py
+        test_combination.py
+        test_iteration.py
+        test_prompts.py
+        test_context.py
+        test_summary.py
+        test_graph_build.py
+        test_snapshot.py
+        test_repo_analysis.py
+        test_scip_transform.py
+        test_boundary.py
+      utils/
+        __init__.py
+        test_json.py
+        test_hashing.py
+        test_paths.py
+      effects/
+        __init__.py
+        test_db.py
+        test_llm.py
+        test_fs.py
+tests/                            # Root-level tests (original app tests, unchanged)
+  ...
+```
 
 ---
 
@@ -18,99 +115,183 @@
 
 | File | Source | Responsibility |
 |------|--------|---------------|
-| `src/fastcore/__init__.py` | new | Package root |
-| `src/fastcore/pyproject.toml` | new | Package metadata |
-| `src/fastcore/schema/__init__.py` | new | Re-exports all types |
-| `src/fastcore/schema/core_types.py` | copy from `fastcode/core/types.py` | Frozen dataclasses (Hit, FusionConfig, etc.) |
-| `src/fastcore/schema/ir.py` | copy from `fastcode/semantic_ir.py` | IR dataclasses (IRSnapshot, IRSymbol, etc.) |
-| `src/fastcore/core/__init__.py` | copy from `fastcode/core/__init__.py` | Package marker |
-| `src/fastcore/core/scoring.py` | copy from `fastcode/core/scoring.py` | Scoring functions |
-| `src/fastcore/core/fusion.py` | copy from `fastcode/core/fusion.py` | Fusion functions |
-| `src/fastcore/core/filtering.py` | copy from `fastcode/core/filtering.py` | Filtering functions |
-| `src/fastcore/core/combination.py` | copy from `fastcode/core/combination.py` | Combination functions |
-| `src/fastcore/core/iteration.py` | copy from `fastcode/core/iteration.py` | Iteration functions |
-| `src/fastcore/core/prompts.py` | copy from `fastcode/core/prompts.py` | Prompt formatting |
-| `src/fastcore/core/context.py` | copy from `fastcode/core/context.py` | Context preparation |
-| `src/fastcore/core/summary.py` | copy from `fastcode/core/summary.py` | Summary generation |
-| `src/fastcore/core/graph_build.py` | copy from `fastcode/core/graph_build.py` | Graph payload building |
-| `src/fastcore/core/snapshot.py` | copy from `fastcode/core/snapshot.py` | Source extraction (utils functions removed) |
-| `src/fastcore/core/repo_analysis.py` | copy from `fastcode/core/repo_analysis.py` | Repo analysis (utils functions removed) |
-| `src/fastcore/core/scip_transform.py` | copy from `fastcode/core/scip_transform.py` | SCIP transforms |
-| `src/fastcore/core/boundary.py` | copy from `fastcode/core/boundary.py` | Explicit translation |
-| `src/fastcore/utils/__init__.py` | new | Package marker |
-| `src/fastcore/utils/json.py` | extract from `fastcode/core/parsing.py` + `fastcode/utils.py` | JSON utilities + safe_jsonable |
-| `src/fastcore/utils/hashing.py` | extract from `fastcode/core/snapshot.py` + `fastcode/core/graph_build.py` | Hashing utilities |
-| `src/fastcore/utils/paths.py` | extract from `fastcode/core/snapshot.py` + `fastcode/core/repo_analysis.py` | Path/language utilities |
-| `src/fastcore/effects/__init__.py` | copy from `fastcode/effects/__init__.py` | Package marker |
-| `src/fastcore/effects/db.py` | copy from `fastcode/effects/db.py` | DB effects |
-| `src/fastcore/effects/llm.py` | copy from `fastcode/effects/llm.py` | LLM effects |
-| `src/fastcore/effects/fs.py` | copy from `fastcode/effects/fs.py` | FS effects |
-| `tests/fastcore/__init__.py` | new | Test package marker |
-| `tests/fastcore/test_schema_types.py` | copy from `tests/test_core_types.py` | Core types tests |
-| `tests/fastcore/test_schema_ir.py` | new | IR types tests |
-| `tests/fastcore/test_core_scoring.py` | copy from `tests/test_core_scoring.py` | Scoring tests |
-| `tests/fastcore/test_core_fusion.py` | copy from `tests/test_core_fusion.py` | Fusion tests |
-| `tests/fastcore/test_core_boundary.py` | copy from `tests/test_core_boundary.py` | Boundary tests |
-| `tests/fastcore/test_core_filtering.py` | copy from `tests/test_core_filtering.py` | Filtering tests |
-| `tests/fastcore/test_core_combination.py` | copy from `tests/test_core_combination.py` | Combination tests |
-| `tests/fastcore/test_core_iteration.py` | copy from `tests/test_core_iteration.py` | Iteration tests |
-| `tests/fastcore/test_core_prompts.py` | copy from `tests/test_core_prompts.py` | Prompts tests |
-| `tests/fastcore/test_core_context.py` | copy from `tests/test_core_context.py` | Context tests |
-| `tests/fastcore/test_core_summary.py` | copy from `tests/test_core_summary.py` | Summary tests |
-| `tests/fastcore/test_core_graph_build.py` | copy from `tests/test_core_graph_build.py` | Graph build tests |
-| `tests/fastcore/test_core_snapshot.py` | copy from `tests/test_core_snapshot.py` | Snapshot tests |
-| `tests/fastcore/test_core_repo_analysis.py` | copy from `tests/test_core_repo_analysis.py` | Repo analysis tests |
-| `tests/fastcore/test_core_scip_transform.py` | copy from `tests/test_core_scip_transform.py` | SCIP transform tests |
-| `tests/fastcore/test_utils_json.py` | copy from `tests/test_core_parsing.py` | JSON utils tests |
-| `tests/fastcore/test_utils_hashing.py` | new | Hashing utils tests |
-| `tests/fastcore/test_utils_paths.py` | extract from `tests/test_core_snapshot.py` + `tests/test_core_repo_analysis.py` | Path utils tests |
-| `tests/fastcore/test_effects_db.py` | copy from `tests/test_effects_db.py` | DB effects tests |
-| `tests/fastcore/test_effects_llm.py` | copy from `tests/test_effects_llm.py` | LLM effects tests |
-| `tests/fastcore/test_effects_fs.py` | copy from `tests/test_effects_fs.py` | FS effects tests |
+| `libs/core/pyproject.toml` | new | Workspace member package config |
+| `libs/core/src/fastcode_core/__init__.py` | new | Package root |
+| `libs/core/src/fastcode_core/schema/__init__.py` | new | Re-exports all types |
+| `libs/core/src/fastcode_core/schema/core_types.py` | copy from `fastcode/core/types.py` | Frozen dataclasses |
+| `libs/core/src/fastcode_core/schema/ir.py` | copy from `fastcode/semantic_ir.py` | IR dataclasses |
+| `libs/core/src/fastcode_core/core/__init__.py` | new | Package marker |
+| `libs/core/src/fastcode_core/core/scoring.py` | copy from `fastcode/core/scoring.py` | Scoring functions |
+| `libs/core/src/fastcode_core/core/fusion.py` | copy from `fastcode/core/fusion.py` | Fusion functions |
+| `libs/core/src/fastcode_core/core/filtering.py` | copy from `fastcode/core/filtering.py` | Filtering functions |
+| `libs/core/src/fastcode_core/core/combination.py` | copy from `fastcode/core/combination.py` | Combination functions |
+| `libs/core/src/fastcode_core/core/iteration.py` | copy from `fastcode/core/iteration.py` | Iteration functions |
+| `libs/core/src/fastcode_core/core/prompts.py` | copy from `fastcode/core/prompts.py` | Prompt formatting |
+| `libs/core/src/fastcode_core/core/context.py` | copy from `fastcode/core/context.py` | Context preparation |
+| `libs/core/src/fastcode_core/core/summary.py` | copy from `fastcode/core/summary.py` | Summary generation |
+| `libs/core/src/fastcode_core/core/graph_build.py` | copy from `fastcode/core/graph_build.py` | Graph payload building |
+| `libs/core/src/fastcode_core/core/snapshot.py` | copy from `fastcode/core/snapshot.py` | Snapshot logic (utils fns removed) |
+| `libs/core/src/fastcode_core/core/repo_analysis.py` | copy from `fastcode/core/repo_analysis.py` | Repo analysis (utils fns removed) |
+| `libs/core/src/fastcode_core/core/scip_transform.py` | copy from `fastcode/core/scip_transform.py` | SCIP transforms |
+| `libs/core/src/fastcode_core/core/boundary.py` | copy from `fastcode/core/boundary.py` | Explicit translation |
+| `libs/core/src/fastcode_core/utils/__init__.py` | new | Re-exports all utils |
+| `libs/core/src/fastcode_core/utils/json.py` | extract from `fastcode/core/parsing.py` + `fastcode/utils.py` | JSON utilities |
+| `libs/core/src/fastcode_core/utils/hashing.py` | extract from `fastcode/core/snapshot.py` + `fastcode/core/graph_build.py` | Hashing utilities |
+| `libs/core/src/fastcode_core/utils/paths.py` | extract from `fastcode/core/snapshot.py` + `fastcode/core/repo_analysis.py` | Path utilities |
+| `libs/core/src/fastcode_core/effects/__init__.py` | new | Package marker |
+| `libs/core/src/fastcode_core/effects/db.py` | copy from `fastcode/effects/db.py` | DB effects |
+| `libs/core/src/fastcode_core/effects/llm.py` | copy from `fastcode/effects/llm.py` | LLM effects |
+| `libs/core/src/fastcode_core/effects/fs.py` | copy from `fastcode/effects/fs.py` | FS effects |
+| `libs/core/tests/**` (21 test files) | copy from `tests/test_core_*.py` + `tests/test_effects_*.py` | Tests mirroring src |
 
 ### Existing files to modify
 
 | File | Change |
 |------|--------|
-| `pyproject.toml` | Add workspace member, add fastcore dependency, add pytest-timeout/subprocess, add timeout config |
-| `fastcode/retriever.py` | Update imports: `fastcode.core.*` → `fastcore.*` |
-| `fastcode/iterative_agent.py` | Update imports: `fastcode.core.*` → `fastcore.*` |
-| `fastcode/answer_generator.py` | Update imports: `fastcode.core.*` → `fastcore.*` |
-| `fastcode/terminus_publisher.py` | Update imports: `fastcode.core.*` → `fastcore.*` |
-| `fastcode/main.py` | Update imports: `fastcode.core.*` → `fastcore.*` |
-| `fastcode/repo_overview.py` | Update imports: `fastcode.core.*` → `fastcore.*` |
-| `fastcode/scip_loader.py` | Update imports: `fastcode.core.*` → `fastcore.*` |
+| `pyproject.toml` | Add workspace member, add fastcode-core dependency, add pytest plugins, add timeout config |
+| `fastcode/retriever.py` | Update imports: `from .core.*` → `from fastcode_core.*` |
+| `fastcode/iterative_agent.py` | Update imports: `from .core.*` → `from fastcode_core.*` |
+| `fastcode/answer_generator.py` | Update imports: `from .core.*` → `from fastcode_core.*` |
+| `fastcode/terminus_publisher.py` | Update imports: `from .core.*` → `from fastcode_core.*` |
+| `fastcode/main.py` | Update imports: `from .core.*` → `from fastcode_core.*` |
+| `fastcode/repo_overview.py` | Update imports: `from .core.*` → `from fastcode_core.*` |
+| `fastcode/scip_loader.py` | Update imports: `from fastcode.core.*` → `from fastcode_core.*` |
 
-### Files/directories to delete after migration
+### Import Mapping
 
-| Path | Reason |
-|------|--------|
-| `fastcode/core/` | Moved to `src/fastcore/core/` |
-| `fastcode/effects/` | Moved to `src/fastcore/effects/` |
-| `tests/test_core_*.py` (15 files) | Moved to `tests/fastcore/` |
-| `tests/test_effects_*.py` (3 files) | Moved to `tests/fastcore/` |
+| Old import | New import |
+|------------|------------|
+| `from fastcode.core.types import Hit` | `from fastcode_core.schema.core_types import Hit` |
+| `from fastcode.core.types import FusionConfig` | `from fastcode_core.schema.core_types import FusionConfig` |
+| `from fastcode.core.types import IterationConfig` | `from fastcode_core.schema.core_types import IterationConfig` |
+| `from fastcode.core.types import SnapshotRecord` | `from fastcode_core.schema.core_types import SnapshotRecord` |
+| `from .core.scoring import ...` | `from fastcode_core.core.scoring import ...` |
+| `from .core.fusion import ...` | `from fastcode_core.core.fusion import ...` |
+| `from .core.filtering import ...` | `from fastcode_core.core.filtering import ...` |
+| `from .core.combination import ...` | `from fastcode_core.core.combination import ...` |
+| `from .core.iteration import ...` | `from fastcode_core.core.iteration import ...` |
+| `from .core.prompts import ...` | `from fastcode_core.core.prompts import ...` |
+| `from .core.context import ...` | `from fastcode_core.core.context import ...` |
+| `from .core.summary import ...` | `from fastcode_core.core.summary import ...` |
+| `from .core.graph_build import ...` | `from fastcode_core.core.graph_build import ...` |
+| `from .core.snapshot import ...` | `from fastcode_core.core.snapshot import ...` |
+| `from .core.repo_analysis import ...` | `from fastcode_core.core.repo_analysis import ...` |
+| `from .core.scip_transform import ...` | `from fastcode_core.core.scip_transform import ...` |
+| `from .core.boundary import ...` | `from fastcode_core.core.boundary import ...` |
+| `from .core.parsing import ...` | `from fastcode_core.utils.json import ...` |
+| `from ..semantic_ir import _resolution_to_confidence` | `from fastcode_core.schema.ir import _resolution_to_confidence` |
+| `from fastcode.core import scip_transform` | `from fastcode_core.core import scip_transform` |
+| `from .effects.db import ...` | `from fastcode_core.effects.db import ...` |
 
 ---
 
-## Task 1: Package Scaffolding & Workspace Config
+## Task 1: Archive Original & Scaffold Workspace
 
 **Files:**
-- Create: `src/fastcore/pyproject.toml`
-- Create: `src/fastcore/__init__.py`
-- Create: `src/fastcore/schema/__init__.py`
-- Create: `src/fastcore/core/__init__.py`
-- Create: `src/fastcore/utils/__init__.py`
-- Create: `src/fastcore/effects/__init__.py`
-- Create: `tests/fastcore/__init__.py`
+- Create: `libs/core/pyproject.toml`
+- Create: `libs/core/src/fastcode_core/__init__.py`
+- Create: `libs/core/src/fastcode_core/schema/__init__.py`
+- Create: `libs/core/src/fastcode_core/core/__init__.py`
+- Create: `libs/core/src/fastcode_core/utils/__init__.py`
+- Create: `libs/core/src/fastcode_core/effects/__init__.py`
 - Modify: `pyproject.toml`
 
-- [ ] **Step 1: Create directory structure**
+- [ ] **Step 1: Archive original `fastcode/` as `_fastcode/`**
 
 ```bash
-mkdir -p src/fastcore/schema src/fastcore/core src/fastcore/utils src/fastcore/effects tests/fastcore
+git mv fastcode/ _fastcode/
 ```
 
-- [ ] **Step 2: Create `src/fastcore/pyproject.toml`**
+This renames the directory with the `_` prefix. Python and setuptools ignore directories starting with `_`, eliminating ambiguity.
+
+- [ ] **Step 2: Create new root `fastcode/` with app-level files only**
+
+Copy all files from `_fastcode/` to `fastcode/` EXCEPT `core/` and `effects/` subdirectories:
+
+```bash
+mkdir -p fastcode
+# Copy all root-level .py files (excluding __init__.py which we'll write fresh)
+for f in _fastcode/*.py; do
+  cp "$f" "fastcode/$(basename "$f")"
+done
+```
+
+Then create `fastcode/__init__.py` (copy verbatim from `_fastcode/__init__.py`):
+
+```python
+"""
+FastCode 2.0 - Repository-Level Code Understanding System
+With Multi-Repository Support
+"""
+
+import os
+import platform
+
+if platform.system() == 'Darwin':
+    os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+    os.environ['OMP_NUM_THREADS'] = '1'
+    os.environ['OPENBLAS_NUM_THREADS'] = '1'
+    os.environ['MKL_NUM_THREADS'] = '1'
+
+from .main import FastCode
+from .loader import RepositoryLoader
+from .parser import CodeParser
+from .indexer import CodeIndexer
+from .retriever import HybridRetriever
+from .answer_generator import AnswerGenerator
+from .repo_overview import RepositoryOverviewGenerator
+from .repo_selector import RepositorySelector
+from .iterative_agent import IterativeAgent
+from .agent_tools import AgentTools
+from .semantic_ir import (
+    IRCodeUnit,
+    IRDocument,
+    IREdge,
+    IRRelation,
+    IRSnapshot,
+    IRSymbol,
+    IRUnitEmbedding,
+    IRUnitSupport,
+    IROccurrence,
+)
+
+__version__ = "2.0.0"
+FastCode = FastCode
+
+__all__ = [
+    "FastCode",
+    "FastCode",
+    "RepositoryLoader",
+    "CodeParser",
+    "CodeIndexer",
+    "HybridRetriever",
+    "AnswerGenerator",
+    "RepositoryOverviewGenerator",
+    "RepositorySelector",
+    "IterativeAgent",
+    "AgentTools",
+    "IRSnapshot",
+    "IRCodeUnit",
+    "IRUnitSupport",
+    "IRRelation",
+    "IRUnitEmbedding",
+    "IRDocument",
+    "IRSymbol",
+    "IROccurrence",
+    "IREdge",
+]
+```
+
+Note: The imports in `retriever.py`, `iterative_agent.py`, etc. still reference `from .core import ...` — these will be updated in Task 8.
+
+- [ ] **Step 3: Create workspace member directory structure**
+
+```bash
+mkdir -p libs/core/src/fastcode_core/{schema,core,utils,effects}
+mkdir -p libs/core/tests/{schema,core,utils,effects}
+```
+
+- [ ] **Step 4: Create `libs/core/pyproject.toml`**
 
 ```toml
 [build-system]
@@ -118,71 +299,91 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fastcore"
+name = "fastcode-core"
 version = "0.1.0"
 description = "Pure functional core for code intelligence"
 requires-python = ">=3.11"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["fastcore*"]
+where = ["src"]
+include = ["fastcode_core*"]
 ```
 
-- [ ] **Step 3: Create package `__init__.py` files**
+- [ ] **Step 5: Create package `__init__.py` files**
 
-`src/fastcore/__init__.py`:
+`libs/core/src/fastcode_core/__init__.py`:
 ```python
-"""fastcore — pure functional core for code intelligence."""
+"""fastcode_core — pure functional core for code intelligence."""
 ```
 
-`src/fastcore/schema/__init__.py`:
+`libs/core/src/fastcode_core/schema/__init__.py`:
 ```python
 """Schema — all frozen dataclasses and IR types."""
 ```
 
-`src/fastcore/core/__init__.py`:
+`libs/core/src/fastcode_core/core/__init__.py`:
 ```python
 """Core — domain-specific pure functions."""
 ```
 
-`src/fastcore/utils/__init__.py`:
+`libs/core/src/fastcode_core/utils/__init__.py`:
 ```python
 """Utils — domain-independent utilities (copy-paste test)."""
 ```
 
-`src/fastcore/effects/__init__.py`:
+`libs/core/src/fastcode_core/effects/__init__.py`:
 ```python
 """Effects — thin I/O boundary."""
 ```
 
-`tests/fastcore/__init__.py`:
+`libs/core/tests/__init__.py`:
 ```python
 ```
 
-- [ ] **Step 4: Update root `pyproject.toml`**
-
-In `[tool.uv.workspace]`, add `src/fastcore`:
-```toml
-[tool.uv.workspace]
-members = ["nanobot", "src/fastcore"]
+`libs/core/tests/schema/__init__.py`:
+```python
 ```
 
-In `[tool.uv.sources]`, add fastcore:
+`libs/core/tests/core/__init__.py`:
+```python
+```
+
+`libs/core/tests/utils/__init__.py`:
+```python
+```
+
+`libs/core/tests/effects/__init__.py`:
+```python
+```
+
+- [ ] **Step 6: Update root `pyproject.toml`**
+
+Add `libs/core` to workspace members:
+
+```toml
+[tool.uv.workspace]
+members = ["nanobot", "libs/core"]
+```
+
+Add workspace source for fastcode-core:
+
 ```toml
 [tool.uv.sources]
 nanobot-ai = { workspace = true }
-fastcore = { workspace = true }
+fastcode-core = { workspace = true }
 ```
 
-In `dependencies`, add fastcore:
+Add `fastcode-core` to dependencies:
+
 ```toml
 dependencies = [
     # ... existing entries ...
-    "fastcore",
+    "fastcode-core",
 ]
 ```
 
-In `[project.optional-dependencies]` dev, add pytest plugins:
+Add pytest plugins to dev deps:
+
 ```toml
 [project.optional-dependencies]
 dev = [
@@ -192,7 +393,8 @@ dev = [
 ]
 ```
 
-In `[tool.pytest.ini_options]`, add timeout config:
+Add timeout config to pytest:
+
 ```toml
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -202,20 +404,32 @@ timeout = 30
 timeout_method = "thread"
 ```
 
-- [ ] **Step 5: Run `uv sync` and verify workspace**
+Keep existing `[tool.setuptools.packages.find]` — it finds root `fastcode/` (the app):
+```toml
+[tool.setuptools.packages.find]
+include = ["fastcode*"]
+```
+
+- [ ] **Step 7: Run `uv sync` and verify workspace**
 
 ```bash
 uv sync
-uv run python -c "import fastcore; print(fastcore.__file__)"
+uv run python -c "import fastcode_core; print(fastcode_core.__file__)"
 ```
 
-Expected: prints path to `src/fastcore/__init__.py`
+Expected: prints path to `libs/core/src/fastcode_core/__init__.py`
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/fastcore/ tests/fastcore/ pyproject.toml uv.lock
-git commit -m "chore: scaffold src/fastcore package and workspace config"
+git add _fastcode/ fastcode/ libs/core/ pyproject.toml uv.lock
+git commit -m "chore: archive fastcode/ to _fastcode/, scaffold libs/core workspace member
+
+- Rename fastcode/ to _fastcode/ (archive original)
+- Create new fastcode/ with app-level files only
+- Add libs/core/ workspace member (fastcode-core)
+- Add pytest-timeout and pytest-subprocess to dev deps
+- Add Cargo-style workspace config to root pyproject.toml"
 ```
 
 ---
@@ -223,23 +437,23 @@ git commit -m "chore: scaffold src/fastcore package and workspace config"
 ## Task 2: Schema — Core Types
 
 **Files:**
-- Create: `src/fastcore/schema/core_types.py`
-- Modify: `src/fastcore/schema/__init__.py`
+- Create: `libs/core/src/fastcode_core/schema/core_types.py`
+- Modify: `libs/core/src/fastcode_core/schema/__init__.py`
 
-- [ ] **Step 1: Copy `fastcode/core/types.py` to `src/fastcore/schema/core_types.py`**
+- [ ] **Step 1: Copy `_fastcode/core/types.py` to `libs/core/src/fastcode_core/schema/core_types.py`**
 
 ```bash
-cp fastcode/core/types.py src/fastcore/schema/core_types.py
+cp _fastcode/core/types.py libs/core/src/fastcode_core/schema/core_types.py
 ```
 
-No changes needed — the file has no relative imports that need updating (it only imports from `dataclasses` and `typing`).
+No changes needed — the file only imports from `dataclasses` and `typing` (stdlib).
 
-- [ ] **Step 2: Update `src/fastcore/schema/__init__.py` with re-exports**
+- [ ] **Step 2: Update `libs/core/src/fastcode_core/schema/__init__.py` with re-exports**
 
 ```python
 """Schema — all frozen dataclasses and IR types."""
 
-from fastcore.schema.core_types import (
+from fastcode_core.schema.core_types import (
     ElementFilter,
     FileAnalysis,
     FusionConfig,
@@ -287,16 +501,16 @@ __all__ = [
 - [ ] **Step 3: Verify import works**
 
 ```bash
-uv run python -c "from fastcore.schema.core_types import Hit; print(Hit)"
+uv run python -c "from fastcode_core.schema.core_types import Hit; print(Hit)"
 ```
 
-Expected: `<class 'fastcore.schema.core_types.Hit'>`
+Expected: `<class 'fastcode_core.schema.core_types.Hit'>`
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/fastcore/schema/
-git commit -m "feat: add schema/core_types.py — frozen dataclasses"
+git add libs/core/src/fastcode_core/schema/
+git commit -m "feat: add fastcode-core schema/core_types.py — frozen dataclasses"
 ```
 
 ---
@@ -304,20 +518,19 @@ git commit -m "feat: add schema/core_types.py — frozen dataclasses"
 ## Task 3: Schema — IR Types
 
 **Files:**
-- Create: `src/fastcore/schema/ir.py`
-- Modify: `src/fastcore/schema/__init__.py`
+- Create: `libs/core/src/fastcode_core/schema/ir.py`
+- Modify: `libs/core/src/fastcode_core/schema/__init__.py`
 
-- [ ] **Step 1: Create `src/fastcore/schema/ir.py`**
+- [ ] **Step 1: Create `libs/core/src/fastcode_core/schema/ir.py`**
 
-Read `fastcode/semantic_ir.py` and copy the following items. Adjust the import: replace `from .utils import safe_jsonable` with `from fastcore.utils.json import safe_jsonable` (will be created in Task 4).
+Read `_fastcode/semantic_ir.py` and copy the following items. Adjust the import: replace `from .utils import safe_jsonable` with `from fastcode_core.utils.json import safe_jsonable` (will be created in Task 4).
 
-Items to copy verbatim:
-- Constants: `_MAX_SAFE_JSONABLE_DEPTH` is not here — it's in utils.py. The `safe_jsonable` function will be in `fastcore/utils/json.py`.
+Items to copy verbatim from `_fastcode/semantic_ir.py`:
 - Helper functions: `_sorted_set`, `_normalize_set`, `_resolution_to_confidence`, `_confidence_to_resolution`, `_unit_kind_to_symbol_kind`, `_symbol_kind_to_unit_kind`
 - Dataclasses: `IRDocument`, `IRSymbol`, `IROccurrence`, `IREdge`, `IRAttachment`
 - The `IRSnapshot` class with its properties and methods
 
-Top of file should be:
+Top of file:
 ```python
 """Canonical IR dataclasses — extracted from fastcode.semantic_ir."""
 
@@ -326,16 +539,16 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from fastcore.utils.json import safe_jsonable
+from fastcode_core.utils.json import safe_jsonable
 ```
 
-Do NOT copy: `IRCodeUnit`, `IRUnitSupport`, `IRRelation`, `IRUnitEmbedding` — these are advanced types not used by the core modules. They stay in `fastcode.semantic_ir` for now.
+Do NOT copy: `IRCodeUnit`, `IRUnitSupport`, `IRRelation`, `IRUnitEmbedding` — these are advanced types not used by the core modules. They stay in root `fastcode/semantic_ir.py`.
 
-- [ ] **Step 2: Update `src/fastcore/schema/__init__.py` — add IR re-exports**
+- [ ] **Step 2: Update `libs/core/src/fastcode_core/schema/__init__.py` — add IR re-exports**
 
 Append to the existing file:
 ```python
-from fastcore.schema.ir import (
+from fastcode_core.schema.ir import (
     IRAttachment,
     IRDocument,
     IREdge,
@@ -356,8 +569,10 @@ __all__ += [
 
 - [ ] **Step 3: Verify import works**
 
+Note: This will fail until Task 4 creates `fastcode_core.utils.json`. Verify after Task 4.
+
 ```bash
-uv run python -c "from fastcore.schema.ir import IRSnapshot, IRSymbol; print(IRSnapshot, IRSymbol)"
+uv run python -c "from fastcode_core.schema.ir import IRSnapshot, IRSymbol; print(IRSnapshot, IRSymbol)"
 ```
 
 Expected: both classes print without error
@@ -365,8 +580,8 @@ Expected: both classes print without error
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/fastcore/schema/ir.py src/fastcore/schema/__init__.py
-git commit -m "feat: add schema/ir.py — canonical IR dataclasses"
+git add libs/core/src/fastcode_core/schema/ir.py libs/core/src/fastcode_core/schema/__init__.py
+git commit -m "feat: add fastcode-core schema/ir.py — canonical IR dataclasses"
 ```
 
 ---
@@ -374,14 +589,14 @@ git commit -m "feat: add schema/ir.py — canonical IR dataclasses"
 ## Task 4: Utils Extraction
 
 **Files:**
-- Create: `src/fastcore/utils/json.py`
-- Create: `src/fastcore/utils/hashing.py`
-- Create: `src/fastcore/utils/paths.py`
-- Modify: `src/fastcore/utils/__init__.py`
+- Create: `libs/core/src/fastcode_core/utils/json.py`
+- Create: `libs/core/src/fastcode_core/utils/hashing.py`
+- Create: `libs/core/src/fastcode_core/utils/paths.py`
+- Modify: `libs/core/src/fastcode_core/utils/__init__.py`
 
-- [ ] **Step 1: Create `src/fastcore/utils/json.py`**
+- [ ] **Step 1: Create `libs/core/src/fastcode_core/utils/json.py`**
 
-Copy `safe_jsonable` from `fastcode/utils.py` (lines 288-323) and all four parsing functions from `fastcode/core/parsing.py`:
+Copy `safe_jsonable` from `_fastcode/utils.py` (lines 288-323) and all four parsing functions from `_fastcode/core/parsing.py`:
 
 ```python
 """Domain-independent JSON utilities."""
@@ -425,17 +640,33 @@ def safe_jsonable(obj: Any, *, _depth: int = 0) -> Any:
     return repr(obj)
 
 
-# Copy all four function bodies verbatim from fastcode/core/parsing.py:
-#   extract_json_from_response, sanitize_json_string,
-#   remove_json_comments, robust_json_parse
-# These functions have no external dependencies beyond stdlib (ast, json, re).
+def extract_json_from_response(response: str) -> str:
+    """Extract JSON string from LLM response, handling markdown blocks and reasoning text."""
+    # Copy verbatim from _fastcode/core/parsing.py
+    ...
+
+
+def sanitize_json_string(json_str: str) -> str:
+    """Sanitize JSON string to fix common issues from small models."""
+    # Copy verbatim from _fastcode/core/parsing.py
+    ...
+
+
+def remove_json_comments(json_str: str) -> str:
+    """Remove inline comments from JSON string (# or // style)."""
+    # Copy verbatim from _fastcode/core/parsing.py
+    ...
+
+
+def robust_json_parse(json_str: str) -> Any:
+    """Robustly parse JSON with multiple fallback strategies."""
+    # Copy verbatim from _fastcode/core/parsing.py
+    ...
 ```
 
-Copy the function bodies verbatim from `fastcode/core/parsing.py`. The functions have no external dependencies beyond `ast`, `json`, `re`, and `typing` — all stdlib.
+Copy the four function bodies verbatim from `_fastcode/core/parsing.py`. They have no external dependencies beyond `ast`, `json`, `re`, and `typing` — all stdlib.
 
-- [ ] **Step 2: Create `src/fastcore/utils/hashing.py`**
-
-Copy `projection_params_hash` from `fastcode/core/snapshot.py` and `deterministic_event_id` from `fastcode/core/graph_build.py`:
+- [ ] **Step 2: Create `libs/core/src/fastcode_core/utils/hashing.py`**
 
 ```python
 """Domain-independent hashing utilities."""
@@ -463,9 +694,9 @@ def deterministic_event_id(snapshot_id: str, payload: str) -> str:
     return f"outbox:{snapshot_id}:{h}"
 ```
 
-- [ ] **Step 3: Create `src/fastcore/utils/paths.py`**
+- [ ] **Step 3: Create `libs/core/src/fastcode_core/utils/paths.py`**
 
-Copy `get_language_from_extension` from `fastcode/core/repo_analysis.py` and `projection_scope_key` from `fastcode/core/snapshot.py`:
+Copy `get_language_from_extension` from `_fastcode/core/repo_analysis.py` and `projection_scope_key` from `_fastcode/core/snapshot.py`:
 
 ```python
 """Domain-independent path and extension utilities."""
@@ -477,8 +708,24 @@ import json
 from typing import Any
 
 
-# Copy get_language_from_extension function body verbatim from
-# fastcode/core/repo_analysis.py (pure extension lookup table, no dependencies)
+def get_language_from_extension(ext: str) -> str:
+    """Get programming language from extension."""
+    language_map = {
+        ".py": "python",
+        ".js": "javascript",
+        ".ts": "typescript",
+        ".jsx": "javascript",
+        ".tsx": "typescript",
+        ".java": "java",
+        ".go": "go",
+        ".cpp": "cpp",
+        ".c": "c",
+        ".rs": "rust",
+        ".rb": "ruby",
+        ".php": "php",
+        ".cs": "csharp",
+    }
+    return language_map.get(ext.lower(), "unknown")
 
 
 def projection_scope_key(
@@ -500,19 +747,19 @@ def projection_scope_key(
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:24]
 ```
 
-- [ ] **Step 4: Update `src/fastcore/utils/__init__.py`**
+- [ ] **Step 4: Update `libs/core/src/fastcode_core/utils/__init__.py`**
 
 ```python
 """Utils — domain-independent utilities (copy-paste test)."""
 
-from fastcore.utils.json import (
+from fastcode_core.utils.json import (
     extract_json_from_response,
     robust_json_parse,
     safe_jsonable,
     sanitize_json_string,
 )
-from fastcore.utils.hashing import deterministic_event_id, projection_params_hash
-from fastcore.utils.paths import get_language_from_extension, projection_scope_key
+from fastcode_core.utils.hashing import deterministic_event_id, projection_params_hash
+from fastcode_core.utils.paths import get_language_from_extension, projection_scope_key
 
 __all__ = [
     "deterministic_event_id",
@@ -526,19 +773,20 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 5: Verify imports work**
+- [ ] **Step 5: Verify all imports work**
 
 ```bash
-uv run python -c "from fastcore.utils.json import safe_jsonable; from fastcore.utils.hashing import deterministic_event_id; from fastcore.utils.paths import get_language_from_extension; print('OK')"
+uv run python -c "from fastcode_core.utils.json import safe_jsonable; from fastcode_core.utils.hashing import deterministic_event_id; from fastcode_core.utils.paths import get_language_from_extension; print('OK')"
+uv run python -c "from fastcode_core.schema.ir import IRSnapshot; print('IR OK')"
 ```
 
-Expected: `OK`
+Expected: `OK` and `IR OK`
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/fastcore/utils/
-git commit -m "feat: add utils/ — domain-independent json, hashing, paths utilities"
+git add libs/core/src/fastcode_core/utils/
+git commit -m "feat: add fastcode-core utils/ — domain-independent json, hashing, paths"
 ```
 
 ---
@@ -546,66 +794,71 @@ git commit -m "feat: add utils/ — domain-independent json, hashing, paths util
 ## Task 5: Core Modules Move
 
 **Files:**
-- Create: 14 files in `src/fastcode/core/` (copies with import adjustments)
+- Create: 14 files in `libs/core/src/fastcode_core/core/` (copies with import adjustments)
 
-- [ ] **Step 1: Copy all core modules**
+- [ ] **Step 1: Copy all core modules from `_fastcode/core/`**
 
 ```bash
 for f in scoring.py fusion.py filtering.py combination.py iteration.py \
          prompts.py context.py summary.py graph_build.py snapshot.py \
          repo_analysis.py scip_transform.py boundary.py; do
-    cp "fastcode/core/$f" "src/fastcore/core/$f"
+    cp "_fastcode/core/$f" "libs/core/src/fastcode_core/core/$f"
 done
 ```
 
+Note: `parsing.py` is NOT copied here — it was split into `utils/json.py` in Task 4.
+
 - [ ] **Step 2: Fix imports in each file**
 
-Every file that has relative imports like `from .types import ...` or `from .scoring import ...` needs adjustment. Here is the complete mapping:
+**`scoring.py`** — no changes (only stdlib imports)
 
-**`src/fastcore/core/scoring.py`** — no changes (only stdlib imports)
-
-**`src/fastcore/core/fusion.py`** — change:
+**`fusion.py`** — change:
 ```python
 # OLD:
-from .scoring import clone_result_row, normalized_query_entropy, normalized_totals, sigmoid, tokenize_signal, trace_confidence_weight, weighted_keyword_affinity
-from .types import FusionConfig
+from .scoring import (
+    clone_result_row, normalized_query_entropy, normalized_totals,
+    sigmoid, tokenize_signal, trace_confidence_weight, weighted_keyword_affinity,
+)
 # NEW:
-from fastcore.core.scoring import clone_result_row, normalized_query_entropy, normalized_totals, sigmoid, tokenize_signal, trace_confidence_weight, weighted_keyword_affinity
-from fastcore.schema.core_types import FusionConfig
+from fastcode_core.core.scoring import (
+    clone_result_row, normalized_query_entropy, normalized_totals,
+    sigmoid, tokenize_signal, trace_confidence_weight, weighted_keyword_affinity,
+)
 ```
 
-**`src/fastcore/core/filtering.py`** — no changes (only stdlib imports)
+**`filtering.py`** — no changes (only stdlib imports)
 
-**`src/fastcore/core/combination.py`** — no changes (only stdlib imports)
+**`combination.py`** — no changes (only stdlib imports)
 
-**`src/fastcore/core/iteration.py`** — change:
+**`iteration.py`** — change:
 ```python
 # OLD:
 from .types import IterationConfig
 # NEW:
-from fastcore.schema.core_types import IterationConfig
+from fastcode_core.schema.core_types import IterationConfig
 ```
 
-**`src/fastcore/core/prompts.py`** — no changes (only stdlib imports)
+**`prompts.py`** — no changes (only stdlib imports)
 
-**`src/fastcore/core/context.py`** — no changes (only stdlib imports)
+**`context.py`** — no changes (only stdlib imports)
 
-**`src/fastcore/core/summary.py`** — no changes (only stdlib imports)
+**`summary.py`** — no changes (only stdlib imports)
 
-**`src/fastcore/core/graph_build.py`** — change:
+**`graph_build.py`** — change:
 ```python
 # OLD:
 from ..semantic_ir import _resolution_to_confidence
 # NEW:
-from fastcore.schema.ir import _resolution_to_confidence
+from fastcode_core.schema.ir import _resolution_to_confidence
 ```
+Also remove `deterministic_event_id` from this file — it moved to `utils/hashing.py`. Replace any usage with `from fastcode_core.utils.hashing import deterministic_event_id`.
 
-**`src/fastcore/core/snapshot.py`** — this file needs splitting:
-- Remove `projection_scope_key` and `projection_params_hash` (moved to `fastcore/utils/`)
+**`snapshot.py`** — this file needs splitting:
+- Remove `projection_scope_key` (moved to `fastcode_core/utils/paths.py`)
+- Remove `projection_params_hash` (moved to `fastcode_core/utils/hashing.py`)
 - Keep `extract_sources_from_elements` (domain-specific)
-- Update any remaining imports
 
-New `src/fastcore/core/snapshot.py`:
+New `libs/core/src/fastcode_core/core/snapshot.py`:
 ```python
 """Pure snapshot logic — domain-specific parts."""
 
@@ -618,7 +871,6 @@ def extract_sources_from_elements(
     elements: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Extract source information from retrieved elements."""
-    # Copy verbatim from fastcode/core/snapshot.py
     sources: list[dict[str, Any]] = []
     for elem_data in elements:
         elem = elem_data.get("element", {})
@@ -635,42 +887,39 @@ def extract_sources_from_elements(
     return sources
 ```
 
-**`src/fastcore/core/repo_analysis.py`** — remove `get_language_from_extension` (moved to `fastcore/utils/paths.py`). Keep: `is_key_file`, `infer_project_type`, `generate_structure_based_overview`, `format_file_structure`.
-
-Change:
+**`repo_analysis.py`** — remove `get_language_from_extension` (moved to `fastcode_core/utils/paths.py`). Add import:
 ```python
-# Add at top:
-from fastcore.utils.paths import get_language_from_extension
-# Remove the get_language_from_extension function definition from this file
+from fastcode_core.utils.paths import get_language_from_extension
 ```
+Keep: `is_key_file`, `infer_project_type`, `generate_structure_based_overview`, `format_file_structure`.
 
-**`src/fastcore/core/scip_transform.py`** — no changes (no imports)
+**`scip_transform.py`** — no changes (no relative imports)
 
-**`src/fastcore/core/boundary.py`** — change:
+**`boundary.py`** — change:
 ```python
 # OLD:
 from fastcode.core.types import Hit
 # NEW:
-from fastcore.schema.core_types import Hit
+from fastcode_core.schema.core_types import Hit
 ```
 
 - [ ] **Step 3: Verify all core modules import cleanly**
 
 ```bash
 uv run python -c "
-from fastcore.core.scoring import sigmoid
-from fastcore.core.fusion import adaptive_fuse_channels
-from fastcore.core.filtering import apply_filters
-from fastcore.core.combination import combine_results
-from fastcore.core.iteration import should_continue_iteration
-from fastcore.core.prompts import format_elements_with_metadata
-from fastcore.core.context import prepare_context
-from fastcore.core.summary import generate_fallback_summary
-from fastcore.core.graph_build import build_code_graph_payload
-from fastcore.core.snapshot import extract_sources_from_elements
-from fastcore.core.repo_analysis import infer_project_type
-from fastcore.core.scip_transform import symbol_role_to_str
-from fastcore.core.boundary import hit_to_response
+from fastcode_core.core.scoring import sigmoid
+from fastcode_core.core.fusion import adaptive_fuse_channels
+from fastcode_core.core.filtering import apply_filters
+from fastcode_core.core.combination import combine_results
+from fastcode_core.core.iteration import should_continue_iteration
+from fastcode_core.core.prompts import format_elements_with_metadata
+from fastcode_core.core.context import prepare_context
+from fastcode_core.core.summary import generate_fallback_summary
+from fastcode_core.core.graph_build import build_code_graph_payload
+from fastcode_core.core.snapshot import extract_sources_from_elements
+from fastcode_core.core.repo_analysis import infer_project_type
+from fastcode_core.core.scip_transform import symbol_role_to_str
+from fastcode_core.core.boundary import hit_to_response
 print('All core modules OK')
 "
 ```
@@ -680,8 +929,8 @@ Expected: `All core modules OK`
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/fastcore/core/
-git commit -m "feat: move core modules to src/fastcore/core/ with adjusted imports"
+git add libs/core/src/fastcode_core/core/
+git commit -m "feat: move core modules to fastcode-core with adjusted imports"
 ```
 
 ---
@@ -689,41 +938,43 @@ git commit -m "feat: move core modules to src/fastcore/core/ with adjusted impor
 ## Task 6: Effects Modules Move
 
 **Files:**
-- Create: `src/fastcore/effects/db.py`, `src/fastcore/effects/llm.py`, `src/fastcore/effects/fs.py`
+- Create: `libs/core/src/fastcode_core/effects/db.py`, `llm.py`, `fs.py`
 
 - [ ] **Step 1: Copy effects modules**
 
 ```bash
-cp fastcode/effects/db.py src/fastcore/effects/db.py
-cp fastcode/effects/llm.py src/fastcore/effects/llm.py
-cp fastcode/effects/fs.py src/fastcore/effects/fs.py
+cp _fastcode/effects/db.py libs/core/src/fastcode_core/effects/db.py
+cp _fastcode/effects/llm.py libs/core/src/fastcode_core/effects/llm.py
+cp _fastcode/effects/fs.py libs/core/src/fastcode_core/effects/fs.py
 ```
 
 - [ ] **Step 2: Fix imports**
 
-**`src/fastcore/effects/db.py`** — change:
+**`db.py`** — change:
 ```python
 # OLD:
 from fastcode.core.types import SnapshotRecord
 # NEW:
-from fastcore.schema.core_types import SnapshotRecord
+from fastcode_core.schema.core_types import SnapshotRecord
 ```
 
-**`src/fastcore/effects/llm.py`** — no changes
+**`llm.py`** — no changes
 
-**`src/fastcore/effects/fs.py`** — no changes
+**`fs.py`** — no changes
 
 - [ ] **Step 3: Verify imports**
 
 ```bash
-uv run python -c "from fastcore.effects.db import load_snapshot_record; from fastcore.effects.llm import chat_completion; from fastcore.effects.fs import read_file; print('OK')"
+uv run python -c "from fastcode_core.effects.db import load_snapshot_record; from fastcode_core.effects.llm import chat_completion; from fastcode_core.effects.fs import read_file; print('OK')"
 ```
+
+Expected: `OK`
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/fastcore/effects/
-git commit -m "feat: move effects modules to src/fastcore/effects/"
+git add libs/core/src/fastcode_core/effects/
+git commit -m "feat: move effects modules to fastcode-core"
 ```
 
 ---
@@ -731,126 +982,90 @@ git commit -m "feat: move effects modules to src/fastcore/effects/"
 ## Task 7: Tests Restructure
 
 **Files:**
-- Create: 21 test files in `tests/fastcore/`
+- Create: 21 test files in `libs/core/tests/` mirroring `libs/core/src/`
 
 - [ ] **Step 1: Copy test files**
 
 ```bash
 # Schema tests
-cp tests/test_core_types.py tests/fastcore/test_schema_types.py
+cp tests/test_core_types.py libs/core/tests/schema/test_core_types.py
 
 # Core tests
 for f in scoring fusion filtering combination iteration prompts \
          context summary graph_build snapshot repo_analysis \
          scip_transform boundary; do
-    cp "tests/test_core_${f}.py" "tests/fastcore/test_core_${f}.py"
+    cp "tests/test_core_${f}.py" "libs/core/tests/core/test_${f}.py"
 done
 
 # Effects tests
 for f in db llm fs; do
-    cp "tests/test_effects_${f}.py" "tests/fastcore/test_effects_${f}.py"
+    cp "tests/test_effects_${f}.py" "libs/core/tests/effects/test_${f}.py"
 done
 
 # Utils tests (parsing → json)
-cp tests/test_core_parsing.py tests/fastcore/test_utils_json.py
+cp tests/test_core_parsing.py libs/core/tests/utils/test_json.py
 ```
 
 - [ ] **Step 2: Update imports in all test files**
 
-Every `from fastcode.core.X import ...` must become `from fastcore.core.X import ...`.
-Every `from fastcode.core.types import ...` must become `from fastcore.schema.core_types import ...`.
-Every `from fastcode.effects.X import ...` must become `from fastcore.effects.X import ...`.
+Every `from fastcode.core.X import ...` must become `from fastcode_core.core.X import ...`.
+Every `from fastcode.core.types import ...` must become `from fastcode_core.schema.core_types import ...`.
+Every `from fastcode.effects.X import ...` must become `from fastcode_core.effects.X import ...`.
 
-For `test_core_parsing.py` → `test_utils_json.py`: change `from fastcode.core.parsing import ...` to `from fastcore.utils.json import ...`.
+For `test_json.py`: change `from fastcode.core.parsing import ...` to `from fastcode_core.utils.json import ...`.
 
-Complete mapping for each test file:
+Complete mapping:
 
-| Test file | Old import prefix | New import prefix |
-|-----------|------------------|-------------------|
-| `test_schema_types.py` | `from fastcode.core.types` | `from fastcore.schema.core_types` |
-| `test_core_scoring.py` | `from fastcode.core.scoring` | `from fastcore.core.scoring` |
-| `test_core_fusion.py` | `from fastcode.core.fusion` / `from fastcode.core.types` | `from fastcore.core.fusion` / `from fastcore.schema.core_types` |
-| `test_core_boundary.py` | `from fastcode.core.boundary` / `from fastcode.core.types` | `from fastcore.core.boundary` / `from fastcore.schema.core_types` |
-| `test_core_filtering.py` | `from fastcode.core.filtering` | `from fastcore.core.filtering` |
-| `test_core_combination.py` | `from fastcode.core.combination` | `from fastcore.core.combination` |
-| `test_core_iteration.py` | `from fastcode.core.iteration` / `from fastcode.core.types` | `from fastcode.core.iteration` / `from fastcore.schema.core_types` |
-| `test_core_prompts.py` | `from fastcode.core.prompts` | `from fastcore.core.prompts` |
-| `test_core_context.py` | `from fastcode.core.context` | `from fastcore.core.context` |
-| `test_core_summary.py` | `from fastcode.core.summary` | `from fastcore.core.summary` |
-| `test_core_graph_build.py` | `from fastcode.core.graph_build` | `from fastcore.core.graph_build` |
-| `test_core_snapshot.py` | `from fastcode.core.snapshot` | `from fastcore.core.snapshot` + `from fastcore.utils.hashing` + `from fastcore.utils.paths` |
-| `test_core_repo_analysis.py` | `from fastcode.core.repo_analysis` | `from fastcore.core.repo_analysis` |
-| `test_core_scip_transform.py` | `from fastcode.core.scip_transform` | `from fastcore.core.scip_transform` |
-| `test_utils_json.py` | `from fastcode.core.parsing` | `from fastcore.utils.json` |
-| `test_effects_db.py` | `from fastcode.core.types` / `from fastcode.effects.db` | `from fastcore.schema.core_types` / `from fastcore.effects.db` |
-| `test_effects_llm.py` | `from fastcode.effects.llm` | `from fastcore.effects.llm` |
-| `test_effects_fs.py` | `from fastcode.effects.fs` | `from fastcore.effects.fs` |
+| Test file | Old import | New import |
+|-----------|-----------|------------|
+| `tests/schema/test_core_types.py` | `from fastcode.core.types` | `from fastcode_core.schema.core_types` |
+| `tests/core/test_scoring.py` | `from fastcode.core.scoring` | `from fastcode_core.core.scoring` |
+| `tests/core/test_fusion.py` | `from fastcode.core.fusion` / `from fastcode.core.types` | `from fastcode_core.core.fusion` / `from fastcode_core.schema.core_types` |
+| `tests/core/test_boundary.py` | `from fastcode.core.boundary` / `from fastcode.core.types` | `from fastcode_core.core.boundary` / `from fastcode_core.schema.core_types` |
+| `tests/core/test_filtering.py` | `from fastcode.core.filtering` | `from fastcode_core.core.filtering` |
+| `tests/core/test_combination.py` | `from fastcode.core.combination` | `from fastcode_core.core.combination` |
+| `tests/core/test_iteration.py` | `from fastcode.core.iteration` / `from fastcode.core.types` | `from fastcode_core.core.iteration` / `from fastcode_core.schema.core_types` |
+| `tests/core/test_prompts.py` | `from fastcode.core.prompts` | `from fastcode_core.core.prompts` |
+| `tests/core/test_context.py` | `from fastcode.core.context` | `from fastcode_core.core.context` |
+| `tests/core/test_summary.py` | `from fastcode.core.summary` | `from fastcode_core.core.summary` |
+| `tests/core/test_graph_build.py` | `from fastcode.core.graph_build` | `from fastcode_core.core.graph_build` |
+| `tests/core/test_snapshot.py` | `from fastcode.core.snapshot` | `from fastcode_core.core.snapshot` + `from fastcode_core.utils.hashing` + `from fastcode_core.utils.paths` |
+| `tests/core/test_repo_analysis.py` | `from fastcode.core.repo_analysis` | `from fastcode_core.core.repo_analysis` |
+| `tests/core/test_scip_transform.py` | `from fastcode.core.scip_transform` | `from fastcode_core.core.scip_transform` |
+| `tests/utils/test_json.py` | `from fastcode.core.parsing` | `from fastcode_core.utils.json` |
+| `tests/effects/test_db.py` | `from fastcode.core.types` / `from fastcode.effects.db` | `from fastcode_core.schema.core_types` / `from fastcode_core.effects.db` |
+| `tests/effects/test_llm.py` | `from fastcode.effects.llm` | `from fastcode_core.effects.llm` |
+| `tests/effects/test_fs.py` | `from fastcode.effects.fs` | `from fastcode_core.effects.fs` |
 
-**Special handling for `test_core_snapshot.py`:** The original imports `projection_params_hash` and `projection_scope_key` from `fastcode.core.snapshot`. These functions moved to `fastcore.utils.hashing` and `fastcore.utils.paths` respectively. Update:
-
+**Special: `test_snapshot.py`** — `projection_params_hash` and `projection_scope_key` moved:
 ```python
 # OLD:
 from fastcode.core.snapshot import (
     extract_sources_from_elements, projection_params_hash, projection_scope_key
 )
 # NEW:
-from fastcore.core.snapshot import extract_sources_from_elements
-from fastcore.utils.hashing import projection_params_hash
-from fastcore.utils.paths import projection_scope_key
+from fastcode_core.core.snapshot import extract_sources_from_elements
+from fastcode_core.utils.hashing import projection_params_hash
+from fastcode_core.utils.paths import projection_scope_key
 ```
 
-**Special handling for `test_core_boundary.py`:** The `TestCoreImportGuard` test scans `fastcode/core/` for I/O imports. Update it to scan `src/fastcore/core/` instead. Change:
-
+**Special: `test_boundary.py`** — update path references:
 ```python
-# OLD:
-CORE_DIR = pathlib.Path(__file__).resolve().parent.parent / "fastcode" / "core"
-# NEW:
-CORE_DIR = pathlib.Path(__file__).resolve().parent.parent / "src" / "fastcore" / "core"
+# OLD: CORE_DIR = pathlib.Path(...) / "fastcode" / "core"
+# NEW: CORE_DIR = pathlib.Path(...) / "libs" / "core" / "src" / "fastcode_core" / "core"
+
+# OLD: db_effects = ... / "fastcode" / "effects" / "db.py"
+# NEW: db_effects = ... / "libs" / "core" / "src" / "fastcode_core" / "effects" / "db.py"
 ```
 
-Also update the `TestDbEffectsReturnDataclasses` test to point to `src/fastcore/effects/db.py`:
+- [ ] **Step 3: Create `libs/core/tests/utils/test_hashing.py`**
 
 ```python
-# OLD:
-db_effects = (
-    pathlib.Path(__file__).resolve().parent.parent
-    / "fastcode"
-    / "effects"
-    / "db.py"
-)
-# NEW:
-db_effects = (
-    pathlib.Path(__file__).resolve().parent.parent
-    / "src"
-    / "fastcore"
-    / "effects"
-    / "db.py"
-)
-```
-
-Also update `TestBoundaryExplicitTranslation` to point to `fastcore.core.boundary`:
-
-```python
-# OLD:
-source = pathlib.Path(
-    __import__("fastcode.core.boundary", fromlist=[""]).__file__
-).read_text(encoding="utf-8")
-# NEW:
-source = pathlib.Path(
-    __import__("fastcore.core.boundary", fromlist=[""]).__file__
-).read_text(encoding="utf-8")
-```
-
-- [ ] **Step 3: Create `tests/fastcore/test_utils_hashing.py`**
-
-Extract hashing-related tests from `test_core_snapshot.py` and `test_core_graph_build.py`:
-
-```python
-"""Tests for fastcore.utils.hashing."""
+"""Tests for fastcode_core.utils.hashing."""
 
 from __future__ import annotations
 
-from fastcore.utils.hashing import deterministic_event_id, projection_params_hash
+from fastcode_core.utils.hashing import deterministic_event_id, projection_params_hash
 
 
 class TestProjectionParamsHash:
@@ -885,7 +1100,7 @@ class TestDeterministicEventId:
 - [ ] **Step 4: Run the new tests**
 
 ```bash
-uv run pytest tests/fastcore/ -v --timeout=30
+uv run pytest libs/core/tests/ -v --timeout=30
 ```
 
 Expected: All tests pass.
@@ -893,8 +1108,8 @@ Expected: All tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/fastcore/
-git commit -m "test: restructure tests into tests/fastcore/ mirroring src layout"
+git add libs/core/tests/
+git commit -m "test: restructure tests into libs/core/tests/ mirroring src layout"
 ```
 
 ---
@@ -912,8 +1127,6 @@ git commit -m "test: restructure tests into tests/fastcore/ mirroring src layout
 
 - [ ] **Step 1: Update imports in all 7 files**
 
-Apply these exact replacements:
-
 **`fastcode/retriever.py`** (lines 16-20):
 ```python
 # OLD:
@@ -923,11 +1136,11 @@ from .core import fusion as _fusion
 from .core import scoring as _scoring
 from .core.types import FusionConfig
 # NEW:
-from fastcore.core import combination as _combination
-from fastcore.core import filtering as _filtering
-from fastcore.core import fusion as _fusion
-from fastcore.core import scoring as _scoring
-from fastcore.schema.core_types import FusionConfig
+from fastcode_core.core import combination as _combination
+from fastcode_core.core import filtering as _filtering
+from fastcode_core.core import fusion as _fusion
+from fastcode_core.core import scoring as _scoring
+from fastcode_core.schema.core_types import FusionConfig
 ```
 
 **`fastcode/iterative_agent.py`** (lines 16-19):
@@ -938,13 +1151,13 @@ from .core import parsing as _parsing
 from .core import prompts as _prompts
 from .core.types import IterationConfig
 # NEW:
-from fastcore.core import iteration as _iteration
-from fastcore.utils import json as _json_utils
-from fastcore.core import prompts as _prompts
-from fastcore.schema.core_types import IterationConfig
+from fastcode_core.core import iteration as _iteration
+from fastcode_core.utils import json as _json_utils
+from fastcode_core.core import prompts as _prompts
+from fastcode_core.schema.core_types import IterationConfig
 ```
 
-Note: `parsing` module moved to `fastcore.utils.json`. Find all usages of `_parsing.` in this file and replace with `_json_utils.`.
+Note: `parsing` module moved to `fastcode_core.utils.json`. Find all usages of `_parsing.` in this file and replace with `_json_utils.`.
 
 **`fastcode/answer_generator.py`** (lines 15-16):
 ```python
@@ -952,8 +1165,8 @@ Note: `parsing` module moved to `fastcore.utils.json`. Find all usages of `_pars
 from .core import context as _context
 from .core import summary as _summary
 # NEW:
-from fastcore.core import context as _context
-from fastcore.core import summary as _summary
+from fastcode_core.core import context as _context
+from fastcode_core.core import summary as _summary
 ```
 
 **`fastcode/terminus_publisher.py`** (line 13):
@@ -961,7 +1174,7 @@ from fastcore.core import summary as _summary
 # OLD:
 from .core import graph_build as _graph_build
 # NEW:
-from fastcore.core import graph_build as _graph_build
+from fastcode_core.core import graph_build as _graph_build
 ```
 
 **`fastcode/main.py`** (line 25):
@@ -969,7 +1182,7 @@ from fastcore.core import graph_build as _graph_build
 # OLD:
 from .core import snapshot as _snapshot
 # NEW:
-from fastcore.core import snapshot as _snapshot
+from fastcode_core.core import snapshot as _snapshot
 ```
 
 **`fastcode/repo_overview.py`** (line 14):
@@ -977,7 +1190,7 @@ from fastcore.core import snapshot as _snapshot
 # OLD:
 from .core import repo_analysis as _repo_analysis
 # NEW:
-from fastcore.core import repo_analysis as _repo_analysis
+from fastcode_core.core import repo_analysis as _repo_analysis
 ```
 
 **`fastcode/scip_loader.py`** (line 13):
@@ -985,7 +1198,7 @@ from fastcore.core import repo_analysis as _repo_analysis
 # OLD:
 from fastcode.core import scip_transform as _scip_transform
 # NEW:
-from fastcore.core import scip_transform as _scip_transform
+from fastcode_core.core import scip_transform as _scip_transform
 ```
 
 - [ ] **Step 2: Verify fastcode still imports correctly**
@@ -1002,27 +1215,20 @@ uv run python -c "from fastcode.answer_generator import AnswerGenerator; print('
 git add fastcode/retriever.py fastcode/iterative_agent.py fastcode/answer_generator.py \
        fastcode/terminus_publisher.py fastcode/main.py fastcode/repo_overview.py \
        fastcode/scip_loader.py
-git commit -m "refactor: update fastcode/ imports to use fastcore package"
+git commit -m "refactor: update fastcode/ imports to use fastcode_core package"
 ```
 
 ---
 
-## Task 9: Cleanup Old Directories
+## Task 9: Cleanup Old Test Files
 
 **Files:**
-- Delete: `fastcode/core/` directory (14 files)
-- Delete: `fastcode/effects/` directory (3 files)
 - Delete: `tests/test_core_*.py` (15 files)
 - Delete: `tests/test_effects_*.py` (3 files)
-- Delete: `tests/test_core_parsing.py` (moved to test_utils_json.py)
 
-- [ ] **Step 1: Delete old core and effects directories**
+The original test files at `tests/` root are no longer needed — they've been copied to `libs/core/tests/`.
 
-```bash
-rm -rf fastcode/core/ fastcode/effects/
-```
-
-- [ ] **Step 2: Delete old test files**
+- [ ] **Step 1: Delete old core and effects test files**
 
 ```bash
 rm tests/test_core_types.py tests/test_core_scoring.py tests/test_core_fusion.py \
@@ -1033,19 +1239,19 @@ rm tests/test_core_types.py tests/test_core_scoring.py tests/test_core_fusion.py
    tests/test_effects_db.py tests/test_effects_llm.py tests/test_effects_fs.py
 ```
 
-- [ ] **Step 3: Run fastcore tests to confirm nothing broke**
+- [ ] **Step 2: Run fastcode-core tests to confirm nothing broke**
 
 ```bash
-uv run pytest tests/fastcore/ -v --timeout=30
+uv run pytest libs/core/tests/ -v --timeout=30
 ```
 
 Expected: All tests pass.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add -A
-git commit -m "chore: remove old fastcode/core/ and fastcode/effects/ (migrated to src/fastcore/)"
+git commit -m "chore: remove old test files (migrated to libs/core/tests/)"
 ```
 
 ---
@@ -1053,12 +1259,12 @@ git commit -m "chore: remove old fastcode/core/ and fastcode/effects/ (migrated 
 ## Task 10: Pytest Config & Final Verification
 
 **Files:**
-- Modify: `pyproject.toml` (pytest-timeout config already added in Task 1)
-- Create: `tests/fastcore/conftest.py` (optional per-test timeout overrides)
+- Modify: `pyproject.toml` (verify pytest config from Task 1)
+- Create: `libs/core/tests/conftest.py`
 
-- [ ] **Step 1: Verify pytest config is correct**
+- [ ] **Step 1: Verify pytest config in root `pyproject.toml`**
 
-Check `pyproject.toml` has:
+Check it has:
 ```toml
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -1070,32 +1276,30 @@ timeout_method = "thread"
 
 And dev dependencies include `pytest-timeout` and `pytest-subprocess`.
 
-- [ ] **Step 2: Create `tests/fastcore/conftest.py`** (optional timeout overrides)
+- [ ] **Step 2: Create `libs/core/tests/conftest.py`**
 
 ```python
-"""Shared fixtures for fastcore tests."""
+"""Shared fixtures for fastcode_core tests."""
 ```
 
-This file can grow over time with shared fixtures for effects testing using `pytest-subprocess`.
-
-- [ ] **Step 3: Run all fastcore tests with timeout enforcement**
+- [ ] **Step 3: Run all fastcode-core tests with timeout enforcement**
 
 ```bash
-uv run pytest tests/fastcore/ -v --timeout=30
+uv run pytest libs/core/tests/ -v --timeout=30
 ```
 
 Expected: All tests pass, no timeouts triggered.
 
-- [ ] **Step 4: Run ruff check on new code**
+- [ ] **Step 4: Run ruff on new code**
 
 ```bash
-uv run ruff check src/fastcore/ tests/fastcore/ --fix
-uv run ruff format src/fastcore/ tests/fastcore/
+uv run ruff check libs/core/ --fix
+uv run ruff format libs/core/
 ```
 
 - [ ] **Step 5: Final commit**
 
 ```bash
 git add -A
-git commit -m "chore: add pytest-timeout and pytest-subprocess, format new code"
+git commit -m "chore: add pytest-timeout/pytest-subprocess config, format new code"
 ```

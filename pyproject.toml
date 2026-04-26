@@ -197,6 +197,25 @@ ignore = [
     "W291",    # Trailing whitespace (pre-existing)
     "UP028",   # Yield in generator (pre-existing)
 ]
+"fastcode/main.py" = [
+    "ANN001",  # Missing type annotation for args (pre-existing)
+    "ANN201",  # Missing return type for public functions (pre-existing)
+    "ANN202",  # Missing return type for private functions (pre-existing)
+    "ANN204",  # Missing return type for __init__ (pre-existing)
+    "PLR0912", # Too many branches (pre-existing)
+    "PLR0913", # Too many arguments (pre-existing)
+    "PLR0915", # Too many statements (pre-existing)
+    "PLC0415", # Lazy imports (pre-existing)
+    "S324",    # SHA1 usage (pre-existing, used for non-security hashing)
+    "S301",    # pickle usage (pre-existing)
+    "PLR2004", # Magic values (pre-existing)
+    "B904",    # raise from None (pre-existing)
+    "RUF013",  # Implicit Optional (pre-existing)
+    "F821",    # Forward reference (pre-existing)
+]
+"fastcode/core/snapshot.py" = [
+    "S324",    # SHA1 usage (non-security cache key hashing, matches main.py)
+]
 
 [tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false

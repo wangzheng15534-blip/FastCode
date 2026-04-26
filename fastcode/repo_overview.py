@@ -2,22 +2,22 @@
 Repository Overview Generator - Generate summaries and file structures for repositories
 """
 
-import os
 import logging
-from typing import Dict, List, Any, Optional
-from pathlib import Path
-from openai import OpenAI
+import os
+from typing import Any
+
 from anthropic import Anthropic
 from dotenv import load_dotenv
+from openai import OpenAI
 
-from .llm_utils import openai_chat_completion
 from .core import repo_analysis as _repo_analysis
+from .llm_utils import openai_chat_completion
 
 
 class RepositoryOverviewGenerator:
     """Generate repository overviews from README files and file structure"""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         self.config = config
         self.gen_config = config.get("generation", {})
         self.logger = logging.getLogger(__name__)
@@ -47,22 +47,21 @@ class RepositoryOverviewGenerator:
                     return None
                 return OpenAI(api_key=self.api_key, base_url=self.base_url)
 
-            elif self.provider == "anthropic":
+            if self.provider == "anthropic":
                 if not self.anthropic_api_key:
                     self.logger.warning("ANTHROPIC_API_KEY not set")
                     return None
                 return Anthropic(api_key=self.anthropic_api_key, base_url=self.base_url)
 
-            else:
-                self.logger.warning(f"Unknown provider: {self.provider}")
-                return None
+            self.logger.warning(f"Unknown provider: {self.provider}")
+            return None
         except Exception as e:
             self.logger.warning(f"Failed to initialize LLM client: {e}")
             return None
 
     def generate_overview(
-        self, repo_path: str, repo_name: str, file_structure: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, repo_path: str, repo_name: str, file_structure: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Generate comprehensive repository overview
 
@@ -104,7 +103,7 @@ class RepositoryOverviewGenerator:
 
         return overview
 
-    def _find_and_read_readme(self, repo_path: str) -> Optional[str]:
+    def _find_and_read_readme(self, repo_path: str) -> str | None:
         """Find and read README file in repository"""
         # Support common README variants across ecosystems (case-insensitive, multiple extensions)
         readme_names = [
@@ -132,7 +131,7 @@ class RepositoryOverviewGenerator:
             readme_path = os.path.join(repo_path, readme_name)
             if os.path.exists(readme_path):
                 try:
-                    with open(readme_path, "r", encoding="utf-8") as f:
+                    with open(readme_path, encoding="utf-8") as f:
                         content = f.read()
                     self.logger.debug(f"Found README: {readme_name}")
                     return content
@@ -144,8 +143,8 @@ class RepositoryOverviewGenerator:
         return None
 
     def parse_file_structure(
-        self, repo_path: str, files: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, repo_path: str, files: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """
         Parse repository file structure from scanned files
 
@@ -220,7 +219,7 @@ class RepositoryOverviewGenerator:
         return _repo_analysis.is_key_file(file_path)
 
     def _summarize_readme_with_llm(
-        self, repo_name: str, readme_content: str, file_structure: Dict[str, Any]
+        self, repo_name: str, readme_content: str, file_structure: dict[str, Any]
     ) -> str:
         """Use LLM to summarize README and infer repository purpose"""
 
@@ -260,7 +259,7 @@ Summary:"""
                 )
                 return response.choices[0].message.content.strip()
 
-            elif self.provider == "anthropic":
+            if self.provider == "anthropic":
                 response = self.llm_client.messages.create(
                     model=self.model,
                     max_tokens=self.max_tokens,
@@ -276,7 +275,7 @@ Summary:"""
         return self._generate_structure_based_overview(repo_name, file_structure)
 
     def _generate_structure_based_overview(
-        self, repo_name: str, file_structure: Dict[str, Any]
+        self, repo_name: str, file_structure: dict[str, Any]
     ) -> str:
         """Generate overview based on file structure when README is unavailable"""
         return _repo_analysis.generate_structure_based_overview(
@@ -284,11 +283,11 @@ Summary:"""
         )
 
     def _infer_project_type(
-        self, key_files: List[str], languages: Dict[str, int]
+        self, key_files: list[str], languages: dict[str, int]
     ) -> str:
         """Infer project type from files and languages"""
         return _repo_analysis.infer_project_type(key_files, languages)
 
-    def _format_file_structure(self, file_structure: Dict[str, Any]) -> str:
+    def _format_file_structure(self, file_structure: dict[str, Any]) -> str:
         """Format file structure as readable text"""
         return _repo_analysis.format_file_structure(file_structure)

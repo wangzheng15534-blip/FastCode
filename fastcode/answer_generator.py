@@ -520,7 +520,7 @@ class AnswerGenerator:
         """Build complete prompt for LLM"""
 
         # Base system prompt
-        base_system_prompt = """You are a helpful AI assistant specialized in code understanding and explanation. 
+        base_system_prompt = """You are a helpful AI assistant specialized in code understanding and explanation.
 Your task is to answer questions about code repositories based on the relevant code snippets provided.
 You may be working with code from multiple repositories, so pay attention to repository names.
 

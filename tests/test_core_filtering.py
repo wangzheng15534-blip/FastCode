@@ -135,13 +135,21 @@ class TestDiversify:
         result = diversify([], diversity_penalty=0.5)
         assert result == []
 
-    def test_result_is_sorted(self):
+    def test_result_is_sorted_with_penalty(self):
+        rows = [
+            _mk_row("a", total=0.5, file_path="f1.py"),
+            _mk_row("b", total=0.9, file_path="f2.py"),
+        ]
+        result = diversify(rows, diversity_penalty=0.1)
+        assert result[0]["element"]["id"] == "b"
+
+    def test_zero_penalty_preserves_order(self):
         rows = [
             _mk_row("a", total=0.5, file_path="f1.py"),
             _mk_row("b", total=0.9, file_path="f2.py"),
         ]
         result = diversify(rows, diversity_penalty=0.0)
-        assert result[0]["element"]["id"] == "b"
+        assert result[0]["element"]["id"] == "a"
 
 
 class TestFinalRepoFilter:

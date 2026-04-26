@@ -5,8 +5,8 @@ Answer Generator - Generate answers using LLM with retrieved context
 import logging
 import os
 import re
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Generator
+from typing import Any, cast
 
 from anthropic import Anthropic
 from dotenv import load_dotenv
@@ -51,7 +51,7 @@ class AnswerGenerator:
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         self.base_url = os.getenv("BASE_URL")
         self.model = os.getenv("MODEL")
-        self.client = self._initialize_client()
+        self.client: OpenAI | Anthropic | None = self._initialize_client()
 
     def _initialize_client(self):
         """Initialize LLM client based on provider"""
@@ -107,7 +107,7 @@ class AnswerGenerator:
             prompt = self._build_prompt(query, context, query_info, dialogue_history)
 
         # Count tokens
-        prompt_tokens = count_tokens(prompt, self.model)
+        prompt_tokens = count_tokens(prompt, self.model or "gpt-4")
         self.logger.info(f"Initial prompt tokens: {prompt_tokens}")
 
         # Calculate available tokens for input
@@ -128,7 +128,7 @@ class AnswerGenerator:
             system_prompt_sample = self._build_prompt(
                 query, "", query_info, dialogue_history
             )
-            base_tokens = count_tokens(system_prompt_sample, self.model)
+            base_tokens = count_tokens(system_prompt_sample, self.model or "gpt-4")
             context_token_budget = (
                 available_input_tokens - base_tokens - 100
             )  # Extra safety margin
@@ -153,7 +153,7 @@ class AnswerGenerator:
                 )
 
             # Verify final token count
-            final_prompt_tokens = count_tokens(prompt, self.model)
+            final_prompt_tokens = count_tokens(prompt, self.model or "gpt-4")
             self.logger.info(
                 f"Final prompt tokens after truncation: {final_prompt_tokens}"
             )
@@ -227,7 +227,7 @@ class AnswerGenerator:
             [str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str
         ]
         | None = None,
-    ):
+    ) -> Generator[tuple[str | None, dict[str, Any] | None], None, None]:
         """
         Generate answer with streaming support (yields chunks of text)
 
@@ -256,7 +256,7 @@ class AnswerGenerator:
             prompt = self._build_prompt(query, context, query_info, dialogue_history)
 
         # Count tokens and truncate if needed (same logic as generate())
-        prompt_tokens = count_tokens(prompt, self.model)
+        prompt_tokens = count_tokens(prompt, self.model or "gpt-4")
         self.logger.info(f"Initial prompt tokens: {prompt_tokens}")
 
         available_input_tokens = (
@@ -271,7 +271,7 @@ class AnswerGenerator:
             system_prompt_sample = self._build_prompt(
                 query, "", query_info, dialogue_history
             )
-            base_tokens = count_tokens(system_prompt_sample, self.model)
+            base_tokens = count_tokens(system_prompt_sample, self.model or "gpt-4")
             context_token_budget = available_input_tokens - base_tokens - 100
 
             if context_token_budget > 0:
@@ -288,7 +288,7 @@ class AnswerGenerator:
                     query, context, query_info, dialogue_history
                 )
 
-            final_prompt_tokens = count_tokens(prompt, self.model)
+            final_prompt_tokens = count_tokens(prompt, self.model or "gpt-4")
             self.logger.info(
                 f"Final prompt tokens after truncation: {final_prompt_tokens}"
             )
@@ -308,8 +308,8 @@ class AnswerGenerator:
 
         # Generate streaming answer
         try:
-            full_response = []
-            displayed_response = []
+            full_response: list[str] = []
+            displayed_response: list[str] = []
 
             if filter_summary:
                 # Use buffered streaming to filter out <SUMMARY> section
@@ -349,7 +349,7 @@ class AnswerGenerator:
                     )
 
             # Final yield with summary and completion flag
-            final_metadata = {"complete": True}
+            final_metadata: dict[str, Any] = {"complete": True}
             if summary:
                 final_metadata["summary"] = summary
             yield None, final_metadata
@@ -363,7 +363,9 @@ class AnswerGenerator:
             error_msg = f"Error generating answer: {e!s}"
             yield error_msg, {"error": full_error, "complete": True}
 
-    def _stream_with_summary_filter(self, prompt: str):
+    def _stream_with_summary_filter(
+        self, prompt: str
+    ) -> Generator[tuple[str | None, str | None], None, None]:
         """
         Stream LLM response while filtering out <SUMMARY>...</SUMMARY> section.
 
@@ -389,13 +391,15 @@ class AnswerGenerator:
         summary_end_patterns = ["</SUMMARY>", "</summary>", "</Summary>"]
 
         # Buffer for detecting summary start
-        buffer = ""
+        buffer: str = ""
         in_summary = False
         max_buffer_size = 20  # Buffer enough to detect "<SUMMARY>"
 
         # Choose stream generator based on provider
         if self.provider == "openai":
-            stream_generator = self._generate_openai_stream(prompt)
+            stream_generator: Generator[str, None, None] = self._generate_openai_stream(
+                prompt
+            )
         elif self.provider == "anthropic":
             stream_generator = self._generate_anthropic_stream(prompt)
         else:
@@ -578,7 +582,7 @@ Symbol Mappings:
             system_prompt = base_system_prompt
 
         # Build user prompt
-        user_parts = []
+        user_parts: list[str] = []
 
         # Add dialogue history context if available
         if dialogue_history and len(dialogue_history) > 0:
@@ -641,7 +645,7 @@ Symbol Mappings:
 
     def _truncate_context(self, context: str, max_tokens: int) -> str:
         """Truncate context to fit within token limit"""
-        return truncate_to_tokens(context, max_tokens, self.model)
+        return truncate_to_tokens(context, max_tokens, self.model or "gpt-4")
 
     def _generate_openai(self, prompt: str) -> str:
         """Generate answer using OpenAI"""
@@ -650,8 +654,8 @@ Symbol Mappings:
 
         try:
             response = openai_chat_completion(
-                self.client,
-                model=self.model,
+                cast(OpenAI, self.client),
+                model=self.model or "gpt-4",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
@@ -673,7 +677,7 @@ Symbol Mappings:
             self.logger.error(f"OpenAI API error: {e}")
             raise
 
-    def _generate_openai_stream(self, prompt: str):
+    def _generate_openai_stream(self, prompt: str) -> Generator[str, None, None]:
         """Generate answer using OpenAI with streaming"""
         if self.client is None:
             yield "Error: OpenAI client not initialized"
@@ -681,8 +685,8 @@ Symbol Mappings:
 
         try:
             response = openai_chat_completion(
-                self.client,
-                model=self.model,
+                cast(OpenAI, self.client),
+                model=self.model or "gpt-4",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
@@ -705,8 +709,9 @@ Symbol Mappings:
             return "Error: Anthropic client not initialized"
 
         try:
-            response = self.client.messages.create(
-                model=self.model,
+            anthropic_client = cast(Anthropic, self.client)
+            response = anthropic_client.messages.create(
+                model=self.model or "gpt-4",
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
                 messages=[{"role": "user", "content": prompt}],
@@ -725,15 +730,16 @@ Symbol Mappings:
             self.logger.error(f"Anthropic API error: {e}")
             raise
 
-    def _generate_anthropic_stream(self, prompt: str):
+    def _generate_anthropic_stream(self, prompt: str) -> Generator[str, None, None]:
         """Generate answer using Anthropic Claude with streaming"""
         if self.client is None:
             yield "Error: Anthropic client not initialized"
             return
 
         try:
-            with self.client.messages.stream(
-                model=self.model,
+            anthropic_client = cast(Anthropic, self.client)
+            with anthropic_client.messages.stream(
+                model=self.model or "gpt-4",
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
                 messages=[{"role": "user", "content": prompt}],

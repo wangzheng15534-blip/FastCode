@@ -35,14 +35,12 @@ from .semantic_ir import (
 )
 
 __version__ = "2.0.0"
-FastCode = FastCode
 
 __all__ = [
     "AgentTools",
     "AnswerGenerator",
     "CodeIndexer",
     "CodeParser",
-    "FastCode",
     "FastCode",
     "HybridRetriever",
     "IRCodeUnit",

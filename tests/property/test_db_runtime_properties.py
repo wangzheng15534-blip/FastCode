@@ -360,7 +360,7 @@ class TestConnect:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
             pass
-        with pytest.raises(Exception):
+        with pytest.raises(Exception, match=r"closed|Cannot operate|closed database"):
             conn.execute("SELECT 1")
 
     @pytest.mark.edge
@@ -368,11 +368,14 @@ class TestConnect:
         """Lines 105-106: connection closed on exception exit."""
         rt = _make_sqlite_runtime()
         conn_ref = None
-        with pytest.raises(ValueError), rt.connect() as conn:
-            conn_ref = conn
-            raise ValueError("boom")
+        try:
+            with rt.connect() as conn:
+                conn_ref = conn
+                raise ValueError("boom")
+        except ValueError:
+            pass
         assert conn_ref is not None
-        with pytest.raises(Exception):
+        with pytest.raises(Exception, match=r"closed|Cannot operate|closed database"):
             conn_ref.execute("SELECT 1")
 
     @pytest.mark.edge
@@ -650,7 +653,7 @@ class TestRollbackBehavior:
         with rt.connect() as conn:
             rt.execute(conn, "CREATE TABLE t (id INTEGER PRIMARY KEY UNIQUE)")
             rt.execute(conn, "INSERT INTO t VALUES (?)", (1,))
-            with pytest.raises(Exception):
+            with pytest.raises(Exception, match="UNIQUE constraint"):
                 rt.execute(conn, "INSERT INTO t VALUES (?)", (1,))
             cur = rt.execute(conn, "SELECT COUNT(*) FROM t")
             assert cur.fetchone()[0] == 1
@@ -659,7 +662,7 @@ class TestRollbackBehavior:
     def test_invalid_sql_no_crash(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
-            with pytest.raises(Exception):
+            with pytest.raises(Exception, match=r".*"):
                 rt.execute(conn, "NOT VALID SQL")
             rt.execute(conn, "CREATE TABLE ok (id INTEGER)")
             rt.execute(conn, "INSERT INTO ok VALUES (?)", (1,))
@@ -670,7 +673,7 @@ class TestRollbackBehavior:
     def test_nonexistent_table_no_corruption(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
-            with pytest.raises(Exception):
+            with pytest.raises(Exception, match="no such table"):
                 rt.execute(conn, "SELECT * FROM nonexistent")
             rt.execute(conn, "CREATE TABLE real (v TEXT)")
             rt.execute(conn, "INSERT INTO real VALUES (?)", ("hello",))
@@ -713,7 +716,7 @@ class TestRollbackBehavior:
                 raise RuntimeError("boom")
         except RuntimeError:
             pass
-        with pytest.raises(Exception):
+        with pytest.raises(Exception, match=r"closed|Cannot operate|closed database"):
             conn.execute("SELECT 1")
 
 
@@ -799,7 +802,7 @@ class TestDbRuntimeEdgeExtras:
     @pytest.mark.edge
     def test_execute_invalid_sql(self) -> None:
         rt = _make_sqlite_runtime()
-        with rt.connect() as conn, pytest.raises(Exception):
+        with rt.connect() as conn, pytest.raises(Exception, match=r".*"):
             rt.execute(conn, "INVALID SQL STATEMENT")
 
     @pytest.mark.edge

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from typing import Never, Any
+from typing import Any, Never
 
 import pytest
 from hypothesis import given, settings

@@ -132,7 +132,7 @@ class TerminusPublisher:
             raise RuntimeError("Terminus endpoint is not configured")
 
         body = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(  # noqa: S310
+        req = urllib.request.Request(
             self.endpoint,
             data=body,
             method="POST",
@@ -143,8 +143,8 @@ class TerminusPublisher:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
-                if resp.status >= 300:  # noqa: PLR2004
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                if resp.status >= 300:
                     raise RuntimeError(f"Terminus publish failed: HTTP {resp.status}")
                 self.logger.info("Published snapshot lineage to Terminus")
         except urllib.error.URLError as e:
@@ -181,7 +181,7 @@ class TerminusPublisher:
             "publish-only mode is currently supported"
         )
 
-    def build_lineage_payload(  # noqa: PLR0912, PLR0915
+    def build_lineage_payload(
         self,
         snapshot: dict[str, Any],
         manifest: dict[str, Any],

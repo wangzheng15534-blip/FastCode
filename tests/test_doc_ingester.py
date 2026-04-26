@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from fastcode.doc_ingester import KeyDocIngester
 from fastcode.semantic_ir import IRSnapshot, IRSymbol

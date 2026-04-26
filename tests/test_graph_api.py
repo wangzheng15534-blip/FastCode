@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
 import sys
 from pathlib import Path
+from typing import Any
 
 # api.py is a root-level module, not in the fastcode package
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -20,9 +20,9 @@ class _FakeFastCode:
         self,
         snapshot_id: str,
         *,
-        symbol_id: str = None,
-        name: str = None,
-        path: str = None,
+        symbol_id: str | None = None,
+        name: str | None = None,
+        path: str | None = None,
     ) -> Any:
         if name == "missing":
             return None

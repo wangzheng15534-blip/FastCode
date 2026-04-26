@@ -7,10 +7,9 @@ pickle-based IR graphs persistence, and query correctness.
 
 from __future__ import annotations
 
-from typing import Any
-
 import json
 import tempfile
+from typing import Any
 
 import pytest
 from hypothesis import assume, given, settings

@@ -140,7 +140,7 @@ _QUALIFIED_NAME_CASES = [
 ]
 
 
-@pytest.mark.parametrize("meta,expected_qname", _QUALIFIED_NAME_CASES)
+@pytest.mark.parametrize(("meta", "expected_qname"), _QUALIFIED_NAME_CASES)
 def test_qualified_name_construction(meta: dict, expected_qname: str):
     """qualified_name uses class_name.name when class_name is truthy."""
     elements = [_elem(name="my_func", metadata=meta)]
@@ -199,7 +199,7 @@ _LINE_CLAMP_CASES = [
 ]
 
 
-@pytest.mark.parametrize("start_line,expected", _LINE_CLAMP_CASES)
+@pytest.mark.parametrize(("start_line", "expected"), _LINE_CLAMP_CASES)
 def test_start_line_clamping(start_line: int, expected: int):
     """Occurrence start_line is clamped to >= 1 via max(... or 1, 1)."""
     elements = [_elem(name="f", start_line=start_line, end_line=start_line + 5)]

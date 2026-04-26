@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import importlib.util
 import pathlib
 
 import pytest
 
 try:
-    import google.protobuf  # noqa: F401
-
-    _HAS_PROTOBUF = True
-except ImportError:
+    _HAS_PROTOBUF = importlib.util.find_spec("google.protobuf") is not None
+except ModuleNotFoundError:
     _HAS_PROTOBUF = False
 
 requires_protobuf = pytest.mark.skipif(

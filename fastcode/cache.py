@@ -54,7 +54,7 @@ class CacheManager:
 
                 self.cache = redis.Redis(
                     host=os.getenv("REDIS_HOST", "localhost"),
-                    port=int(os.getenv("REDIS_PORT", 6379)),
+                    port=int(os.getenv("REDIS_PORT", "6379")),
                     db=0,
                     decode_responses=False,
                 )
@@ -68,7 +68,7 @@ class CacheManager:
             self.logger.warning(f"Unknown cache backend: {self.backend}")
             self.enabled = False
 
-    def _generate_key(self, prefix: str, *args) -> str:
+    def _generate_key(self, prefix: str, *args: Any) -> str:
         """Generate cache key from arguments"""
         # Create a hash of all arguments
         content = "_".join(str(arg) for arg in args)

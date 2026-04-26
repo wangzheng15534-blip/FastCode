@@ -10,7 +10,7 @@ from typing import Any
 _MAX_SAFE_JSONABLE_DEPTH = 12
 
 
-def safe_jsonable(obj: Any, *, _depth: int = 0) -> Any:  # noqa: PLR0911
+def safe_jsonable(obj: Any, *, _depth: int = 0) -> Any:
     """Recursively convert objects to JSON-serializable structures.
 
     Handles dicts, lists/tuples/sets, objects with ``to_dict()``, and
@@ -113,7 +113,7 @@ def extract_json_from_response(response: str) -> str:
     return sanitize_json_string(json_str)
 
 
-def sanitize_json_string(json_str: str) -> str:  # noqa: PLR0912
+def sanitize_json_string(json_str: str) -> str:
     """Sanitize JSON string to fix common issues from small models.
 
     Handles:
@@ -168,7 +168,7 @@ def sanitize_json_string(json_str: str) -> str:  # noqa: PLR0912
                 cleaned.append("\\r")
             elif char == "\t":
                 cleaned.append("\\t")
-            elif ord(char) < 32:  # noqa: PLR2004 Other control characters
+            elif ord(char) < 32:
                 # Skip or replace with space
                 cleaned.append(" ")
             else:
@@ -297,7 +297,7 @@ def robust_json_parse(json_str: str) -> Any:
             r"([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)", r'\1"\2"\3', json_str
         )
         return json.loads(fixed)
-    except (json.JSONDecodeError, Exception):  # noqa: S110
+    except (json.JSONDecodeError, Exception):
         pass
 
     # Strategy 4: Use ast.literal_eval as safer alternative (can handle Python-style dicts)
@@ -306,7 +306,7 @@ def robust_json_parse(json_str: str) -> Any:
         result = ast.literal_eval(json_str)
         if isinstance(result, (dict, list)):
             return result
-    except (ValueError, SyntaxError, Exception):  # noqa: S110
+    except (ValueError, SyntaxError, Exception):
         pass
 
     # Strategy 5: Try to extract and parse just the first complete object
@@ -319,9 +319,9 @@ def robust_json_parse(json_str: str) -> Any:
                     subset = json_str[start:end]
                     if subset.count("{") == subset.count("}"):
                         return json.loads(subset)
-                except Exception:  # noqa: S112
+                except Exception:
                     continue
-    except Exception:  # noqa: S110
+    except Exception:
         pass
 
     # All strategies failed

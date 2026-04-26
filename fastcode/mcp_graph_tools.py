@@ -9,6 +9,7 @@ json.dumps().
 
 from __future__ import annotations
 
+import contextlib
 from collections import deque
 
 import networkx as nx
@@ -125,7 +126,7 @@ def build_combined_graph(
 # ---------------------------------------------------------------------------
 
 
-def compute_directed_path(  # noqa: PLR0911
+def compute_directed_path(
     from_symbol: str,
     to_symbol: str,
     snapshot: IRSnapshot,
@@ -233,7 +234,7 @@ def compute_directed_path(  # noqa: PLR0911
     }
 
 
-def compute_impact_analysis(  # noqa: PLR0912
+def compute_impact_analysis(
     symbol: str,
     snapshot: IRSnapshot,
     max_hops: int = 3,
@@ -337,7 +338,7 @@ def compute_leiden_clusters(snapshot: IRSnapshot, fc: object | None = None) -> d
     projection_transformer = getattr(fc, "projection_transformer", None)
 
     if projection_store is not None and projection_store.enabled:
-        from .projection_models import ProjectionScope  # noqa: PLC0415
+        from .projection_models import ProjectionScope
 
         scope = ProjectionScope(
             scope_kind="full",
@@ -353,7 +354,7 @@ def compute_leiden_clusters(snapshot: IRSnapshot, fc: object | None = None) -> d
     # No cached projection; try to build one
     if projection_transformer is not None:
         try:
-            from .projection_models import ProjectionScope  # noqa: PLC0415
+            from .projection_models import ProjectionScope
 
             scope = ProjectionScope(
                 scope_kind="full",
@@ -379,12 +380,12 @@ def compute_leiden_clusters(snapshot: IRSnapshot, fc: object | None = None) -> d
     }
 
 
-def compute_steiner_path(  # noqa: PLR0911, PLR0912
+def compute_steiner_path(
     terminals: list[str],
     snapshot: IRSnapshot,
 ) -> dict:
     """Find a small undirected explanatory subgraph connecting terminal symbols."""
-    if not terminals or len(terminals) < 2:  # noqa: PLR2004
+    if not terminals or len(terminals) < 2:
         return {
             "found": False,
             "nodes": [],
@@ -392,7 +393,7 @@ def compute_steiner_path(  # noqa: PLR0911, PLR0912
             "error": "At least 2 terminal symbols required.",
         }
 
-    if len(terminals) > 8:  # noqa: PLR2004
+    if len(terminals) > 8:
         return {
             "found": False,
             "nodes": [],
@@ -575,7 +576,7 @@ def extract_cluster_data(l1_data: dict, snapshot: IRSnapshot) -> dict:
     for xref in xref_list:
         xref_id = xref.get("id", "")
         parts = xref_id.split("->")
-        if len(parts) == 2:  # noqa: PLR2004
+        if len(parts) == 2:
             xrefs.append(
                 {
                     "from_cluster": parts[0],
@@ -593,10 +594,8 @@ def extract_cluster_data(l1_data: dict, snapshot: IRSnapshot) -> dict:
             "top_members": [],
         }
         text = section.get("text", "")
-        try:  # noqa: SIM105
+        with contextlib.suppress(ValueError, IndexError):
             cluster_info["node_count"] = int(text.split()[0])
-        except (ValueError, IndexError):
-            pass
         if i < len(navigation):
             nav = navigation[i]
             rep_ref = nav.get("ref", {})

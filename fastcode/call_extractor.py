@@ -269,8 +269,8 @@ class CallExtractor:
                 # Convert dict format to list of (node, capture_name) tuples
                 result = []
                 for capture_name, nodes in captures.items():
-                    for node in nodes:
-                        result.append((node, capture_name))
+                    for cap_node in nodes:
+                        result.append((cap_node, capture_name))
                 return result
             # Newer versions already return list format
             return captures
@@ -599,7 +599,8 @@ class CallExtractor:
                     self._process_type_hint(node, target_dict)
                 elif tag == "type_hint_assign":
                     self._process_type_hint_assignment(node, target_dict)
-            except Exception:
+            except Exception as exc:
+                self.logger.debug("Skipping type extraction node: %s", exc)
                 continue
 
         return scoped_types

@@ -4,6 +4,8 @@ import json
 import pathlib
 from typing import Any
 
+import pytest
+
 from fastcode.adapters.scip_to_ir import build_ir_from_scip
 from fastcode.scip_loader import load_scip_artifact
 from fastcode.scip_models import SCIPArtifactRef, SCIPIndex
@@ -85,9 +87,6 @@ def test_scip_artifact_ref_to_dict():
     payload = ref.to_dict()
     assert payload["snapshot_id"] == "snap:repo:1"
     assert payload["checksum"] == "abc"
-
-
-import pytest
 
 
 @pytest.mark.parametrize(

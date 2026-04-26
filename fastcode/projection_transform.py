@@ -667,8 +667,8 @@ class ProjectionTransformer:
             for m in members:
                 by_node[m] = cid
         cg = nx.DiGraph()
-        for cid in clusters:
-            cg.add_node(cid, size=len(clusters[cid]))
+        for cid, members in clusters.items():
+            cg.add_node(cid, size=len(members))
         for u, v, data in g.edges(data=True):
             cu = by_node.get(u)
             cv = by_node.get(v)

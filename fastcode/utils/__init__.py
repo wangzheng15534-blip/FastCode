@@ -34,36 +34,36 @@ from fastcode.utils.json import (
 )
 from fastcode.utils.paths import get_language_from_extension, projection_scope_key
 
-__all__ = [  # noqa: RUF022
+__all__ = [
     # From _compat (legacy re-exports)
     "calculate_code_complexity",
     "clean_docstring",
     "compute_file_hash",
     "count_tokens",
+    # From utils sub-modules (new canonical locations)
+    "deterministic_event_id",
     "ensure_dir",
     "extract_code_snippet",
+    "extract_json_from_response",
     "format_code_block",
     "get_file_extension",
+    "get_language_from_extension",
     "get_repo_name_from_url",
     "is_supported_file",
     "is_text_file",
     "load_config",
     "merge_dicts",
     "normalize_path",
+    "projection_params_hash",
+    "projection_scope_key",
+    "remove_json_comments",
     "resolve_config_paths",
+    "robust_json_parse",
     "safe_get",
+    "safe_jsonable",
+    "sanitize_json_string",
     "setup_logging",
     "should_ignore_path",
     "truncate_to_tokens",
     "utc_now",
-    # From utils sub-modules (new canonical locations)
-    "deterministic_event_id",
-    "extract_json_from_response",
-    "get_language_from_extension",
-    "projection_params_hash",
-    "projection_scope_key",
-    "remove_json_comments",
-    "robust_json_parse",
-    "safe_jsonable",
-    "sanitize_json_string",
 ]

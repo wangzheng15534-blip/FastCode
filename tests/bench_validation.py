@@ -70,7 +70,7 @@ def _make_snapshot(num_symbols: int, num_occurrences: int) -> IRSnapshot:
 
 
 @pytest.mark.parametrize(
-    "num_symbols,num_occurrences",
+    ("num_symbols", "num_occurrences"),
     [
         (10, 10),
         (100, 100),

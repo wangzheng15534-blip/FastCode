@@ -30,7 +30,10 @@ def test_adaptive_fusion_prefers_docs_for_design_intent_queries():
     retriever = _mk_retriever()
 
     code_rows = [_mk_row("code:1", "function", 0.45), _mk_row("code:2", "class", 0.42)]
-    doc_rows = [_mk_row("doc:1", "design_document", 0.82), _mk_row("doc:2", "design_document", 0.7)]
+    doc_rows = [
+        _mk_row("doc:1", "design_document", 0.82),
+        _mk_row("doc:2", "design_document", 0.7),
+    ]
     alpha, _, _ = retriever._compute_adaptive_fusion_params(
         query="What is the architecture rationale for branch indexing design?",
         query_info={"intent": "design_rationale"},
@@ -46,7 +49,8 @@ def test_adaptive_fusion_prefers_docs_for_design_intent_queries():
         doc_results=doc_rows,
     )
     ids = [r["element"]["id"] for r in fused]
-    assert "doc:1" in ids and "code:1" in ids
+    assert "doc:1" in ids
+    assert "code:1" in ids
     assert fused[0]["element"]["id"] == "doc:1"
 
 

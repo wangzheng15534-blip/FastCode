@@ -207,9 +207,9 @@ class CodeParser:
             self.logger.error(f"Failed to parse {file_path}: {e}")
             return None
 
-        classes = []
-        functions = []
-        imports = []
+        classes: list[ClassInfo] = []
+        functions: list[FunctionInfo] = []
+        imports: list[ImportInfo] = []
         module_docstring = ast.get_docstring(tree)
 
         # Extract imports
@@ -291,12 +291,18 @@ class CodeParser:
                     _visit_nodes(node.body, parent_scope)
 
                     # Handle 'else' blocks for If/Try/For/While
-                    if hasattr(node, "orelse") and node.orelse:
-                        _visit_nodes(node.orelse, parent_scope)
+                    orelse: list[ast.stmt] | None = None
+                    if isinstance(node, (ast.If, ast.For, ast.While, ast.Try)):
+                        orelse = node.orelse
+                    if orelse:
+                        _visit_nodes(orelse, parent_scope)
 
                     # Handle 'finalbody' for Try
-                    if hasattr(node, "finalbody") and node.finalbody:
-                        _visit_nodes(node.finalbody, parent_scope)
+                    finalbody: list[ast.stmt] | None = None
+                    if isinstance(node, ast.Try):
+                        finalbody = node.finalbody
+                    if finalbody:
+                        _visit_nodes(finalbody, parent_scope)
 
         # Start the visit from the root body
         _visit_nodes(tree.body)
@@ -326,7 +332,7 @@ class CodeParser:
 
     def _extract_python_imports(self, tree: ast.AST) -> list[ImportInfo]:
         """Extract import statements from Python AST"""
-        imports = []
+        imports: list[ImportInfo] = []
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -362,19 +368,18 @@ class CodeParser:
             docstring = ast.get_docstring(node)
 
             # Extract base classes
-            bases = []
+            bases: list[str] = []
             for base in node.bases:
                 if isinstance(base, ast.Name):
                     bases.append(base.id)
                 elif isinstance(base, ast.Attribute):
-                    bases.append(
-                        f"{base.value.id}.{base.attr}"
-                        if hasattr(base.value, "id")
-                        else base.attr
-                    )
+                    if isinstance(base.value, ast.Name):
+                        bases.append(f"{base.value.id}.{base.attr}")
+                    else:
+                        bases.append(base.attr)
 
             # Extract methods (FULL INFO)
-            methods = []
+            methods: list[FunctionInfo] = []
             for item in node.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     self.logger.debug(
@@ -400,7 +405,7 @@ class CodeParser:
                 )
 
             # Extract decorators
-            decorators = []
+            decorators: list[str] = []
             for dec in node.decorator_list:
                 if isinstance(dec, ast.Name):
                     decorators.append(dec.id)
@@ -421,7 +426,9 @@ class CodeParser:
             return None
 
     def _extract_python_function(
-        self, node: ast.FunctionDef, class_name: str | None = None
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        class_name: str | None = None,
     ) -> FunctionInfo | None:
         """Extract function information from Python AST node"""
         try:
@@ -436,7 +443,7 @@ class CodeParser:
             docstring = ast.get_docstring(node)
 
             # Extract parameters
-            parameters = []
+            parameters: list[str] = []
             for arg in node.args.args:
                 param_name = arg.arg
                 if arg.annotation:
@@ -445,13 +452,13 @@ class CodeParser:
                 parameters.append(param_name)
 
             # Extract return type
-            return_type = None
+            return_type: str | None = None
             if node.returns:
                 with contextlib.suppress(Exception):
                     return_type = ast.unparse(node.returns)
 
             # Extract decorators
-            decorators = []
+            decorators: list[str] = []
             for dec in node.decorator_list:
                 if isinstance(dec, ast.Name):
                     decorators.append(dec.id)
@@ -480,7 +487,9 @@ class CodeParser:
             self.logger.warning(f"Failed to extract function info: {e}")
             return None
 
-    def _calculate_python_complexity(self, node: ast.FunctionDef) -> int:
+    def _calculate_python_complexity(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> int:
         """Calculate cyclomatic complexity for Python function"""
         complexity = 1
 
@@ -520,10 +529,10 @@ class CodeParser:
 
             root_node = tree.root_node
 
-            classes = []
-            functions = []
-            imports = []
-            module_docstring = None
+            classes: list[ClassInfo] = []
+            functions: list[FunctionInfo] = []
+            imports: list[ImportInfo] = []
+            module_docstring: str | None = None
 
             # Extract module-level comment as docstring
             if self.extract_docstrings:
@@ -586,14 +595,14 @@ class CodeParser:
 
     def _extract_js_imports(self, root_node: Any, content: str) -> list[ImportInfo]:
         """Extract import statements from JavaScript AST"""
-        imports = []
+        imports: list[ImportInfo] = []
         code_bytes = content.encode("utf-8")
 
         def visit_node(node: Any) -> None:
             if node.type == "import_statement":
                 # Extract import information
-                module_node = None
-                names = []
+                module_node: str | None = None
+                names: list[str] = []
 
                 for child in node.children:
                     if child.type == "string":
@@ -697,7 +706,7 @@ class CodeParser:
             )
 
             # Extract base class (extends)
-            bases = []
+            bases: list[str] = []
             for child in node.children:
                 if child.type == "class_heritage":
                     for subchild in child.children:
@@ -709,7 +718,7 @@ class CodeParser:
                             )
 
             # Extract methods
-            methods = []
+            methods: list[FunctionInfo] = []
             for child in node.children:
                 if child.type == "class_body":
                     for method_node in child.children:
@@ -742,7 +751,7 @@ class CodeParser:
         """Extract function information from JavaScript AST node"""
         try:
             # Get function name
-            name_node = None
+            name_node: Any = None
             for child in node.children:
                 if child.type == "identifier":
                     name_node = child
@@ -756,7 +765,7 @@ class CodeParser:
             )
 
             # Extract parameters
-            parameters = []
+            parameters: list[str] = []
             for child in node.children:
                 if child.type == "formal_parameters":
                     for param_node in child.children:
@@ -802,7 +811,7 @@ class CodeParser:
         """Extract method information from JavaScript class"""
         try:
             # Get method name
-            name_node = None
+            name_node: Any = None
             for child in node.children:
                 if child.type == "property_identifier":
                     name_node = child
@@ -816,7 +825,7 @@ class CodeParser:
             )
 
             # Extract parameters
-            parameters = []
+            parameters: list[str] = []
             for child in node.children:
                 if child.type == "formal_parameters":
                     for param_node in child.children:
@@ -906,10 +915,10 @@ class CodeParser:
 
             root_node = tree.root_node
 
-            classes = []
-            functions = []
-            imports = []
-            module_docstring = None
+            classes: list[ClassInfo] = []
+            functions: list[FunctionInfo] = []
+            imports: list[ImportInfo] = []
+            module_docstring: str | None = None
 
             # Extract module-level comment as docstring
             if self.extract_docstrings:
@@ -1012,7 +1021,7 @@ class CodeParser:
             )
 
             # Extract base classes/interfaces (extends/implements)
-            bases = []
+            bases: list[str] = []
             for child in node.children:
                 if child.type in (
                     "class_heritage",
@@ -1028,7 +1037,7 @@ class CodeParser:
                             )
 
             # Extract methods
-            methods = []
+            methods: list[FunctionInfo] = []
             for child in node.children:
                 if child.type in ("class_body", "interface_body", "object_type"):
                     for method_node in child.children:
@@ -1077,10 +1086,10 @@ class CodeParser:
 
             root_node = tree.root_node
 
-            classes = []
-            functions = []
-            imports = []
-            module_docstring = None
+            classes: list[ClassInfo] = []
+            functions: list[FunctionInfo] = []
+            imports: list[ImportInfo] = []
+            module_docstring: str | None = None
 
             # Extract module-level comment as docstring
             if self.extract_docstrings:
@@ -1142,7 +1151,7 @@ class CodeParser:
 
     def _extract_c_includes(self, root_node: Any, content: str) -> list[ImportInfo]:
         """Extract #include statements from C/C++ AST"""
-        imports = []
+        imports: list[ImportInfo] = []
         code_bytes = content.encode("utf-8")
 
         def visit_node(node: Any) -> None:
@@ -1210,7 +1219,7 @@ class CodeParser:
         """Extract class/struct information from C/C++ AST node"""
         try:
             # Get class/struct name
-            name_node = None
+            name_node: Any = None
             for child in node.children:
                 if child.type in ("type_identifier", "identifier"):
                     name_node = child
@@ -1224,7 +1233,7 @@ class CodeParser:
             )
 
             # Extract base classes (C++ only)
-            bases = []
+            bases: list[str] = []
             if language == "cpp":
                 for child in node.children:
                     if child.type == "base_class_clause":
@@ -1237,7 +1246,7 @@ class CodeParser:
                                 )
 
             # Extract methods (functions within class/struct)
-            methods = []
+            methods: list[FunctionInfo] = []
             for child in node.children:
                 if child.type == "field_declaration_list":
                     for member_node in child.children:
@@ -1270,12 +1279,12 @@ class CodeParser:
         """Extract function information from C/C++ AST node"""
         try:
             # Get function name from declarator
-            func_name = None
-            parameters = []
-            return_type = None
+            func_name: str | None = None
+            parameters: list[str] = []
+            return_type: str | None = None
 
             # Navigate to function declarator
-            declarator_node = None
+            declarator_node: Any = None
             for child in node.children:
                 if child.type == "function_declarator":
                     declarator_node = child
@@ -1374,10 +1383,10 @@ class CodeParser:
 
             root_node = tree.root_node
 
-            classes = []  # Will include structs, traits, impls
-            functions = []
-            imports = []
-            module_docstring = None
+            classes: list[ClassInfo] = []  # Will include structs, traits, impls
+            functions: list[FunctionInfo] = []
+            imports: list[ImportInfo] = []
+            module_docstring: str | None = None
 
             # Extract module-level documentation
             if self.extract_docstrings:
@@ -1440,7 +1449,7 @@ class CodeParser:
 
     def _extract_rust_imports(self, root_node: Any, content: str) -> list[ImportInfo]:
         """Extract 'use' statements from Rust AST"""
-        imports = []
+        imports: list[ImportInfo] = []
         code_bytes = content.encode("utf-8")
 
         def visit_node(node: Any) -> None:
@@ -1504,7 +1513,7 @@ class CodeParser:
         """Extract struct/trait/impl information from Rust AST node"""
         try:
             # Get type name
-            name_node = None
+            name_node: Any = None
             for child in node.children:
                 if child.type == "type_identifier":
                     name_node = child
@@ -1518,7 +1527,7 @@ class CodeParser:
             )
 
             # Extract trait bounds or impl target
-            bases = []
+            bases: list[str] = []
             if node.type == "impl_item":
                 # For impl blocks, extract the trait being implemented
                 for child in node.children:
@@ -1530,7 +1539,7 @@ class CodeParser:
                         )
 
             # Extract methods (functions within struct/trait/impl)
-            methods = []
+            methods: list[FunctionInfo] = []
             for child in node.children:
                 if child.type == "declaration_list":
                     for item_node in child.children:
@@ -1563,7 +1572,7 @@ class CodeParser:
         """Extract function information from Rust AST node"""
         try:
             # Get function name
-            func_name = None
+            func_name: str | None = None
             for child in node.children:
                 if child.type == "identifier":
                     func_name = code_bytes[child.start_byte : child.end_byte].decode(
@@ -1575,8 +1584,8 @@ class CodeParser:
                 return None
 
             # Extract parameters
-            parameters = []
-            return_type = None
+            parameters: list[str] = []
+            return_type: str | None = None
             for child in node.children:
                 if child.type == "parameters":
                     for param_node in child.children:
@@ -1656,10 +1665,10 @@ class CodeParser:
 
             root_node = tree.root_node
 
-            classes = []
-            functions = []
-            imports = []
-            module_docstring = None
+            classes: list[ClassInfo] = []
+            functions: list[FunctionInfo] = []
+            imports: list[ImportInfo] = []
+            module_docstring: str | None = None
 
             # Extract module-level documentation
             if self.extract_docstrings:
@@ -1724,7 +1733,7 @@ class CodeParser:
 
     def _extract_csharp_imports(self, root_node: Any, content: str) -> list[ImportInfo]:
         """Extract 'using' statements from C# AST"""
-        imports = []
+        imports: list[ImportInfo] = []
         code_bytes = content.encode("utf-8")
 
         def visit_node(node: Any) -> None:
@@ -1795,7 +1804,7 @@ class CodeParser:
         """Extract class/interface/struct information from C# AST node"""
         try:
             # Get class name
-            name_node = None
+            name_node: Any = None
             for child in node.children:
                 if child.type == "identifier":
                     name_node = child
@@ -1809,7 +1818,7 @@ class CodeParser:
             )
 
             # Extract base classes/interfaces
-            bases = []
+            bases: list[str] = []
             for child in node.children:
                 if child.type == "base_list":
                     for subchild in child.children:
@@ -1821,7 +1830,7 @@ class CodeParser:
                             )
 
             # Extract methods
-            methods = []
+            methods: list[FunctionInfo] = []
             for child in node.children:
                 if child.type == "declaration_list":
                     for member_node in child.children:
@@ -1836,7 +1845,7 @@ class CodeParser:
             docstring = self._extract_csharp_docstring(node, content, code_bytes)
 
             # Extract attributes (C# decorators)
-            decorators = []
+            decorators: list[str] = []
             for child in node.children:
                 if child.type == "attribute_list":
                     for attr_node in child.children:
@@ -1865,7 +1874,7 @@ class CodeParser:
         """Extract method information from C# AST node"""
         try:
             # Get method name
-            func_name = None
+            func_name: str | None = None
             for child in node.children:
                 if child.type == "identifier":
                     func_name = code_bytes[child.start_byte : child.end_byte].decode(
@@ -1877,8 +1886,8 @@ class CodeParser:
                 return None
 
             # Extract parameters
-            parameters = []
-            return_type = None
+            parameters: list[str] = []
+            return_type: str | None = None
             for child in node.children:
                 if child.type == "parameter_list":
                     for param_node in child.children:
@@ -1908,7 +1917,7 @@ class CodeParser:
             )
 
             # Extract attributes (C# decorators)
-            decorators = []
+            decorators: list[str] = []
             for child in node.children:
                 if child.type == "attribute_list":
                     for attr_node in child.children:

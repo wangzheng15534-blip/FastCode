@@ -5,7 +5,7 @@ Graph Builder - Build code relationship graphs
 import logging
 import os
 import pickle
-from typing import Any
+from typing import Any, cast
 
 import networkx as nx
 import tqdm
@@ -39,9 +39,9 @@ class CodeGraphBuilder:
         self.max_depth = self.graph_config.get("max_depth", 5)
 
         # Graphs
-        self.call_graph = nx.DiGraph()
-        self.dependency_graph = nx.DiGraph()
-        self.inheritance_graph = nx.DiGraph()
+        self.call_graph: nx.DiGraph[str] = nx.DiGraph()
+        self.dependency_graph: nx.DiGraph[str] = nx.DiGraph()
+        self.inheritance_graph: nx.DiGraph[str] = nx.DiGraph()
 
         # Maps for quick lookup
         self.element_by_name: dict[str, CodeElement] = {}
@@ -177,12 +177,12 @@ class CodeGraphBuilder:
                 is_package = elem.file_path.endswith("__init__.py")
 
                 for imp in imports:
-                    module = imp.get("module", "")
-                    names = imp.get("names", [])
-                    level = imp.get("level", 0)
+                    module: str = imp.get("module", "")
+                    names: list[str] = imp.get("names", [])
+                    level: int = imp.get("level", 0)
 
                     # Determine which modules to resolve
-                    modules_to_resolve = []
+                    modules_to_resolve: list[str] = []
 
                     if module:
                         # Case 1: Standard import - from module import names
@@ -517,7 +517,7 @@ class CodeGraphBuilder:
         Returns:
             Set of related element IDs
         """
-        related = set()
+        related: set[str] = set()
 
         # Check all graphs
         for graph in [self.dependency_graph, self.inheritance_graph, self.call_graph]:
@@ -608,7 +608,7 @@ class CodeGraphBuilder:
         Returns:
             List of element IDs forming the path, or None if no path
         """
-        graph_map = {
+        graph_map: dict[str, nx.DiGraph[str]] = {
             "dependency": self.dependency_graph,
             "inheritance": self.inheritance_graph,
             "call": self.call_graph,
@@ -619,13 +619,15 @@ class CodeGraphBuilder:
             return None
 
         try:
-            return nx.shortest_path(graph, source_id, target_id)
+            _sp = getattr(nx, "shortest_path")
+            result: Any = _sp(graph, source_id, target_id)
+            return list(result)
         except (nx.NodeNotFound, nx.NetworkXNoPath):
             return None
 
     def get_graph_stats(self) -> dict[str, Any]:
         """Get statistics about the graphs"""
-        stats = {}
+        stats: dict[str, dict[str, Any]] = {}
 
         for name, graph in [
             ("dependency", self.dependency_graph),
@@ -715,9 +717,11 @@ class CodeGraphBuilder:
                     )
                 # ------------------------------------------------------------
 
-                self.call_graph = data["call_graph"]
-                self.dependency_graph = data["dependency_graph"]
-                self.inheritance_graph = data["inheritance_graph"]
+                self.call_graph = cast(nx.DiGraph[str], data["call_graph"])
+                self.dependency_graph = cast(nx.DiGraph[str], data["dependency_graph"])
+                self.inheritance_graph = cast(
+                    nx.DiGraph[str], data["inheritance_graph"]
+                )
                 self.imports_by_file = data["imports_by_file"]
 
                 # Reconstruct indices with CodeElement objects
@@ -778,9 +782,11 @@ class CodeGraphBuilder:
         try:
             with open(graph_path, "rb") as f:
                 data = pickle.load(f)
-                other_call_graph = data["call_graph"]
-                other_dependency_graph = data["dependency_graph"]
-                other_inheritance_graph = data["inheritance_graph"]
+                other_call_graph = cast(nx.DiGraph[str], data["call_graph"])
+                other_dependency_graph = cast(nx.DiGraph[str], data["dependency_graph"])
+                other_inheritance_graph = cast(
+                    nx.DiGraph[str], data["inheritance_graph"]
+                )
                 other_imports_by_file = data["imports_by_file"]
 
                 # --- FIX: Use element_by_id to avoid data loss from duplicate names ---
@@ -1060,7 +1066,7 @@ class CodeGraphBuilder:
                 self.logger.debug("    [-] Not found in GLOBAL scope")
 
                 # Debugging aid
-                found_in_other_scopes = []
+                found_in_other_scopes: list[str] = []
                 for s_id, vars_map in file_instance_types.items():
                     if base_object in vars_map:
                         found_in_other_scopes.append(
@@ -1076,7 +1082,7 @@ class CodeGraphBuilder:
         if not candidate_classes:
             return []
 
-        resolved_ids = []
+        resolved_ids: list[str] = []
 
         # For each candidate class, try to resolve the method
         for class_name in candidate_classes:
@@ -1142,8 +1148,8 @@ class CodeGraphBuilder:
                         )
 
         # Deduplicate resolved IDs while preserving order
-        seen = set()
-        unique_resolved_ids = []
+        seen: set[str] = set()
+        unique_resolved_ids: list[str] = []
         for resolved_id in resolved_ids:
             if resolved_id not in seen:
                 seen.add(resolved_id)

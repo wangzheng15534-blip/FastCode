@@ -10,7 +10,7 @@ import os
 import re
 from collections import Counter, defaultdict
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 import networkx as nx
 
@@ -86,7 +86,7 @@ class ProjectionTransformer:
                 "ref": 2.0,
                 "reference": 2.0,
             },
-            **(proj_cfg.get("edge_weights", {}) or {}),
+            **cast(dict[str, float], proj_cfg.get("edge_weights", {}) or {}),
         )
 
     def build(
@@ -107,8 +107,8 @@ class ProjectionTransformer:
             scoped_nodes = set(g.nodes())
             warnings.append("scope_empty_fallback_to_full_graph")
 
-        sg = g.subgraph(scoped_nodes).copy()
-        sdg = dg.subgraph(scoped_nodes).copy()
+        sg: nx.Graph[str] = g.subgraph(scoped_nodes).copy()
+        sdg: Any = dg.subgraph(scoped_nodes).copy()
         hidden_edge_count = self._compress_hubs(sg)
         hierarchy_levels, cluster_method = self._cluster_hierarchy(sg)
         clusters, selected_level = self._select_cluster_level(hierarchy_levels)
@@ -162,8 +162,8 @@ class ProjectionTransformer:
             ),
         )
 
-        sections = []
-        navigation = []
+        sections: list[dict[str, Any]] = []
+        navigation: list[dict[str, Any]] = []
         for cid, members in sorted(
             clusters.items(), key=lambda kv: (-len(kv[1]), kv[0])
         ):
@@ -277,7 +277,7 @@ class ProjectionTransformer:
     def _build_weighted_graph(
         self, snapshot: IRSnapshot, ir_graphs: IRGraphs | None
     ) -> nx.Graph[str]:
-        g = nx.Graph()
+        g: nx.Graph[str] = nx.Graph()
         docs_by_id = {d.doc_id: d for d in snapshot.documents}
         symbols_by_id = {s.symbol_id: s for s in snapshot.symbols}
 
@@ -356,7 +356,7 @@ class ProjectionTransformer:
     def _build_directed_weighted_graph(
         self, snapshot: IRSnapshot, ir_graphs: IRGraphs | None
     ) -> nx.DiGraph[str]:
-        g = nx.DiGraph()
+        g: nx.DiGraph[str] = nx.DiGraph()
         for d in snapshot.documents:
             g.add_node(d.doc_id)
         for s in snapshot.symbols:
@@ -431,9 +431,9 @@ class ProjectionTransformer:
                 weighted = g.copy()
                 for _src, _dst, data in weighted.edges(data=True):
                     data["distance"] = 1.0 / max(0.1, float(data.get("weight", 1.0)))
-                tree = nx.approximation.steiner_tree(
-                    weighted, terminals, weight="distance"
-                )
+                _steiner = getattr(nx.approximation, "steiner_tree")
+                _steiner_result: Any = _steiner(weighted, terminals, weight="distance")
+                tree: nx.Graph[str] = cast(nx.Graph[str], _steiner_result)
                 if self.steiner_prune:
                     tree = self._prune_steiner_leaves(tree, terminals)
                 nodes = set(tree.nodes())
@@ -443,7 +443,7 @@ class ProjectionTransformer:
                     )
                 return nodes, terminals
             except Exception:
-                nodes = set()
+                nodes: set[str] = set()
                 for t in terminals:
                     nodes.update(
                         nx.single_source_shortest_path_length(
@@ -539,7 +539,7 @@ class ProjectionTransformer:
             try:
                 nodes = list(g.nodes())
                 idx = {n: i for i, n in enumerate(nodes)}
-                ig_g = ig.Graph()
+                ig_g: Any = ig.Graph()
                 ig_g.add_vertices(len(nodes))
                 ig_edges = [(idx[u], idx[v]) for u, v in g.edges()]
                 ig_g.add_edges(ig_edges)
@@ -548,9 +548,9 @@ class ProjectionTransformer:
                     and len(self.leiden_resolutions) == 1
                 ):
                     resolution = self.leiden_resolutions[0]
-                    part = ig_g.community_leiden(resolution_parameter=resolution)
+                    part: Any = ig_g.community_leiden(resolution_parameter=resolution)
                     clusters = {
-                        f"c{ci}": {nodes[m] for m in members}
+                        f"c{ci}": {nodes[int(m)] for m in members}
                         for ci, members in enumerate(part)
                     }
                     return {0: clusters}, "leiden"
@@ -561,7 +561,7 @@ class ProjectionTransformer:
                     ):
                         part = ig_g.community_leiden(resolution_parameter=resolution)
                         clusters = {
-                            f"c{ci}": {nodes[m] for m in members}
+                            f"c{ci}": {nodes[int(m)] for m in members}
                             for ci, members in enumerate(part)
                         }
                         levels[level] = clusters
@@ -664,11 +664,11 @@ class ProjectionTransformer:
         if len(clusters) <= 1:
             root = next(iter(clusters.keys())) if clusters else "c0"
             return [], root
-        by_node = {}
+        by_node: dict[str, str] = {}
         for cid, members in clusters.items():
             for m in members:
                 by_node[m] = cid
-        cg = nx.DiGraph()
+        cg: nx.DiGraph[str] = nx.DiGraph()
         for cid, members in clusters.items():
             cg.add_node(cid, size=len(members))
         for u, v, data in g.edges(data=True):
@@ -685,10 +685,10 @@ class ProjectionTransformer:
         if cg.number_of_edges() == 0:
             return [], root
         tree_edges: list[tuple[str, str]] = []
-        visited = {root}
-        remaining = set(cg.nodes()) - visited
+        visited: set[str] = {root}
+        remaining: set[str] = set(cg.nodes()) - visited
         while remaining:
-            best = None
+            best: tuple[str, str] | None = None
             best_weight = -1.0
             for u in list(visited):
                 for _, v, data in cg.out_edges(u, data=True):
@@ -706,7 +706,7 @@ class ProjectionTransformer:
                         best = (u, v)
                         best_weight = w
             if not best:
-                next_cluster = max(
+                next_cluster: str = max(
                     remaining, key=lambda c: cg.out_degree(c) + cg.in_degree(c)
                 )
                 tree_edges.append((root, next_cluster))
@@ -733,7 +733,7 @@ class ProjectionTransformer:
         clusters: dict[str, set[str]],
         limit: int = 32,
     ) -> list[tuple[str, str, float]]:
-        by_node = {}
+        by_node: dict[str, str] = {}
         for cid, members in clusters.items():
             for m in members:
                 by_node[m] = cid
@@ -947,7 +947,7 @@ class ProjectionTransformer:
         paths = [p for p in [*(s.path for s in symbols), *(d.path for d in docs)] if p]
         common_prefix = os.path.commonpath(paths) if paths else ""
 
-        edge_type_counter = Counter()
+        edge_type_counter: Counter[str] = Counter()
         for u, v, data in sg.edges(data=True):
             if u not in members or v not in members:
                 continue
@@ -1088,7 +1088,7 @@ class ProjectionTransformer:
         members: set[str],
         mentions_by_symbol: dict[str, list[dict[str, Any]]],
         max_docs: int,
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, str | list[str]]]:
         """Build supporting_docs list for a cluster from doc mentions."""
         chunk_mentions: dict[str, list[str]] = defaultdict(list)
         for sid in members:
@@ -1114,10 +1114,10 @@ class ProjectionTransformer:
         hidden_edge_count: int,
         projection_method: str,
     ) -> dict[str, Any]:
-        chunk_rows = []
+        chunk_rows: list[dict[str, Any]] = []
         for c in chunks:
-            c_content = c.get("content", {})
-            c_range = c_content.get("range", {}) or {}
+            c_content: dict[str, Any] = c.get("content", {})
+            c_range: dict[str, Any] = c_content.get("range", {}) or {}
             chunk_rows.append(
                 {
                     "chunk_id": c["chunk_id"],

@@ -8,7 +8,7 @@ import os
 import pickle
 import re
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -47,7 +47,7 @@ from .redo_worker import RedoWorker
 from .retriever import HybridRetriever
 from .scip_loader import load_scip_artifact, run_scip_python_index
 from .scip_models import SCIPIndex
-from .semantic_ir import IRRelation
+from .semantic_ir import IRRelation, IRSnapshot
 from .snapshot_store import SnapshotStore
 from .snapshot_symbol_index import SnapshotSymbolIndex
 from .symbol_resolver import SymbolResolver
@@ -115,9 +115,9 @@ class FastCode:
         self.logger.info("Initializing FastCode system")
 
         # Initialize resolver attributes (will be set in index_repository)
-        self.global_index_builder = None
-        self.module_resolver = None
-        self.symbol_resolver = None
+        self.global_index_builder: GlobalIndexBuilder | None = None
+        self.module_resolver: ModuleResolver | None = None
+        self.symbol_resolver: SymbolResolver | None = None
 
         # Initialize components
         self.loader = RepositoryLoader(self.config)
@@ -131,7 +131,7 @@ class FastCode:
         self.ir_graph_builder = IRGraphBuilder()
 
         # Get repo_root from config if available
-        config_repo_root = self.config.get("repo_root")
+        config_repo_root: str = self.config.get("repo_root")
         config_repo_root = os.path.abspath(config_repo_root)
         ensure_dir(config_repo_root)
         self.logger.info(f"Configured repo_root: {config_repo_root}")
@@ -148,7 +148,7 @@ class FastCode:
         self.cache_manager = CacheManager(self.config)
 
         persist_dir = self.vector_store.persist_dir
-        storage_cfg = self.config.get("storage", {})
+        storage_cfg: dict[str, Any] = self.config.get("storage", {})
         self.snapshot_store = SnapshotStore(persist_dir, storage_cfg=storage_cfg)
         self.manifest_store = ManifestStore(self.snapshot_store.db_runtime)
         self.index_run_store = IndexRunStore(self.snapshot_store.db_runtime)
@@ -171,19 +171,21 @@ class FastCode:
 
         self._redo_worker: RedoWorker | None = None
         if self.snapshot_store.db_runtime.backend == "postgres":
-            storage_cfg = self.config.get("storage", {}) or {}
+            storage_cfg: dict[str, Any] = self.config.get("storage", {}) or {}
             poll_interval = int(storage_cfg.get("redo_poll_interval_seconds", 30))
             self._redo_worker = RedoWorker(self, poll_interval_seconds=poll_interval)
             self._redo_worker.start()
 
         # State
-        self.repo_loaded = False
-        self.repo_indexed = False
-        self.repo_info = {}
+        self.repo_loaded: bool = False
+        self.repo_indexed: bool = False
+        self.repo_info: dict[str, Any] = {}
 
         # Multi-repository state
-        self.multi_repo_mode = False
-        self.loaded_repositories = {}  # {repo_name: repo_info}
+        self.multi_repo_mode: bool = False
+        self.loaded_repositories: dict[
+            str, dict[str, Any]
+        ] = {}  # {repo_name: repo_info}
 
     @staticmethod
     def _infer_is_url(source: str) -> bool:
@@ -293,11 +295,14 @@ class FastCode:
 
             # Initialize vector store if not already done
             if self.vector_store.dimension is None:
+                if self.embedder.embedding_dim is None:
+                    raise RuntimeError("Embedding dimension must be set")
+
                 self.vector_store.initialize(self.embedder.embedding_dim)
 
             # Add embeddings to vector store
-            vectors = []
-            metadata = []
+            vectors: list[Any] = []
+            metadata: list[dict[str, Any]] = []
 
             for elem in elements:
                 embedding = elem.metadata.get("embedding")
@@ -306,7 +311,7 @@ class FastCode:
                     metadata.append(elem.to_dict())
 
             if vectors:
-                vectors_array = np.array(vectors)
+                vectors_array: np.ndarray = np.array(vectors)
                 self.vector_store.add_vectors(vectors_array, metadata)
 
             # Initialize resolvers for complete graph building
@@ -610,7 +615,7 @@ class FastCode:
 
         try:
             self.index_run_store.mark_status(run_id, "extracting")
-            elements = self.indexer.extract_elements(
+            elements: list[CodeElement] = self.indexer.extract_elements(
                 repo_name=repo_name, repo_url=repo_url
             )
 
@@ -618,9 +623,11 @@ class FastCode:
 
             self.index_run_store.mark_status(run_id, "materializing")
             temp_store = VectorStore(self.config)
+            if self.embedder.embedding_dim is None:
+                raise RuntimeError("Embedding dimension must be set")
             temp_store.initialize(self.embedder.embedding_dim)
-            vectors = []
-            metadata = []
+            vectors: list[list[float]] = []
+            metadata: list[dict[str, Any]] = []
             for elem in elements:
                 embedding = elem.metadata.get("embedding")
                 if embedding is not None:
@@ -645,7 +652,9 @@ class FastCode:
             except Exception as e:
                 warnings.append(f"resolver_init_failed: {e}")
             temp_graph.build_graphs(elements, module_resolver, symbol_resolver)
-            call_graph_edges_raw = list(temp_graph.call_graph.edges(data=True))
+            call_graph_edges_raw: list[tuple[Any, Any, dict[str, Any]]] = list(
+                temp_graph.call_graph.edges(data=True)
+            )
 
             temp_retriever = HybridRetriever(
                 self.config,
@@ -662,7 +671,7 @@ class FastCode:
             temp_graph.save(artifact_key)
 
             self.index_run_store.mark_status(run_id, "validating")
-            ast_snapshot = build_ir_from_ast(
+            ast_snapshot: IRSnapshot = build_ir_from_ast(
                 repo_name=repo_name,
                 snapshot_id=snapshot_id,
                 elements=elements,
@@ -1704,7 +1713,7 @@ class FastCode:
 
         result = None  # Always process through full flow
         processed_query = None
-        retrieved: list[CodeElement] = []
+        retrieved: list[dict[str, Any]] = []
 
         try:
             if result is None:
@@ -1828,7 +1837,7 @@ class FastCode:
             [str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str
         ]
         | None = None,
-    ):
+    ) -> Generator[tuple[str | None, dict[str, Any] | None], Any, None]:
         """
         Query the repository with streaming response (yields answer chunks)
 
@@ -1929,7 +1938,7 @@ class FastCode:
             yield None, {"status": "generating", "retrieved_count": len(retrieved)}
 
             # Stream answer generation
-            full_answer_parts = []
+            full_answer_parts: list[str] = []
             answer_metadata = {}
 
             for chunk, metadata in self.answer_generator.generate_stream(
@@ -2126,7 +2135,7 @@ class FastCode:
         Returns:
             List of CodeElement objects
         """
-        elements = []
+        elements: list[CodeElement] = []
         for meta in self.vector_store.metadata:
             try:
                 # Skip repository_overview elements
@@ -2210,6 +2219,8 @@ class FastCode:
         if not chunks or not getattr(self.graph_runtime, "enabled", False):
             return
         try:
+            if self.graph_runtime is None:
+                raise RuntimeError("Graph runtime not available")
             synced = self.graph_runtime.sync_docs(chunks=chunks, mentions=mentions)
         except Exception as e:
             warnings.append(f"ladybug_doc_sync_failed: {e}")
@@ -2379,7 +2390,7 @@ class FastCode:
                     self.loader.load_from_path(source)
 
                 repo_info = self.loader.get_repository_info()
-                repo_name = repo_info.get("name")
+                repo_name: str = repo_info.get("name")
                 repo_url = repo_info.get("url", source)
 
                 # Update config with repo_root for each repo (Critical for graph building)
@@ -2393,6 +2404,8 @@ class FastCode:
 
                 # Create a fresh vector store for this repository
                 temp_vector_store = VectorStore(self.config)
+                if self.embedder.embedding_dim is None:
+                    raise RuntimeError("Embedding dimension must be set")
                 temp_vector_store.initialize(self.embedder.embedding_dim)
 
                 # Create a temporary indexer with the temp vector store for this repo
@@ -2410,8 +2423,8 @@ class FastCode:
                 )
 
                 # Add to temporary vector store
-                vectors = []
-                metadata = []
+                vectors: list[list[float]] = []
+                metadata: list[dict[str, Any]] = []
 
                 for elem in elements:
                     embedding = elem.metadata.get("embedding")
@@ -2420,7 +2433,7 @@ class FastCode:
                         metadata.append(elem.to_dict())
 
                 if vectors:
-                    vectors_array = np.array(vectors)
+                    vectors_array: np.ndarray = np.array(vectors)
                     temp_vector_store.add_vectors(vectors_array, metadata)
 
                     # Save this repository's vector index separately
@@ -2502,6 +2515,8 @@ class FastCode:
                 "Merging repositories into main vector store for statistics..."
             )
             if self.vector_store.dimension is None:
+                if self.embedder.embedding_dim is None:
+                    raise RuntimeError("Embedding dimension must be set")
                 self.vector_store.initialize(self.embedder.embedding_dim)
 
             for repo_name in successfully_indexed:
@@ -2527,7 +2542,7 @@ class FastCode:
         repo_names = self.vector_store.get_repository_names()
         repo_counts = self.vector_store.get_count_by_repository()
 
-        repositories = []
+        repositories: list[dict[str, Any]] = []
         for repo_name in repo_names:
             repo_info = self.loaded_repositories.get(repo_name, {})
             repositories.append(
@@ -2585,7 +2600,7 @@ class FastCode:
         try:
             # Discover available repository indexes
             persist_dir = self.vector_store.persist_dir
-            available_repos = []
+            available_repos: list[str] = []
 
             if os.path.exists(persist_dir):
                 for file in os.listdir(persist_dir):
@@ -2652,8 +2667,8 @@ class FastCode:
             # For multi-repo, we merge BM25 data from all loaded repositories
             self.logger.info("Loading BM25 and graph data...")
 
-            all_bm25_elements = []
-            all_bm25_corpus = []
+            all_bm25_elements: list[CodeElement] = []
+            all_bm25_corpus: list[str] = []
             graphs_loaded = False
 
             for repo_name in repos_to_load:
@@ -2739,10 +2754,10 @@ class FastCode:
     # ------------------------------------------------------------------
 
     def _build_file_manifest(
-        self, elements: list[dict[str, Any]], repo_root: str
+        self, elements: list[CodeElement], repo_root: str
     ) -> dict[str, Any]:
         """Build a file manifest mapping files to their mtime/size and element IDs."""
-        manifest = {
+        manifest: dict[str, Any] = {
             "repo_name": self.repo_info.get("name", ""),
             "created_at": datetime.now().isoformat(),
             "files": {},
@@ -2769,7 +2784,7 @@ class FastCode:
 
         return manifest
 
-    def _save_file_manifest(self, repo_name, manifest) -> None:
+    def _save_file_manifest(self, repo_name: str, manifest: dict[str, Any]) -> None:
         """Save file manifest to disk as JSON."""
         manifest_path = os.path.join(
             self.vector_store.persist_dir, f"{repo_name}_manifest.json"
@@ -2778,7 +2793,7 @@ class FastCode:
             json.dump(manifest, f, indent=2)
         self.logger.info(f"Saved file manifest: {manifest_path}")
 
-    def _load_file_manifest(self, repo_name):
+    def _load_file_manifest(self, repo_name: str) -> dict[str, Any] | None:
         """Load file manifest from disk. Returns None if missing."""
         manifest_path = os.path.join(
             self.vector_store.persist_dir, f"{repo_name}_manifest.json"
@@ -2807,7 +2822,9 @@ class FastCode:
             self.logger.warning(f"Failed to load metadata for '{repo_name}': {e}")
             return []
 
-    def _detect_file_changes(self, repo_name, current_files):
+    def _detect_file_changes(
+        self, repo_name: str, current_files: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
         """Compare current files against saved manifest to detect changes.
 
         Returns dict with added/modified/deleted/unchanged lists, or None
@@ -2860,12 +2877,15 @@ class FastCode:
         }
 
     def _collect_unchanged_elements(
-        self, manifest, unchanged_files, existing_metadata
-    ) -> tuple[list[dict[str, Any]], set[str]]:
+        self,
+        manifest: dict[str, Any],
+        unchanged_files: list[str],
+        existing_metadata: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         """Collect element dicts and IDs for unchanged files from existing metadata."""
-        unchanged_element_ids = set()
+        unchanged_element_ids: set[str] = set()
         for rel_path in unchanged_files:
-            file_entry = manifest.get("files", {}).get(rel_path, {})
+            file_entry: dict[str, Any] = manifest.get("files", {}).get(rel_path, {})
             for elem_id in file_entry.get("element_ids", []):
                 unchanged_element_ids.add(elem_id)
 
@@ -2943,13 +2963,13 @@ class FastCode:
         )
 
         # 6. Parse & embed changed files
-        changed_file_infos = []
+        changed_file_infos: list[dict[str, Any]] = []
         for rp in added + modified:
             lookup = changes["current_lookup"].get(rp)
             if lookup and lookup.get("file_info"):
                 changed_file_infos.append(lookup["file_info"])
 
-        new_elements = []
+        new_elements: list[CodeElement] = []
         if changed_file_infos:
             repo_url = self.loaded_repositories.get(repo_name, {}).get("url")
             new_elements = self.indexer.index_files(
@@ -2960,7 +2980,7 @@ class FastCode:
             )
 
         # 7. Combine: convert unchanged metadata dicts → CodeElement objects
-        all_elements = []
+        all_elements: list[CodeElement] = []
         for meta in unchanged_elements:
             try:
                 all_elements.append(
@@ -2989,6 +3009,8 @@ class FastCode:
 
         # 8. Rebuild FAISS (temporary store — main instance untouched)
         temp_store = VectorStore(self.config)
+        if self.embedder.embedding_dim is None:
+            raise RuntimeError("Embedding dimension must be set")
         temp_store.initialize(self.embedder.embedding_dim)
 
         vectors, metadata_list = [], []
@@ -3053,14 +3075,14 @@ class FastCode:
 
     def shutdown(self):
         """Stop background workers."""
-        if getattr(self, "_redo_worker", None):
+        if self._redo_worker is not None:
             self._redo_worker.stop()
         graph_rt = getattr(self, "graph_runtime", None)
         if graph_rt is not None:
             graph_rt.close()
 
     def _get_full_dialogue_history(
-        self, session_id: str | None, enable_multi_turn: bool
+        self, session_id: str | None, enable_multi_turn: bool = False
     ) -> list[dict[str, Any]] | None:
         """
         Get full dialogue history for answer generation
@@ -3138,7 +3160,7 @@ class FastCode:
         import shutil
 
         persist_dir = self.vector_store.persist_dir
-        deleted_files = []
+        deleted_files: list[str] = []
         freed_bytes = 0
 
         # Files to delete from vector_store directory
@@ -3200,7 +3222,7 @@ class FastCode:
         sessions = self.cache_manager.list_sessions()
 
         # Enrich each session with the first query as a title
-        enriched_sessions = []
+        enriched_sessions: list[dict[str, Any]] = []
         for session in sessions:
             session_id = session.get("session_id", "")
             if session_id:

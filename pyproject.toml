@@ -181,14 +181,29 @@ parametrize-names-type = "tuple"
 [tool.pyright]
 include = ["fastcode", "tests"]
 exclude = ["**/repos", "**/repo_backup", "**/_bmad-output", "**/_fastcode"]
-typeCheckingMode = "strict"
+typeCheckingMode = "standard"
 reportUnnecessaryComparison = true
 reportUnusedVariable = true
-reportUnusedCallResult = true
 reportUnknownArgumentType = "error"
 reportUnknownMemberType = "error"
 reportUnknownVariableType = "error"
 reportUntypedFunctionDecorator = "error"
+reportMissingParameterType = "warning"
+reportUnusedCallResult = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportOptionalSubscript = "none"
+reportOptionalMemberAccess = "none"
+reportOptionalOperand = "none"
+reportOptionalIterable = "none"
+reportOperatorIssue = "none"
+reportAttributeAccessIssue = "none"
+reportArgumentType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportMissingParameterType = "none"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -50,76 +50,88 @@ class HybridRetriever:
         graph_builder: CodeGraphBuilder,
         repo_root: str | None = None,
     ):
-        self.config = config
-        self.retrieval_config = config.get("retrieval", {})
-        self.logger = logging.getLogger(__name__)
+        self.config: dict[str, Any] = config
+        self.retrieval_config: dict[str, Any] = config.get("retrieval", {})
+        self.logger: logging.Logger = logging.getLogger(__name__)
 
-        self.vector_store = vector_store
-        self.embedder = embedder
-        self.graph_builder = graph_builder
+        self.vector_store: VectorStore = vector_store
+        self.embedder: CodeEmbedder = embedder
+        self.graph_builder: CodeGraphBuilder = graph_builder
 
         # Weights for hybrid search
-        self.semantic_weight = self.retrieval_config.get("semantic_weight", 0.6)
-        self.keyword_weight = self.retrieval_config.get("keyword_weight", 0.3)
-        self.graph_weight = self.retrieval_config.get("graph_weight", 0.1)
-        self.graph_backend = self.retrieval_config.get("graph_backend", "ir")
-        self.allow_legacy_graph_fallback = self.retrieval_config.get(
+        self.semantic_weight: float = self.retrieval_config.get("semantic_weight", 0.6)
+        self.keyword_weight: float = self.retrieval_config.get("keyword_weight", 0.3)
+        self.graph_weight: float = self.retrieval_config.get("graph_weight", 0.1)
+        self.graph_backend: str = self.retrieval_config.get("graph_backend", "ir")
+        self.allow_legacy_graph_fallback: bool = self.retrieval_config.get(
             "allow_legacy_graph_fallback", True
         )
-        self.retrieval_backend = self.retrieval_config.get("backend", "pg_hybrid")
-        self.adaptive_fusion_cfg = (
+        self.retrieval_backend: str = self.retrieval_config.get("backend", "pg_hybrid")
+        self.adaptive_fusion_cfg: dict[str, Any] = (
             self.retrieval_config.get("adaptive_fusion", {}) or {}
         )
-        self.adaptive_fusion_enabled = bool(
+        self.adaptive_fusion_enabled: bool = bool(
             self.adaptive_fusion_cfg.get("enabled", False)
         )
 
         # Retrieval parameters
-        self.min_similarity = self.retrieval_config.get("min_similarity", 0.3)
-        self.max_results = self.retrieval_config.get("max_results", 5)
-        self.diversity_penalty = self.retrieval_config.get("diversity_penalty", 0.1)
+        self.min_similarity: float = self.retrieval_config.get("min_similarity", 0.3)
+        self.max_results: int = self.retrieval_config.get("max_results", 5)
+        self.diversity_penalty: float = self.retrieval_config.get(
+            "diversity_penalty", 0.1
+        )
 
         # Multi-repository parameters
-        self.enable_two_stage_retrieval = self.retrieval_config.get(
+        self.enable_two_stage_retrieval: bool = self.retrieval_config.get(
             "enable_two_stage_retrieval", True
         )
-        self.select_repos_by_overview = self.retrieval_config.get(
+        self.select_repos_by_overview: bool = self.retrieval_config.get(
             "select_repos_by_overview", True
         )
-        self.repo_selection_method = self.retrieval_config.get(
+        self.repo_selection_method: str = self.retrieval_config.get(
             "repo_selection_method", "llm"
         )  # "llm" or "embedding"
-        self.top_repos_to_search = self.retrieval_config.get("top_repos_to_search", 5)
-        self.min_repo_similarity = self.retrieval_config.get("min_repo_similarity", 0.3)
-        self.max_files_to_search = self.retrieval_config.get("max_files_to_search", 5)
+        self.top_repos_to_search: int = self.retrieval_config.get(
+            "top_repos_to_search", 5
+        )
+        self.min_repo_similarity: float = self.retrieval_config.get(
+            "min_repo_similarity", 0.3
+        )
+        self.max_files_to_search: int = self.retrieval_config.get(
+            "max_files_to_search", 5
+        )
 
         # Agency mode parameters
-        self.enable_agency_mode = self.retrieval_config.get("enable_agency_mode", True)
+        self.enable_agency_mode: bool = self.retrieval_config.get(
+            "enable_agency_mode", True
+        )
 
         # Full indexes (for repository selection - never cleared)
-        self.full_bm25 = None
-        self.full_bm25_corpus = []
-        self.full_bm25_elements = []
+        self.full_bm25: BM25Okapi | None = None
+        self.full_bm25_corpus: list[str] = []
+        self.full_bm25_elements: list[CodeElement] = []
 
         # Separate BM25 index for repository overviews
-        self.repo_overview_bm25 = None
-        self.repo_overview_bm25_corpus = []
-        self.repo_overview_names = []  # List of repo names corresponding to corpus
+        self.repo_overview_bm25: BM25Okapi | None = None
+        self.repo_overview_bm25_corpus: list[str] = []
+        self.repo_overview_names: list[
+            str
+        ] = []  # List of repo names corresponding to corpus
 
         # Filtered indexes (for actual retrieval after repo selection)
-        self.filtered_bm25 = None
-        self.filtered_bm25_corpus = []
-        self.filtered_bm25_elements = []
+        self.filtered_bm25: BM25Okapi | None = None
+        self.filtered_bm25_corpus: list[str] = []
+        self.filtered_bm25_elements: list[CodeElement] = []
 
         # Filtered vector store for selected repositories
-        self.filtered_vector_store = None
+        self.filtered_vector_store: VectorStore | None = None
 
         # Repository selector for LLM-based file selection
-        self.repo_selector = RepositorySelector(config)
+        self.repo_selector: RepositorySelector = RepositorySelector(config)
 
         # Initialize agents for agency mode (will be initialized later when repo_root is known)
-        self.iterative_agent = None
-        self.repo_root = repo_root
+        self.iterative_agent: IterativeAgent | None = None
+        self.repo_root: str | None = repo_root
 
         # Try to initialize agents if repo_root is provided
         if self.enable_agency_mode and repo_root:
@@ -139,7 +151,7 @@ class HybridRetriever:
         ensure_dir(self.persist_dir)
 
         # Track currently loaded repositories for filtering
-        self.current_loaded_repos = (
+        self.current_loaded_repos: list[str] | None = (
             None  # None means all repos loaded, List means specific repos
         )
         self.ir_graphs: IRGraphs | None = None
@@ -751,7 +763,7 @@ class HybridRetriever:
         )
 
         # Stage 2: BM25 search on repository overviews (use separate BM25 index)
-        bm25_results = []
+        bm25_results: list[tuple[str, float]] = []
         if self.repo_overview_bm25 is not None and self.repo_overview_names:
             # Tokenize using provided keywords when available; fall back to query text
             query_tokens: list[str] = []
@@ -816,7 +828,7 @@ class HybridRetriever:
             )
 
         # 1. filter and sort
-        qualified_repos = [
+        qualified_repos: list[tuple[str, dict[str, Any]]] = [
             (name, scores)
             for name, scores in repo_scores.items()
             if scores["total_score"] > MIN_SCORE_THRESHOLD
@@ -981,7 +993,7 @@ class HybridRetriever:
 
         # Merge with existing results (prioritize LLM-selected files)
         # Add selected file elements with boosted scores
-        enhanced_results = []
+        enhanced_results: list[dict[str, Any]] = []
         seen_ids = set()
 
         # First add LLM-selected file elements with boosted score
@@ -1045,7 +1057,7 @@ class HybridRetriever:
         Returns:
             List of file-level code elements from those files
         """
-        results = []
+        results: list[dict[str, Any]] = []
 
         # Use filtered elements if available, otherwise use full elements
         elements_to_search = (
@@ -1215,7 +1227,7 @@ class HybridRetriever:
 
         # Additional safety check: manually filter results by repo
         if repo_filter:
-            filtered_results = []
+            filtered_results: list[dict[str, Any]] = []
             for metadata, score in results:
                 repo_name = metadata.get("repo_name", "")
                 if repo_name in repo_filter:
@@ -1287,7 +1299,7 @@ class HybridRetriever:
         search_limit = top_k * 3 if use_filter else top_k
         top_indices = np.argsort(scores)[::-1][: min(search_limit, len(scores))]
 
-        results = []
+        results: list[dict[str, Any]] = []
         filtered_count = 0
         allowed_types = set(element_types) if element_types else None
 
@@ -1531,7 +1543,7 @@ class HybridRetriever:
 
     def retrieve_by_file(self, file_path: str) -> list[dict[str, Any]]:
         """Retrieve all elements from a specific file"""
-        results = []
+        results: list[dict[str, Any]] = []
 
         # Use filtered elements if available, otherwise use full elements
         elements_to_search = (
@@ -1558,7 +1570,7 @@ class HybridRetriever:
         self, element_type: str, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Retrieve elements by type"""
-        results = []
+        results: list[dict[str, Any]] = []
 
         # Use filtered elements if available, otherwise use full elements
         elements_to_search = (

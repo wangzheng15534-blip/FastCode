@@ -6,9 +6,12 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from anthropic import Anthropic
+
+if TYPE_CHECKING:
+    from .indexer import CodeElement
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -20,12 +23,21 @@ from .path_utils import PathUtils
 from .schema.core_types import IterationConfig
 from .utils import json as _json_parsing
 
+# Type alias for iteration history entries
+IterationEntry = dict[str, Any]
+# Type alias for tool call history entries
+ToolCallEntry = dict[str, Any]
+
 
 class IterativeAgent:
     """Agent for managing multi-round iterative retrieval with confidence and cost control"""
 
     def __init__(
-        self, config: dict[str, Any], retriever, repo_root: str, bm25_elements=None
+        self,
+        config: dict[str, Any],
+        retriever: Any,
+        repo_root: str,
+        bm25_elements: Any = None,
     ):
         """
         Initialize iterative agent
@@ -36,63 +48,68 @@ class IterativeAgent:
             repo_root: Root directory of the repository
             bm25_elements: Reference to indexed BM25 elements for retrieving file details
         """
-        self.config = config
-        self.retriever = retriever
-        self.repo_root = repo_root
-        self.bm25_elements = bm25_elements
-        self.logger = logging.getLogger(__name__)
+        self.config: dict[str, Any] = config
+        self.retriever: Any = retriever
+        self.repo_root: str = repo_root
+        self.bm25_elements: list[CodeElement] | None = bm25_elements  # type: ignore[assignment]
+        self.logger: logging.Logger = logging.getLogger(__name__)
 
         # Initialize tools
-        self.tools = AgentTools(repo_root)
+        self.tools: AgentTools = AgentTools(repo_root)
 
         # Initialize path utilities
-        self.path_utils = PathUtils(repo_root)
+        self.path_utils: PathUtils = PathUtils(repo_root)
 
         # Agent settings
-        self.agent_config = config.get("agent", {}).get("iterative", {})
-        self.gen_config = config.get("generation", {})
+        self.agent_config: dict[str, Any] = config.get("agent", {}).get("iterative", {})
+        self.gen_config: dict[str, Any] = config.get("generation", {})
 
         # Adaptive thresholds (will be set dynamically)
-        self.base_max_iterations = self.agent_config.get("max_iterations", 4)
-        self.base_confidence_threshold = self.agent_config.get(
+        self.base_max_iterations: int = self.agent_config.get("max_iterations", 4)
+        self.base_confidence_threshold: int = self.agent_config.get(
             "confidence_threshold", 95
         )
-        self.min_confidence_gain = self.agent_config.get("min_confidence_gain", 5)
-        self.max_total_lines = self.agent_config.get("max_total_lines", 12000)  # 12000
+        self.min_confidence_gain: int = self.agent_config.get("min_confidence_gain", 5)
+        self.max_total_lines: int = self.agent_config.get(
+            "max_total_lines", 12000
+        )  # 12000
 
-        self.temperature = self.agent_config.get("temperature_agent", 0.2)
-        self.max_tokens = self.agent_config.get("max_tokens_agent", 6000)
+        self.temperature: float = self.agent_config.get("temperature_agent", 0.2)
+        self.max_tokens: int = self.agent_config.get("max_tokens_agent", 6000)
 
         # Element limits
-        self.max_elements = self.agent_config.get("max_elements", 100)
-        self.max_candidates_display = self.agent_config.get(
+        self.max_elements: int = self.agent_config.get("max_elements", 100)
+        self.max_candidates_display: int = self.agent_config.get(
             "max_candidates_display", 100
         )
 
         # Dynamic thresholds (set per query)
-        self.max_iterations = self.base_max_iterations
-        self.confidence_threshold = self.base_confidence_threshold
-        self.adaptive_line_budget = self.max_total_lines
+        self.max_iterations: int = self.base_max_iterations
+        self.confidence_threshold: int = self.base_confidence_threshold
+        self.adaptive_line_budget: int = self.max_total_lines
 
         # LLM settings
         load_dotenv()
-        self.provider = self.gen_config.get("provider", "openai")
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-        self.base_url = os.getenv("BASE_URL")
-        self.model = os.getenv("MODEL")
+        self.provider: str = self.gen_config.get("provider", "openai")
+        self.api_key: str | None = os.getenv("OPENAI_API_KEY")
+        self.anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY")
+        self.base_url: str | None = os.getenv("BASE_URL")
+        self.model: str | None = os.getenv("MODEL")
 
         # Initialize LLM client
-        self.client = self._initialize_client()
+        self.client: OpenAI | Anthropic | None = self._initialize_client()
 
         # Repo statistics (will be set later)
-        self.repo_stats = None
+        self.repo_stats: dict[str, Any] | None = None
 
         # Iteration history
-        self.iteration_history = []
-        self.tool_call_history = []
+        self.iteration_history: list[IterationEntry] = []
+        self.tool_call_history: list[ToolCallEntry] = []
 
-    def _initialize_client(self):
+        # Dialogue history (set per query)
+        self.dialogue_history: list[dict[str, Any]] | None = None
+
+    def _initialize_client(self) -> OpenAI | Anthropic | None:
         """Initialize LLM client based on provider"""
         if self.provider == "openai":
             api_key = self.api_key
@@ -146,7 +163,7 @@ class IterativeAgent:
     def retrieve_with_iteration(
         self,
         query: str,
-        processed_query,
+        processed_query: Any,
         query_info: dict[str, Any],
         repo_filter: list[str] | None = None,
         dialogue_history: list[dict[str, Any]] | None = None,
@@ -396,7 +413,7 @@ class IterativeAgent:
         )
 
         # Per-round efficiency
-        round_efficiencies = []
+        round_efficiencies: list[dict[str, Any]] = []
         for h in self.iteration_history[1:]:  # Skip round 1 for ROI
             round_efficiencies.append(
                 {
@@ -475,7 +492,7 @@ class IterativeAgent:
     def _round_one(
         self,
         query: str,
-        processed_query,
+        processed_query: Any,
         query_info: dict[str, Any],
         repo_filter: list[str] | None = None,
         dialogue_history: list[dict[str, Any]] | None = None,
@@ -509,7 +526,7 @@ class IterativeAgent:
     def _build_round_one_prompt(
         self,
         query: str,
-        processed_query,
+        processed_query: Any,
         query_info: dict[str, Any],
         repo_filter: list[str] | None = None,
         dialogue_history: list[dict[str, Any]] | None = None,
@@ -712,9 +729,9 @@ If confidence < 95:
 
     def _normalize_query_enhancement(self, query_enhancement: Any) -> dict[str, Any]:
         """Normalize query enhancement payload to a consistent dict format."""
-        normalized = {}
+        normalized: dict[str, Any] = {}
         if isinstance(query_enhancement, dict):
-            normalized = dict(query_enhancement)
+            normalized = dict(query_enhancement)  # type: ignore[assignment]
         elif isinstance(query_enhancement, str):
             normalized = self._parse_query_enhancement_fallback(query_enhancement)
 
@@ -744,13 +761,18 @@ If confidence < 95:
             else:
                 normalized.pop("rewritten_query", None)
 
-        selected_keywords = normalized.get("selected_keywords")
+        selected_keywords: str | list[Any] | None = normalized.get("selected_keywords")
         if isinstance(selected_keywords, str):
             keywords_str = " ".join(selected_keywords.split())
             keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
             normalized["selected_keywords"] = keywords[:10]
         elif isinstance(selected_keywords, list):
-            keywords = [str(k).strip() for k in selected_keywords if str(k).strip()]
+            keywords: list[str] = []
+            for k in selected_keywords:
+                k_str = str(k).strip()
+                if k_str:
+                    keywords.append(k_str)
+            keywords = keywords[:10]
             normalized["selected_keywords"] = keywords[:10]
 
         pseudocode = normalized.get("pseudocode_hints")
@@ -771,7 +793,7 @@ If confidence < 95:
 
     def _parse_query_enhancement_fallback(self, response: str) -> dict[str, Any]:
         """Fallback parsing for query enhancement fields in non-JSON outputs."""
-        enhancements = {}
+        enhancements: dict[str, Any] = {}
 
         if not response:
             return enhancements
@@ -848,7 +870,9 @@ If confidence < 95:
 
         return enhancements
 
-    def _perform_standard_retrieval(self, processed_query, filters, repo_filter):
+    def _perform_standard_retrieval(
+        self, processed_query: Any, filters: Any, repo_filter: Any
+    ) -> list[dict[str, Any]]:
         """
         Perform standard retrieval without triggering iterative mode recursion
         Directly calls retriever's internal methods (_semantic_search, _keyword_search, etc.)
@@ -872,7 +896,7 @@ If confidence < 95:
                 else str(processed_query)
             )
 
-        keywords = (
+        keywords: list[str] = (
             processed_query.keywords if hasattr(processed_query, "keywords") else []
         )
         pseudocode = (
@@ -896,7 +920,7 @@ If confidence < 95:
             )
 
         # Stage 3: Keyword search
-        keyword_query = " ".join(keywords) if keywords else search_text
+        keyword_query: str = " ".join(keywords) if keywords else search_text
         keyword_results = self.retriever._keyword_search(
             keyword_query, top_k=10, repo_filter=repo_filter
         )
@@ -925,7 +949,7 @@ If confidence < 95:
     def _execute_round_one_retrieval(
         self,
         query: str,
-        processed_query,
+        processed_query: Any,
         query_info: dict[str, Any],
         round1_result: dict[str, Any],
         repo_filter: list[str] | None = None,
@@ -946,7 +970,7 @@ If confidence < 95:
         self.logger.info(f"Standard retrieval found {len(retrieval_results)} elements")
 
         # Step 2: Execute tool calls if any
-        tool_results = []
+        tool_results: list[dict[str, Any]] = []
         if round1_result.get("tool_calls"):
             tool_results = self._execute_tool_calls_with_selection(
                 query, round1_result["tool_calls"], repo_filter
@@ -1003,7 +1027,7 @@ If confidence < 95:
         Returns:
             List of selected elements
         """
-        all_candidates = []
+        all_candidates: list[dict[str, Any]] = []
         selected_repos = repo_filter or []
 
         # Execute tool calls to get candidates
@@ -1150,13 +1174,15 @@ If confidence < 95:
 
     def _format_candidates_with_elements(self, candidates: list[dict[str, Any]]) -> str:
         """Format candidates showing indexed elements"""
-        lines = []
+        lines: list[str] = []
 
         for i, candidate in enumerate(candidates[: self.max_candidates_display], 1):
-            file_path = candidate.get("file_path", "")
-            indexed_elements = candidate.get("indexed_elements", [])
-            match_count = candidate.get("match_count", 0)
-            repo_name = candidate.get("repo_name", "")
+            file_path: str = candidate.get("file_path", "")
+            indexed_elements: list[dict[str, Any]] = candidate.get(
+                "indexed_elements", []
+            )
+            match_count: int = candidate.get("match_count", 0)
+            repo_name: str = candidate.get("repo_name", "")
 
             lines.append(f"\n{i}. {file_path}")
             if repo_name:
@@ -1203,7 +1229,7 @@ If confidence < 95:
         self, selections: list[dict[str, Any]], candidates: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Convert selections to retrieval element format"""
-        results = []
+        results: list[dict[str, Any]] = []
 
         self.logger.debug(
             f"[SELECTION DEBUG] Converting {len(selections)} selections to elements"
@@ -1213,15 +1239,15 @@ If confidence < 95:
         )
 
         # Build known repos set from candidates and bm25_elements
-        known_repos = set()
+        known_repos: set[str] = set()
         for candidate in candidates:
             repo = candidate.get("repo_name", "")
             if repo:
                 known_repos.add(repo)
         if self.bm25_elements:
-            for elem in self.bm25_elements[:100]:  # Sample first 100
-                if elem.repo_name:
-                    known_repos.add(elem.repo_name)
+            for bm25_elem in self.bm25_elements[:100]:  # Sample first 100
+                if bm25_elem.repo_name:
+                    known_repos.add(bm25_elem.repo_name)
 
         self.logger.debug(f"[SELECTION DEBUG] Known repos: {known_repos}")
 
@@ -1429,11 +1455,11 @@ If confidence < 95:
             f"[SELECTION DEBUG] ===== ALL CONVERTED ELEMENTS ({len(results)}) ====="
         )
         for i, res_data in enumerate(results):
-            elem = res_data.get("element", {})
-            path = elem.get("relative_path", elem.get("file_path", "N/A"))
-            elem_type = elem.get("type", "N/A")
-            repo = elem.get("repo_name", "N/A")
-            granularity = res_data.get("selection_granularity", "N/A")
+            elem: dict[str, Any] = res_data.get("element", {})
+            path: str = elem.get("relative_path", elem.get("file_path", "N/A"))
+            elem_type: str = elem.get("type", "N/A")
+            repo: str = elem.get("repo_name", "N/A")
+            granularity: str = res_data.get("selection_granularity", "N/A")
             self.logger.debug(
                 f"[SELECTION DEBUG]   [{i}] repo='{repo}' | path='{path}' | type={elem_type} | granularity={granularity}"
             )
@@ -1445,7 +1471,7 @@ If confidence < 95:
         self, candidates: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Fallback: select files when element selection fails"""
-        results = []
+        results: list[dict[str, Any]] = []
 
         for candidate in candidates[:10]:
             file_path = candidate.get("file_path", "")
@@ -1769,7 +1795,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             )
 
             # Determine target repo (mirrors logic in _execute_search_codebase)
-            target_repo = None
+            target_repo: str | None = None
 
             # Try to detect target repo from root_path_hint
             if selected_repos and root_path_hint and root_path_hint != ".":
@@ -1800,7 +1826,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
                         f"[RESOLVE] validate_and_normalize_file_pattern('{file_pattern}', '{repo}') -> {result}"
                     )
                     if result:
-                        targets_repo, normalized_pattern = result
+                        targets_repo, _normalized_pattern = result
                         if targets_repo:
                             target_repo = repo
                             self.logger.debug(
@@ -1809,7 +1835,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
                             break
 
             # Apply single-repo fallback
-            if is_single_repo:
+            if is_single_repo and selected_repos:
                 target_repo = selected_repos[0]
                 self.logger.debug(
                     f"[RESOLVE] Single-repo fallback: target_repo='{target_repo}'"
@@ -1879,7 +1905,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             self.logger.debug(f"[RESOLVE] list_directory: raw_path='{raw_path}'")
 
             # Determine target repo (mirrors logic in _execute_list_directory)
-            target_repo = None
+            target_repo: str | None = None
 
             # Try to detect target repo from path
             if selected_repos and raw_path and raw_path != ".":
@@ -1896,7 +1922,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
                         break
 
             # Apply single-repo fallback
-            if is_single_repo:
+            if is_single_repo and selected_repos:
                 target_repo = selected_repos[0]
                 self.logger.debug(
                     f"[RESOLVE] Single-repo fallback: target_repo='{target_repo}'"
@@ -1947,15 +1973,15 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         if not tool_calls:
             return []
 
-        prior_calls = {
+        prior_calls: set[str] = {
             self._normalize_tool_call(entry)
             for entry in self.tool_call_history
             if entry.get("round", 0) < round_num
         }
-        seen_current = set()
-        filtered = []
-        removed_prior = 0
-        removed_current = 0
+        seen_current: set[str] = set()
+        filtered: list[dict[str, Any]] = []
+        removed_prior: int = 0
+        removed_current: int = 0
 
         for tool_call in tool_calls:
             # Resolve the tool call parameters before comparison to match recorded history
@@ -2100,20 +2126,22 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
 
         # Step 1: Basic filtering by keep_files
         self.logger.debug("[FILTER DEBUG] ===== STARTING MATCHING PROCESS =====")
-        filtered = []
-        not_matched_elements = []
-        matched_pairs = []
+        filtered: list[dict[str, Any]] = []
+        not_matched_elements: list[tuple[int, str, str, str]] = []
+        matched_pairs: list[tuple[int, str, str]] = []
 
         for idx, elem_data in enumerate(elements):
-            elem = elem_data.get("element", {})
-            elem_type = elem.get("type", "")
-            elem_name = elem.get("name", "")
+            elem: dict[str, Any] = elem_data.get("element", {})
+            elem_type: str = elem.get("type", "")
+            elem_name: str = elem.get("name", "")
 
-            repo_name = elem.get("repo_name", "")
-            relative_path = elem.get("relative_path", elem.get("file_path", ""))
+            repo_name: str = elem.get("repo_name", "")
+            relative_path: str = elem.get("relative_path", elem.get("file_path", ""))
 
             # Construct full path with repo for matching
-            file_path = f"{repo_name}/{relative_path}" if repo_name else relative_path
+            file_path: str = (
+                f"{repo_name}/{relative_path}" if repo_name else relative_path
+            )
 
             self.logger.debug(
                 f"[FILTER DEBUG] Checking element [{idx}]: path='{file_path}', type='{elem_type}', name='{elem_name}'"
@@ -2121,7 +2149,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
 
             # Check if this element should be kept
             matched = False
-            matched_with = None
+            matched_with: str | None = None
             for keep_item in keep_files:
                 # Simple filename match
                 if keep_item in file_path:
@@ -2144,7 +2172,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
                         matched_with = keep_item
                         break
 
-            if matched:
+            if matched and matched_with:
                 matched_pairs.append((idx, file_path, matched_with))
             else:
                 not_matched_elements.append((idx, file_path, elem_type, elem_name))
@@ -2243,7 +2271,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             return elements
 
         # Calculate priority score for each element
-        scored_elements = []
+        scored_elements: list[tuple[float, dict[str, Any]]] = []
         for elem_data in elements:
             score = self._calculate_element_priority_score(elem_data)
             scored_elements.append((score, elem_data))
@@ -2252,12 +2280,12 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         scored_elements.sort(key=lambda x: x[0], reverse=True)
 
         # Select elements until budget is reached
-        selected = []
-        total_lines = 0
+        selected: list[dict[str, Any]] = []
+        total_lines: int = 0
         for score, elem_data in scored_elements:
-            elem = elem_data.get("element", {})
-            start = elem.get("start_line", 0)
-            end = elem.get("end_line", 0)
+            elem: dict[str, Any] = elem_data.get("element", {})
+            start: int = elem.get("start_line", 0)
+            end: int = elem.get("end_line", 0)
             elem_lines = end - start + 1 if end > start else 0
 
             # Always keep at least the top element
@@ -2413,7 +2441,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         """Format elements as a concise list for logging."""
         if not elements:
             return "[]"
-        items = []
+        items: list[str] = []
         for elem_data in elements:
             elem = elem_data.get("element", {})
             file_path = elem.get("relative_path", elem.get("file_path", ""))
@@ -2449,8 +2477,10 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         """Filter candidates to only those not present in existing."""
         if not candidates:
             return []
-        existing_keys = {self._element_identity(elem) for elem in existing}
-        filtered = []
+        existing_keys: set[tuple[str, str, str, str, int, int]] = {
+            self._element_identity(elem) for elem in existing
+        }
+        filtered: list[dict[str, Any]] = []
         for elem in candidates:
             key = self._element_identity(elem)
             if key in existing_keys:
@@ -2481,7 +2511,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             return results
 
         # Step 2: Group by (repo_name, file_path)
-        file_groups = {}
+        file_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for result in results:
             elem = result.get("element", {})
             repo_name = elem.get("repo_name", "")
@@ -2493,14 +2523,14 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             file_groups[key].append(result)
 
         # Step 3: Within each file, remove contained elements
-        final_results = []
+        final_results: list[dict[str, Any]] = []
         for key, group in file_groups.items():
             if len(group) == 1:
                 final_results.extend(group)
                 continue
 
             # Sort by coverage (descending): file > class > function, then by line range
-            def get_priority_and_range(result):
+            def get_priority_and_range(result: dict[str, Any]) -> tuple[int, int, Any]:
                 elem = result.get("element", {})
                 elem_type = elem.get("type", "")
                 start = elem.get("start_line", 0)
@@ -2517,8 +2547,8 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             group.sort(key=get_priority_and_range)
 
             # Keep elements that are not contained by others
-            kept = []
-            for i, result in enumerate(group):
+            kept: list[dict[str, Any]] = []
+            for _i, result in enumerate(group):
                 elem = result.get("element", {})
                 start = elem.get("start_line", 0)
                 end = elem.get("end_line", 0)
@@ -2579,7 +2609,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         """
         total_lines = _iteration.calculate_total_lines(current_elements)
 
-        result = _iteration.should_continue_iteration(
+        result: bool = _iteration.should_continue_iteration(
             confidence=confidence,
             current_round=current_round,
             max_iterations=self.max_iterations,
@@ -2679,6 +2709,10 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             return content
 
         if self.provider == "anthropic":
+            if not isinstance(self.client, Anthropic):
+                raise RuntimeError("Expected Anthropic client")
+            if self.model is None:
+                raise RuntimeError("Model must be set for Anthropic")
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
@@ -2691,7 +2725,8 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
                 raise ValueError(f"Empty response: {response}")
 
             stop_reason = getattr(response, "stop_reason", "unknown")
-            text = response.content[0].text if response.content else None
+            first_block = response.content[0] if response.content else None
+            text = getattr(first_block, "text", None) if first_block else None
             self.logger.info(
                 f"LLM response: content_len={len(text) if text else 0}, stop_reason={stop_reason}"
             )
@@ -2712,7 +2747,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         """
         Generate a tree-like structure of directories for selected repos
         """
-        tree_lines = []
+        tree_lines: list[str] = []
         max_depth = 5
         # Common directories to ignore
         ignore_dirs = {
@@ -2732,7 +2767,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             "out",
         }
 
-        def _add_dir_to_tree(path: str, prefix: str = "", depth: int = 0):
+        def _add_dir_to_tree(path: str, prefix: str = "", depth: int = 0) -> None:
             if depth >= max_depth:
                 return
 
@@ -2850,7 +2885,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             self.logger.warning("[DEBUG] Empty search_term, returning empty candidates")
             return []
 
-        candidates = []
+        candidates: list[dict[str, Any]] = []
         is_single_repo = selected_repos and len(selected_repos) == 1
 
         # Step 1: Intelligent repo detection from root_path_hint and file_pattern
@@ -3051,7 +3086,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
                         first_part = file_path.split("/")[0]
                         first_lower = first_part.lower()
                         for elem in self.bm25_elements:
-                            if (
+                            if elem.repo_name and (
                                 elem.repo_name == first_part
                                 or elem.repo_name.lower() == first_lower
                             ):
@@ -3092,7 +3127,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         self.logger.debug(f"  selected_repos={selected_repos}")
         self.logger.debug(f"  repo_root='{self.repo_root}'")
 
-        candidates = []
+        candidates: list[dict[str, Any]] = []
         is_single_repo = selected_repos and len(selected_repos) == 1
 
         # Step 1: Intelligent repo detection from raw_path
@@ -3282,9 +3317,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             self.logger.debug("[RETRIEVE DEBUG] No bm25_elements available")
             return []
 
-        results = []
-
-        # Find only file-level element from this file (use exact match to avoid duplicates)
+        results: list[dict[str, Any]] = []
         matches_found = 0
         for elem in self.bm25_elements:
             # if (elem.repo_name == repo_name and
@@ -3354,7 +3387,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         if not self.bm25_elements:
             return []
 
-        results = []
+        results: list[dict[str, Any]] = []
 
         # Find class and function elements from this file
         for elem in self.bm25_elements:
@@ -3401,7 +3434,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             Deduplicated results
         """
         # First, group by (repo_name, file_path)
-        file_groups = {}
+        file_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
         for result in results:
             elem = result.get("element", {})
@@ -3416,7 +3449,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             file_groups[key].append(result)
 
         # Process each file group
-        deduplicated = []
+        deduplicated: list[dict[str, Any]] = []
 
         for key, group in file_groups.items():
             # Check if there's a file-level result
@@ -3438,7 +3471,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             else:
                 # No file-level result, keep all class and function results
                 # Only remove exact duplicates (same element id or same type/name/location)
-                elem_id_seen = {}
+                elem_id_seen: dict[str | tuple[str, str, int], dict[str, Any]] = {}
 
                 for result in group:
                     elem = result.get("element", {})

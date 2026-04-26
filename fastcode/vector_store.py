@@ -17,9 +17,9 @@ class VectorStore:
     """Vector database for code embeddings using FAISS"""
 
     def __init__(self, config: dict[str, Any]) -> None:
-        self.config = config
-        self.vector_config = config.get("vector_store", {})
-        self.logger = logging.getLogger(__name__)
+        self.config: dict[str, Any] = config
+        self.vector_config: dict[str, Any] = config.get("vector_store", {})
+        self.logger: logging.Logger = logging.getLogger(__name__)
 
         # Evaluation mode can request a purely in-memory index that never touches disk.
         self.in_memory = self.vector_config.get(
@@ -29,27 +29,27 @@ class VectorStore:
         # Keep repo overviews in-memory when persistence is disabled.
         self._in_memory_repo_overviews: dict[str, dict[str, Any]] = {}
 
-        self.dimension = None
-        self.index = None
-        self.metadata = []  # Store metadata for each vector
+        self.dimension: int | None = None
+        self.index: Any = None  # faiss index types are untyped
+        self.metadata: list[dict[str, Any]] = []  # Store metadata for each vector
 
-        self.persist_dir = self.vector_config.get(
+        self.persist_dir: str = self.vector_config.get(
             "persist_directory", "./data/vector_store"
         )
-        self.distance_metric = self.vector_config.get("distance_metric", "cosine")
-        self.index_type = self.vector_config.get("index_type", "HNSW")
+        self.distance_metric: str = self.vector_config.get("distance_metric", "cosine")
+        self.index_type: str = self.vector_config.get("index_type", "HNSW")
 
         # HNSW parameters
-        self.m = self.vector_config.get("m", 16)
-        self.ef_construction = self.vector_config.get("ef_construction", 200)
-        self.ef_search = self.vector_config.get("ef_search", 50)
+        self.m: int = self.vector_config.get("m", 16)
+        self.ef_construction: int = self.vector_config.get("ef_construction", 200)
+        self.ef_search: int = self.vector_config.get("ef_search", 50)
 
         # Cache for scan_available_indexes to avoid repeated file I/O
         self._index_scan_cache: tuple[float, list[dict[str, Any]]] | None = None
-        self._index_scan_cache_ttl = self.vector_config.get(
+        self._index_scan_cache_ttl: float = self.vector_config.get(
             "index_scan_cache_ttl", 30.0
         )
-        self._index_scan_sample_size = self.vector_config.get(
+        self._index_scan_sample_size: int = self.vector_config.get(
             "index_scan_sample_size", 100
         )
 
@@ -91,7 +91,7 @@ class VectorStore:
         else:
             self.index = faiss.IndexFlatL2(dimension)  # L2 distance
 
-        self.metadata = []
+        self.metadata: list[dict[str, Any]] = []
         self.logger.info(
             f"Initialized {self.index_type} index with {self.distance_metric} distance"
         )
@@ -163,7 +163,7 @@ class VectorStore:
         distances, indices = self.index.search(query_vector, search_k)
 
         # Prepare results
-        results = []
+        results: list[tuple[dict[str, Any], float]] = []
         for dist, idx in zip(distances[0], indices[0], strict=True):
             if idx == -1:  # FAISS returns -1 for empty slots
                 continue
@@ -345,7 +345,7 @@ class VectorStore:
             faiss.normalize_L2(query_vector)
 
         # Calculate similarities with all repo overviews
-        results = []
+        results: list[tuple[dict[str, Any], float]] = []
         for repo_name, overview_data in overviews.items():
             embedding = overview_data["embedding"].reshape(1, -1)
 
@@ -410,9 +410,9 @@ class VectorStore:
         distances, indices = self.index.search(query_vectors, k)
 
         # Prepare results for each query
-        all_results = []
+        all_results: list[list[tuple[dict[str, Any], float]]] = []
         for query_distances, query_indices in zip(distances, indices, strict=True):
-            results = []
+            results: list[tuple[dict[str, Any], float]] = []
             for dist, idx in zip(query_distances, query_indices, strict=True):
                 if idx == -1:
                     continue
@@ -463,7 +463,7 @@ class VectorStore:
         Returns:
             List of indices
         """
-        indices = []
+        indices: list[int] = []
         for i, meta in enumerate(self.metadata):
             if meta.get("repo_name") in repo_names:
                 indices.append(i)
@@ -560,7 +560,7 @@ class VectorStore:
             self.initialize(self.dimension)
         else:
             self.index = None
-            self.metadata = []
+            self.metadata: list[dict[str, Any]] = []
         self.logger.info("Cleared vector store")
 
     def merge_from_index(self, index_name: str) -> bool:
@@ -649,8 +649,8 @@ class VectorStore:
             Number of vectors deleted
         """
         # FAISS doesn't support direct deletion, need to rebuild
-        indices_to_keep = []
-        metadata_to_keep = []
+        indices_to_keep: list[int] = []
+        metadata_to_keep: list[dict[str, Any]] = []
 
         for i, meta in enumerate(self.metadata):
             if not filter_func(meta):
@@ -687,7 +687,7 @@ class VectorStore:
         """
         import time
 
-        available_repos = []
+        available_repos: list[dict[str, Any]] = []
 
         if self.in_memory:
             self.logger.info("Skipping index scan (in-memory mode enabled)")

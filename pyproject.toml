@@ -4,7 +4,7 @@ members = ["fastcode", "nanobot"]
 [tool.ruff]
 line-length = 88
 target-version = "py311"
-exclude = ["_fastcode"]
+exclude = ["_fastcode", "repos", "repo_backup", "_bmad-output"]
 
 [tool.ruff.lint]
 select = [
@@ -182,6 +182,7 @@ parametrize-names-type = "tuple"
 
 [tool.pyright]
 include = ["fastcode", "tests"]
+exclude = ["**/repos", "**/repo_backup", "**/_bmad-output", "**/_fastcode"]
 typeCheckingMode = "strict"
 reportUnnecessaryComparison = true
 reportUnreachableCode = true

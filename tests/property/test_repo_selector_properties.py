@@ -22,7 +22,8 @@ def _make_selector():
 
 name_st = st.text(
     alphabet="abcdefghijklmnopqrstuvwxyz0123456789_-",
-    min_size=1, max_size=20,
+    min_size=1,
+    max_size=20,
 )
 
 names_list_st = st.lists(name_st, min_size=1, max_size=5, unique=True)
@@ -33,7 +34,6 @@ names_list_st = st.lists(name_st, min_size=1, max_size=5, unique=True)
 
 @pytest.mark.property
 class TestNormalize:
-
     @given(name=st.text(min_size=1, max_size=20))
     @settings(max_examples=30)
     @pytest.mark.happy
@@ -86,7 +86,6 @@ class TestNormalize:
 
 @pytest.mark.property
 class TestFuzzyMatchRepo:
-
     @pytest.mark.happy
     def test_exact_match(self):
         """HAPPY: exact name match returns the name."""

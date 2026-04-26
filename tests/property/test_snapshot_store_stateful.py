@@ -32,11 +32,15 @@ identifier = st.text(
 # --- Strategies ---
 
 _repo_name_st = st.text(
-    alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=12,
+    alphabet="abcdefghijklmnopqrstuvwxyz",
+    min_size=1,
+    max_size=12,
 )
 _branch_st = st.sampled_from(["main", "dev", "feature", "release", "hotfix"])
 _commit_st = st.text(alphabet="0123456789abcdef", min_size=7, max_size=40)
-_metadata_key_st = st.text(alphabet="abcdefghijklmnopqrstuvwxyz_", min_size=1, max_size=10)
+_metadata_key_st = st.text(
+    alphabet="abcdefghijklmnopqrstuvwxyz_", min_size=1, max_size=10
+)
 _metadata_val_st = st.one_of(
     st.integers(min_value=0, max_value=100),
     st.text(alphabet="abc", min_size=0, max_size=5),
@@ -166,9 +170,11 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
     @invariant()
     def find_by_repo_commit_returns_record(self):
         """INVARIANT: find_by_repo_commit always returns a record for saved data."""
-        for snap_id, snap in self.saved_snapshots.items():
+        for _snap_id, snap in self.saved_snapshots.items():
             result = self.store.find_by_repo_commit(snap.repo_name, snap.commit_id)
-            assert result is not None, f"No record for {snap.repo_name}:{snap.commit_id}"
+            assert result is not None, (
+                f"No record for {snap.repo_name}:{snap.commit_id}"
+            )
 
     @invariant()
     def snapshot_record_exists(self):
@@ -193,22 +199,47 @@ def _build_connected_snapshot(
 
     doc_id = f"doc:{commit_id[:8]}"
     sym_id = f"sym:{commit_id[:8]}"
-    docs = [IRDocument(doc_id=doc_id, path="src/main.py", language="python", source_set={"ast"})]
-    syms = [IRSymbol(
-        symbol_id=sym_id, external_symbol_id=None,
-        path="src/main.py", display_name="main_fn",
-        kind="function", language="python", source_priority=10,
-        source_set={"ast"}, start_line=1,
-    )]
-    occs = [IROccurrence(
-        occurrence_id=f"occ:{commit_id[:8]}", symbol_id=sym_id,
-        doc_id=doc_id, role="definition", start_line=1,
-        start_col=0, end_line=1, end_col=0, source="ast",
-    )]
-    edges = [IREdge(
-        edge_id=f"edge:{commit_id[:8]}", src_id=doc_id, dst_id=sym_id,
-        edge_type="contain", source="ast", confidence="resolved",
-    )]
+    docs = [
+        IRDocument(
+            doc_id=doc_id, path="src/main.py", language="python", source_set={"ast"}
+        )
+    ]
+    syms = [
+        IRSymbol(
+            symbol_id=sym_id,
+            external_symbol_id=None,
+            path="src/main.py",
+            display_name="main_fn",
+            kind="function",
+            language="python",
+            source_priority=10,
+            source_set={"ast"},
+            start_line=1,
+        )
+    ]
+    occs = [
+        IROccurrence(
+            occurrence_id=f"occ:{commit_id[:8]}",
+            symbol_id=sym_id,
+            doc_id=doc_id,
+            role="definition",
+            start_line=1,
+            start_col=0,
+            end_line=1,
+            end_col=0,
+            source="ast",
+        )
+    ]
+    edges = [
+        IREdge(
+            edge_id=f"edge:{commit_id[:8]}",
+            src_id=doc_id,
+            dst_id=sym_id,
+            edge_type="contain",
+            source="ast",
+            confidence="resolved",
+        )
+    ]
     return IRSnapshot(
         repo_name=repo_name,
         snapshot_id=snap_id,
@@ -232,7 +263,6 @@ TestSnapshotStoreStateMachine = SnapshotStoreMachine.TestCase
 
 @pytest.mark.property
 class TestSnapshotStoreUpsert:
-
     @given(
         repo=_repo_name_st,
         commit=_commit_st,
@@ -271,8 +301,12 @@ class TestSnapshotStoreUpsert:
             snap = _build_connected_snapshot(repo, snap_id, branch, commit)
             store.save_snapshot(snap)
 
-            ref1 = store.save_scip_artifact_ref(snap_id, indexer_name="scip-python", checksum="aaa")
-            ref2 = store.save_scip_artifact_ref(snap_id, indexer_name="scip-go", checksum="bbb")
+            store.save_scip_artifact_ref(
+                snap_id, indexer_name="scip-python", checksum="aaa"
+            )
+            ref2 = store.save_scip_artifact_ref(
+                snap_id, indexer_name="scip-go", checksum="bbb"
+            )
             assert ref2["indexer_name"] == "scip-go"
 
             loaded_ref = store.get_scip_artifact_ref(snap_id)
@@ -349,5 +383,6 @@ class TestSnapshotStoreUpsert:
             record = store.get_snapshot_record(snap_id)
             assert record is not None
             import json
+
             stored_meta = json.loads(record.get("metadata_json", "{}"))
             assert stored_meta.get(key) == value

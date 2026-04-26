@@ -136,7 +136,7 @@ def _make_fc_with_prefix(
 
 
 def test_get_session_prefix_returns_l0_and_l1():
-    fc, store, conn = _make_fc_with_prefix(
+    fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:abc",
         projection_id="proj_abc123",
         l0_data={"layer": "L0", "summary": "Architectural overview"},
@@ -153,7 +153,7 @@ def test_get_session_prefix_returns_l0_and_l1():
 
 
 def test_get_session_prefix_not_found():
-    fc, store, conn = _make_fc_with_prefix(
+    fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:missing",
         projection_id=None,
     )
@@ -169,7 +169,7 @@ def test_get_session_prefix_not_found():
 
 def test_get_session_prefix_no_layers():
     """Projection exists in builds but has no L0/L1 data."""
-    fc, store, conn = _make_fc_with_prefix(
+    fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:empty",
         projection_id="proj_empty123",
         l0_data=None,
@@ -186,14 +186,14 @@ def test_get_session_prefix_no_layers():
 
 
 def test_get_session_prefix_store_disabled():
-    fc, store, conn = _make_fc_with_prefix(store_enabled=False)
+    fc, _store, _conn = _make_fc_with_prefix(store_enabled=False)
 
     with pytest.raises(RuntimeError, match="projection store is not configured"):
         fc.get_session_prefix("snap:repo:abc")
 
 
 def test_get_session_prefix_l0_only():
-    fc, store, conn = _make_fc_with_prefix(
+    fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:partial",
         projection_id="proj_partial123",
         l0_data={"layer": "L0", "summary": "Overview only"},
@@ -209,7 +209,7 @@ def test_get_session_prefix_l0_only():
 
 
 def test_get_session_prefix_l1_only():
-    fc, store, conn = _make_fc_with_prefix(
+    fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:partial2",
         projection_id="proj_partial456",
         l0_data=None,
@@ -225,7 +225,7 @@ def test_get_session_prefix_l1_only():
 
 def test_get_session_prefix_uses_latest_projection():
     """When multiple projections exist, it should pick the first (latest by updated_at)."""
-    fc, store, conn = _make_fc_with_prefix(
+    fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:multi",
         projection_id="proj_latest",
         l0_data={"layer": "L0", "summary": "Latest"},
@@ -247,7 +247,7 @@ def test_api_prefix_endpoint_success():
     """GET /projection/snapshot/{snapshot_id}/prefix returns 200 with L0+L1."""
     from fastapi.testclient import TestClient
 
-    fc, store, conn = _make_fc_with_prefix(
+    fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:api_test",
         projection_id="proj_api123",
         l0_data={"layer": "L0", "summary": "API overview"},
@@ -272,7 +272,7 @@ def test_api_prefix_endpoint_not_found():
     """GET /projection/snapshot/{snapshot_id}/prefix returns 404 when no projection."""
     from fastapi.testclient import TestClient
 
-    fc, store, conn = _make_fc_with_prefix(
+    fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:notfound",
         projection_id=None,
     )
@@ -292,7 +292,7 @@ def test_api_prefix_endpoint_existing_layer_route_unaffected():
     """Existing /projection/{projection_id}/{layer} route still works."""
     from fastapi.testclient import TestClient
 
-    fc, store, conn = _make_fc_with_prefix(
+    fc, store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:existing",
         projection_id="proj_exist123",
         l0_data={"layer": "L0", "summary": "Existing L0"},
@@ -335,7 +335,7 @@ def test_mcp_get_session_prefix_success():
     """MCP get_session_prefix tool returns found=True with L0+L1."""
     import mcp_server as mcp_mod
 
-    fc, store, conn = _make_fc_with_prefix(
+    fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:mcp_test",
         projection_id="proj_mcp123",
         l0_data={"layer": "L0", "summary": "MCP overview"},
@@ -356,7 +356,7 @@ def test_mcp_get_session_prefix_not_found():
     """MCP get_session_prefix tool returns found=False when no projection."""
     import mcp_server as mcp_mod
 
-    fc, store, conn = _make_fc_with_prefix(
+    fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:mcp_missing",
         projection_id=None,
     )
@@ -375,7 +375,7 @@ def test_mcp_get_session_prefix_exception():
 
     # The error comes from get_session_prefix raising, not from _get_fastcode.
     # Mock _get_fastcode to return a fake fc, then make get_session_prefix raise.
-    fc, store, conn = _make_fc_with_prefix(store_enabled=False)
+    fc, _store, _conn = _make_fc_with_prefix(store_enabled=False)
     with patch.object(mcp_mod, "_get_fastcode", return_value=fc):
         result_str = mcp_mod.get_session_prefix("snap:repo:err")
 

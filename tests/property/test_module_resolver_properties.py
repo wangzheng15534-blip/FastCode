@@ -11,16 +11,19 @@ from fastcode.module_resolver import ModuleResolver
 # --- Helpers ---
 
 segment_st = st.text(
-    alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=5,
+    alphabet="abcdefghijklmnopqrstuvwxyz",
+    min_size=1,
+    max_size=5,
 )
 
 module_path_st = st.lists(segment_st, min_size=1, max_size=4).map(
-    lambda parts: ".".join(parts)
+    ".".join
 )
 
 
 class _FakeIndex:
     """Minimal fake GlobalIndexBuilder for testing."""
+
     def __init__(self, module_map=None):
         self.module_map = module_map or {}
 
@@ -34,7 +37,6 @@ def _make_resolver(module_map=None):
 
 @pytest.mark.property
 class TestResolveAbsoluteImport:
-
     @pytest.mark.happy
     def test_known_module_found(self):
         """HAPPY: absolute import of known module returns file ID."""
@@ -73,7 +75,6 @@ class TestResolveAbsoluteImport:
 
 @pytest.mark.property
 class TestResolveRelativeImport:
-
     @pytest.mark.happy
     def test_level_one_import(self):
         """HAPPY: single-dot import resolves to sibling module."""
@@ -146,7 +147,6 @@ class TestResolveRelativeImport:
 
 @pytest.mark.property
 class TestModuleResolverEdge:
-
     @pytest.mark.edge
     def test_is_package_false_by_default(self):
         """EDGE: is_package defaults to False."""

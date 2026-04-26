@@ -12,8 +12,10 @@ from fastcode.redo_worker import RedoWorker
 
 # --- Helpers ---
 
+
 class _FakeSnapshotStore:
     """Fake snapshot store for testing RedoWorker."""
+
     def __init__(self, tasks=None):
         self._tasks = list(tasks or [])
         self.done_ids = []
@@ -33,6 +35,7 @@ class _FakeSnapshotStore:
 
 class _FakeFastCode:
     """Minimal FastCode fake for RedoWorker."""
+
     def __init__(self, snapshot_store=None, retry_raises=None):
         self.snapshot_store = snapshot_store or _FakeSnapshotStore()
         self._retry_raises = retry_raises
@@ -62,7 +65,6 @@ task_st = st.dictionaries(
 
 @pytest.mark.property
 class TestRedoWorkerInit:
-
     @pytest.mark.happy
     def test_poll_interval_minimum(self):
         """HAPPY: poll interval clamped to minimum 1."""
@@ -86,7 +88,6 @@ class TestRedoWorkerInit:
 
 @pytest.mark.property
 class TestProcessOnce:
-
     @pytest.mark.happy
     def test_no_task_returns_false(self):
         """HAPPY: no pending task returns False."""
@@ -96,11 +97,15 @@ class TestProcessOnce:
     @pytest.mark.happy
     def test_successful_task_returns_true(self):
         """HAPPY: successful task returns True."""
-        store = _FakeSnapshotStore([{
-            "task_id": "t1",
-            "task_type": "index_run_recovery",
-            "payload_json": json.dumps({"run_id": "r1"}),
-        }])
+        store = _FakeSnapshotStore(
+            [
+                {
+                    "task_id": "t1",
+                    "task_type": "index_run_recovery",
+                    "payload_json": json.dumps({"run_id": "r1"}),
+                }
+            ]
+        )
         fc = _FakeFastCode(store)
         w = _make_worker(fc)
         assert w.process_once() is True
@@ -117,11 +122,15 @@ class TestProcessOnce:
     @pytest.mark.edge
     def test_failed_task_returns_false(self):
         """EDGE: task that raises returns False."""
-        store = _FakeSnapshotStore([{
-            "task_id": "t1",
-            "task_type": "index_run_recovery",
-            "payload_json": json.dumps({"run_id": "r1"}),
-        }])
+        store = _FakeSnapshotStore(
+            [
+                {
+                    "task_id": "t1",
+                    "task_type": "index_run_recovery",
+                    "payload_json": json.dumps({"run_id": "r1"}),
+                }
+            ]
+        )
         fc = _FakeFastCode(store, retry_raises=RuntimeError("boom"))
         w = _make_worker(fc)
         assert w.process_once() is False
@@ -129,11 +138,15 @@ class TestProcessOnce:
     @pytest.mark.edge
     def test_malformed_payload_json_raises(self):
         """EDGE: malformed JSON in payload raises."""
-        store = _FakeSnapshotStore([{
-            "task_id": "t1",
-            "task_type": "index_run_recovery",
-            "payload_json": "{not valid json",
-        }])
+        store = _FakeSnapshotStore(
+            [
+                {
+                    "task_id": "t1",
+                    "task_type": "index_run_recovery",
+                    "payload_json": "{not valid json",
+                }
+            ]
+        )
         fc = _FakeFastCode(store)
         w = _make_worker(fc)
         # Should return False because exception is caught
@@ -142,11 +155,15 @@ class TestProcessOnce:
     @pytest.mark.edge
     def test_unsupported_task_type_fails(self):
         """EDGE: unsupported task type causes failure."""
-        store = _FakeSnapshotStore([{
-            "task_id": "t1",
-            "task_type": "unknown_type",
-            "payload_json": "{}",
-        }])
+        store = _FakeSnapshotStore(
+            [
+                {
+                    "task_id": "t1",
+                    "task_type": "unknown_type",
+                    "payload_json": "{}",
+                }
+            ]
+        )
         fc = _FakeFastCode(store)
         w = _make_worker(fc)
         assert w.process_once() is False
@@ -154,11 +171,15 @@ class TestProcessOnce:
     @pytest.mark.edge
     def test_missing_run_id_fails(self):
         """EDGE: index_run_recovery without run_id fails."""
-        store = _FakeSnapshotStore([{
-            "task_id": "t1",
-            "task_type": "index_run_recovery",
-            "payload_json": json.dumps({}),
-        }])
+        store = _FakeSnapshotStore(
+            [
+                {
+                    "task_id": "t1",
+                    "task_type": "index_run_recovery",
+                    "payload_json": json.dumps({}),
+                }
+            ]
+        )
         fc = _FakeFastCode(store)
         w = _make_worker(fc)
         assert w.process_once() is False
@@ -166,7 +187,6 @@ class TestProcessOnce:
 
 @pytest.mark.property
 class TestProcessOnceStatus:
-
     @pytest.mark.happy
     def test_none_status(self):
         """HAPPY: no task returns 'none'."""
@@ -176,11 +196,15 @@ class TestProcessOnceStatus:
     @pytest.mark.happy
     def test_succeeded_status(self):
         """HAPPY: successful task returns 'succeeded'."""
-        store = _FakeSnapshotStore([{
-            "task_id": "t1",
-            "task_type": "index_run_recovery",
-            "payload_json": json.dumps({"run_id": "r1"}),
-        }])
+        store = _FakeSnapshotStore(
+            [
+                {
+                    "task_id": "t1",
+                    "task_type": "index_run_recovery",
+                    "payload_json": json.dumps({"run_id": "r1"}),
+                }
+            ]
+        )
         fc = _FakeFastCode(store)
         w = _make_worker(fc)
         assert w.process_once_status() == "succeeded"
@@ -188,11 +212,15 @@ class TestProcessOnceStatus:
     @pytest.mark.edge
     def test_failed_status(self):
         """EDGE: failed task returns 'failed'."""
-        store = _FakeSnapshotStore([{
-            "task_id": "t1",
-            "task_type": "index_run_recovery",
-            "payload_json": json.dumps({"run_id": "r1"}),
-        }])
+        store = _FakeSnapshotStore(
+            [
+                {
+                    "task_id": "t1",
+                    "task_type": "index_run_recovery",
+                    "payload_json": json.dumps({"run_id": "r1"}),
+                }
+            ]
+        )
         fc = _FakeFastCode(store, retry_raises=RuntimeError("fail"))
         w = _make_worker(fc)
         assert w.process_once_status() == "failed"
@@ -200,11 +228,15 @@ class TestProcessOnceStatus:
     @pytest.mark.edge
     def test_task_marked_done_on_success(self):
         """EDGE: successful task marked done in store."""
-        store = _FakeSnapshotStore([{
-            "task_id": "t1",
-            "task_type": "index_run_recovery",
-            "payload_json": json.dumps({"run_id": "r1"}),
-        }])
+        store = _FakeSnapshotStore(
+            [
+                {
+                    "task_id": "t1",
+                    "task_type": "index_run_recovery",
+                    "payload_json": json.dumps({"run_id": "r1"}),
+                }
+            ]
+        )
         fc = _FakeFastCode(store)
         w = _make_worker(fc)
         w.process_once_status()
@@ -213,11 +245,15 @@ class TestProcessOnceStatus:
     @pytest.mark.edge
     def test_task_marked_failed_on_error(self):
         """EDGE: failed task marked failed in store."""
-        store = _FakeSnapshotStore([{
-            "task_id": "t1",
-            "task_type": "index_run_recovery",
-            "payload_json": json.dumps({"run_id": "r1"}),
-        }])
+        store = _FakeSnapshotStore(
+            [
+                {
+                    "task_id": "t1",
+                    "task_type": "index_run_recovery",
+                    "payload_json": json.dumps({"run_id": "r1"}),
+                }
+            ]
+        )
         fc = _FakeFastCode(store, retry_raises=RuntimeError("err"))
         w = _make_worker(fc)
         w.process_once_status()
@@ -227,11 +263,15 @@ class TestProcessOnceStatus:
     @pytest.mark.edge
     def test_dict_payload_without_json(self):
         """EDGE: payload as dict (not JSON string) works."""
-        store = _FakeSnapshotStore([{
-            "task_id": "t1",
-            "task_type": "index_run_recovery",
-            "payload_json": {"run_id": "r1"},
-        }])
+        store = _FakeSnapshotStore(
+            [
+                {
+                    "task_id": "t1",
+                    "task_type": "index_run_recovery",
+                    "payload_json": {"run_id": "r1"},
+                }
+            ]
+        )
         fc = _FakeFastCode(store)
         w = _make_worker(fc)
         assert w.process_once_status() == "succeeded"
@@ -239,11 +279,15 @@ class TestProcessOnceStatus:
     @pytest.mark.edge
     def test_none_payload_treated_as_empty(self):
         """EDGE: None payload treated as empty dict."""
-        store = _FakeSnapshotStore([{
-            "task_id": "t1",
-            "task_type": "index_run_recovery",
-            "payload_json": None,
-        }])
+        store = _FakeSnapshotStore(
+            [
+                {
+                    "task_id": "t1",
+                    "task_type": "index_run_recovery",
+                    "payload_json": None,
+                }
+            ]
+        )
         fc = _FakeFastCode(store)
         w = _make_worker(fc)
         # Will fail because run_id missing from empty dict

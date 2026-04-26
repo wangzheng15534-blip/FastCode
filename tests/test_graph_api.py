@@ -16,7 +16,11 @@ class _FakeFastCode:
     def find_symbol(self, snapshot_id: str, *, symbol_id=None, name=None, path=None):
         if name == "missing":
             return None
-        return {"symbol_id": symbol_id or "sym:1", "display_name": name or "foo", "path": path or "a.py"}
+        return {
+            "symbol_id": symbol_id or "sym:1",
+            "display_name": name or "foo",
+            "path": path or "a.py",
+        }
 
     def get_graph_callees(self, snapshot_id: str, symbol_id: str, max_hops: int = 1):
         return [{"symbol_id": "sym:2", "distance": 1}]
@@ -51,7 +55,9 @@ def test_graph_and_symbol_endpoints():
         assert isinstance(ref["snapshot_id"], str)
 
         # --- symbol find: name param reflected in response ---
-        symbol = client.get("/symbols/find", params={"snapshot_id": "snap:repo:1", "name": "foo"})
+        symbol = client.get(
+            "/symbols/find", params={"snapshot_id": "snap:repo:1", "name": "foo"}
+        )
         assert symbol.status_code == 200
         sym_body = symbol.json()
         assert "symbol" in sym_body
@@ -59,9 +65,18 @@ def test_graph_and_symbol_endpoints():
         assert sym_body["symbol"]["path"] == "a.py"
 
         # --- graph endpoints: response has envelope with nested list of results ---
-        callees = client.get("/graph/callees", params={"snapshot_id": "snap:repo:1", "symbol_id": "sym:1"})
-        callers = client.get("/graph/callers", params={"snapshot_id": "snap:repo:1", "symbol_id": "sym:1"})
-        deps = client.get("/graph/dependencies", params={"snapshot_id": "snap:repo:1", "doc_id": "doc:1"})
+        callees = client.get(
+            "/graph/callees",
+            params={"snapshot_id": "snap:repo:1", "symbol_id": "sym:1"},
+        )
+        callers = client.get(
+            "/graph/callers",
+            params={"snapshot_id": "snap:repo:1", "symbol_id": "sym:1"},
+        )
+        deps = client.get(
+            "/graph/dependencies",
+            params={"snapshot_id": "snap:repo:1", "doc_id": "doc:1"},
+        )
 
         for label, resp, list_key in [
             ("callees", callees, "callees"),
@@ -100,7 +115,10 @@ def test_redo_process_endpoint():
         assert "processed" in result
         assert "succeeded" in result
         assert "failed" in result
-        assert result["processed"] + result["failed"] == result["succeeded"] + result["failed"]
+        assert (
+            result["processed"] + result["failed"]
+            == result["succeeded"] + result["failed"]
+        )
     finally:
         api.fastcode_instance = original
 
@@ -110,7 +128,9 @@ def test_symbol_find_returns_404_for_missing():
     api.fastcode_instance = _FakeFastCode()
     try:
         client = TestClient(api.app)
-        resp = client.get("/symbols/find", params={"snapshot_id": "snap:repo:1", "name": "missing"})
+        resp = client.get(
+            "/symbols/find", params={"snapshot_id": "snap:repo:1", "name": "missing"}
+        )
         assert resp.status_code == 404
     finally:
         api.fastcode_instance = original

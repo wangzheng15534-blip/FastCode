@@ -33,7 +33,10 @@ def _doc_id(snapshot_id: str, rel_path: str) -> str:
 def _ast_symbol_id(snapshot_id: str, elem: CodeElement) -> str:
     qualified = (
         (elem.metadata or {}).get("qualified_name")
-        or ((elem.metadata or {}).get("class_name") and f"{(elem.metadata or {}).get('class_name')}.{elem.name}")
+        or (
+            (elem.metadata or {}).get("class_name")
+            and f"{(elem.metadata or {}).get('class_name')}.{elem.name}"
+        )
         or elem.name
         or "unknown"
     )
@@ -48,7 +51,9 @@ def _support_id(snapshot_id: str, elem_id: str, label: str) -> str:
     return _hash_id("support", f"{snapshot_id}:{elem_id}:{label}")
 
 
-def _relation_id(snapshot_id: str, relation_type: str, src_id: str, dst_id: str, payload: str = "") -> str:
+def _relation_id(
+    snapshot_id: str, relation_type: str, src_id: str, dst_id: str, payload: str = ""
+) -> str:
     return _hash_id("rel", f"{snapshot_id}:{relation_type}:{src_id}:{dst_id}:{payload}")
 
 
@@ -70,7 +75,14 @@ def _normalize_embedding_value(value: object) -> object:
 
 def _qualified_name(elem: CodeElement) -> str:
     meta = elem.metadata or {}
-    return str(meta.get("qualified_name") or (f"{meta.get('class_name')}.{elem.name}" if meta.get("class_name") else elem.name))
+    return str(
+        meta.get("qualified_name")
+        or (
+            f"{meta.get('class_name')}.{elem.name}"
+            if meta.get("class_name")
+            else elem.name
+        )
+    )
 
 
 def build_ir_from_ast(
@@ -129,10 +141,16 @@ def build_ir_from_ast(
         if unit_kind == "file":
             continue
 
-        unit_id = _ast_symbol_id(snapshot_id, elem) if unit_kind != "doc" else f"docunit:{snapshot_id}:{elem.id}"
+        unit_id = (
+            _ast_symbol_id(snapshot_id, elem)
+            if unit_kind != "doc"
+            else f"docunit:{snapshot_id}:{elem.id}"
+        )
         parent_unit_id = file_unit.unit_id
         if elem.type == "method" and elem_meta.get("class_name"):
-            parent_unit_id = class_units_by_path_name.get((rel_path, str(elem_meta["class_name"])), file_unit.unit_id)
+            parent_unit_id = class_units_by_path_name.get(
+                (rel_path, str(elem_meta["class_name"])), file_unit.unit_id
+            )
 
         unit = IRCodeUnit(
             unit_id=unit_id,
@@ -156,7 +174,11 @@ def build_ir_from_ast(
                 "confidence": "resolved",
                 "extractor": STRUCTURE_EXTRACTOR,
                 "source_priority": STRUCTURE_PRIORITY,
-                **{k: v for k, v in elem_meta.items() if k not in {"embedding", "embedding_text"}},
+                **{
+                    k: v
+                    for k, v in elem_meta.items()
+                    if k not in {"embedding", "embedding_text"}
+                },
             },
         )
         units.append(unit)
@@ -203,7 +225,9 @@ def build_ir_from_ast(
         )
         relations.append(
             IRRelation(
-                relation_id=_relation_id(snapshot_id, "contain", parent_unit_id, unit.unit_id),
+                relation_id=_relation_id(
+                    snapshot_id, "contain", parent_unit_id, unit.unit_id
+                ),
                 src_unit_id=parent_unit_id,
                 dst_unit_id=unit.unit_id,
                 relation_type="contain",
@@ -223,10 +247,14 @@ def build_ir_from_ast(
         if embedding is not None or embedding_text:
             embeddings.append(
                 IRUnitEmbedding(
-                    embedding_id=_embedding_id(snapshot_id, unit.unit_id, "fc_embedding"),
+                    embedding_id=_embedding_id(
+                        snapshot_id, unit.unit_id, "fc_embedding"
+                    ),
                     unit_id=unit.unit_id,
                     source="fc_embedding",
-                    vector=embedding if isinstance(embedding, list) else safe_jsonable(embedding),
+                    vector=embedding
+                    if isinstance(embedding, list)
+                    else safe_jsonable(embedding),
                     embedding_text=str(embedding_text) if embedding_text else None,
                     metadata={
                         "ast_element_id": elem.id,
@@ -253,7 +281,8 @@ def build_ir_from_ast(
                     (
                         other.unit_id
                         for path, other in file_units.items()
-                        if path.endswith(f"{module_path}.py") or f"/{module_path}/" in path
+                        if path.endswith(f"{module_path}.py")
+                        or f"/{module_path}/" in path
                     ),
                     None,
                 )
@@ -261,7 +290,9 @@ def build_ir_from_ast(
                     continue
                 relations.append(
                     IRRelation(
-                        relation_id=_relation_id(snapshot_id, "import", file_unit.unit_id, target, module),
+                        relation_id=_relation_id(
+                            snapshot_id, "import", file_unit.unit_id, target, module
+                        ),
                         src_unit_id=file_unit.unit_id,
                         dst_unit_id=target,
                         relation_type="import",
@@ -289,7 +320,9 @@ def build_ir_from_ast(
                     continue
                 relations.append(
                     IRRelation(
-                        relation_id=_relation_id(snapshot_id, "inherit", src_unit_id, target, str(base)),
+                        relation_id=_relation_id(
+                            snapshot_id, "inherit", src_unit_id, target, str(base)
+                        ),
                         src_unit_id=src_unit_id,
                         dst_unit_id=target,
                         relation_type="inherit",

@@ -68,14 +68,14 @@ class RepositorySelector:
     ) -> list[dict[str, str]]:
         """
         Select most relevant files from repositories based on user query
-        
+
         Args:
             query: User query
             repo_overviews: List of repository overview dictionaries
             max_files: Maximum number of files to select
             scenario_mode: "single" when only one repository is in scope,
                            otherwise "multi"
-        
+
         Returns:
             List of selected files with repo_name and file_path
         """
@@ -99,10 +99,14 @@ class RepositorySelector:
             else:
                 return []
 
-            self.logger.info(f"fallback to LLM response of select_relevant_files: {response}")
+            self.logger.info(
+                f"fallback to LLM response of select_relevant_files: {response}"
+            )
 
             # Parse response to extract selected files
-            selected_files = self._parse_file_selection_response(response, repo_overviews)
+            selected_files = self._parse_file_selection_response(
+                response, repo_overviews
+            )
 
             self.logger.info(f"Selected {len(selected_files)} relevant files")
             return selected_files
@@ -131,7 +135,7 @@ class RepositorySelector:
 
         prompt_parts = [
             scope_line,
-            f"\nUser Query: \"{query}\"\n",
+            f'\nUser Query: "{query}"\n',
             "\nRepository Information:\n",
         ]
 
@@ -141,14 +145,14 @@ class RepositorySelector:
             summary = overview.get("summary", "No summary available")
             structure_text = overview.get("structure_text", "")
 
-            prompt_parts.append(f"\n{'='*60}")
+            prompt_parts.append(f"\n{'=' * 60}")
             prompt_parts.append(f"\nRepository #{i}: {repo_name}")
             prompt_parts.append(f"\nSummary: {summary}")
             prompt_parts.append("\nFile Structure:")
             prompt_parts.append(structure_text[:])  # Limit structure text
             prompt_parts.append("\n")
 
-        prompt_parts.append(f"\n{'='*60}\n")
+        prompt_parts.append(f"\n{'=' * 60}\n")
 
         # task_prefix = (
         #     "Task: Analyze the query and repository information. Select up to "
@@ -203,19 +207,20 @@ class RepositorySelector:
             model=self.model,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
         )
         return response.content[0].text
 
-    def _parse_file_selection_response(self, response: str,
-                                      repo_overviews: list[dict[str, Any]]) -> list[dict[str, str]]:
+    def _parse_file_selection_response(
+        self, response: str, repo_overviews: list[dict[str, Any]]
+    ) -> list[dict[str, str]]:
         """
         Parse LLM response to extract selected files
-        
+
         Args:
             response: LLM response text
             repo_overviews: Repository overviews for validation
-        
+
         Returns:
             List of dictionaries with repo_name, file_path, and reason
         """
@@ -226,8 +231,8 @@ class RepositorySelector:
 
         # Parse FILE: and REASON: pairs with flexible markdown support
         # Handles: FILE:, **FILE:**, and optional repo prefix
-        file_pattern = r'\*{0,2}FILE:\*{0,2}\s*(?:(.+?)::)?(.+?)(?:\n|$)'
-        reason_pattern = r'\*{0,2}REASON:\*{0,2}\s*(.+?)(?:\n|$)'
+        file_pattern = r"\*{0,2}FILE:\*{0,2}\s*(?:(.+?)::)?(.+?)(?:\n|$)"
+        reason_pattern = r"\*{0,2}REASON:\*{0,2}\s*(.+?)(?:\n|$)"
 
         file_matches = re.findall(file_pattern, response, re.MULTILINE)
         reason_matches = re.findall(reason_pattern, response, re.MULTILINE)
@@ -239,11 +244,11 @@ class RepositorySelector:
 
             # Clean markdown formatting from both repo_name and file_path
             # Remove backticks: `filename`
-            repo_name = re.sub(r'^`+|`+$', '', repo_name)
-            file_path = re.sub(r'^`+|`+$', '', file_path)
+            repo_name = re.sub(r"^`+|`+$", "", repo_name)
+            file_path = re.sub(r"^`+|`+$", "", file_path)
             # Remove bold markers: **filename**
-            repo_name = re.sub(r'^\*+|\*+$', '', repo_name)
-            file_path = re.sub(r'^\*+|\*+$', '', file_path)
+            repo_name = re.sub(r"^\*+|\*+$", "", repo_name)
+            file_path = re.sub(r"^\*+|\*+$", "", file_path)
             # Strip again after removing markdown
             repo_name = repo_name.strip()
             file_path = file_path.strip()
@@ -254,7 +259,10 @@ class RepositorySelector:
                 if file_path:
                     first_segment = file_path.split("/", 1)[0]
                     for candidate_repo in valid_repos:
-                        if candidate_repo and candidate_repo.lower() == first_segment.lower():
+                        if (
+                            candidate_repo
+                            and candidate_repo.lower() == first_segment.lower()
+                        ):
                             inferred_repo = candidate_repo
                             # Strip repo prefix from file_path
                             remainder = file_path.split("/", 1)
@@ -263,17 +271,21 @@ class RepositorySelector:
                 if not inferred_repo and len(valid_repos) == 1:
                     inferred_repo = next(iter(valid_repos))
                 if not inferred_repo:
-                    self.logger.debug(f"Skipping invalid repo: {repo_name or '<missing>'}")
+                    self.logger.debug(
+                        f"Skipping invalid repo: {repo_name or '<missing>'}"
+                    )
                     continue
                 repo_name = inferred_repo
 
-            reason = reason_matches[i].strip() if i < len(reason_matches) else "No reason provided"
+            reason = (
+                reason_matches[i].strip()
+                if i < len(reason_matches)
+                else "No reason provided"
+            )
 
-            selected_files.append({
-                "repo_name": repo_name,
-                "file_path": file_path,
-                "reason": reason
-            })
+            selected_files.append(
+                {"repo_name": repo_name, "file_path": file_path, "reason": reason}
+            )
 
         return selected_files
 
@@ -319,7 +331,9 @@ class RepositorySelector:
 
         for idx, (repo_name, data) in enumerate(repo_overviews.items(), 1):
             metadata = data.get("metadata", {})
-            summary = metadata.get("summary", data.get("content", "No summary available"))
+            summary = metadata.get(
+                "summary", data.get("content", "No summary available")
+            )
             prompt_parts.append(f"Repository #{idx}: {repo_name}\n")
             prompt_parts.append(f"Summary: {summary[:1000]}\n\n")
 
@@ -376,10 +390,14 @@ class RepositorySelector:
         """
         norm_candidate = self._normalize(candidate)
         if not norm_candidate:
-            self.logger.info(f"Fuzzy match: candidate '{candidate}' is empty after normalization, skipping")
+            self.logger.info(
+                f"Fuzzy match: candidate '{candidate}' is empty after normalization, skipping"
+            )
             return None
 
-        self.logger.info(f"Fuzzy match: trying to match '{candidate}' (normalized: '{norm_candidate}')")
+        self.logger.info(
+            f"Fuzzy match: trying to match '{candidate}' (normalized: '{norm_candidate}')"
+        )
 
         # 1. exact (case-insensitive)
         for name in available:
@@ -391,12 +409,14 @@ class RepositorySelector:
         for name in available:
             norm_name = self._normalize(name)
             if norm_candidate in norm_name or norm_name in norm_candidate:
-                self.logger.info(f"Fuzzy match: substring match '{candidate}' -> '{name}'")
+                self.logger.info(
+                    f"Fuzzy match: substring match '{candidate}' -> '{name}'"
+                )
                 return name
 
         # 3. token-overlap ratio (Jaccard)
         def _tokens(s: str):
-            return set(re.split(r'[\W_]+', s.lower())) - {''}
+            return set(re.split(r"[\W_]+", s.lower())) - {""}
 
         cand_tokens = _tokens(norm_candidate)
         best_score, best_name = 0.0, None
@@ -405,16 +425,22 @@ class RepositorySelector:
             if not cand_tokens or not name_tokens:
                 continue
             score = len(cand_tokens & name_tokens) / len(cand_tokens | name_tokens)
-            self.logger.info(f"Fuzzy match: Jaccard('{candidate}', '{name}') = {score:.3f}")
+            self.logger.info(
+                f"Fuzzy match: Jaccard('{candidate}', '{name}') = {score:.3f}"
+            )
             if score > best_score:
                 best_score = score
                 best_name = name
 
         if best_score >= 0.5:
-            self.logger.info(f"Fuzzy match: Jaccard match '{candidate}' -> '{best_name}' (score={best_score:.3f})")
+            self.logger.info(
+                f"Fuzzy match: Jaccard match '{candidate}' -> '{best_name}' (score={best_score:.3f})"
+            )
             return best_name
 
-        self.logger.info(f"Fuzzy match: no match found for '{candidate}' (best Jaccard={best_score:.3f})")
+        self.logger.info(
+            f"Fuzzy match: no match found for '{candidate}' (best Jaccard={best_score:.3f})"
+        )
         return None
 
     def _parse_repo_selection_response(
@@ -423,15 +449,19 @@ class RepositorySelector:
         """
         Parse the LLM response and robustly match each name to available repos.
         """
-        self.logger.info(f"Parsing repo selection response ({len(response)} chars), "
-                         f"available repos: {available_names}")
+        self.logger.info(
+            f"Parsing repo selection response ({len(response)} chars), "
+            f"available repos: {available_names}"
+        )
         selected: list[str] = []
         seen: set = set()
 
         for line in response.splitlines():
             line = line.strip()
             # accept lines like "REPO: name" or "- name" or just "name"
-            match = re.match(r'(?:\*{0,2}REPO:\*{0,2}\s*|[-•]\s*)(.*)', line, re.IGNORECASE)
+            match = re.match(
+                r"(?:\*{0,2}REPO:\*{0,2}\s*|[-•]\s*)(.*)", line, re.IGNORECASE
+            )
             if match:
                 raw_name = match.group(1).strip()
             elif line and not line.startswith("#"):
@@ -445,7 +475,9 @@ class RepositorySelector:
                 seen.add(matched)
                 self.logger.info(f"Matched LLM output '{raw_name}' -> '{matched}'")
             elif matched and matched in seen:
-                self.logger.info(f"Skipping duplicate LLM output '{raw_name}' (already matched to '{matched}')")
+                self.logger.info(
+                    f"Skipping duplicate LLM output '{raw_name}' (already matched to '{matched}')"
+                )
             elif not matched:
                 self.logger.warning(
                     f"Could not match LLM output '{raw_name}' to any available repo"
@@ -454,15 +486,16 @@ class RepositorySelector:
         self.logger.info(f"Repo selection result: {selected} ({len(selected)} repos)")
         return selected
 
-    def enhance_query_with_file_hints(self, query: str,
-                                     selected_files: list[dict[str, str]]) -> str:
+    def enhance_query_with_file_hints(
+        self, query: str, selected_files: list[dict[str, str]]
+    ) -> str:
         """
         Enhance query with file hints for better retrieval
-        
+
         Args:
             query: Original query
             selected_files: Selected files from LLM
-        
+
         Returns:
             Enhanced query string
         """
@@ -474,8 +507,4 @@ class RepositorySelector:
         for sf in selected_files[:5]:  # Limit to top 5
             file_hints.append(f"{sf['repo_name']}/{sf['file_path']}")
 
-        enhanced = f"{query} [Relevant files: {', '.join(file_hints)}]"
-        return enhanced
-
-
-
+        return f"{query} [Relevant files: {', '.join(file_hints)}]"

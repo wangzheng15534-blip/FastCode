@@ -23,7 +23,6 @@ except Exception:  # pragma: no cover - optional dependency
     ConnectionPool = None
 
 
-
 class ProjectionStore:
     def __init__(self, config: dict[str, Any]):
         self.logger = logging.getLogger(__name__)
@@ -39,7 +38,9 @@ class ProjectionStore:
         self.enabled = bool(self.dsn)
         self.pool = None
         if self.enabled and psycopg is None:
-            raise RuntimeError("projection store requires psycopg; install dependency first")
+            raise RuntimeError(
+                "projection store requires psycopg; install dependency first"
+            )
         if self.enabled:
             pool_min = int(storage_cfg.get("pool_min", 1))
             pool_max = int(storage_cfg.get("pool_max", 8))
@@ -54,7 +55,9 @@ class ProjectionStore:
 
     def _connect(self):
         if not self.enabled:
-            raise RuntimeError("projection store is not configured (projection.postgres_dsn missing)")
+            raise RuntimeError(
+                "projection store is not configured (projection.postgres_dsn missing)"
+            )
         if self.pool is not None:
             return self.pool.connection()
         return psycopg.connect(self.dsn, autocommit=False)
@@ -125,7 +128,9 @@ class ProjectionStore:
                 )
             conn.commit()
 
-    def find_cached_projection_id(self, scope: ProjectionScope, params_hash: str) -> str | None:
+    def find_cached_projection_id(
+        self, scope: ProjectionScope, params_hash: str
+    ) -> str | None:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
@@ -188,7 +193,12 @@ class ProjectionStore:
                             node_json=EXCLUDED.node_json,
                             updated_at=EXCLUDED.updated_at
                         """,
-                        (result.projection_id, layer, json.dumps(payload, ensure_ascii=False), now),
+                        (
+                            result.projection_id,
+                            layer,
+                            json.dumps(payload, ensure_ascii=False),
+                            now,
+                        ),
                     )
                 for chunk in result.chunks:
                     cur.execute(
@@ -199,7 +209,12 @@ class ProjectionStore:
                             chunk_json=EXCLUDED.chunk_json,
                             updated_at=EXCLUDED.updated_at
                         """,
-                        (result.projection_id, chunk["chunk_id"], json.dumps(chunk, ensure_ascii=False), now),
+                        (
+                            result.projection_id,
+                            chunk["chunk_id"],
+                            json.dumps(chunk, ensure_ascii=False),
+                            now,
+                        ),
                     )
             conn.commit()
 
@@ -233,8 +248,7 @@ class ProjectionStore:
             return row[0] if row else None
 
     def get_build(self, projection_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
+        with self._connect() as conn, conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT projection_id, snapshot_id, scope_kind, scope_key, params_hash, status,

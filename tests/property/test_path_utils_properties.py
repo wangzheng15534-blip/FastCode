@@ -20,11 +20,12 @@ from fastcode.path_utils import (
 
 segment_st = st.text(
     alphabet="abcdefghijklmnopqrstuvwxyz0123456789_",
-    min_size=1, max_size=10,
+    min_size=1,
+    max_size=10,
 )
 
 path_st = st.lists(segment_st, min_size=1, max_size=5).map(
-    lambda parts: "/".join(parts)
+    "/".join
 )
 
 python_path_st = st.lists(segment_st, min_size=1, max_size=5).map(
@@ -37,7 +38,6 @@ python_path_st = st.lists(segment_st, min_size=1, max_size=5).map(
 
 @pytest.mark.property
 class TestFilePathToModulePath:
-
     @given(rel_path=python_path_st)
     @settings(max_examples=30)
     @pytest.mark.happy
@@ -87,8 +87,10 @@ class TestFilePathToModulePath:
     @pytest.mark.edge
     def test_outside_repo_returns_none(self):
         """EDGE: file outside repo root returns None."""
-        with tempfile.TemporaryDirectory() as repo, \
-             tempfile.TemporaryDirectory() as other:
+        with (
+            tempfile.TemporaryDirectory() as repo,
+            tempfile.TemporaryDirectory() as other,
+        ):
             path = os.path.join(other, "other.py")
             with open(path, "w") as f:
                 f.write("# other")
@@ -148,7 +150,6 @@ class TestFilePathToModulePath:
 
 @pytest.mark.property
 class TestIsValidPythonFile:
-
     @pytest.mark.happy
     def test_valid_py_file(self):
         """HAPPY: existing .py file returns True."""
@@ -186,7 +187,6 @@ class TestIsValidPythonFile:
 
 @pytest.mark.property
 class TestNormalizeRepoRoot:
-
     @pytest.mark.happy
     def test_returns_absolute_path(self):
         """HAPPY: returns absolute path."""
@@ -199,7 +199,9 @@ class TestNormalizeRepoRoot:
         result = normalize_repo_root("some/relative/path")
         assert os.path.isabs(result)
 
-    @given(path=st.text(alphabet="abcdefghijklmnopqrstuvwxyz/", min_size=1, max_size=20))
+    @given(
+        path=st.text(alphabet="abcdefghijklmnopqrstuvwxyz/", min_size=1, max_size=20)
+    )
     @settings(max_examples=10)
     @pytest.mark.happy
     def test_always_returns_absolute(self, path):
@@ -210,7 +212,6 @@ class TestNormalizeRepoRoot:
 
 @pytest.mark.property
 class TestPathUtilsDetectRepoName:
-
     @pytest.mark.happy
     def test_exact_match(self):
         """HAPPY: exact repo name found in path."""
@@ -234,7 +235,7 @@ class TestPathUtilsDetectRepoName:
             pu = PathUtils(repo)
             result = pu.detect_repo_name_from_path("", {"fallback"})
             # Empty path has no segments, falls through to fallback
-            assert result == "fallback" or result == ""
+            assert result in {"fallback", ""}
 
     @pytest.mark.edge
     def test_no_match_returns_fallback(self):
@@ -255,7 +256,6 @@ class TestPathUtilsDetectRepoName:
 
 @pytest.mark.property
 class TestPathUtilsNormalizePathWithRepo:
-
     @pytest.mark.happy
     def test_removes_repo_prefix(self):
         """HAPPY: repo prefix removed from path."""
@@ -300,7 +300,6 @@ class TestPathUtilsNormalizePathWithRepo:
 
 @pytest.mark.property
 class TestPathUtilsIsSafePath:
-
     @pytest.mark.happy
     def test_relative_path_safe(self):
         """HAPPY: relative path within repo is safe."""

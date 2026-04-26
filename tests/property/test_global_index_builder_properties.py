@@ -13,7 +13,7 @@ from fastcode.global_index_builder import GlobalIndexBuilder
 segment_st = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=8)
 
 module_path_st = st.lists(segment_st, min_size=1, max_size=4).map(
-    lambda parts: ".".join(parts)
+    ".".join
 )
 
 
@@ -48,7 +48,6 @@ def _make_builder():
 
 @pytest.mark.property
 class TestGetFileIdByPath:
-
     @pytest.mark.happy
     def test_existing_path(self):
         """HAPPY: known path returns file ID."""
@@ -71,7 +70,6 @@ class TestGetFileIdByPath:
 
 @pytest.mark.property
 class TestGetFileIdByModule:
-
     @pytest.mark.happy
     def test_existing_module(self):
         """HAPPY: known module returns file ID."""
@@ -96,7 +94,6 @@ class TestGetFileIdByModule:
 
 @pytest.mark.property
 class TestContainsFile:
-
     @pytest.mark.happy
     def test_known_file(self):
         """HAPPY: known file returns True."""
@@ -112,7 +109,6 @@ class TestContainsFile:
 
 @pytest.mark.property
 class TestContainsModule:
-
     @pytest.mark.happy
     def test_known_module(self):
         """HAPPY: known module returns True."""
@@ -128,7 +124,6 @@ class TestContainsModule:
 
 @pytest.mark.property
 class TestGetAllFileIds:
-
     @pytest.mark.happy
     def test_returns_all_ids(self):
         """HAPPY: returns all file IDs."""
@@ -146,7 +141,6 @@ class TestGetAllFileIds:
 
 @pytest.mark.property
 class TestGetAllModules:
-
     @pytest.mark.happy
     def test_returns_all_modules(self):
         """HAPPY: returns all module paths."""
@@ -164,7 +158,6 @@ class TestGetAllModules:
 
 @pytest.mark.property
 class TestGetStats:
-
     @pytest.mark.happy
     def test_stats_keys(self):
         """HAPPY: stats contains expected keys."""
@@ -188,7 +181,6 @@ class TestGetStats:
 
 @pytest.mark.property
 class TestValidateMaps:
-
     @pytest.mark.happy
     def test_valid_maps_no_errors(self):
         """HAPPY: consistent maps produce no errors."""
@@ -205,7 +197,6 @@ class TestValidateMaps:
 
 @pytest.mark.property
 class TestGetExportedSymbolId:
-
     @pytest.mark.happy
     def test_known_symbol(self):
         """HAPPY: known symbol returns node ID."""
@@ -227,7 +218,6 @@ class TestGetExportedSymbolId:
 
 @pytest.mark.property
 class TestGetModuleExports:
-
     @pytest.mark.happy
     def test_known_module(self):
         """HAPPY: returns copy of export dict."""
@@ -253,7 +243,6 @@ class TestGetModuleExports:
 
 @pytest.mark.property
 class TestClear:
-
     @pytest.mark.happy
     def test_clear_resets_maps(self):
         """HAPPY: clear empties all maps."""

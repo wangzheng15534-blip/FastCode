@@ -29,7 +29,6 @@ def _make_store() -> ManifestStore:
 
 @pytest.mark.property
 class TestSchemaMigration:
-
     @pytest.mark.happy
     def test_init_idempotent_reinstantiation(self):
         """HAPPY: re-instantiating ManifestStore on same DB path does not raise."""
@@ -77,7 +76,6 @@ class TestSchemaMigration:
 
 @pytest.mark.property
 class TestManifestChain:
-
     @pytest.mark.happy
     def test_chain_links_two_publishes(self):
         """HAPPY: two publishes for same repo/ref create linked chain."""
@@ -111,7 +109,6 @@ class TestManifestChain:
 
 @pytest.mark.property
 class TestHeadsTablePointsToLatest:
-
     @pytest.mark.happy
     def test_heads_points_to_last_published(self):
         """HAPPY: get_branch_manifest returns the most recently published manifest."""
@@ -138,7 +135,6 @@ class TestHeadsTablePointsToLatest:
 
 @pytest.mark.property
 class TestPublishReturnStructure:
-
     @pytest.mark.happy
     def test_manifest_id_starts_with_prefix(self):
         """HAPPY: manifest_id starts with 'manifest_'."""
@@ -167,7 +163,9 @@ class TestPublishReturnStructure:
     def test_publish_fields_match_input(self):
         """HAPPY: publish result fields reflect the input arguments."""
         store = _make_store()
-        result = store.publish("my_repo", "develop", "snap_42", "run_99", status="draft")
+        result = store.publish(
+            "my_repo", "develop", "snap_42", "run_99", status="draft"
+        )
         assert result["repo_name"] == "my_repo"
         assert result["ref_name"] == "develop"
         assert result["snapshot_id"] == "snap_42"
@@ -195,7 +193,6 @@ class TestPublishReturnStructure:
 
 @pytest.mark.property
 class TestMissingLookups:
-
     @pytest.mark.edge
     def test_get_branch_manifest_unknown_returns_none(self):
         """EDGE: get_branch_manifest returns None for unknown repo/ref."""
@@ -218,7 +215,6 @@ class TestMissingLookups:
 
 @pytest.mark.property
 class TestDifferentRefsIndependent:
-
     @pytest.mark.happy
     def test_same_repo_different_refs_independent_chains(self):
         """HAPPY: different refs for same repo maintain independent chains."""
@@ -257,7 +253,6 @@ class TestDifferentRefsIndependent:
 
 @pytest.mark.property
 class TestMultipleRepos:
-
     @pytest.mark.happy
     def test_different_repos_tracked_independently(self):
         """HAPPY: different repos each track their own manifest chains."""

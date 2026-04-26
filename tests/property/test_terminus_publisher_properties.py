@@ -53,7 +53,6 @@ def _minimal_git_meta():
 
 @pytest.mark.property
 class TestTerminusPublisherProperties:
-
     @pytest.mark.happy
     def test_is_configured_true_with_endpoint(self):
         """HAPPY: is_configured returns True when endpoint set."""
@@ -158,7 +157,9 @@ class TestTerminusPublisherProperties:
         ]
         pub = _make_publisher()
         payload = pub.build_lineage_payload(
-            snapshot=snap, manifest=_minimal_manifest(), git_meta=_minimal_git_meta(),
+            snapshot=snap,
+            manifest=_minimal_manifest(),
+            git_meta=_minimal_git_meta(),
         )
         doc_nodes = [n for n in payload["nodes"] if n["type"] == "DocumentVersion"]
         assert len(doc_nodes) == 1
@@ -169,11 +170,18 @@ class TestTerminusPublisherProperties:
         """HAPPY: payload includes SymbolVersion nodes."""
         snap = _minimal_snapshot()
         snap["symbols"] = [
-            {"symbol_id": "sym:1", "display_name": "foo", "path": "a.py", "kind": "function"},
+            {
+                "symbol_id": "sym:1",
+                "display_name": "foo",
+                "path": "a.py",
+                "kind": "function",
+            },
         ]
         pub = _make_publisher()
         payload = pub.build_lineage_payload(
-            snapshot=snap, manifest=_minimal_manifest(), git_meta=_minimal_git_meta(),
+            snapshot=snap,
+            manifest=_minimal_manifest(),
+            git_meta=_minimal_git_meta(),
         )
         sym_nodes = [n for n in payload["nodes"] if n["type"] == "SymbolVersion"]
         assert len(sym_nodes) == 1
@@ -187,7 +195,9 @@ class TestTerminusPublisherProperties:
         git_meta["branch"] = None
         pub = _make_publisher()
         payload = pub.build_lineage_payload(
-            snapshot=snap, manifest=_minimal_manifest(), git_meta=git_meta,
+            snapshot=snap,
+            manifest=_minimal_manifest(),
+            git_meta=git_meta,
         )
         branch_nodes = [n for n in payload["nodes"] if n["type"] == "Branch"]
         assert len(branch_nodes) == 0
@@ -200,7 +210,9 @@ class TestTerminusPublisherProperties:
         snap["snapshot_id"] = None
         with pytest.raises(ValueError, match="snapshot_id"):
             pub.build_lineage_payload(
-                snapshot=snap, manifest=_minimal_manifest(), git_meta=_minimal_git_meta(),
+                snapshot=snap,
+                manifest=_minimal_manifest(),
+                git_meta=_minimal_git_meta(),
             )
 
     @pytest.mark.edge
@@ -213,7 +225,9 @@ class TestTerminusPublisherProperties:
         git_meta["repo_name"] = None
         with pytest.raises(ValueError, match="repo_name"):
             pub.build_lineage_payload(
-                snapshot=snap, manifest=_minimal_manifest(), git_meta=git_meta,
+                snapshot=snap,
+                manifest=_minimal_manifest(),
+                git_meta=git_meta,
             )
 
     @pytest.mark.edge
@@ -261,16 +275,23 @@ class TestTerminusPublisherProperties:
         pub = _make_publisher()
         snap = _minimal_snapshot()
         snap["symbols"] = [
-            {"symbol_id": "sym:1", "display_name": "foo", "kind": "function",
-             "external_symbol_id": "ext:foo"},
+            {
+                "symbol_id": "sym:1",
+                "display_name": "foo",
+                "kind": "function",
+                "external_symbol_id": "ext:foo",
+            },
         ]
         prev = {"ext:foo": "symbol:prev:ext_foo"}
         payload = pub.build_lineage_payload(
-            snapshot=snap, manifest=_minimal_manifest(),
+            snapshot=snap,
+            manifest=_minimal_manifest(),
             git_meta=_minimal_git_meta(),
             previous_snapshot_symbols=prev,
         )
-        version_edges = [e for e in payload["edges"] if e["type"] == "symbol_version_from"]
+        version_edges = [
+            e for e in payload["edges"] if e["type"] == "symbol_version_from"
+        ]
         assert len(version_edges) == 1
 
     @given(repo_name=small_text)
@@ -282,7 +303,9 @@ class TestTerminusPublisherProperties:
         snap = _minimal_snapshot()
         snap["repo_name"] = repo_name
         payload = pub.build_lineage_payload(
-            snapshot=snap, manifest=_minimal_manifest(), git_meta=_minimal_git_meta(),
+            snapshot=snap,
+            manifest=_minimal_manifest(),
+            git_meta=_minimal_git_meta(),
         )
         assert payload["snapshot_id"] == snap["snapshot_id"]
 
@@ -293,7 +316,9 @@ class TestTerminusPublisherProperties:
         snap = _minimal_snapshot()
         snap["documents"] = [{"path": "a.py", "language": "python"}]  # no doc_id
         payload = pub.build_lineage_payload(
-            snapshot=snap, manifest=_minimal_manifest(), git_meta=_minimal_git_meta(),
+            snapshot=snap,
+            manifest=_minimal_manifest(),
+            git_meta=_minimal_git_meta(),
         )
         doc_nodes = [n for n in payload["nodes"] if n["type"] == "DocumentVersion"]
         assert len(doc_nodes) == 0
@@ -305,7 +330,9 @@ class TestTerminusPublisherProperties:
         snap = _minimal_snapshot()
         snap["symbols"] = [{"display_name": "foo", "kind": "function"}]
         payload = pub.build_lineage_payload(
-            snapshot=snap, manifest=_minimal_manifest(), git_meta=_minimal_git_meta(),
+            snapshot=snap,
+            manifest=_minimal_manifest(),
+            git_meta=_minimal_git_meta(),
         )
         sym_nodes = [n for n in payload["nodes"] if n["type"] == "SymbolVersion"]
         assert len(sym_nodes) == 0
@@ -330,7 +357,9 @@ class TestTerminusPublisherProperties:
         git_meta = _minimal_git_meta()
         git_meta["commit_id"] = None
         payload = pub.build_lineage_payload(
-            snapshot=snap, manifest=_minimal_manifest(), git_meta=git_meta,
+            snapshot=snap,
+            manifest=_minimal_manifest(),
+            git_meta=git_meta,
         )
         commit_nodes = [n for n in payload["nodes"] if n["type"] == "Commit"]
         assert len(commit_nodes) == 0
@@ -341,7 +370,9 @@ class TestTerminusPublisherProperties:
         pub = _make_publisher()
         manifest = {"ref_name": "main", "status": "published"}
         payload = pub.build_lineage_payload(
-            snapshot=_minimal_snapshot(), manifest=manifest, git_meta=_minimal_git_meta(),
+            snapshot=_minimal_snapshot(),
+            manifest=manifest,
+            git_meta=_minimal_git_meta(),
         )
         manifest_nodes = [n for n in payload["nodes"] if n["type"] == "Manifest"]
         assert len(manifest_nodes) == 0
@@ -352,7 +383,9 @@ class TestTerminusPublisherProperties:
         pub = _make_publisher()
         manifest = {"manifest_id": "m1", "ref_name": "main"}
         payload = pub.build_lineage_payload(
-            snapshot=_minimal_snapshot(), manifest=manifest, git_meta=_minimal_git_meta(),
+            snapshot=_minimal_snapshot(),
+            manifest=manifest,
+            git_meta=_minimal_git_meta(),
         )
         run_nodes = [n for n in payload["nodes"] if n["type"] == "IndexRun"]
         assert len(run_nodes) == 0
@@ -364,7 +397,9 @@ class TestTerminusPublisherProperties:
         git_meta = _minimal_git_meta()
         git_meta["parent_commit_id"] = "parent0"
         payload = pub.build_lineage_payload(
-            snapshot=_minimal_snapshot(), manifest=_minimal_manifest(), git_meta=git_meta,
+            snapshot=_minimal_snapshot(),
+            manifest=_minimal_manifest(),
+            git_meta=git_meta,
         )
         parent_edges = [e for e in payload["edges"] if e["type"] == "commit_parent"]
         assert len(parent_edges) == 1
@@ -376,7 +411,9 @@ class TestTerminusPublisherProperties:
         snap = _minimal_snapshot()
         snap["documents"] = []
         payload = pub.build_lineage_payload(
-            snapshot=snap, manifest=_minimal_manifest(), git_meta=_minimal_git_meta(),
+            snapshot=snap,
+            manifest=_minimal_manifest(),
+            git_meta=_minimal_git_meta(),
         )
         doc_nodes = [n for n in payload["nodes"] if n["type"] == "DocumentVersion"]
         assert len(doc_nodes) == 0
@@ -389,8 +426,10 @@ class TestTerminusPublisherProperties:
         # Will fail at network level but that's OK — we just want to test the key is used
         with pytest.raises(RuntimeError):
             pub.publish_snapshot_lineage(
-                snapshot=snap, manifest=_minimal_manifest(),
-                git_meta=_minimal_git_meta(), idempotency_key="key-123",
+                snapshot=snap,
+                manifest=_minimal_manifest(),
+                git_meta=_minimal_git_meta(),
+                idempotency_key="key-123",
             )
 
     @pytest.mark.edge
@@ -398,7 +437,8 @@ class TestTerminusPublisherProperties:
         """EDGE: payload version field is always 'v1'."""
         pub = _make_publisher()
         payload = pub.build_lineage_payload(
-            snapshot=_minimal_snapshot(), manifest=_minimal_manifest(),
+            snapshot=_minimal_snapshot(),
+            manifest=_minimal_manifest(),
             git_meta=_minimal_git_meta(),
         )
         assert payload["version"] == "v1"

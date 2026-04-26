@@ -54,20 +54,17 @@ class ImportExtractor:
         for capture_name, nodes in captures.items():
             for node in nodes:
                 # --- Case 1: Import (import os) ---
-                if capture_name == 'import.item':
+                if capture_name == "import.item":
                     name, alias = self._parse_aliased_import(node, code)
-                    imports.append({
-                        'module': name,
-                        'names': [name],
-                        'alias': alias,
-                        'level': 0
-                    })
+                    imports.append(
+                        {"module": name, "names": [name], "alias": alias, "level": 0}
+                    )
 
                 # --- Case 2: From Import (from x import y) ---
-                elif capture_name == 'from.item':
+                elif capture_name == "from.item":
                     # Search upward for parent node import_from_statement
                     parent = node.parent
-                    while parent and parent.type != 'import_from_statement':
+                    while parent and parent.type != "import_from_statement":
                         parent = parent.parent
 
                     if not parent:
@@ -75,34 +72,39 @@ class ImportExtractor:
 
                     # Parse the context of parent statement (module, level)
                     if parent.id not in from_stmt_cache:
-                        from_stmt_cache[parent.id] = self._parse_from_context(parent, code)
+                        from_stmt_cache[parent.id] = self._parse_from_context(
+                            parent, code
+                        )
 
                     module, level = from_stmt_cache[parent.id]
 
                     # Parse current import item
-                    if node.type == 'wildcard_import':
-                        name = '*'
+                    if node.type == "wildcard_import":
+                        name = "*"
                         alias = None
                     else:
                         name, alias = self._parse_aliased_import(node, code)
 
-                    imports.append({
-                        'module': module,
-                        'names': [name],
-                        'alias': alias,
-                        'level': level
-                    })
+                    imports.append(
+                        {
+                            "module": module,
+                            "names": [name],
+                            "alias": alias,
+                            "level": level,
+                        }
+                    )
 
         return imports
 
     def _parse_aliased_import(self, node: Node, code: str) -> tuple[str, str | None]:
         """Parse name or aliased_import"""
-        def get_text(n):
-            return code[n.start_byte:n.end_byte]
 
-        if node.type == 'aliased_import':
-            name_node = node.child_by_field_name('name')
-            alias_node = node.child_by_field_name('alias')
+        def get_text(n):
+            return code[n.start_byte : n.end_byte]
+
+        if node.type == "aliased_import":
+            name_node = node.child_by_field_name("name")
+            alias_node = node.child_by_field_name("alias")
             name = get_text(name_node) if name_node else ""
             alias = get_text(alias_node) if alias_node else None
             return name, alias
@@ -120,16 +122,15 @@ class ImportExtractor:
 
         # Directly traverse child nodes of statement to find relative_import or dotted_name
         for child in stmt_node.children:
-
-            if child.type == 'relative_import':
+            if child.type == "relative_import":
                 # relative_import node may contain dots and name, e.g., "..utils"
                 # or only dots, e.g., ".."
-                text = code[child.start_byte:child.end_byte]
+                text = code[child.start_byte : child.end_byte]
 
                 # Count number of dots
                 current_dots = 0
                 for char in text:
-                    if char == '.':
+                    if char == ".":
                         current_dots += 1
                     else:
                         break
@@ -138,7 +139,7 @@ class ImportExtractor:
                 # The remaining part is the module name
                 module_name = text[current_dots:]
 
-            elif child.type == 'dotted_name':
+            elif child.type == "dotted_name":
                 # Absolute import, only process when relative_import is not encountered
                 # (Prevent misidentifying dotted_name after import as module)
                 if level == 0 and not module_name:
@@ -147,9 +148,9 @@ class ImportExtractor:
                     # Or simpler: the structure of import_from_statement is fixed as "from" module "import" ...
                     # As long as it's before the import keyword.
                     # Simplified handling here: usually the module's dotted_name appears first
-                    module_name = code[child.start_byte:child.end_byte]
+                    module_name = code[child.start_byte : child.end_byte]
 
-            elif child.type == 'import':
+            elif child.type == "import":
                 # Encountered import keyword, indicating module part parsing is complete
                 break
 

@@ -34,16 +34,18 @@ class GlobalIndexBuilder:
         self.logger = logging.getLogger(__name__)
 
         # Main lookup maps
-        self.file_map: dict[str, str] = {}      # abs_path -> file_id
-        self.module_map: dict[str, str] = {}    # dotted.module.path -> file_id
-        self.export_map: dict[str, dict[str, str]] = {}  # module_path -> {symbol_name: node_id}
+        self.file_map: dict[str, str] = {}  # abs_path -> file_id
+        self.module_map: dict[str, str] = {}  # dotted.module.path -> file_id
+        self.export_map: dict[
+            str, dict[str, str]
+        ] = {}  # module_path -> {symbol_name: node_id}
 
         # Statistics
         self.stats = {
             "files_processed": 0,
             "modules_created": 0,
             "symbols_exported": 0,
-            "errors": 0
+            "errors": 0,
         }
 
     def build_maps(self, elements: list[CodeElement], repo_root: str) -> None:
@@ -61,7 +63,12 @@ class GlobalIndexBuilder:
         self.file_map.clear()
         self.module_map.clear()
         self.export_map.clear()
-        self.stats = {"files_processed": 0, "modules_created": 0, "symbols_exported": 0, "errors": 0}
+        self.stats = {
+            "files_processed": 0,
+            "modules_created": 0,
+            "symbols_exported": 0,
+            "errors": 0,
+        }
 
         # Normalize repo root
         norm_repo_root = normalize_repo_root(repo_root)
@@ -92,7 +99,9 @@ class GlobalIndexBuilder:
         )
 
         if self.stats["errors"] > 0:
-            self.logger.warning(f"Encountered {self.stats['errors']} errors during processing")
+            self.logger.warning(
+                f"Encountered {self.stats['errors']} errors during processing"
+            )
 
     def _process_file_element(self, element: CodeElement, repo_root: str) -> None:
         """
@@ -196,7 +205,8 @@ class GlobalIndexBuilder:
             **self.stats,
             "file_map_size": len(self.file_map),
             "module_map_size": len(self.module_map),
-            "module_coverage": self.stats["modules_created"] / max(1, self.stats["files_processed"])
+            "module_coverage": self.stats["modules_created"]
+            / max(1, self.stats["files_processed"]),
         }
 
     def validate_maps(self) -> list[str]:
@@ -221,7 +231,9 @@ class GlobalIndexBuilder:
         module_to_files = {}
         for module_path, file_id in self.module_map.items():
             if module_path in module_to_files:
-                errors.append(f"Duplicate module '{module_path}' for files {module_to_files[module_path]} and {file_id}")
+                errors.append(
+                    f"Duplicate module '{module_path}' for files {module_to_files[module_path]} and {file_id}"
+                )
             else:
                 module_to_files[module_path] = file_id
 
@@ -235,7 +247,9 @@ class GlobalIndexBuilder:
         self.logger.info("Building export symbol map from class and function elements")
 
         # Filter class and function elements
-        symbol_elements = [elem for elem in elements if elem.type in ("class", "function")]
+        symbol_elements = [
+            elem for elem in elements if elem.type in ("class", "function")
+        ]
 
         for element in symbol_elements:
             try:
@@ -251,8 +265,8 @@ class GlobalIndexBuilder:
                     self.export_map[module_path][element.name] = element.id
 
                     # --- [CRITICAL FIX] Export Class.Method for methods ---
-                    if element.type == 'function':
-                        class_name = element.metadata.get('class_name')
+                    if element.type == "function":
+                        class_name = element.metadata.get("class_name")
                         if class_name:
                             full_name = f"{class_name}.{element.name}"
                             self.export_map[module_path][full_name] = element.id
@@ -265,7 +279,9 @@ class GlobalIndexBuilder:
                 self.logger.error(f"Error processing symbol {element.name}: {e}")
                 self.stats["errors"] += 1
 
-        self.logger.info(f"Built export map with {self.stats['symbols_exported']} symbols from {len(self.export_map)} modules")
+        self.logger.info(
+            f"Built export map with {self.stats['symbols_exported']} symbols from {len(self.export_map)} modules"
+        )
 
     def _get_module_path_for_element(self, element: CodeElement) -> str | None:
         """
@@ -322,4 +338,9 @@ class GlobalIndexBuilder:
         self.file_map.clear()
         self.module_map.clear()
         self.export_map.clear()
-        self.stats = {"files_processed": 0, "modules_created": 0, "symbols_exported": 0, "errors": 0}
+        self.stats = {
+            "files_processed": 0,
+            "modules_created": 0,
+            "symbols_exported": 0,
+            "errors": 0,
+        }

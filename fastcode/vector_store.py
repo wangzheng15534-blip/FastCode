@@ -33,7 +33,9 @@ class VectorStore:
         self.index = None
         self.metadata = []  # Store metadata for each vector
 
-        self.persist_dir = self.vector_config.get("persist_directory", "./data/vector_store")
+        self.persist_dir = self.vector_config.get(
+            "persist_directory", "./data/vector_store"
+        )
         self.distance_metric = self.vector_config.get("distance_metric", "cosine")
         self.index_type = self.vector_config.get("index_type", "HNSW")
 
@@ -44,18 +46,24 @@ class VectorStore:
 
         # Cache for scan_available_indexes to avoid repeated file I/O
         self._index_scan_cache: tuple[float, list[dict[str, Any]]] | None = None
-        self._index_scan_cache_ttl = self.vector_config.get("index_scan_cache_ttl", 30.0)
-        self._index_scan_sample_size = self.vector_config.get("index_scan_sample_size", 100)
+        self._index_scan_cache_ttl = self.vector_config.get(
+            "index_scan_cache_ttl", 30.0
+        )
+        self._index_scan_sample_size = self.vector_config.get(
+            "index_scan_sample_size", 100
+        )
 
         if not self.in_memory:
             ensure_dir(self.persist_dir)
         else:
-            self.logger.info("VectorStore running in in-memory mode; persistence disabled.")
+            self.logger.info(
+                "VectorStore running in in-memory mode; persistence disabled."
+            )
 
     def initialize(self, dimension: int):
         """
         Initialize the vector store
-        
+
         Args:
             dimension: Dimension of embedding vectors
         """
@@ -66,7 +74,9 @@ class VectorStore:
             # HNSW index for fast approximate search
             if self.distance_metric == "cosine":
                 # Use inner product for cosine with normalized vectors
-                index = faiss.IndexHNSWFlat(dimension, self.m, faiss.METRIC_INNER_PRODUCT)
+                index = faiss.IndexHNSWFlat(
+                    dimension, self.m, faiss.METRIC_INNER_PRODUCT
+                )
             else:
                 # L2 distance
                 index = faiss.IndexHNSWFlat(dimension, self.m, faiss.METRIC_L2)
@@ -82,12 +92,14 @@ class VectorStore:
             self.index = faiss.IndexFlatL2(dimension)  # L2 distance
 
         self.metadata = []
-        self.logger.info(f"Initialized {self.index_type} index with {self.distance_metric} distance")
+        self.logger.info(
+            f"Initialized {self.index_type} index with {self.distance_metric} distance"
+        )
 
     def add_vectors(self, vectors: np.ndarray, metadata: list[dict[str, Any]]):
         """
         Add vectors to the store
-        
+
         Args:
             vectors: Array of embedding vectors (N x dimension)
             metadata: List of metadata dictionaries for each vector
@@ -109,21 +121,28 @@ class VectorStore:
         self.index.add(vectors)
         self.metadata.extend(metadata)
 
-        self.logger.info(f"Added {len(vectors)} vectors to store (total: {len(self.metadata)})")
+        self.logger.info(
+            f"Added {len(vectors)} vectors to store (total: {len(self.metadata)})"
+        )
 
-    def search(self, query_vector: np.ndarray, k: int = 10,
-               min_score: float | None = None, repo_filter: list[str] | None = None,
-               element_type_filter: str | None = None) -> list[tuple[dict[str, Any], float]]:
+    def search(
+        self,
+        query_vector: np.ndarray,
+        k: int = 10,
+        min_score: float | None = None,
+        repo_filter: list[str] | None = None,
+        element_type_filter: str | None = None,
+    ) -> list[tuple[dict[str, Any], float]]:
         """
         Search for similar vectors
-        
+
         Args:
             query_vector: Query embedding vector
             k: Number of results to return
             min_score: Minimum similarity score (optional)
             repo_filter: Optional list of repository names to filter by
             element_type_filter: Optional element type to filter by (e.g., "repository_overview")
-        
+
         Returns:
             List of (metadata, score) tuples
         """
@@ -145,7 +164,7 @@ class VectorStore:
 
         # Prepare results
         results = []
-        for dist, idx in zip(distances[0], indices[0]):
+        for dist, idx in zip(distances[0], indices[0], strict=True):
             if idx == -1:  # FAISS returns -1 for empty slots
                 continue
 
@@ -180,11 +199,16 @@ class VectorStore:
 
         return results
 
-    def save_repo_overview(self, repo_name: str, overview_content: str,
-                          embedding: np.ndarray, metadata: dict[str, Any]):
+    def save_repo_overview(
+        self,
+        repo_name: str,
+        overview_content: str,
+        embedding: np.ndarray,
+        metadata: dict[str, Any],
+    ):
         """
         Save a single repository overview to a separate file
-        
+
         Args:
             repo_name: Name of the repository
             overview_content: Text content of the overview
@@ -208,7 +232,7 @@ class VectorStore:
         overviews = {}
         if os.path.exists(overview_path):
             try:
-                with open(overview_path, 'rb') as f:
+                with open(overview_path, "rb") as f:
                     overviews = pickle.load(f)
             except Exception as e:
                 self.logger.warning(f"Failed to load existing repo overviews: {e}")
@@ -218,12 +242,12 @@ class VectorStore:
             "repo_name": repo_name,
             "content": overview_content,
             "embedding": embedding.astype(np.float32),
-            "metadata": metadata
+            "metadata": metadata,
         }
 
         # Save back to file
         try:
-            with open(overview_path, 'wb') as f:
+            with open(overview_path, "wb") as f:
                 pickle.dump(overviews, f)
             self.logger.info(f"Saved repository overview for {repo_name}")
         except Exception as e:
@@ -251,7 +275,7 @@ class VectorStore:
             return False
 
         try:
-            with open(overview_path, 'rb') as f:
+            with open(overview_path, "rb") as f:
                 overviews = pickle.load(f)
 
             if repo_name not in overviews:
@@ -259,18 +283,20 @@ class VectorStore:
 
             del overviews[repo_name]
 
-            with open(overview_path, 'wb') as f:
+            with open(overview_path, "wb") as f:
                 pickle.dump(overviews, f)
             self.logger.info(f"Deleted repository overview for {repo_name}")
             return True
         except Exception as e:
-            self.logger.error(f"Failed to delete repository overview for {repo_name}: {e}")
+            self.logger.error(
+                f"Failed to delete repository overview for {repo_name}: {e}"
+            )
             return False
 
     def load_repo_overviews(self) -> dict[str, dict[str, Any]]:
         """
         Load all repository overviews from storage
-        
+
         Returns:
             Dictionary mapping repo_name to overview data
         """
@@ -285,7 +311,7 @@ class VectorStore:
             return {}
 
         try:
-            with open(overview_path, 'rb') as f:
+            with open(overview_path, "rb") as f:
                 overviews = pickle.load(f)
             self.logger.info(f"Loaded {len(overviews)} repository overviews")
             return overviews
@@ -293,16 +319,17 @@ class VectorStore:
             self.logger.error(f"Failed to load repository overviews: {e}")
             return {}
 
-    def search_repository_overviews(self, query_vector: np.ndarray, k: int = 5,
-                                    min_score: float | None = None) -> list[tuple[dict[str, Any], float]]:
+    def search_repository_overviews(
+        self, query_vector: np.ndarray, k: int = 5, min_score: float | None = None
+    ) -> list[tuple[dict[str, Any], float]]:
         """
         Search specifically for repository overview elements using separate storage
-        
+
         Args:
             query_vector: Query embedding vector
             k: Number of repositories to return
             min_score: Minimum similarity score
-        
+
         Returns:
             List of (metadata, score) tuples for repository overviews only
         """
@@ -345,7 +372,7 @@ class VectorStore:
             result_metadata = {
                 "repo_name": repo_name,
                 "type": "repository_overview",
-                **overview_data["metadata"]
+                **overview_data["metadata"],
             }
 
             results.append((result_metadata, similarity))
@@ -354,16 +381,17 @@ class VectorStore:
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:k]
 
-    def search_batch(self, query_vectors: np.ndarray, k: int = 10,
-                     min_score: float | None = None) -> list[list[tuple[dict[str, Any], float]]]:
+    def search_batch(
+        self, query_vectors: np.ndarray, k: int = 10, min_score: float | None = None
+    ) -> list[list[tuple[dict[str, Any], float]]]:
         """
         Search for multiple queries at once
-        
+
         Args:
             query_vectors: Array of query vectors (N x dimension)
             k: Number of results per query
             min_score: Minimum similarity score
-        
+
         Returns:
             List of result lists (one per query)
         """
@@ -383,9 +411,9 @@ class VectorStore:
 
         # Prepare results for each query
         all_results = []
-        for query_distances, query_indices in zip(distances, indices):
+        for query_distances, query_indices in zip(distances, indices, strict=True):
             results = []
-            for dist, idx in zip(query_distances, query_indices):
+            for dist, idx in zip(query_distances, query_indices, strict=True):
                 if idx == -1:
                     continue
 
@@ -415,7 +443,7 @@ class VectorStore:
             repo_name = meta.get("repo_name")
             if repo_name:
                 repo_names.add(repo_name)
-        return sorted(list(repo_names))
+        return sorted(repo_names)
 
     def get_count_by_repository(self) -> dict[str, int]:
         """Get count of vectors per repository"""
@@ -428,10 +456,10 @@ class VectorStore:
     def filter_by_repositories(self, repo_names: list[str]) -> list[int]:
         """
         Get indices of vectors belonging to specific repositories
-        
+
         Args:
             repo_names: List of repository names to filter by
-        
+
         Returns:
             List of indices
         """
@@ -444,7 +472,7 @@ class VectorStore:
     def save(self, name: str = "index"):
         """
         Save index and metadata to disk
-        
+
         Args:
             name: Name for the saved files
         """
@@ -463,13 +491,16 @@ class VectorStore:
         faiss.write_index(self.index, index_path)
 
         # Save metadata
-        with open(metadata_path, 'wb') as f:
-            pickle.dump({
-                "metadata": self.metadata,
-                "dimension": self.dimension,
-                "distance_metric": self.distance_metric,
-                "index_type": self.index_type,
-            }, f)
+        with open(metadata_path, "wb") as f:
+            pickle.dump(
+                {
+                    "metadata": self.metadata,
+                    "dimension": self.dimension,
+                    "distance_metric": self.distance_metric,
+                    "index_type": self.index_type,
+                },
+                f,
+            )
 
         # Invalidate cache since we just modified the indexes
         self.invalidate_scan_cache()
@@ -479,10 +510,10 @@ class VectorStore:
     def load(self, name: str = "index") -> bool:
         """
         Load index and metadata from disk
-        
+
         Args:
             name: Name of the saved files
-        
+
         Returns:
             True if successful, False otherwise
         """
@@ -502,7 +533,7 @@ class VectorStore:
             self.index = faiss.read_index(index_path)
 
             # Load metadata
-            with open(metadata_path, 'rb') as f:
+            with open(metadata_path, "rb") as f:
                 data = pickle.load(f)
                 self.metadata = data["metadata"]
                 self.dimension = data["dimension"]
@@ -510,7 +541,7 @@ class VectorStore:
                 self.index_type = data.get("index_type", "HNSW")
 
             # Set search parameters for HNSW
-            if self.index_type == "HNSW" and hasattr(self.index, 'hnsw'):
+            if self.index_type == "HNSW" and hasattr(self.index, "hnsw"):
                 self.index.hnsw.efSearch = self.ef_search
 
             self.logger.info(
@@ -535,10 +566,10 @@ class VectorStore:
     def merge_from_index(self, index_name: str) -> bool:
         """
         Merge vectors from another saved index into this store
-        
+
         Args:
             index_name: Name of the index to merge from
-        
+
         Returns:
             True if successful, False otherwise
         """
@@ -558,17 +589,16 @@ class VectorStore:
             other_index = faiss.read_index(index_path)
 
             # Load metadata
-            with open(metadata_path, 'rb') as f:
+            with open(metadata_path, "rb") as f:
                 data = pickle.load(f)
                 other_metadata = data["metadata"]
                 other_dimension = data["dimension"]
 
-
-
-
             # Verify dimensions match
             if self.dimension and self.dimension != other_dimension:
-                self.logger.error(f"Dimension mismatch: {self.dimension} vs {other_dimension}")
+                self.logger.error(
+                    f"Dimension mismatch: {self.dimension} vs {other_dimension}"
+                )
                 return False
 
             # Initialize if needed
@@ -599,7 +629,9 @@ class VectorStore:
                 return True
 
             except Exception as e:
-                self.logger.error(f"Failed to reconstruct vectors from {index_name}: {e}")
+                self.logger.error(
+                    f"Failed to reconstruct vectors from {index_name}: {e}"
+                )
                 return False
 
         except Exception as e:
@@ -609,10 +641,10 @@ class VectorStore:
     def delete_by_filter(self, filter_func) -> int:
         """
         Delete vectors matching a filter function
-        
+
         Args:
             filter_func: Function that takes metadata and returns True to delete
-        
+
         Returns:
             Number of vectors deleted
         """
@@ -646,10 +678,10 @@ class VectorStore:
     def scan_available_indexes(self, use_cache: bool = True) -> list[dict[str, Any]]:
         """
         Scan persist directory for available index files (with caching)
-        
+
         Args:
             use_cache: Use cached results if available (default: True)
-        
+
         Returns:
             List of dictionaries with repository information
         """
@@ -675,9 +707,11 @@ class VectorStore:
         self.logger.info("Scanning available indexes...")
 
         for file in os.listdir(self.persist_dir):
-            if file.endswith('.faiss'):
-                repo_name = file.replace('.faiss', '')
-                metadata_file = os.path.join(self.persist_dir, f"{repo_name}_metadata.pkl")
+            if file.endswith(".faiss"):
+                repo_name = file.replace(".faiss", "")
+                metadata_file = os.path.join(
+                    self.persist_dir, f"{repo_name}_metadata.pkl"
+                )
 
                 if os.path.exists(metadata_file):
                     try:
@@ -693,7 +727,7 @@ class VectorStore:
                         file_count = 0
                         repo_url = "N/A"
 
-                        with open(metadata_file, 'rb') as f:
+                        with open(metadata_file, "rb") as f:
                             try:
                                 data = pickle.load(f)
                                 metadata_list = data.get("metadata", [])
@@ -701,7 +735,9 @@ class VectorStore:
 
                                 # Sample first few entries to get URL and estimate file count
                                 # (much faster than iterating through all)
-                                sample_size = min(self._index_scan_sample_size, len(metadata_list))
+                                sample_size = min(
+                                    self._index_scan_sample_size, len(metadata_list)
+                                )
                                 seen_files = set()
 
                                 for i in range(sample_size):
@@ -714,32 +750,43 @@ class VectorStore:
 
                                 # Estimate total file count based on sample
                                 if sample_size > 0 and sample_size < len(metadata_list):
-                                    file_count = int(len(seen_files) * (len(metadata_list) / sample_size))
+                                    file_count = int(
+                                        len(seen_files)
+                                        * (len(metadata_list) / sample_size)
+                                    )
                                 else:
                                     file_count = len(seen_files)
 
                             except Exception as load_error:
-                                self.logger.warning(f"Failed to parse metadata for {repo_name}: {load_error}")
+                                self.logger.warning(
+                                    f"Failed to parse metadata for {repo_name}: {load_error}"
+                                )
 
-                        available_repos.append({
-                            'name': repo_name,
-                            'element_count': element_count,
-                            'file_count': file_count,
-                            'size_mb': round(total_size_mb, 2),
-                            'url': repo_url,
-                        })
+                        available_repos.append(
+                            {
+                                "name": repo_name,
+                                "element_count": element_count,
+                                "file_count": file_count,
+                                "size_mb": round(total_size_mb, 2),
+                                "url": repo_url,
+                            }
+                        )
                     except Exception as e:
-                        self.logger.warning(f"Failed to read metadata for {repo_name}: {e}")
+                        self.logger.warning(
+                            f"Failed to read metadata for {repo_name}: {e}"
+                        )
                         # Still add it with minimal info
-                        available_repos.append({
-                            'name': repo_name,
-                            'element_count': 0,
-                            'file_count': 0,
-                            'size_mb': 0,
-                            'url': "N/A",
-                        })
+                        available_repos.append(
+                            {
+                                "name": repo_name,
+                                "element_count": 0,
+                                "file_count": 0,
+                                "size_mb": 0,
+                                "url": "N/A",
+                            }
+                        )
 
-        results = sorted(available_repos, key=lambda x: x['name'])
+        results = sorted(available_repos, key=lambda x: x["name"])
 
         # Update cache
         self._index_scan_cache = (time.time(), results)
@@ -751,4 +798,3 @@ class VectorStore:
         """Invalidate the scan cache (call this when indexes change)"""
         self._index_scan_cache = None
         self.logger.debug("Invalidated index scan cache")
-

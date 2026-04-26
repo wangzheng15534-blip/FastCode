@@ -39,6 +39,7 @@ def _make_config(**overrides):
 
 # ---- Test 1: SemanticChunker produces semantic chunks ----
 
+
 def test_chunk_document_produces_semantic_boundaries():
     """SemanticChunker should split at semantic boundaries, not arbitrary word counts."""
     text = """# Architecture Overview
@@ -104,6 +105,7 @@ def test_chunk_document_does_not_split_mid_sentence():
 
 # ---- Test 2: Heading pre-split preserved ----
 
+
 def test_heading_preserved_in_chunk_metadata():
     """Chunks under a heading should carry that heading in metadata."""
     text = """# Main Title
@@ -154,12 +156,17 @@ Third line.
 
 # ---- Test 3: Config reads new keys ----
 
+
 def test_chunk_token_size_affects_chunk_granularity():
     """Smaller chunk_token_size should produce more chunks from the same text."""
-    text = "Word. ".join(f"Sentence {i} with enough content to matter." for i in range(20))
+    text = "Word. ".join(
+        f"Sentence {i} with enough content to matter." for i in range(20)
+    )
 
     ingester_small = KeyDocIngester(_make_config(chunk_token_size=64), _DummyEmbedder())
-    ingester_large = KeyDocIngester(_make_config(chunk_token_size=2048), _DummyEmbedder())
+    ingester_large = KeyDocIngester(
+        _make_config(chunk_token_size=2048), _DummyEmbedder()
+    )
 
     chunks_small = ingester_small._chunk_document(text)
     chunks_large = ingester_large._chunk_document(text)
@@ -179,8 +186,12 @@ def test_similarity_threshold_affects_split_sensitivity():
         "Section about messaging. Kafka processes events. RabbitMQ routes queues."
     )
 
-    ingester_strict = KeyDocIngester(_make_config(similarity_threshold=0.99), _DummyEmbedder())
-    ingester_loose = KeyDocIngester(_make_config(similarity_threshold=0.01), _DummyEmbedder())
+    ingester_strict = KeyDocIngester(
+        _make_config(similarity_threshold=0.99), _DummyEmbedder()
+    )
+    ingester_loose = KeyDocIngester(
+        _make_config(similarity_threshold=0.01), _DummyEmbedder()
+    )
 
     chunks_strict = ingester_strict._chunk_document(text)
     chunks_loose = ingester_loose._chunk_document(text)
@@ -204,6 +215,7 @@ def test_config_defaults_when_missing():
 
 
 # ---- Test 4: Fallback when chonkie unavailable ----
+
 
 def test_fallback_when_chonkie_import_fails():
     """Should fall back to word-based chunking if chonkie import fails."""
@@ -241,6 +253,7 @@ def test_fallback_when_chunker_init_fails():
 
 
 # ---- Test 5: Edge cases ----
+
 
 def test_chunk_empty_text():
     """Empty text should produce no chunks."""

@@ -21,11 +21,13 @@ from fastcode.scip_models import SCIPIndex
 
 small_text = st.text(
     alphabet="abcdefghijklmnopqrstuvwxyz0123456789_/",
-    min_size=1, max_size=30,
+    min_size=1,
+    max_size=30,
 )
 
 
 # --- Helpers ---
+
 
 def _write_json_file(tmpdir: str, name: str, data: dict) -> str:
     path = os.path.join(tmpdir, name)
@@ -44,7 +46,11 @@ def _minimal_scip_dict() -> dict:
                     {"symbol": "pkg foo.", "name": "foo", "kind": "function"},
                 ],
                 "occurrences": [
-                    {"symbol": "pkg foo.", "role": "definition", "range": [1, 0, 1, 10]},
+                    {
+                        "symbol": "pkg foo.",
+                        "role": "definition",
+                        "range": [1, 0, 1, 10],
+                    },
                 ],
             }
         ],
@@ -56,7 +62,6 @@ def _minimal_scip_dict() -> dict:
 
 @pytest.mark.property
 class TestSymbolRoleToStr:
-
     @given(role_bitmask=st.integers(min_value=0, max_value=255))
     @settings(max_examples=30)
     @pytest.mark.happy
@@ -64,8 +69,11 @@ class TestSymbolRoleToStr:
         """HAPPY: _symbol_role_to_str always returns a known role string."""
         result = _symbol_role_to_str(role_bitmask)
         assert result in (
-            "definition", "import", "write_access",
-            "forward_definition", "reference",
+            "definition",
+            "import",
+            "write_access",
+            "forward_definition",
+            "reference",
         )
 
     @pytest.mark.happy
@@ -111,7 +119,6 @@ class TestSymbolRoleToStr:
 
 @pytest.mark.property
 class TestScipKindToStr:
-
     @given(kind_value=st.integers(min_value=0, max_value=30))
     @settings(max_examples=30)
     @pytest.mark.happy
@@ -132,17 +139,31 @@ class TestScipKindToStr:
     def test_result_is_known_kind_or_symbol(self, kind_value: int):
         """EDGE: result is always from the known kind set or 'symbol'."""
         known = {
-            "function", "method", "class", "interface", "enum", "enum_member",
-            "variable", "constant", "property", "type", "macro", "module",
-            "namespace", "package", "parameter", "type_parameter", "constructor",
-            "struct", "symbol",
+            "function",
+            "method",
+            "class",
+            "interface",
+            "enum",
+            "enum_member",
+            "variable",
+            "constant",
+            "property",
+            "type",
+            "macro",
+            "module",
+            "namespace",
+            "package",
+            "parameter",
+            "type_parameter",
+            "constructor",
+            "struct",
+            "symbol",
         }
         assert _scip_kind_to_str(kind_value) in known
 
 
 @pytest.mark.property
 class TestLoadScipArtifactJson:
-
     @pytest.mark.happy
     def test_load_valid_json(self):
         """HAPPY: loading a valid .json SCIP artifact."""
@@ -173,14 +194,16 @@ class TestLoadScipArtifactJson:
     def test_load_preserves_symbol_data(self):
         """HAPPY: symbol fields survive JSON roundtrip."""
         data = {
-            "documents": [{
-                "path": "a.py",
-                "language": "python",
-                "symbols": [
-                    {"symbol": "pkg foo.", "name": "foo", "kind": "function"},
-                ],
-                "occurrences": [],
-            }],
+            "documents": [
+                {
+                    "path": "a.py",
+                    "language": "python",
+                    "symbols": [
+                        {"symbol": "pkg foo.", "name": "foo", "kind": "function"},
+                    ],
+                    "occurrences": [],
+                }
+            ],
         }
         with tempfile.TemporaryDirectory() as tmpdir:
             path = _write_json_file(tmpdir, "sym.json", data)
@@ -193,14 +216,20 @@ class TestLoadScipArtifactJson:
     def test_load_preserves_occurrence_data(self):
         """HAPPY: occurrence fields survive JSON roundtrip."""
         data = {
-            "documents": [{
-                "path": "a.py",
-                "language": "python",
-                "symbols": [],
-                "occurrences": [
-                    {"symbol": "pkg bar.", "role": "reference", "range": [10, 0, 10, 5]},
-                ],
-            }],
+            "documents": [
+                {
+                    "path": "a.py",
+                    "language": "python",
+                    "symbols": [],
+                    "occurrences": [
+                        {
+                            "symbol": "pkg bar.",
+                            "role": "reference",
+                            "range": [10, 0, 10, 5],
+                        },
+                    ],
+                }
+            ],
         }
         with tempfile.TemporaryDirectory() as tmpdir:
             path = _write_json_file(tmpdir, "occ.json", data)
@@ -305,7 +334,9 @@ class TestLoadScipArtifactJson:
     def test_load_json_with_no_language(self):
         """EDGE: document without language field."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            data = {"documents": [{"path": "unknown.xyz", "symbols": [], "occurrences": []}]}
+            data = {
+                "documents": [{"path": "unknown.xyz", "symbols": [], "occurrences": []}]
+            }
             path = _write_json_file(tmpdir, "nolang.json", data)
             result = load_scip_artifact(path)
             assert result.documents[0].language is None

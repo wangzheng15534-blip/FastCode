@@ -39,7 +39,9 @@ class RepositoryLoader:
         if configured_backup_root:
             self.repo_backup_root = os.path.abspath(configured_backup_root)
         else:
-            self.repo_backup_root = os.path.join(os.path.dirname(self.safe_repo_root), "repo_backup")
+            self.repo_backup_root = os.path.join(
+                os.path.dirname(self.safe_repo_root), "repo_backup"
+            )
         ensure_dir(self.repo_backup_root)
 
         self.temp_dir = None
@@ -85,11 +87,11 @@ class RepositoryLoader:
     def load_from_url(self, url: str, target_dir: str | None = None) -> str:
         """
         Clone repository from URL
-        
+
         Args:
             url: Git repository URL
             target_dir: Target directory for cloning (optional, creates temp dir if None)
-        
+
         Returns:
             Path to cloned repository
         """
@@ -104,10 +106,7 @@ class RepositoryLoader:
             # Clone with shallow depth for faster cloning
             if self.clone_depth > 0:
                 Repo.clone_from(
-                    url,
-                    self.repo_path,
-                    depth=self.clone_depth,
-                    single_branch=True
+                    url, self.repo_path, depth=self.clone_depth, single_branch=True
                 )
             else:
                 Repo.clone_from(url, self.repo_path)
@@ -122,11 +121,11 @@ class RepositoryLoader:
     def load_from_path(self, path: str, target_dir: str | None = None) -> str:
         """
         Copy local repository into repository workspace and load it.
-        
+
         Args:
             path: Local path to repository
             target_dir: Optional destination root (defaults to configured repo_root)
-        
+
         Returns:
             Path to copied repository
         """
@@ -138,7 +137,9 @@ class RepositoryLoader:
 
         source_path = os.path.abspath(path)
         self.repo_name = os.path.basename(source_path)
-        destination_root = os.path.abspath(target_dir) if target_dir else self.safe_repo_root
+        destination_root = (
+            os.path.abspath(target_dir) if target_dir else self.safe_repo_root
+        )
         destination_path = os.path.join(destination_root, self.repo_name)
 
         # If source is already in workspace destination, use it directly.
@@ -158,11 +159,11 @@ class RepositoryLoader:
     def load_from_zip(self, zip_path: str, target_dir: str | None = None) -> str:
         """
         Extract and load repository from ZIP file
-        
+
         Args:
             zip_path: Path to ZIP file
             target_dir: Target directory for extraction (optional, creates temp dir if None)
-        
+
         Returns:
             Path to extracted repository
         """
@@ -182,18 +183,22 @@ class RepositoryLoader:
 
         try:
             # Extract ZIP file
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
                 # Extract all files
                 zip_ref.extractall(extract_path)
 
             # If ZIP contains a single root directory, flatten it so repository
             # always lives directly under repo workspace root/<repo_name>.
             contents = os.listdir(extract_path)
-            if len(contents) == 1 and os.path.isdir(os.path.join(extract_path, contents[0])):
+            if len(contents) == 1 and os.path.isdir(
+                os.path.join(extract_path, contents[0])
+            ):
                 self.logger.info(f"Detected single root directory: {contents[0]}")
                 root_dir = os.path.join(extract_path, contents[0])
                 for name in os.listdir(root_dir):
-                    shutil.move(os.path.join(root_dir, name), os.path.join(extract_path, name))
+                    shutil.move(
+                        os.path.join(root_dir, name), os.path.join(extract_path, name)
+                    )
                 shutil.rmtree(root_dir)
 
             self.repo_path = extract_path
@@ -201,7 +206,7 @@ class RepositoryLoader:
             self.logger.info(f"Successfully extracted to {self.repo_path}")
 
             # Get file count for logging
-            file_count = sum(1 for _ in Path(self.repo_path).rglob('*') if _.is_file())
+            file_count = sum(1 for _ in Path(self.repo_path).rglob("*") if _.is_file())
             self.logger.info(f"Extracted {file_count} files")
 
             return self.repo_path
@@ -266,9 +271,11 @@ class RepositoryLoader:
 
         for root, dirs, filenames in os.walk(self.repo_path):
             # Filter out ignored directories
-            dirs[:] = [d for d in dirs if not should_ignore_path(
-                os.path.join(root, d), effective_ignore
-            )]
+            dirs[:] = [
+                d
+                for d in dirs
+                if not should_ignore_path(os.path.join(root, d), effective_ignore)
+            ]
 
             for filename in filenames:
                 file_path = os.path.join(root, filename)
@@ -292,12 +299,14 @@ class RepositoryLoader:
                         )
                         continue
 
-                    files.append({
-                        "path": normalize_path(file_path),
-                        "relative_path": normalize_path(relative_path),
-                        "size": file_size,
-                        "extension": Path(file_path).suffix,
-                    })
+                    files.append(
+                        {
+                            "path": normalize_path(file_path),
+                            "relative_path": normalize_path(relative_path),
+                            "size": file_size,
+                            "extension": Path(file_path).suffix,
+                        }
+                    )
 
                     total_size += file_size
 
@@ -315,20 +324,20 @@ class RepositoryLoader:
     def read_file_content(self, file_path: str) -> str | None:
         """
         Read file content with error handling
-        
+
         Args:
             file_path: Path to file
-        
+
         Returns:
             File content or None if error
         """
         try:
-            with open(file_path, encoding='utf-8') as f:
+            with open(file_path, encoding="utf-8") as f:
                 return f.read()
         except UnicodeDecodeError:
             # Try with different encoding
             try:
-                with open(file_path, encoding='latin-1') as f:
+                with open(file_path, encoding="latin-1") as f:
                     return f.read()
             except Exception as e:
                 self.logger.error(f"Failed to read {file_path}: {e}")
@@ -340,7 +349,7 @@ class RepositoryLoader:
     def get_repository_info(self) -> dict[str, Any]:
         """
         Get repository metadata
-        
+
         Returns:
             Dictionary with repository information
         """
@@ -355,20 +364,24 @@ class RepositoryLoader:
         # Try to get git info
         try:
             repo = Repo(self.repo_path)
-            info.update({
-                "branch": repo.active_branch.name,
-                "commit": repo.head.commit.hexsha[:8],
-                "remote_url": repo.remotes.origin.url if repo.remotes else None,
-            })
+            info.update(
+                {
+                    "branch": repo.active_branch.name,
+                    "commit": repo.head.commit.hexsha[:8],
+                    "remote_url": repo.remotes.origin.url if repo.remotes else None,
+                }
+            )
         except Exception:
             self.logger.debug("Not a git repository or git info unavailable")
 
         # Count files
         files = self.scan_files()
-        info.update({
-            "file_count": len(files),
-            "total_size_mb": sum(f["size"] for f in files) / 1024 / 1024,
-        })
+        info.update(
+            {
+                "file_count": len(files),
+                "total_size_mb": sum(f["size"] for f in files) / 1024 / 1024,
+            }
+        )
 
         return info
 
@@ -382,4 +395,3 @@ class RepositoryLoader:
     def __del__(self):
         """Cleanup on deletion"""
         self.cleanup()
-

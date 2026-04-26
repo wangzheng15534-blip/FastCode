@@ -80,8 +80,7 @@ def test_run_scip_indexer_success(tmp_path):
 def test_run_scip_indexer_not_installed(tmp_path):
     """run_scip_indexer raises when indexer not installed."""
     from fastcode.scip_indexers import run_scip_indexer
-    with patch("fastcode.scip_indexers.shutil.which", return_value=None):
-        with pytest.raises(RuntimeError, match="not found"):
+    with patch("fastcode.scip_indexers.shutil.which", return_value=None), pytest.raises(RuntimeError, match="not found"):
             run_scip_indexer("python", str(tmp_path), str(tmp_path / "out.scip"))
 
 
@@ -90,8 +89,7 @@ def test_run_scip_indexer_failure(tmp_path):
     from fastcode.scip_indexers import run_scip_indexer
     with patch("fastcode.scip_indexers.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error msg")
-        with patch("fastcode.scip_indexers.shutil.which", return_value="/usr/bin/scip-python"):
-            with pytest.raises(RuntimeError, match="error msg"):
+        with patch("fastcode.scip_indexers.shutil.which", return_value="/usr/bin/scip-python"), pytest.raises(RuntimeError, match="error msg"):
                 run_scip_indexer("python", str(tmp_path), str(tmp_path / "out.scip"))
 
 

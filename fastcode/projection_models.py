@@ -59,4 +59,3 @@ class ProjectionBuildResult:
             "warnings": self.warnings,
             "created_at": self.created_at,
         }
-

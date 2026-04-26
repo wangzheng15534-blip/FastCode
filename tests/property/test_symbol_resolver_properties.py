@@ -11,12 +11,16 @@ from fastcode.symbol_resolver import SymbolResolver
 
 # --- Helpers ---
 
+
 class _FakeModuleResolver:
     """Minimal fake module resolver."""
+
     def __init__(self, mappings=None):
         self._mappings = mappings or {}
 
-    def resolve_import(self, current_module_path, import_name, level=0, is_package=False):
+    def resolve_import(
+        self, current_module_path, import_name, level=0, is_package=False
+    ):
         key = (current_module_path, import_name, level)
         return self._mappings.get(key)
 
@@ -44,7 +48,6 @@ name_st = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=8)
 
 @pytest.mark.property
 class TestResolveSymbol:
-
     @pytest.mark.happy
     def test_local_resolution(self):
         """HAPPY: symbol defined in current file resolved locally."""
@@ -63,7 +66,9 @@ class TestResolveSymbol:
             export_map={"app.utils": {"helper": "sym:helper"}},
             import_mappings={("app.main", "app.utils", 0): "file:utils"},
         )
-        imports = [{"module": "app.utils", "names": ["helper"], "alias": None, "level": 0}]
+        imports = [
+            {"module": "app.utils", "names": ["helper"], "alias": None, "level": 0}
+        ]
         result = resolver.resolve_symbol("helper", "file:main", imports)
         assert result == "sym:helper"
 
@@ -106,38 +111,69 @@ class TestResolveSymbol:
 
 @pytest.mark.property
 class TestMatchesImport:
-
     @pytest.mark.happy
     def test_direct_name_match(self):
         """HAPPY: symbol directly in import names."""
         resolver = _make_resolver()
-        assert resolver._matches_import("helper", {
-            "names": ["helper"], "module": "utils", "alias": None,
-        }) is True
+        assert (
+            resolver._matches_import(
+                "helper",
+                {
+                    "names": ["helper"],
+                    "module": "utils",
+                    "alias": None,
+                },
+            )
+            is True
+        )
 
     @pytest.mark.happy
     def test_alias_match(self):
         """HAPPY: symbol matches import alias."""
         resolver = _make_resolver()
-        assert resolver._matches_import("h", {
-            "names": ["helper"], "module": "utils", "alias": "h",
-        }) is True
+        assert (
+            resolver._matches_import(
+                "h",
+                {
+                    "names": ["helper"],
+                    "module": "utils",
+                    "alias": "h",
+                },
+            )
+            is True
+        )
 
     @pytest.mark.happy
     def test_module_prefix_match(self):
         """HAPPY: symbol starts with module prefix."""
         resolver = _make_resolver()
-        assert resolver._matches_import("utils.helper", {
-            "names": [], "module": "utils", "alias": None,
-        }) is True
+        assert (
+            resolver._matches_import(
+                "utils.helper",
+                {
+                    "names": [],
+                    "module": "utils",
+                    "alias": None,
+                },
+            )
+            is True
+        )
 
     @pytest.mark.edge
     def test_no_match(self):
         """EDGE: symbol doesn't match any import pattern."""
         resolver = _make_resolver()
-        assert resolver._matches_import("other", {
-            "names": ["helper"], "module": "utils", "alias": None,
-        }) is False
+        assert (
+            resolver._matches_import(
+                "other",
+                {
+                    "names": ["helper"],
+                    "module": "utils",
+                    "alias": None,
+                },
+            )
+            is False
+        )
 
     @pytest.mark.edge
     def test_empty_import_info(self):
@@ -149,14 +185,21 @@ class TestMatchesImport:
     def test_member_prefix_match(self):
         """EDGE: Class.method matches imported Class name."""
         resolver = _make_resolver()
-        assert resolver._matches_import("MyClass.method", {
-            "names": ["MyClass"], "module": "mod", "alias": None,
-        }) is True
+        assert (
+            resolver._matches_import(
+                "MyClass.method",
+                {
+                    "names": ["MyClass"],
+                    "module": "mod",
+                    "alias": None,
+                },
+            )
+            is True
+        )
 
 
 @pytest.mark.property
 class TestGetModulePathByFileId:
-
     @pytest.mark.happy
     def test_known_file_id(self):
         """HAPPY: known file_id returns module path."""
@@ -178,7 +221,6 @@ class TestGetModulePathByFileId:
 
 @pytest.mark.property
 class TestGetCurrentModulePathForImports:
-
     @pytest.mark.happy
     def test_known_file(self):
         """HAPPY: returns module path for known file_id."""
@@ -200,7 +242,6 @@ class TestGetCurrentModulePathForImports:
 
 @pytest.mark.property
 class TestGetResolutionStats:
-
     @pytest.mark.happy
     def test_stats_keys(self):
         """HAPPY: stats contains expected keys."""

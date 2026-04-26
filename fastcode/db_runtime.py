@@ -45,7 +45,9 @@ class DBRuntime:
 
         if self.backend == "postgres":
             if not self.postgres_dsn:
-                raise RuntimeError("postgres backend selected but no postgres_dsn configured")
+                raise RuntimeError(
+                    "postgres backend selected but no postgres_dsn configured"
+                )
             if psycopg is None:
                 raise RuntimeError("postgres backend requires psycopg")
             if ConnectionPool is not None:
@@ -56,7 +58,9 @@ class DBRuntime:
                     kwargs={"autocommit": False, "row_factory": dict_row},
                 )
             else:
-                logger.warning("psycopg_pool not available — PostgreSQL connections will not be pooled")
+                logger.warning(
+                    "psycopg_pool not available — PostgreSQL connections will not be pooled"
+                )
         elif not self.sqlite_path:
             raise RuntimeError("sqlite backend requires sqlite_path")
 
@@ -73,9 +77,13 @@ class DBRuntime:
         self.close()
 
     @classmethod
-    def from_storage_config(cls, *, sqlite_path: str, storage_cfg: dict | None) -> DBRuntime:
+    def from_storage_config(
+        cls, *, sqlite_path: str, storage_cfg: dict | None
+    ) -> DBRuntime:
         cfg = storage_cfg or {}
-        backend = (cfg.get("backend") or os.getenv("FASTCODE_STORAGE_BACKEND") or "sqlite").lower()
+        backend = (
+            cfg.get("backend") or os.getenv("FASTCODE_STORAGE_BACKEND") or "sqlite"
+        ).lower()
         dsn = cfg.get("postgres_dsn") or os.getenv("FASTCODE_POSTGRES_DSN")
         pool_min = cfg.get("pool_min", 1)
         pool_max = cfg.get("pool_max", 8)
@@ -103,7 +111,9 @@ class DBRuntime:
                 with self.pool.connection() as conn:
                     yield conn
                 return
-            conn = psycopg.connect(self.postgres_dsn, autocommit=False, row_factory=dict_row)
+            conn = psycopg.connect(
+                self.postgres_dsn, autocommit=False, row_factory=dict_row
+            )
             try:
                 yield conn
             finally:
@@ -138,4 +148,3 @@ class DBRuntime:
         if self.backend == "sqlite":
             conn.execute("BEGIN IMMEDIATE")
         # PostgreSQL with autocommit=False: transaction already implicit, no BEGIN needed
-

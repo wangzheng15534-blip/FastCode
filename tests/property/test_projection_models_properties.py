@@ -22,7 +22,6 @@ small_text = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size
 
 @pytest.mark.property
 class TestUtcNowIso:
-
     @pytest.mark.happy
     def test_returns_iso_string(self):
         """HAPPY: utc_now_iso returns valid ISO format string."""
@@ -34,7 +33,6 @@ class TestUtcNowIso:
 
 @pytest.mark.property
 class TestProjectionScope:
-
     @given(kind=small_text, snap_id=small_text, key=small_text)
     @settings(max_examples=15)
     @pytest.mark.happy
@@ -49,12 +47,19 @@ class TestProjectionScope:
         assert d["target_id"] is None
         assert d["filters"] == {}
 
-    @given(kind=small_text, snap_id=small_text, key=small_text, query=st.none() | small_text)
+    @given(
+        kind=small_text,
+        snap_id=small_text,
+        key=small_text,
+        query=st.none() | small_text,
+    )
     @settings(max_examples=15)
     @pytest.mark.happy
     def test_scope_with_query(self, kind, snap_id, key, query):
         """HAPPY: ProjectionScope with optional query."""
-        scope = ProjectionScope(scope_kind=kind, snapshot_id=snap_id, scope_key=key, query=query)
+        scope = ProjectionScope(
+            scope_kind=kind, snapshot_id=snap_id, scope_key=key, query=query
+        )
         d = scope.to_dict()
         assert d["query"] == query
 
@@ -70,27 +75,46 @@ class TestProjectionScope:
 
 @pytest.mark.property
 class TestProjectionBuildResult:
-
     @pytest.mark.happy
     def test_to_dict_has_all_keys(self):
         """HAPPY: ProjectionBuildResult.to_dict has all required keys."""
         result = ProjectionBuildResult(
-            projection_id="proj_1", snapshot_id="snap_1",
-            scope_kind="snapshot", scope_key="repo",
-            l0={}, l1={}, l2_index={}, chunks=[],
+            projection_id="proj_1",
+            snapshot_id="snap_1",
+            scope_kind="snapshot",
+            scope_key="repo",
+            l0={},
+            l1={},
+            l2_index={},
+            chunks=[],
         )
         d = result.to_dict()
-        for key in ("projection_id", "snapshot_id", "scope_kind", "scope_key",
-                     "l0", "l1", "l2_index", "chunks", "warnings", "created_at"):
+        for key in (
+            "projection_id",
+            "snapshot_id",
+            "scope_kind",
+            "scope_key",
+            "l0",
+            "l1",
+            "l2_index",
+            "chunks",
+            "warnings",
+            "created_at",
+        ):
             assert key in d
 
     @pytest.mark.happy
     def test_default_warnings_empty(self):
         """HAPPY: default warnings is empty list."""
         result = ProjectionBuildResult(
-            projection_id="proj_1", snapshot_id="snap_1",
-            scope_kind="snapshot", scope_key="repo",
-            l0={}, l1={}, l2_index={}, chunks=[],
+            projection_id="proj_1",
+            snapshot_id="snap_1",
+            scope_kind="snapshot",
+            scope_key="repo",
+            l0={},
+            l1={},
+            l2_index={},
+            chunks=[],
         )
         assert result.warnings == []
 
@@ -98,9 +122,14 @@ class TestProjectionBuildResult:
     def test_created_at_auto_set(self):
         """HAPPY: created_at is auto-set to current time."""
         result = ProjectionBuildResult(
-            projection_id="proj_1", snapshot_id="snap_1",
-            scope_kind="snapshot", scope_key="repo",
-            l0={}, l1={}, l2_index={}, chunks=[],
+            projection_id="proj_1",
+            snapshot_id="snap_1",
+            scope_kind="snapshot",
+            scope_key="repo",
+            l0={},
+            l1={},
+            l2_index={},
+            chunks=[],
         )
         assert result.created_at is not None
         assert "T" in result.created_at

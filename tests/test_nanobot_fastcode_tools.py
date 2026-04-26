@@ -40,6 +40,7 @@ from nanobot.agent.tools.fastcode import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class _MockTransport(httpx.MockTransport):
     """Routes requests to a handler registry. Tracks which handlers were called."""
 
@@ -70,12 +71,15 @@ def _patch_client(client: httpx.AsyncClient):
     mock_instance = AsyncMock()
     mock_instance.__aenter__ = AsyncMock(return_value=client)
     mock_instance.__aexit__ = AsyncMock(return_value=False)
-    return patch("nanobot.agent.tools.fastcode.httpx.AsyncClient", return_value=mock_instance)
+    return patch(
+        "nanobot.agent.tools.fastcode.httpx.AsyncClient", return_value=mock_instance
+    )
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def api_url() -> str:
@@ -85,6 +89,7 @@ def api_url() -> str:
 # ---------------------------------------------------------------------------
 # Tool 1: FastCodeLoadRepoTool
 # ---------------------------------------------------------------------------
+
 
 class TestFastCodeLoadRepoTool:
     @pytest.mark.asyncio
@@ -97,20 +102,24 @@ class TestFastCodeLoadRepoTool:
         def handler(request: httpx.Request) -> httpx.Response:
             body = json.loads(request.content)
             request_bodies.append(body)
-            return _json_response(body={
-                "status": "success",
-                "message": "Repository loaded and indexed",
-                "summary": {
-                    "total_files": 42,
-                    "total_elements": 350,
-                    "languages": ["Python", "JavaScript"],
-                },
-            })
+            return _json_response(
+                body={
+                    "status": "success",
+                    "message": "Repository loaded and indexed",
+                    "summary": {
+                        "total_files": 42,
+                        "total_elements": 350,
+                        "languages": ["Python", "JavaScript"],
+                    },
+                }
+            )
 
         transport = _MockTransport({"POST /load-and-index": handler})
         async with _make_client(transport) as client:
             with _patch_client(client):
-                result = await tool.execute(source="https://github.com/user/repo", is_url=True)
+                result = await tool.execute(
+                    source="https://github.com/user/repo", is_url=True
+                )
 
         # Verify handler was called and received correct payload
         assert "POST /load-and-index" in transport.called_keys
@@ -136,6 +145,7 @@ class TestFastCodeLoadRepoTool:
 # Tool 2: FastCodeQueryTool
 # ---------------------------------------------------------------------------
 
+
 class TestFastCodeQueryTool:
     @pytest.mark.asyncio
     async def test_query_posts_question(self, api_url):
@@ -146,16 +156,22 @@ class TestFastCodeQueryTool:
         def handler(request: httpx.Request) -> httpx.Response:
             body = json.loads(request.content)
             request_bodies.append(body)
-            return _json_response(body={
-                "answer": "Auth uses JWT tokens.",
-                "query": "How does auth work?",
-                "context_elements": 5,
-                "sources": [
-                    {"name": "auth.py", "relative_path": "src/auth.py", "type": "file"},
-                ],
-                "session_id": "abc123",
-                "total_tokens": 150,
-            })
+            return _json_response(
+                body={
+                    "answer": "Auth uses JWT tokens.",
+                    "query": "How does auth work?",
+                    "context_elements": 5,
+                    "sources": [
+                        {
+                            "name": "auth.py",
+                            "relative_path": "src/auth.py",
+                            "type": "file",
+                        },
+                    ],
+                    "session_id": "abc123",
+                    "total_tokens": 150,
+                }
+            )
 
         transport = _MockTransport({"POST /query": handler})
         async with _make_client(transport) as client:
@@ -189,20 +205,23 @@ class TestFastCodeQueryTool:
 # Tool 3: FastCodeListReposTool
 # ---------------------------------------------------------------------------
 
+
 class TestFastCodeListReposTool:
     @pytest.mark.asyncio
     async def test_list_repos_formats_available_and_loaded(self, api_url):
         tool = FastCodeListReposTool(api_url=api_url)
 
         def handler(_request: httpx.Request) -> httpx.Response:
-            return _json_response(body={
-                "available": [
-                    {"name": "repo-a", "size_mb": 12.5},
-                ],
-                "loaded": [
-                    {"name": "repo-b", "total_elements": 200},
-                ],
-            })
+            return _json_response(
+                body={
+                    "available": [
+                        {"name": "repo-a", "size_mb": 12.5},
+                    ],
+                    "loaded": [
+                        {"name": "repo-b", "total_elements": 200},
+                    ],
+                }
+            )
 
         transport = _MockTransport({"GET /repositories": handler})
         async with _make_client(transport) as client:
@@ -233,20 +252,23 @@ class TestFastCodeListReposTool:
 # Tool 4: FastCodeStatusTool
 # ---------------------------------------------------------------------------
 
+
 class TestFastCodeStatusTool:
     @pytest.mark.asyncio
     async def test_status_formats_system_info(self, api_url):
         tool = FastCodeStatusTool(api_url=api_url)
 
         def handler(_request: httpx.Request) -> httpx.Response:
-            return _json_response(body={
-                "status": "ready",
-                "repo_loaded": True,
-                "repo_indexed": True,
-                "repo_info": {"name": "fastcode"},
-                "available_repositories": [{"name": "fastcode"}],
-                "loaded_repositories": [{"name": "fastcode"}],
-            })
+            return _json_response(
+                body={
+                    "status": "ready",
+                    "repo_loaded": True,
+                    "repo_indexed": True,
+                    "repo_info": {"name": "fastcode"},
+                    "available_repositories": [{"name": "fastcode"}],
+                    "loaded_repositories": [{"name": "fastcode"}],
+                }
+            )
 
         transport = _MockTransport({"GET /status": handler})
         async with _make_client(transport) as client:
@@ -261,6 +283,7 @@ class TestFastCodeStatusTool:
 # ---------------------------------------------------------------------------
 # Tool 5: FastCodeSessionTool
 # ---------------------------------------------------------------------------
+
 
 class TestFastCodeSessionTool:
     @pytest.mark.asyncio
@@ -302,6 +325,7 @@ class TestFastCodeSessionTool:
 # Tool 6: FastCodeSearchSymbolTool (NEW)
 # ---------------------------------------------------------------------------
 
+
 class TestFastCodeSearchSymbolTool:
     @pytest.mark.asyncio
     async def test_search_symbol_by_name(self, api_url):
@@ -311,17 +335,19 @@ class TestFastCodeSearchSymbolTool:
 
         def handler(request: httpx.Request) -> httpx.Response:
             captured_params.append(dict(request.url.params))
-            return _json_response(body={
-                "status": "success",
-                "symbol": {
-                    "symbol_id": "sym_001",
-                    "display_name": "FastCode",
-                    "kind": "class",
-                    "qualified_name": "fastcode.FastCode",
-                    "doc_path": "fastcode/main.py",
-                    "source_set": ["ast"],
-                },
-            })
+            return _json_response(
+                body={
+                    "status": "success",
+                    "symbol": {
+                        "symbol_id": "sym_001",
+                        "display_name": "FastCode",
+                        "kind": "class",
+                        "qualified_name": "fastcode.FastCode",
+                        "doc_path": "fastcode/main.py",
+                        "source_set": ["ast"],
+                    },
+                }
+            )
 
         transport = _MockTransport({"GET /symbols/find": handler})
         async with _make_client(transport) as client:
@@ -347,16 +373,18 @@ class TestFastCodeSearchSymbolTool:
             params = dict(request.url.params)
             assert params["path"] == "fastcode/retriever.py"
             assert "name" not in params
-            return _json_response(body={
-                "status": "success",
-                "symbol": {
-                    "symbol_id": "sym_002",
-                    "display_name": "HybridRetriever",
-                    "kind": "class",
-                    "qualified_name": "fastcode.retriever.HybridRetriever",
-                    "doc_path": "fastcode/retriever.py",
-                },
-            })
+            return _json_response(
+                body={
+                    "status": "success",
+                    "symbol": {
+                        "symbol_id": "sym_002",
+                        "display_name": "HybridRetriever",
+                        "kind": "class",
+                        "qualified_name": "fastcode.retriever.HybridRetriever",
+                        "doc_path": "fastcode/retriever.py",
+                    },
+                }
+            )
 
         transport = _MockTransport({"GET /symbols/find": handler})
         async with _make_client(transport) as client:
@@ -403,6 +431,7 @@ class TestFastCodeSearchSymbolTool:
 # Tool 7: FastCodeCallChainTool (NEW)
 # ---------------------------------------------------------------------------
 
+
 class TestFastCodeCallChainTool:
     @pytest.mark.asyncio
     async def test_get_callees(self, api_url):
@@ -412,15 +441,25 @@ class TestFastCodeCallChainTool:
 
         def handler(request: httpx.Request) -> httpx.Response:
             captured_params.append(dict(request.url.params))
-            return _json_response(body={
-                "status": "success",
-                "snapshot_id": captured_params[-1]["snapshot_id"],
-                "symbol_id": captured_params[-1]["symbol_id"],
-                "callees": [
-                    {"symbol_id": "sym_010", "display_name": "helper_func", "kind": "function"},
-                    {"symbol_id": "sym_011", "display_name": "parse_input", "kind": "function"},
-                ],
-            })
+            return _json_response(
+                body={
+                    "status": "success",
+                    "snapshot_id": captured_params[-1]["snapshot_id"],
+                    "symbol_id": captured_params[-1]["symbol_id"],
+                    "callees": [
+                        {
+                            "symbol_id": "sym_010",
+                            "display_name": "helper_func",
+                            "kind": "function",
+                        },
+                        {
+                            "symbol_id": "sym_011",
+                            "display_name": "parse_input",
+                            "kind": "function",
+                        },
+                    ],
+                }
+            )
 
         transport = _MockTransport({"GET /graph/callees": handler})
         async with _make_client(transport) as client:
@@ -443,21 +482,31 @@ class TestFastCodeCallChainTool:
         tool = FastCodeCallChainTool(api_url=api_url)
 
         def callees_handler(_request: httpx.Request) -> httpx.Response:
-            return _json_response(body={
-                "status": "success",
-                "callees": [{"symbol_id": "s1", "display_name": "f1", "kind": "function"}],
-            })
+            return _json_response(
+                body={
+                    "status": "success",
+                    "callees": [
+                        {"symbol_id": "s1", "display_name": "f1", "kind": "function"}
+                    ],
+                }
+            )
 
         def callers_handler(_request: httpx.Request) -> httpx.Response:
-            return _json_response(body={
-                "status": "success",
-                "callers": [{"symbol_id": "s2", "display_name": "f2", "kind": "function"}],
-            })
+            return _json_response(
+                body={
+                    "status": "success",
+                    "callers": [
+                        {"symbol_id": "s2", "display_name": "f2", "kind": "function"}
+                    ],
+                }
+            )
 
-        transport = _MockTransport({
-            "GET /graph/callees": callees_handler,
-            "GET /graph/callers": callers_handler,
-        })
+        transport = _MockTransport(
+            {
+                "GET /graph/callees": callees_handler,
+                "GET /graph/callers": callers_handler,
+            }
+        )
         async with _make_client(transport) as client:
             with _patch_client(client):
                 result = await tool.execute(
@@ -482,6 +531,7 @@ class TestFastCodeCallChainTool:
 # Tool 8: FastCodeBuildProjectionTool (NEW)
 # ---------------------------------------------------------------------------
 
+
 class TestFastCodeBuildProjectionTool:
     @pytest.mark.asyncio
     async def test_build_snapshot_projection(self, api_url):
@@ -491,15 +541,17 @@ class TestFastCodeBuildProjectionTool:
 
         def handler(request: httpx.Request) -> httpx.Response:
             request_bodies.append(json.loads(request.content))
-            return _json_response(body={
-                "status": "success",
-                "result": {
-                    "projection_id": "proj_001",
-                    "scope_kind": "snapshot",
-                    "snapshot_id": "snap:myrepo:abc123",
-                    "layers_available": ["L0", "L1", "L2"],
-                },
-            })
+            return _json_response(
+                body={
+                    "status": "success",
+                    "result": {
+                        "projection_id": "proj_001",
+                        "scope_kind": "snapshot",
+                        "snapshot_id": "snap:myrepo:abc123",
+                        "layers_available": ["L0", "L1", "L2"],
+                    },
+                }
+            )
 
         transport = _MockTransport({"POST /projection/build": handler})
         async with _make_client(transport) as client:
@@ -529,15 +581,17 @@ class TestFastCodeBuildProjectionTool:
             layer = path_parts[3]
             assert projection_id == "proj_001"
             assert layer == "L0"
-            return _json_response(body={
-                "status": "success",
-                "result": {
-                    "layer": "L0",
-                    "summary": "FastCode is a code understanding system.",
-                    "languages": ["Python"],
-                    "total_files": 42,
-                },
-            })
+            return _json_response(
+                body={
+                    "status": "success",
+                    "result": {
+                        "layer": "L0",
+                        "summary": "FastCode is a code understanding system.",
+                        "languages": ["Python"],
+                        "total_files": 42,
+                    },
+                }
+            )
 
         transport = _MockTransport({"GET /projection/proj_001/L0": handler})
         async with _make_client(transport) as client:
@@ -561,6 +615,7 @@ class TestFastCodeBuildProjectionTool:
 # Tool 9: FastCodeIndexRunTool (NEW)
 # ---------------------------------------------------------------------------
 
+
 class TestFastCodeIndexRunTool:
     @pytest.mark.asyncio
     async def test_run_index_pipeline(self, api_url):
@@ -570,18 +625,20 @@ class TestFastCodeIndexRunTool:
 
         def handler(request: httpx.Request) -> httpx.Response:
             request_bodies.append(json.loads(request.content))
-            return _json_response(body={
-                "status": "success",
-                "result": {
-                    "run_id": "run_001",
-                    "snapshot_id": "snap:user-repo:abc123",
-                    "repo_name": "user-repo",
-                    "documents": 42,
-                    "symbols": 350,
-                    "edges": 1200,
-                    "published": True,
-                },
-            })
+            return _json_response(
+                body={
+                    "status": "success",
+                    "result": {
+                        "run_id": "run_001",
+                        "snapshot_id": "snap:user-repo:abc123",
+                        "repo_name": "user-repo",
+                        "documents": 42,
+                        "symbols": 350,
+                        "edges": 1200,
+                        "published": True,
+                    },
+                }
+            )
 
         transport = _MockTransport({"POST /index/run": handler})
         async with _make_client(transport) as client:
@@ -621,6 +678,7 @@ class TestFastCodeIndexRunTool:
 # Tool 10: FastCodeUploadRepoTool (NEW)
 # ---------------------------------------------------------------------------
 
+
 class TestFastCodeUploadRepoTool:
     @pytest.mark.asyncio
     async def test_upload_repo_posts_file(self, api_url):
@@ -631,15 +689,17 @@ class TestFastCodeUploadRepoTool:
 
         def handler(request: httpx.Request) -> httpx.Response:
             captured_content_types.append(request.headers.get("content-type", ""))
-            return _json_response(body={
-                "status": "success",
-                "message": "Repository uploaded and indexed",
-                "summary": {
-                    "total_files": 25,
-                    "total_elements": 180,
-                    "languages": ["Python"],
-                },
-            })
+            return _json_response(
+                body={
+                    "status": "success",
+                    "message": "Repository uploaded and indexed",
+                    "summary": {
+                        "total_files": 25,
+                        "total_elements": 180,
+                        "languages": ["Python"],
+                    },
+                }
+            )
 
         transport = _MockTransport({"POST /upload-and-index": handler})
         async with _make_client(transport) as client:
@@ -647,6 +707,7 @@ class TestFastCodeUploadRepoTool:
                 # Use a real temp file for the upload
                 import os
                 import tempfile
+
                 with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as f:
                     f.write(b"PK" + b"\x00" * 100)
                     tmp_path = f.name
@@ -671,6 +732,7 @@ class TestFastCodeUploadRepoTool:
 # ---------------------------------------------------------------------------
 # create_all_tools registration
 # ---------------------------------------------------------------------------
+
 
 class TestCreateAllTools:
     def test_includes_all_ten_tools(self):

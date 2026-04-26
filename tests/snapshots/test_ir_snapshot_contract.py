@@ -17,7 +17,6 @@ from fastcode.semantic_ir import (
 @pytest.mark.snapshot
 @pytest.mark.happy
 class TestIRSnapshotContract:
-
     def test_ir_document_serialization(self, snapshot):
         doc = IRDocument(
             doc_id="doc:abc123",

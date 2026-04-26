@@ -17,31 +17,35 @@ from fastcode.semantic_ir import IRSnapshot
 # Inline factory (mirrors tests.conftest._make_code_elements)
 # ---------------------------------------------------------------------------
 
+
 def _make_code_elements(n: int = 3) -> list[CodeElement]:
     """Create a list of CodeElement instances for AST adapter tests."""
     elements = []
     for i in range(n):
-        elements.append(CodeElement(
-            id=f"elem_{i}",
-            type="function" if i % 2 == 0 else "class",
-            name=f"func_{i}" if i % 2 == 0 else f"Class_{i}",
-            file_path=f"src/file{i % 2}.py",
-            relative_path=f"src/file{i % 2}.py",
-            language="python",
-            start_line=i + 1,
-            end_line=i + 5,
-            code=f"def func_{i}(): pass",
-            signature=None,
-            docstring=None,
-            summary=None,
-            metadata={},
-        ))
+        elements.append(
+            CodeElement(
+                id=f"elem_{i}",
+                type="function" if i % 2 == 0 else "class",
+                name=f"func_{i}" if i % 2 == 0 else f"Class_{i}",
+                file_path=f"src/file{i % 2}.py",
+                relative_path=f"src/file{i % 2}.py",
+                language="python",
+                start_line=i + 1,
+                end_line=i + 5,
+                code=f"def func_{i}(): pass",
+                signature=None,
+                docstring=None,
+                summary=None,
+                metadata={},
+            )
+        )
     return elements
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _elem(
     *,
@@ -165,6 +169,7 @@ def test_qualified_name_without_class():
 # 3. Source set always {"fc_structure"}
 # ---------------------------------------------------------------------------
 
+
 def test_source_set_on_symbols():
     """All structure-derived symbols have source_set={'fc_structure'}."""
     elements = _make_code_elements(n=4)
@@ -223,6 +228,7 @@ def test_start_line_negative_clamps_to_one():
 # 5. Source priority always 50
 # ---------------------------------------------------------------------------
 
+
 def test_source_priority_constant():
     """All structure-derived symbols have source_priority == 50."""
     elements = _make_code_elements(n=5)
@@ -234,6 +240,7 @@ def test_source_priority_constant():
 # ---------------------------------------------------------------------------
 # 6. Metadata fields
 # ---------------------------------------------------------------------------
+
 
 def test_symbol_metadata_contains_ast_fields():
     """Symbol metadata includes ast_element_id, source, confidence, extractor."""
@@ -252,7 +259,11 @@ def test_symbol_metadata_excludes_embedding_keys():
     elements = [
         _elem(
             name="f",
-            metadata={"embedding": [0.1, 0.2], "embedding_text": "code", "visible": True},
+            metadata={
+                "embedding": [0.1, 0.2],
+                "embedding_text": "code",
+                "visible": True,
+            },
         ),
     ]
     snap = _build(elements)
@@ -321,6 +332,7 @@ def test_contain_edge_metadata():
 # 7. Empty elements list produces empty snapshot
 # ---------------------------------------------------------------------------
 
+
 def test_empty_elements_no_symbols_or_docs():
     """An empty elements list produces an empty snapshot."""
     snap = _build([])
@@ -343,6 +355,7 @@ def test_empty_elements_identity_fields():
 # ---------------------------------------------------------------------------
 # Additional edge cases
 # ---------------------------------------------------------------------------
+
 
 def test_multiple_elements_same_file_one_document():
     """Multiple elements in the same file produce a single IRDocument."""
@@ -407,8 +420,12 @@ def test_file_element_with_imports_creates_import_edge():
     """A file element with 'imports' metadata can produce import edges."""
     elements = [
         _elem(type="file", name="module_a", relative_path="src/a.py", metadata={}),
-        _elem(type="file", name="module_b", relative_path="src/b.py",
-              metadata={"imports": [{"module": "src.a"}]}),
+        _elem(
+            type="file",
+            name="module_b",
+            relative_path="src/b.py",
+            metadata={"imports": [{"module": "src.a"}]},
+        ),
     ]
     snap = _build(elements)
     import_edges = [e for e in snap.edges if e.edge_type == "import"]
@@ -419,8 +436,12 @@ def test_file_element_with_imports_creates_import_edge():
 def test_no_self_import_edge():
     """A file importing itself does not produce an import edge."""
     elements = [
-        _elem(type="file", name="mod", relative_path="src/mod.py",
-              metadata={"imports": [{"module": "src.mod"}]}),
+        _elem(
+            type="file",
+            name="mod",
+            relative_path="src/mod.py",
+            metadata={"imports": [{"module": "src.mod"}]},
+        ),
     ]
     snap = _build(elements)
     import_edges = [e for e in snap.edges if e.edge_type == "import"]

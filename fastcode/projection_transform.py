@@ -429,7 +429,7 @@ class ProjectionTransformer:
                 return nodes, terminals
             try:
                 weighted = g.copy()
-                for src, dst, data in weighted.edges(data=True):
+                for _src, _dst, data in weighted.edges(data=True):
                     data["distance"] = 1.0 / max(0.1, float(data.get("weight", 1.0)))
                 tree = nx.approximation.steiner_tree(
                     weighted, terminals, weight="distance"
@@ -476,16 +476,12 @@ class ProjectionTransformer:
             return target_id
         for sym in snapshot.symbols:
             if (
-                sym.symbol_id == target_id
-                or sym.display_name == target_id
-                or sym.path == target_id
-            ):
-                if sym.symbol_id in g.nodes:
-                    return sym.symbol_id
+                target_id in {sym.symbol_id, sym.display_name, sym.path}
+            ) and sym.symbol_id in g.nodes:
+                return sym.symbol_id
         for doc in snapshot.documents:
-            if doc.doc_id == target_id or doc.path == target_id:
-                if doc.doc_id in g.nodes:
-                    return doc.doc_id
+            if target_id in (doc.doc_id, doc.path) and doc.doc_id in g.nodes:
+                return doc.doc_id
         return None
 
     def _query_terminals(
@@ -894,7 +890,7 @@ class ProjectionTransformer:
     ) -> dict[str, Any]:
         payload = {
             "updated_at": utc_now(),
-            "covers_nodes": sorted(list(sg.nodes())),
+            "covers_nodes": sorted(sg.nodes()),
             "covers_edges": sorted([f"{u}->{v}" for u, v in sg.edges()]),
             "xrefs": [{"src": s, "dst": d, "weight": w} for s, d, w in xrefs],
             "hidden_edge_count": int(hidden_edge_count),
@@ -953,11 +949,11 @@ class ProjectionTransformer:
         for u, v, data in sg.edges(data=True):
             if u not in members or v not in members:
                 continue
-            for t in sorted(list(data.get("edge_types", set()))):
+            for t in sorted(data.get("edge_types", set())):
                 edge_type_counter[t] += 1
 
         top_members = sorted(
-            list(members),
+            members,
             key=lambda n: (sg.degree(n), str(n)),
             reverse=True,
         )[: self.aggregation_top_members]

@@ -10,13 +10,16 @@ from fastcode.manifest_store import ManifestStore
 
 # --- Helpers ---
 
+
 def _make_store() -> ManifestStore:
     import os
     import tempfile
     import uuid
+
     tmpdir = tempfile.mkdtemp(prefix=f"mfst_{uuid.uuid4().hex[:12]}_")
     path = os.path.join(tmpdir, "test.db")
     return ManifestStore(path)
+
 
 small_id = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=8)
 
@@ -26,7 +29,6 @@ small_id = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=8
 
 @pytest.mark.property
 class TestManifestStoreProperties:
-
     @pytest.mark.happy
     def test_publish_returns_valid_manifest(self):
         """HAPPY: publish returns dict with all required keys."""
@@ -104,6 +106,7 @@ class TestManifestStoreProperties:
         """EDGE: ManifestStore accepts string path (not just DBRuntime)."""
         import os
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.db")
             store = ManifestStore(path)
@@ -171,6 +174,7 @@ class TestManifestStoreProperties:
     def test_publish_published_at_is_iso_format(self):
         """EDGE: published_at is a valid timestamp string."""
         import re
+
         store = _make_store()
         result = store.publish("repo", "main", "snap1", "run1")
         ts = result["published_at"]

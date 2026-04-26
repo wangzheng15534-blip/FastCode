@@ -31,7 +31,9 @@ identifier = st.text(
 )
 
 _repo_name_st = st.text(
-    alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=12,
+    alphabet="abcdefghijklmnopqrstuvwxyz",
+    min_size=1,
+    max_size=12,
 )
 _commit_st = st.text(alphabet="0123456789abcdef", min_size=7, max_size=40)
 _branch_st = st.sampled_from(["main", "dev", "feature", "release"])
@@ -58,26 +60,42 @@ def _build_snapshot(
     occs = []
     for i in range(n_docs):
         doc_id = f"doc:f{i}"
-        docs.append(IRDocument(
-            doc_id=doc_id, path=f"src/f{i}.py",
-            language="python", source_set={"ast"},
-        ))
+        docs.append(
+            IRDocument(
+                doc_id=doc_id,
+                path=f"src/f{i}.py",
+                language="python",
+                source_set={"ast"},
+            )
+        )
         for j in range(n_symbols):
             sym_id = f"sym:f{i}_s{j}"
-            syms.append(IRSymbol(
-                symbol_id=sym_id, external_symbol_id=None,
-                path=f"src/f{i}.py",
-                display_name=f"fn_{j}", kind="function",
-                language="python", source_priority=10,
-                source_set={"ast"}, start_line=j + 1,
-            ))
-            occs.append(IROccurrence(
-                occurrence_id=f"occ:f{i}_s{j}",
-                symbol_id=sym_id, doc_id=doc_id,
-                role="definition", start_line=j + 1,
-                start_col=0, end_line=j + 1, end_col=0,
-                source="ast",
-            ))
+            syms.append(
+                IRSymbol(
+                    symbol_id=sym_id,
+                    external_symbol_id=None,
+                    path=f"src/f{i}.py",
+                    display_name=f"fn_{j}",
+                    kind="function",
+                    language="python",
+                    source_priority=10,
+                    source_set={"ast"},
+                    start_line=j + 1,
+                )
+            )
+            occs.append(
+                IROccurrence(
+                    occurrence_id=f"occ:f{i}_s{j}",
+                    symbol_id=sym_id,
+                    doc_id=doc_id,
+                    role="definition",
+                    start_line=j + 1,
+                    start_col=0,
+                    end_line=j + 1,
+                    end_col=0,
+                    source="ast",
+                )
+            )
     return IRSnapshot(
         repo_name=repo,
         snapshot_id=f"snap:{repo}:{commit}",
@@ -95,7 +113,6 @@ def _build_snapshot(
 
 @pytest.mark.property
 class TestFullLifecycle:
-
     @pytest.mark.happy
     def test_save_load_update_load_cycle(self):
         """HAPPY: save -> load -> update_metadata -> load verifies metadata update."""
@@ -154,7 +171,6 @@ class TestFullLifecycle:
 
 @pytest.mark.property
 class TestSnapshotIsolation:
-
     @pytest.mark.happy
     def test_two_snapshots_different_repos_no_interference(self):
         """HAPPY: two snapshots for different repos are fully isolated."""
@@ -192,7 +208,6 @@ class TestSnapshotIsolation:
 
 @pytest.mark.property
 class TestConcurrentSaveSameSnapshotId:
-
     @pytest.mark.happy
     def test_second_save_wins_upsert(self):
         """HAPPY: saving same snapshot_id twice uses upsert; load returns second."""
@@ -236,7 +251,6 @@ class TestConcurrentSaveSameSnapshotId:
 
 @pytest.mark.property
 class TestArtifactRefLifecycle:
-
     @pytest.mark.happy
     def test_save_get_artifact_ref(self):
         """HAPPY: save and retrieve a SCIP artifact ref."""
@@ -289,7 +303,6 @@ class TestArtifactRefLifecycle:
 
 @pytest.mark.property
 class TestIRGraphsLifecycle:
-
     @pytest.mark.happy
     def test_save_load_graphs(self):
         """HAPPY: save and load IR graphs via pickle."""
@@ -335,7 +348,6 @@ class TestIRGraphsLifecycle:
 
 @pytest.mark.property
 class TestFullWorkflow:
-
     @pytest.mark.happy
     def test_save_snapshot_scip_ref_graphs_query_all(self):
         """HAPPY: full workflow saves snapshot, scip ref, and graphs; all queryable."""
@@ -391,7 +403,6 @@ class TestFullWorkflow:
 
 @pytest.mark.property
 class TestMultipleSnapshotsSameRepoDifferentCommits:
-
     @given(
         repo=_repo_name_st,
         commits=st.lists(_commit_st, min_size=2, max_size=5, unique=True),
@@ -453,7 +464,6 @@ class TestMultipleSnapshotsSameRepoDifferentCommits:
 
 @pytest.mark.property
 class TestMetadataVariants:
-
     @pytest.mark.happy
     def test_empty_dict_metadata_roundtrip(self):
         """HAPPY: empty dict metadata roundtrips correctly."""

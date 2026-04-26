@@ -30,9 +30,12 @@ def _get_chunker_class():
         return _CHUNKER_CLASS
     try:
         from chonkie import SemanticChunker
+
         _CHUNKER_CLASS = SemanticChunker
     except Exception as exc:
-        logger.warning("chonkie import failed, falling back to word-based chunking: %s", exc)
+        logger.warning(
+            "chonkie import failed, falling back to word-based chunking: %s", exc
+        )
     return _CHUNKER_CLASS
 
 
@@ -183,10 +186,36 @@ class KeyDocIngester:
     @staticmethod
     def _read_text(path: str) -> str:
         # Quick binary detection: skip common binary extensions
-        binary_exts = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
-                       ".pdf", ".zip", ".tar", ".gz", ".bz2", ".7z", ".whl", ".egg",
-                       ".pyc", ".pyo", ".so", ".dylib", ".dll", ".exe", ".bin",
-                       ".woff", ".woff2", ".ttf", ".otf", ".eot"}
+        binary_exts = {
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".bmp",
+            ".ico",
+            ".svg",
+            ".webp",
+            ".pdf",
+            ".zip",
+            ".tar",
+            ".gz",
+            ".bz2",
+            ".7z",
+            ".whl",
+            ".egg",
+            ".pyc",
+            ".pyo",
+            ".so",
+            ".dylib",
+            ".dll",
+            ".exe",
+            ".bin",
+            ".woff",
+            ".woff2",
+            ".ttf",
+            ".otf",
+            ".eot",
+        }
         _, ext = os.path.splitext(path)
         if ext.lower() in binary_exts:
             return ""
@@ -235,28 +264,33 @@ class KeyDocIngester:
             if chunker is not None:
                 try:
                     for ch in chunker.chunk(sec_text):
-                        chunks.append({
-                            "heading": heading,
-                            "start_line": s_line,
-                            "end_line": e_line,
-                            "text": ch.text,
-                        })
+                        chunks.append(
+                            {
+                                "heading": heading,
+                                "start_line": s_line,
+                                "end_line": e_line,
+                                "text": ch.text,
+                            }
+                        )
                     continue
                 except Exception as exc:
                     logger.warning(
                         "SemanticChunker failed for section '%s', "
                         "falling back to word-split: %s",
-                        heading, exc,
+                        heading,
+                        exc,
                     )
 
             # Fallback: word-based sliding window
             for piece in self._chunk_section_fallback(sec_text):
-                chunks.append({
-                    "heading": heading,
-                    "start_line": s_line,
-                    "end_line": e_line,
-                    "text": piece,
-                })
+                chunks.append(
+                    {
+                        "heading": heading,
+                        "start_line": s_line,
+                        "end_line": e_line,
+                        "text": piece,
+                    }
+                )
 
         return chunks
 
@@ -284,7 +318,8 @@ class KeyDocIngester:
             )
         except Exception as exc:
             logger.warning(
-                "SemanticChunker init failed, falling back: %s", exc,
+                "SemanticChunker init failed, falling back: %s",
+                exc,
             )
             self._chunker = False
         return self._chunker
@@ -309,13 +344,15 @@ class KeyDocIngester:
         if provider == "sentence_transformers":
             try:
                 from chonkie import SentenceTransformerEmbeddings
+
                 logger.info("Chonkie using configured ST model: %s", model_name)
                 return SentenceTransformerEmbeddings(model_name)
             except Exception as exc:
                 logger.warning(
                     "Failed to create SentenceTransformerEmbeddings for '%s': %s. "
                     "Trying default ST model.",
-                    model_name, exc,
+                    model_name,
+                    exc,
                 )
 
         # For Ollama/other providers, use a good default ST model for chunking.
@@ -323,6 +360,7 @@ class KeyDocIngester:
         # an external API for every sentence pair.
         try:
             from chonkie import SentenceTransformerEmbeddings
+
             default_st = "sentence-transformers/all-MiniLM-L6-v2"
             logger.info("Chonkie using default ST model: %s", default_st)
             return SentenceTransformerEmbeddings(default_st)
@@ -384,7 +422,9 @@ class KeyDocIngester:
             return "readme"
         return "doc"
 
-    def _extract_mentions(self, snapshot: IRSnapshot, chunks: Iterable[DocChunk]) -> list[dict[str, Any]]:
+    def _extract_mentions(
+        self, snapshot: IRSnapshot, chunks: Iterable[DocChunk]
+    ) -> list[dict[str, Any]]:
         symbols = []
         for sym in snapshot.symbols:
             name = (sym.display_name or "").strip()

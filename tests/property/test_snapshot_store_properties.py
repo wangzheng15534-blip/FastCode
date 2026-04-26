@@ -7,6 +7,8 @@ staging, and relational fact no-op paths on SQLite backend.
 
 from __future__ import annotations
 
+from typing import Any
+
 import tempfile
 
 import pytest
@@ -175,7 +177,7 @@ def snapshot_st(
 
 @st.composite
 def connected_snapshot_st(
-    draw,
+    draw: st.DataObject,
     n_docs: int | None = None,
     n_symbols_per_doc: int | None = None,
 ):
@@ -557,7 +559,7 @@ class TestScipArtifactRefProperties:
         self,
         snapshot_id: str,
         indexer_name: str,
-        indexer_version,
+        indexer_version: Any,
         artifact_path: str,
         checksum: str,
     ):
@@ -750,7 +752,9 @@ class TestSnapshotStoreRedoProperties:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_enqueue_redo_task_with_error(self, task_type: str, payload: dict, error):
+    def test_enqueue_redo_task_with_error(
+        self, task_type: str, payload: dict, error: Exception
+    ):
         """HAPPY: enqueue_redo_task with optional error still returns redo_ ID."""
         store = _make_store()
         task_id = store.enqueue_redo_task(task_type, payload, error=error)

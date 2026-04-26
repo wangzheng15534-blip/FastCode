@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -31,7 +32,7 @@ class TestEscFunction:
     @given(val=text_st)
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_esc_returns_string(self, val):
+    def test_esc_returns_string(self, val: Any):
         """HAPPY: _esc always returns a string."""
         result = _esc(val)
         assert isinstance(result, str)
@@ -39,7 +40,7 @@ class TestEscFunction:
     @given(val=text_st)
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_esc_wraps_in_quotes(self, val):
+    def test_esc_wraps_in_quotes(self, val: Any):
         """HAPPY: _esc wraps result in double quotes."""
         result = _esc(val)
         assert result.startswith('"')
@@ -93,7 +94,7 @@ class TestEscFunction:
     @given(val=unsafe_text_st)
     @settings(max_examples=30)
     @pytest.mark.edge
-    def test_esc_never_contains_unescaped_special(self, val):
+    def test_esc_never_contains_unescaped_special(self, val: Any):
         """EDGE: no unescaped special chars in output."""
         result = _esc(val)
         # Strip outer quotes

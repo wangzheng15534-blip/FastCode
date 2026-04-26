@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -13,13 +14,13 @@ from fastcode.terminus_publisher import TerminusPublisher
 small_text = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=8)
 
 
-def _make_publisher(**overrides):
+def _make_publisher(**overrides) -> Any:
     cfg = {"terminus": {"endpoint": "http://localhost:6363/api/publish"}}
     cfg["terminus"].update(overrides)
     return TerminusPublisher(cfg)
 
 
-def _minimal_snapshot():
+def _minimal_snapshot() -> None:
     return {
         "repo_name": "repo",
         "snapshot_id": "snap:repo:abc",
@@ -30,7 +31,7 @@ def _minimal_snapshot():
     }
 
 
-def _minimal_manifest():
+def _minimal_manifest() -> None:
     return {
         "manifest_id": "manifest_001",
         "ref_name": "main",
@@ -40,7 +41,7 @@ def _minimal_manifest():
     }
 
 
-def _minimal_git_meta():
+def _minimal_git_meta() -> None:
     return {
         "repo_name": "repo",
         "branch": "main",
@@ -297,7 +298,7 @@ class TestTerminusPublisherProperties:
     @given(repo_name=small_text)
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_payload_repo_name_varies(self, repo_name):
+    def test_payload_repo_name_varies(self, repo_name: str):
         """HAPPY: payload repo_name reflects snapshot input."""
         pub = _make_publisher()
         snap = _minimal_snapshot()

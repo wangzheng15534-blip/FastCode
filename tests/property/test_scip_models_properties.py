@@ -6,6 +6,8 @@ Tests roundtrip serialization, defaults, None coercion, filtering, and metadata.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -128,7 +130,9 @@ class TestSCIPOccurrenceRoundtrip:
     @given(symbol=st.none() | st.just(""), role=st.none(), range_val=st.none())
     @settings(max_examples=15)
     @pytest.mark.edge
-    def test_from_dict_none_values_coerced(self, symbol, role, range_val):
+    def test_from_dict_none_values_coerced(
+        self, symbol: str, role: str, range_val: Any
+    ):
         """EDGE: from_dict with None values coerces string fields to empty/default."""
         data = {"symbol": symbol, "role": role, "range": range_val}
         occ = SCIPOccurrence.from_dict(data)
@@ -282,7 +286,7 @@ class TestSCIPDocumentRoundtrip:
     @given(path=st.none())
     @settings(max_examples=10)
     @pytest.mark.edge
-    def test_from_dict_none_path_coerced(self, path):
+    def test_from_dict_none_path_coerced(self, path: str):
         """EDGE: from_dict with None path coerces to empty string."""
         doc = SCIPDocument.from_dict({"path": path})
         assert doc.path == ""
@@ -391,7 +395,7 @@ class TestSCIPArtifactRefRoundtrip:
         self,
         snapshot_id: str,
         indexer_name: str,
-        indexer_version,
+        indexer_version: Any,
         artifact_path: str,
         checksum: str,
         created_at: str,
@@ -453,7 +457,12 @@ class TestSCIPArtifactRefRoundtrip:
     @settings(max_examples=15)
     @pytest.mark.happy
     def test_to_dict_keys_stable(
-        self, snapshot_id, indexer_name, artifact_path, checksum, created_at
+        self,
+        snapshot_id: str,
+        indexer_name: str,
+        artifact_path: Any,
+        checksum: Any,
+        created_at: Any,
     ):
         """HAPPY: to_dict always produces the same set of keys."""
         ref = SCIPArtifactRef(

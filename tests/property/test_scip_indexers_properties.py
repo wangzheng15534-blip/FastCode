@@ -31,7 +31,7 @@ class TestGetIndexerCommand:
     @given(language=language_st)
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_supported_language_returns_command(self, language):
+    def test_supported_language_returns_command(self, language: str):
         """HAPPY: supported language returns a command list."""
         cmd = get_indexer_command(language, "/tmp/out.scip")
         assert cmd is not None
@@ -41,7 +41,7 @@ class TestGetIndexerCommand:
     @given(language=unsupported_st)
     @settings(max_examples=10)
     @pytest.mark.edge
-    def test_unsupported_language_returns_none(self, language):
+    def test_unsupported_language_returns_none(self, language: str):
         """EDGE: unsupported language returns None (line 62)."""
         cmd = get_indexer_command(language, "/tmp/out.scip")
         assert cmd is None

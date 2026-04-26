@@ -24,9 +24,7 @@ segment_st = st.text(
     max_size=10,
 )
 
-path_st = st.lists(segment_st, min_size=1, max_size=5).map(
-    "/".join
-)
+path_st = st.lists(segment_st, min_size=1, max_size=5).map("/".join)
 
 python_path_st = st.lists(segment_st, min_size=1, max_size=5).map(
     lambda parts: "/".join(parts) + ".py"
@@ -41,7 +39,7 @@ class TestFilePathToModulePath:
     @given(rel_path=python_path_st)
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_returns_dotted_path(self, rel_path):
+    def test_returns_dotted_path(self, rel_path: str):
         """HAPPY: valid .py file returns dotted module path."""
         with tempfile.TemporaryDirectory() as repo:
             full = os.path.join(repo, rel_path)
@@ -204,7 +202,7 @@ class TestNormalizeRepoRoot:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_always_returns_absolute(self, path):
+    def test_always_returns_absolute(self, path: str):
         """HAPPY: any input produces absolute path."""
         result = normalize_repo_root(path)
         assert os.path.isabs(result)

@@ -13,9 +13,13 @@ Requirements:
 - LadybugDB (optional, graceful skip)
 """
 
+from __future__ import annotations
+
 import contextlib
 import os
+import pathlib
 import subprocess
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -95,8 +99,9 @@ _skip_ladybug = pytest.mark.skipif(
 _TEST_PYTHON_SOURCE = '''\
 """Math utilities for vector operations."""
 
+import pathlib
 import math
-from typing import List, Tuple
+from typing import List, Tuple, Any
 
 
 class Vector:
@@ -153,7 +158,7 @@ Property-based tests check mathematical invariants like associativity.
 """
 
 
-def _build_test_repo(tmp_path):
+def _build_test_repo(tmp_path: pathlib.Path) -> Any:
     """Create a minimal git repo with Python source + docs."""
     repo_dir = tmp_path / "test_repo"
     repo_dir.mkdir()
@@ -202,14 +207,14 @@ def _build_test_repo(tmp_path):
 
 
 def _base_config(
-    tmp_path,
+    tmp_path: pathlib.Path,
     *,
-    backend="sqlite",
-    pg_dsn="",
-    enable_docs=True,
-    enable_ladybug=False,
-    ladybug_db_path="",
-):
+    backend: Any = "sqlite",
+    pg_dsn: Any = "",
+    enable_docs: Any = True,
+    enable_ladybug: Any = False,
+    ladybug_db_path: Any = "",
+) -> dict:
     """Return a minimal config dict with all paths under tmp_path."""
     persist_dir = str(tmp_path / "persist")
     repo_root = str(tmp_path / "repos")
@@ -293,7 +298,7 @@ def _base_config(
 # ---------------------------------------------------------------------------
 
 
-def _build_fastcode(config):
+def _build_fastcode(config: dict) -> Any:
     """Construct a FastCode instance with real components from config."""
     fc = FastCode.__new__(FastCode)
     fc.config = config
@@ -363,7 +368,7 @@ def _build_fastcode(config):
 # ---------------------------------------------------------------------------
 
 
-def _pg_execute(dsn: str, sql: str, params=None):
+def _pg_execute(dsn: str, sql: str, params: dict = None) -> None:
     import psycopg
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
@@ -374,7 +379,7 @@ def _pg_execute(dsn: str, sql: str, params=None):
         return None
 
 
-def _cleanup_pg_tables(dsn: str):
+def _cleanup_pg_tables(dsn: str) -> None:
     for table in (
         "embedding_vectors",
         "search_documents",
@@ -393,7 +398,7 @@ def _cleanup_pg_tables(dsn: str):
 
 
 @_skip_ollama
-def test_semantic_chunker_uses_configured_embedding_model(tmp_path):
+def test_semantic_chunker_uses_configured_embedding_model(tmp_path: pathlib.Path):
     """SemanticChunker should use sentence-transformers model from config,
     not the hardcoded default minishlab/potion-base-32M."""
     config = _base_config(tmp_path, enable_docs=True)
@@ -448,7 +453,7 @@ The gateway handles authentication and rate limiting.
 
 @_skip_ollama
 @_skip_pg
-def test_e2e_semantic_indexing_with_postgres(tmp_path):
+def test_e2e_semantic_indexing_with_postgres(tmp_path: pathlib.Path):
     """Full index pipeline with PostgreSQL backend + Chonkie semantic chunking.
 
     Verifies:
@@ -540,7 +545,7 @@ def test_e2e_semantic_indexing_with_postgres(tmp_path):
 
 @_skip_ollama
 @_skip_ladybug
-def test_e2e_semantic_indexing_with_ladybug(tmp_path):
+def test_e2e_semantic_indexing_with_ladybug(tmp_path: pathlib.Path):
     """Index pipeline with LadybugDB graph backend + semantic chunking.
 
     Verifies:
@@ -625,7 +630,7 @@ def test_e2e_semantic_indexing_with_ladybug(tmp_path):
 
 @_skip_ollama
 @_skip_pg
-def test_e2e_semantic_query_pipeline_with_postgres(tmp_path):
+def test_e2e_semantic_query_pipeline_with_postgres(tmp_path: pathlib.Path):
     """Index with semantic chunking, then query and verify retrieval.
 
     Verifies:

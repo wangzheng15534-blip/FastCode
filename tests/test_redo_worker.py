@@ -1,6 +1,7 @@
 """
 Tests for RedoWorker background task processing.
 """
+
 import json
 from unittest.mock import MagicMock
 
@@ -10,7 +11,7 @@ from fastcode.redo_worker import RedoWorker
 
 
 class _FakeFastCode:
-    def __init__(self):
+    def __init__(self) -> None:
         self.snapshot_store = MagicMock()
 
 
@@ -53,7 +54,11 @@ def test_process_once_status_fails_and_marks_failed():
 def test_dispatch_task_raises_on_missing_run_id():
     fc = _FakeFastCode()
     worker = RedoWorker(fc)
-    task = {"task_id": "redo_bad", "task_type": "index_run_recovery", "payload_json": "{}"}
+    task = {
+        "task_id": "redo_bad",
+        "task_type": "index_run_recovery",
+        "payload_json": "{}",
+    }
     with pytest.raises(RuntimeError, match="missing run_id"):
         worker._dispatch_task(task)
 

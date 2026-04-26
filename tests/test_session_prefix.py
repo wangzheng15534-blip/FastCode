@@ -24,7 +24,7 @@ if PROJECT_ROOT not in sys.path:
 class _FakeProjectionStore:
     """Fake projection store that records calls and returns preset data."""
 
-    def __init__(self, enabled: bool = True):
+    def __init__(self, enabled: bool = True) -> None:
         self.enabled = enabled
         self._layers: dict[str, dict[str, dict[str, Any]]] = {}
         self._builds: dict[str, dict[str, Any]] = {}
@@ -40,14 +40,14 @@ class _FakeProjectionStore:
     def get_build(self, projection_id: str) -> dict[str, Any] | None:
         return self._builds.get(projection_id)
 
-    def _connect(self):
+    def _connect(self) -> Any:
         return self
 
 
 class _FakeCursor:
     """Fake DB cursor for query simulation."""
 
-    def __init__(self, rows: list[tuple] | None = None):
+    def __init__(self, rows: list[tuple] | None = None) -> None:
         self._rows = rows or []
         self.executed_sql = ""
         self.executed_params: tuple = ()
@@ -75,7 +75,7 @@ class _FakeCursor:
 class _FakeConnection:
     """Fake DB connection that returns a _FakeCursor."""
 
-    def __init__(self, cursor: _FakeCursor | None = None):
+    def __init__(self, cursor: _FakeCursor | None = None) -> None:
         self._cursor = cursor or _FakeCursor()
 
     def cursor(self) -> _FakeCursor:

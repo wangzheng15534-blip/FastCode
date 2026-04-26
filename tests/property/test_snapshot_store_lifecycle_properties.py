@@ -7,6 +7,8 @@ multi-snapshot queries, and metadata variant roundtrips.
 
 from __future__ import annotations
 
+from typing import Any
+
 import json
 import tempfile
 
@@ -410,7 +412,9 @@ class TestMultipleSnapshotsSameRepoDifferentCommits:
     )
     @settings(max_examples=10, deadline=None)
     @pytest.mark.happy
-    def test_all_snapshots_findable_individually(self, repo, commits, branch):
+    def test_all_snapshots_findable_individually(
+        self, repo: str, commits: list[str], branch: str
+    ):
         """HAPPY: multiple snapshots for same repo are findable individually."""
         store = _make_store()
         for commit in commits:
@@ -432,7 +436,9 @@ class TestMultipleSnapshotsSameRepoDifferentCommits:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_find_by_repo_commit_distinguishes(self, repo, commit1, commit2, branch):
+    def test_find_by_repo_commit_distinguishes(
+        self, repo: str, commit1: Any, commit2: Any, branch: str
+    ):
         """HAPPY: find_by_repo_commit returns the correct record for each commit."""
         assume(commit1 != commit2)
         store = _make_store()

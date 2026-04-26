@@ -78,7 +78,9 @@ def _make_snapshot(num_symbols: int, num_occurrences: int) -> IRSnapshot:
         (1000, 5000),
     ],
 )
-def test_validation_throughput(num_symbols, num_occurrences, benchmark):
+def test_validation_throughput(
+    num_symbols: int, num_occurrences: int, benchmark: pytest.BenchmarkFixture
+):
     """Benchmark validate_snapshot throughput."""
     snap = _make_snapshot(num_symbols, num_occurrences)
 

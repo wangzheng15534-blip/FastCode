@@ -10,6 +10,7 @@ upsert semantics hold for repeated saves.
 
 from __future__ import annotations
 
+from typing import Any
 import tempfile
 
 import pytest
@@ -54,7 +55,7 @@ _metadata_val_st = st.one_of(
 class SnapshotStoreMachine(RuleBasedStateMachine):
     """Models the SnapshotStore lifecycle as a state machine."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.tmpdir = tempfile.mkdtemp(prefix="ss_stateful_")
         self.store = SnapshotStore(self.tmpdir)
@@ -82,7 +83,7 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
         self.metadata_state[snap_id] = {}
 
     @rule(data=st.data())
-    def load_snapshot(self, data):
+    def load_snapshot(self, data: st.DataObject):
         """Load a previously saved snapshot and verify identity."""
         if not self.saved_snapshots:
             return
@@ -95,7 +96,7 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
         assert loaded.commit_id == original.commit_id
 
     @rule(data=st.data())
-    def save_scip_artifact_ref(self, data):
+    def save_scip_artifact_ref(self, data: st.DataObject):
         """Save a SCIP artifact reference for a stored snapshot."""
         if not self.saved_snapshots:
             return
@@ -111,7 +112,7 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
         self.saved_refs[snap_id] = ref
 
     @rule(data=st.data())
-    def get_scip_artifact_ref(self, data):
+    def get_scip_artifact_ref(self, data: st.DataObject):
         """Retrieve a SCIP artifact ref and verify it matches last save."""
         if not self.saved_refs:
             return
@@ -126,7 +127,7 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
         key=_metadata_key_st,
         value=_metadata_val_st,
     )
-    def update_snapshot_metadata(self, data, key: str, value):
+    def update_snapshot_metadata(self, data: st.DataObject, key: str, value: Any):
         """Update snapshot metadata and track the change."""
         if not self.saved_snapshots:
             return
@@ -137,7 +138,7 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
         self.metadata_state[snap_id] = meta
 
     @rule(data=st.data())
-    def find_by_repo_commit(self, data):
+    def find_by_repo_commit(self, data: st.DataObject):
         """Query by repo+commit and verify result exists."""
         if not self.saved_snapshots:
             return
@@ -270,7 +271,7 @@ class TestSnapshotStoreUpsert:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_double_save_upsert_semantics(self, repo, commit, branch):
+    def test_double_save_upsert_semantics(self, repo: str, commit: str, branch: str):
         """HAPPY: saving the same snapshot twice uses upsert (last wins)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SnapshotStore(tmpdir)
@@ -293,7 +294,7 @@ class TestSnapshotStoreUpsert:
     )
     @settings(max_examples=10)
     @pytest.mark.edge
-    def test_scip_artifact_ref_upsert(self, repo, commit, branch):
+    def test_scip_artifact_ref_upsert(self, repo: str, commit: str, branch: str):
         """EDGE: saving SCIP artifact ref twice uses upsert (last wins)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SnapshotStore(tmpdir)
@@ -320,7 +321,9 @@ class TestSnapshotStoreUpsert:
     )
     @settings(max_examples=10)
     @pytest.mark.edge
-    def test_load_unknown_snapshot_returns_none(self, repo, commit, branch):
+    def test_load_unknown_snapshot_returns_none(
+        self, repo: str, commit: str, branch: str
+    ):
         """EDGE: loading a never-saved snapshot_id returns None."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SnapshotStore(tmpdir)
@@ -333,7 +336,7 @@ class TestSnapshotStoreUpsert:
     )
     @settings(max_examples=10)
     @pytest.mark.edge
-    def test_find_by_repo_commit_unknown_returns_none(self, repo, commit):
+    def test_find_by_repo_commit_unknown_returns_none(self, repo: str, commit: str):
         """EDGE: querying unknown repo+commit returns None."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SnapshotStore(tmpdir)
@@ -345,7 +348,7 @@ class TestSnapshotStoreUpsert:
     )
     @settings(max_examples=10)
     @pytest.mark.edge
-    def test_get_scip_artifact_ref_unknown_returns_none(self, snap_id):
+    def test_get_scip_artifact_ref_unknown_returns_none(self, snap_id: str):
         """EDGE: getting SCIP artifact ref for unknown snapshot returns None."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SnapshotStore(tmpdir)
@@ -369,7 +372,9 @@ class TestSnapshotStoreUpsert:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_metadata_update_persists(self, repo, commit, branch, key, value):
+    def test_metadata_update_persists(
+        self, repo: str, commit: str, branch: str, key: str, value: Any
+    ):
         """HAPPY: metadata update roundtrips through get_snapshot_record."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SnapshotStore(tmpdir)

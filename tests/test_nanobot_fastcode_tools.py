@@ -44,7 +44,7 @@ from nanobot.agent.tools.fastcode import (
 class _MockTransport(httpx.MockTransport):
     """Routes requests to a handler registry. Tracks which handlers were called."""
 
-    def __init__(self, handlers: dict[str, Callable] | None = None):
+    def __init__(self, handlers: dict[str, Callable] | None = None) -> None:
         self._handlers: dict[str, Callable] = handlers or {}
         self.called_keys: set[str] = set()
         super().__init__(self._handle)
@@ -66,7 +66,7 @@ def _make_client(transport: _MockTransport) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=transport, base_url="http://test:8001")
 
 
-def _patch_client(client: httpx.AsyncClient):
+def _patch_client(client: httpx.AsyncClient) -> Any:
     """Return a patch context that makes httpx.AsyncClient yield the given client."""
     mock_instance = AsyncMock()
     mock_instance.__aenter__ = AsyncMock(return_value=client)
@@ -93,7 +93,7 @@ def api_url() -> str:
 
 class TestFastCodeLoadRepoTool:
     @pytest.mark.asyncio
-    async def test_load_repo_posts_to_load_and_index(self, api_url):
+    async def test_load_repo_posts_to_load_and_index(self, api_url: str):
         tool = FastCodeLoadRepoTool(api_url=api_url)
         payload = {"source": "https://github.com/user/repo", "is_url": True}
 
@@ -131,7 +131,7 @@ class TestFastCodeLoadRepoTool:
         assert "Code elements: 350" in result
 
     @pytest.mark.asyncio
-    async def test_load_repo_handles_connection_error(self, api_url):
+    async def test_load_repo_handles_connection_error(self, api_url: str):
         tool = FastCodeLoadRepoTool(api_url=api_url)
 
         with patch("nanobot.agent.tools.fastcode.httpx.AsyncClient") as mock_cls:
@@ -148,7 +148,7 @@ class TestFastCodeLoadRepoTool:
 
 class TestFastCodeQueryTool:
     @pytest.mark.asyncio
-    async def test_query_posts_question(self, api_url):
+    async def test_query_posts_question(self, api_url: str):
         tool = FastCodeQueryTool(api_url=api_url)
 
         request_bodies: list[dict] = []
@@ -187,7 +187,7 @@ class TestFastCodeQueryTool:
         assert "[Session: abc123]" in result
 
     @pytest.mark.asyncio
-    async def test_query_returns_no_repo_error_on_400(self, api_url):
+    async def test_query_returns_no_repo_error_on_400(self, api_url: str):
         tool = FastCodeQueryTool(api_url=api_url)
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -208,7 +208,7 @@ class TestFastCodeQueryTool:
 
 class TestFastCodeListReposTool:
     @pytest.mark.asyncio
-    async def test_list_repos_formats_available_and_loaded(self, api_url):
+    async def test_list_repos_formats_available_and_loaded(self, api_url: str):
         tool = FastCodeListReposTool(api_url=api_url)
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -234,7 +234,7 @@ class TestFastCodeListReposTool:
         assert "repo-a" in result
 
     @pytest.mark.asyncio
-    async def test_list_repos_shows_message_when_empty(self, api_url):
+    async def test_list_repos_shows_message_when_empty(self, api_url: str):
         tool = FastCodeListReposTool(api_url=api_url)
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -255,7 +255,7 @@ class TestFastCodeListReposTool:
 
 class TestFastCodeStatusTool:
     @pytest.mark.asyncio
-    async def test_status_formats_system_info(self, api_url):
+    async def test_status_formats_system_info(self, api_url: str):
         tool = FastCodeStatusTool(api_url=api_url)
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -287,7 +287,7 @@ class TestFastCodeStatusTool:
 
 class TestFastCodeSessionTool:
     @pytest.mark.asyncio
-    async def test_session_new(self, api_url):
+    async def test_session_new(self, api_url: str):
         tool = FastCodeSessionTool(api_url=api_url)
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -301,7 +301,7 @@ class TestFastCodeSessionTool:
         assert "new123" in result
 
     @pytest.mark.asyncio
-    async def test_session_delete(self, api_url):
+    async def test_session_delete(self, api_url: str):
         tool = FastCodeSessionTool(api_url=api_url)
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -315,7 +315,7 @@ class TestFastCodeSessionTool:
         assert "deleted" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_session_unknown_action(self, api_url):
+    async def test_session_unknown_action(self, api_url: str):
         tool = FastCodeSessionTool(api_url=api_url)
         result = await tool.execute(action="invalid")
         assert "Unknown action" in result
@@ -328,7 +328,7 @@ class TestFastCodeSessionTool:
 
 class TestFastCodeSearchSymbolTool:
     @pytest.mark.asyncio
-    async def test_search_symbol_by_name(self, api_url):
+    async def test_search_symbol_by_name(self, api_url: str):
         tool = FastCodeSearchSymbolTool(api_url=api_url)
 
         captured_params: list[dict] = []
@@ -366,7 +366,7 @@ class TestFastCodeSearchSymbolTool:
         assert "fastcode/main.py" in result
 
     @pytest.mark.asyncio
-    async def test_search_symbol_by_path(self, api_url):
+    async def test_search_symbol_by_path(self, api_url: str):
         tool = FastCodeSearchSymbolTool(api_url=api_url)
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -397,7 +397,7 @@ class TestFastCodeSearchSymbolTool:
         assert "HybridRetriever" in result
 
     @pytest.mark.asyncio
-    async def test_search_symbol_not_found(self, api_url):
+    async def test_search_symbol_not_found(self, api_url: str):
         tool = FastCodeSearchSymbolTool(api_url=api_url)
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -414,14 +414,14 @@ class TestFastCodeSearchSymbolTool:
         assert "no symbol found" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_search_symbol_requires_snapshot_id(self, api_url):
+    async def test_search_symbol_requires_snapshot_id(self, api_url: str):
         tool = FastCodeSearchSymbolTool(api_url=api_url)
         # snapshot_id is required in schema - verify validation
         errors = tool.validate_params({})
         assert any("snapshot_id" in e for e in errors)
 
     @pytest.mark.asyncio
-    async def test_search_symbol_requires_at_least_one_filter(self, api_url):
+    async def test_search_symbol_requires_at_least_one_filter(self, api_url: str):
         tool = FastCodeSearchSymbolTool(api_url=api_url)
         result = await tool.execute(snapshot_id="snap:myrepo:abc123")
         assert "name, symbol_id, or path" in result.lower()
@@ -434,7 +434,7 @@ class TestFastCodeSearchSymbolTool:
 
 class TestFastCodeCallChainTool:
     @pytest.mark.asyncio
-    async def test_get_callees(self, api_url):
+    async def test_get_callees(self, api_url: str):
         tool = FastCodeCallChainTool(api_url=api_url)
 
         captured_params: list[dict] = []
@@ -478,7 +478,7 @@ class TestFastCodeCallChainTool:
         assert "parse_input" in result
 
     @pytest.mark.asyncio
-    async def test_get_both_directions(self, api_url):
+    async def test_get_both_directions(self, api_url: str):
         tool = FastCodeCallChainTool(api_url=api_url)
 
         def callees_handler(_request: httpx.Request) -> httpx.Response:
@@ -521,7 +521,7 @@ class TestFastCodeCallChainTool:
         assert "Callers" in result
 
     @pytest.mark.asyncio
-    async def test_requires_snapshot_id_and_symbol_id(self, api_url):
+    async def test_requires_snapshot_id_and_symbol_id(self, api_url: str):
         tool = FastCodeCallChainTool(api_url=api_url)
         result = await tool.execute(snapshot_id="", symbol_id="")
         assert "required" in result.lower()
@@ -534,7 +534,7 @@ class TestFastCodeCallChainTool:
 
 class TestFastCodeBuildProjectionTool:
     @pytest.mark.asyncio
-    async def test_build_snapshot_projection(self, api_url):
+    async def test_build_snapshot_projection(self, api_url: str):
         tool = FastCodeBuildProjectionTool(api_url=api_url)
 
         request_bodies: list[dict] = []
@@ -572,7 +572,7 @@ class TestFastCodeBuildProjectionTool:
         assert "L2" in result
 
     @pytest.mark.asyncio
-    async def test_get_projection_layer(self, api_url):
+    async def test_get_projection_layer(self, api_url: str):
         tool = FastCodeBuildProjectionTool(api_url=api_url)
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -605,7 +605,7 @@ class TestFastCodeBuildProjectionTool:
         assert "code understanding" in result
 
     @pytest.mark.asyncio
-    async def test_invalid_action(self, api_url):
+    async def test_invalid_action(self, api_url: str):
         tool = FastCodeBuildProjectionTool(api_url=api_url)
         result = await tool.execute(action="invalid")
         assert "Unknown action" in result
@@ -618,7 +618,7 @@ class TestFastCodeBuildProjectionTool:
 
 class TestFastCodeIndexRunTool:
     @pytest.mark.asyncio
-    async def test_run_index_pipeline(self, api_url):
+    async def test_run_index_pipeline(self, api_url: str):
         tool = FastCodeIndexRunTool(api_url=api_url)
 
         request_bodies: list[dict] = []
@@ -659,7 +659,7 @@ class TestFastCodeIndexRunTool:
         assert "Symbols: 350" in result
 
     @pytest.mark.asyncio
-    async def test_index_run_handles_error(self, api_url):
+    async def test_index_run_handles_error(self, api_url: str):
         tool = FastCodeIndexRunTool(api_url=api_url)
 
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -681,7 +681,7 @@ class TestFastCodeIndexRunTool:
 
 class TestFastCodeUploadRepoTool:
     @pytest.mark.asyncio
-    async def test_upload_repo_posts_file(self, api_url):
+    async def test_upload_repo_posts_file(self, api_url: str):
         """Upload tool sends file to POST /upload-and-index."""
         tool = FastCodeUploadRepoTool(api_url=api_url)
 
@@ -723,7 +723,7 @@ class TestFastCodeUploadRepoTool:
         assert "25" in result
 
     @pytest.mark.asyncio
-    async def test_upload_repo_file_not_found(self, api_url):
+    async def test_upload_repo_file_not_found(self, api_url: str):
         tool = FastCodeUploadRepoTool(api_url=api_url)
         result = await tool.execute(file_path="/nonexistent/path.zip")
         assert "not found" in result.lower()

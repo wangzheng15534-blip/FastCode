@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from typing import Any
 import sys
 from pathlib import Path
 
@@ -10,10 +13,17 @@ import api
 
 
 class _FakeFastCode:
-    def list_repo_refs(self, repo_name: str):
+    def list_repo_refs(self, repo_name: str) -> None:
         return [{"branch": "main", "snapshot_id": "snap:repo:1"}]
 
-    def find_symbol(self, snapshot_id: str, *, symbol_id=None, name=None, path=None):
+    def find_symbol(
+        self,
+        snapshot_id: str,
+        *,
+        symbol_id: str = None,
+        name: str = None,
+        path: str = None,
+    ) -> Any:
         if name == "missing":
             return None
         return {
@@ -22,16 +32,22 @@ class _FakeFastCode:
             "path": path or "a.py",
         }
 
-    def get_graph_callees(self, snapshot_id: str, symbol_id: str, max_hops: int = 1):
+    def get_graph_callees(
+        self, snapshot_id: str, symbol_id: str, max_hops: int = 1
+    ) -> Any:
         return [{"symbol_id": "sym:2", "distance": 1}]
 
-    def get_graph_callers(self, snapshot_id: str, symbol_id: str, max_hops: int = 1):
+    def get_graph_callers(
+        self, snapshot_id: str, symbol_id: str, max_hops: int = 1
+    ) -> Any:
         return [{"symbol_id": "sym:0", "distance": 1}]
 
-    def get_graph_dependencies(self, snapshot_id: str, doc_id: str, max_hops: int = 1):
+    def get_graph_dependencies(
+        self, snapshot_id: str, doc_id: str, max_hops: int = 1
+    ) -> Any:
         return [{"doc_id": "doc:2", "distance": 1}]
 
-    def process_redo_tasks(self, limit: int = 10):
+    def process_redo_tasks(self, limit: int = 10) -> Any:
         return {"processed": limit, "succeeded": limit, "failed": 0}
 
 

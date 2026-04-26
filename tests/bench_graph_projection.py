@@ -67,7 +67,7 @@ def _make_snapshot(num_symbols: int, edges_per_symbol: int = 2) -> IRSnapshot:
 
 
 @pytest.mark.parametrize("num_symbols", [10, 100, 500, 1000])
-def test_graph_builder_throughput(num_symbols, benchmark):
+def test_graph_builder_throughput(num_symbols: int, benchmark: pytest.BenchmarkFixture):
     """Benchmark IR graph materialization."""
     snap = _make_snapshot(num_symbols)
     builder = IRGraphBuilder()
@@ -80,7 +80,9 @@ def test_graph_builder_throughput(num_symbols, benchmark):
 
 
 @pytest.mark.parametrize("num_symbols", [10, 100, 500])
-def test_projection_transform_throughput(num_symbols, benchmark):
+def test_projection_transform_throughput(
+    num_symbols: int, benchmark: pytest.BenchmarkFixture
+):
     """Benchmark projection transform (Leiden disabled, no LLM)."""
     snap = _make_snapshot(num_symbols)
     graphs = IRGraphBuilder().build_graphs(snap)

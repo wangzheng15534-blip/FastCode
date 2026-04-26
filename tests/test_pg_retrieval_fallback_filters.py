@@ -1,41 +1,46 @@
+from __future__ import annotations
+
+from typing import Any
 import logging
 
 from fastcode.pg_retrieval import PgRetrievalStore
 
 
 class _FakeCursor:
-    def __init__(self, rows):
+    def __init__(self, rows: Any) -> None:
         self.rows = rows
         self.execute_calls = 0
 
-    def execute(self, sql, params=None):
+    def execute(self, sql: Any, params: dict = None) -> None:
         self.execute_calls += 1
         if self.execute_calls == 1:
             raise RuntimeError("force fallback path")
 
-    def fetchall(self):
+    def fetchall(self) -> Any:
         return list(self.rows)
 
 
 class _FakeConn:
-    def __init__(self, cursor):
+    def __init__(self, cursor: Any) -> None:
         self._cursor = cursor
 
-    def cursor(self):
+    def cursor(self) -> Any:
         return self._cursor
 
-    def __enter__(self):
+    def __enter__(self) -> None:
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: Any
+    ) -> None:
         return False
 
 
 class _FakeDBRuntime:
-    def __init__(self, conn):
+    def __init__(self, conn: Any) -> None:
         self._conn = conn
 
-    def connect(self):
+    def connect(self) -> Any:
         return self._conn
 
 
@@ -43,7 +48,10 @@ def test_semantic_fallback_rechecks_repo_and_element_type_filters():
     rows = [
         ({"id": "ok", "type": "design_document", "repo_name": "repoA"}, [1.0, 0.0]),
         ({"id": "wrong_type", "type": "function", "repo_name": "repoA"}, [1.0, 0.0]),
-        ({"id": "wrong_repo", "type": "design_document", "repo_name": "repoB"}, [1.0, 0.0]),
+        (
+            {"id": "wrong_repo", "type": "design_document", "repo_name": "repoB"},
+            [1.0, 0.0],
+        ),
     ]
     store = PgRetrievalStore.__new__(PgRetrievalStore)
     store.enabled = True
@@ -59,4 +67,3 @@ def test_semantic_fallback_rechecks_repo_and_element_type_filters():
     )
     assert len(out) == 1
     assert out[0][0]["id"] == "ok"
-

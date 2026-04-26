@@ -7,6 +7,8 @@ pickle-based IR graphs persistence, and query correctness.
 
 from __future__ import annotations
 
+from typing import Any
+
 import json
 import tempfile
 
@@ -158,7 +160,9 @@ class TestSchemaMigration:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_init_db_after_save_preserves_data(self, repo, commit, branch):
+    def test_init_db_after_save_preserves_data(
+        self, repo: str, commit: str, branch: str
+    ):
         """HAPPY: re-running _init_db after saves preserves all data."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
@@ -197,7 +201,7 @@ class TestSnapshotsTableConstraints:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_duplicate_snapshot_id_upserts(self, repo, commit, branch):
+    def test_duplicate_snapshot_id_upserts(self, repo: str, commit: str, branch: str):
         """HAPPY: saving same snapshot_id twice uses upsert (last wins)."""
         store = _make_store()
         snap_id = f"snap:{repo}:{commit}"
@@ -224,7 +228,7 @@ class TestSnapshotsTableConstraints:
     )
     @settings(max_examples=10)
     @pytest.mark.edge
-    def test_upsert_preserves_latest_data(self, repo, commit, branch):
+    def test_upsert_preserves_latest_data(self, repo: str, commit: str, branch: str):
         """EDGE: upsert overwrites with latest snapshot data."""
         store = _make_store()
         snap_id = f"snap:{repo}:{commit}"
@@ -249,7 +253,7 @@ class TestSnapshotRefsConstraints:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_duplicate_ref_does_not_raise(self, repo, commit, branch):
+    def test_duplicate_ref_does_not_raise(self, repo: str, commit: str, branch: str):
         """HAPPY: saving same (repo, commit, snapshot_id) ref twice is no-op."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
@@ -264,7 +268,7 @@ class TestSnapshotRefsConstraints:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_resolve_snapshot_for_ref(self, repo, commit, branch):
+    def test_resolve_snapshot_for_ref(self, repo: str, commit: str, branch: str):
         """HAPPY: resolve_snapshot_for_ref returns record for known branch."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
@@ -282,7 +286,9 @@ class TestSnapshotRefsConstraints:
     )
     @settings(max_examples=10)
     @pytest.mark.edge
-    def test_resolve_snapshot_for_unknown_ref_returns_none(self, repo, branch):
+    def test_resolve_snapshot_for_unknown_ref_returns_none(
+        self, repo: str, branch: str
+    ):
         """EDGE: resolving unknown branch returns None."""
         store = _make_store()
         result = store.resolve_snapshot_for_ref(repo, branch)
@@ -299,7 +305,9 @@ class TestScipArtifactsTable:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_scip_artifact_upsert(self, repo, commit, branch, indexer_name):
+    def test_scip_artifact_upsert(
+        self, repo: str, commit: str, branch: str, indexer_name: str
+    ):
         """HAPPY: saving SCIP artifact ref twice uses upsert."""
         store = _make_store()
         snap_id = f"snap:{repo}:{commit}"
@@ -321,7 +329,7 @@ class TestScipArtifactsTable:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_scip_artifact_fields_roundtrip(self, repo, commit, branch):
+    def test_scip_artifact_fields_roundtrip(self, repo: str, commit: str, branch: str):
         """HAPPY: all SCIP artifact fields survive save/load."""
         store = _make_store()
         snap_id = f"snap:{repo}:{commit}"
@@ -353,7 +361,9 @@ class TestMultipleSnapshotsSameRepo:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_multiple_snapshots_all_retrievable(self, repo, commits, branch):
+    def test_multiple_snapshots_all_retrievable(
+        self, repo: str, commits: list[str], branch: str
+    ):
         """HAPPY: multiple snapshots for same repo all retrievable independently."""
         store = _make_store()
         for commit in commits:
@@ -374,7 +384,9 @@ class TestMultipleSnapshotsSameRepo:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_find_by_repo_commit_returns_latest(self, repo, commit, branch):
+    def test_find_by_repo_commit_returns_latest(
+        self, repo: str, commit: str, branch: str
+    ):
         """HAPPY: find_by_repo_commit returns a record for the given repo+commit."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
@@ -394,7 +406,7 @@ class TestLargeMetadataRoundtrip:
     )
     @settings(max_examples=5)
     @pytest.mark.edge
-    def test_large_metadata_roundtrip(self, repo, commit, branch):
+    def test_large_metadata_roundtrip(self, repo: str, commit: str, branch: str):
         """EDGE: metadata of ~10KB roundtrips correctly."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
@@ -421,7 +433,7 @@ class TestUnicodeMetadata:
     @settings(max_examples=15)
     @pytest.mark.edge
     def test_unicode_metadata_preserved(
-        self, repo, commit, branch, unicode_key, unicode_val
+        self, repo: str, commit: str, branch: str, unicode_key: Any, unicode_val: Any
     ):
         """EDGE: Unicode characters in metadata survive save/load."""
         store = _make_store()
@@ -445,7 +457,9 @@ class TestIRGraphsPickleRoundtrip:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_ir_graphs_pickle_roundtrip(self, repo, commit, branch, n_nodes):
+    def test_ir_graphs_pickle_roundtrip(
+        self, repo: str, commit: str, branch: str, n_nodes: Any
+    ):
         """HAPPY: save_ir_graphs/load_ir_graphs roundtrips arbitrary data."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
@@ -482,7 +496,7 @@ class TestIRGraphsPickleRoundtrip:
     )
     @settings(max_examples=5)
     @pytest.mark.happy
-    def test_ir_graphs_overwrite(self, repo, commit, branch):
+    def test_ir_graphs_overwrite(self, repo: str, commit: str, branch: str):
         """HAPPY: saving graphs twice overwrites previous version."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
@@ -544,7 +558,9 @@ class TestFindLatestBehavior:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_find_by_repo_commit_returns_matching(self, repo, commit, branch):
+    def test_find_by_repo_commit_returns_matching(
+        self, repo: str, commit: str, branch: str
+    ):
         """HAPPY: find_by_repo_commit returns a snapshot matching the query."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
@@ -564,7 +580,7 @@ class TestFindLatestBehavior:
     @settings(max_examples=10)
     @pytest.mark.happy
     def test_find_by_repo_commit_distinguishes_commits(
-        self, repo, commit1, commit2, branch
+        self, repo: str, commit1: Any, commit2: Any, branch: str
     ):
         """HAPPY: different commits for same repo return distinct records."""
         assume(commit1 != commit2)
@@ -590,7 +606,7 @@ class TestFindLatestBehavior:
     @settings(max_examples=10)
     @pytest.mark.happy
     def test_resolve_snapshot_for_ref_distinguishes_branches(
-        self, repo, commit1, commit2, branch1, branch2
+        self, repo: str, commit1: Any, commit2: Any, branch1: Any, branch2: Any
     ):
         """HAPPY: resolve_snapshot_for_ref distinguishes branches."""
         assume(branch1 != branch2)
@@ -616,7 +632,7 @@ class TestArtifactKeyGeneration:
     )
     @settings(max_examples=20)
     @pytest.mark.happy
-    def test_artifact_key_deterministic(self, snap_id):
+    def test_artifact_key_deterministic(self, snap_id: str):
         """HAPPY: artifact_key_for_snapshot is deterministic."""
         store = _make_store()
         key1 = store.artifact_key_for_snapshot(snap_id)
@@ -630,7 +646,7 @@ class TestArtifactKeyGeneration:
     )
     @settings(max_examples=20)
     @pytest.mark.happy
-    def test_different_snapshot_ids_different_keys(self, snap_id1, snap_id2):
+    def test_different_snapshot_ids_different_keys(self, snap_id1: Any, snap_id2: Any):
         """HAPPY: different snapshot_ids produce different artifact keys."""
         assume(snap_id1 != snap_id2)
         store = _make_store()
@@ -646,7 +662,7 @@ class TestSnapshotDir:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_snapshot_dir_exists_after_call(self, snap_id):
+    def test_snapshot_dir_exists_after_call(self, snap_id: str):
         """HAPPY: snapshot_dir creates the directory if needed."""
         store = _make_store()
         d = store.snapshot_dir(snap_id)
@@ -659,7 +675,7 @@ class TestSnapshotDir:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_snapshot_dir_idempotent(self, snap_id):
+    def test_snapshot_dir_idempotent(self, snap_id: str):
         """HAPPY: calling snapshot_dir twice returns same path."""
         store = _make_store()
         d1 = store.snapshot_dir(snap_id)
@@ -676,7 +692,7 @@ class TestFindbyArtifactKey:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_find_by_artifact_key_after_save(self, repo, commit, branch):
+    def test_find_by_artifact_key_after_save(self, repo: str, commit: str, branch: str):
         """HAPPY: find_by_artifact_key retrieves saved snapshot."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
@@ -703,7 +719,7 @@ class TestSnapshotRecordFields:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_snapshot_record_has_all_fields(self, repo, commit, branch):
+    def test_snapshot_record_has_all_fields(self, repo: str, commit: str, branch: str):
         """HAPPY: get_snapshot_record returns all expected columns."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
@@ -731,7 +747,7 @@ class TestSnapshotRecordFields:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_ir_path_points_to_real_file(self, repo, commit, branch):
+    def test_ir_path_points_to_real_file(self, repo: str, commit: str, branch: str):
         """HAPPY: ir_path in snapshot record points to an existing file."""
         import os
 
@@ -781,7 +797,9 @@ class TestEdgeCases:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_metadata_json_roundtrip_via_save(self, repo, commit, branch, meta_val):
+    def test_metadata_json_roundtrip_via_save(
+        self, repo: str, commit: str, branch: str, meta_val: Any
+    ):
         """HAPPY: metadata passed to save_snapshot roundtrips through DB."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)

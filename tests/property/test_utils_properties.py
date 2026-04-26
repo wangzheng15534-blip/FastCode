@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 import os
 import tempfile
 
@@ -72,7 +73,7 @@ class TestComputeFileHash:
     @given(content=st.text(min_size=0, max_size=100))
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_hash_varies_with_content(self, content):
+    def test_hash_varies_with_content(self, content: str):
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write(content)
             f.flush()
@@ -106,7 +107,7 @@ class TestGetFileExtension:
     @given(ext=extension_st)
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_returns_extension(self, ext):
+    def test_returns_extension(self, ext: Any):
         assert get_file_extension(f"file{ext}") == ext
 
     @pytest.mark.happy
@@ -141,7 +142,7 @@ class TestNormalizePath:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_no_backslashes(self, path):
+    def test_no_backslashes(self, path: str):
         result = normalize_path(path)
         assert "\\" not in result
 
@@ -287,7 +288,7 @@ class TestSafeJsonable:
     @pytest.mark.edge
     def test_object_with_to_dict(self):
         class Obj:
-            def to_dict(self):
+            def to_dict(self) -> None:
                 return {"x": 1}
 
         assert safe_jsonable(Obj()) == {"x": 1}
@@ -295,7 +296,7 @@ class TestSafeJsonable:
     @pytest.mark.edge
     def test_object_with_dunder_dict(self):
         class Obj:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.y = 2
 
         result = safe_jsonable(Obj())
@@ -304,7 +305,7 @@ class TestSafeJsonable:
     @pytest.mark.edge
     def test_depth_limit_returns_repr(self):
         class Recursive:
-            def __init__(self, d=0):
+            def __init__(self, d: Any = 0) -> None:
                 self.d = d
                 self.child = Recursive(d + 1) if d < 15 else None
 
@@ -314,7 +315,7 @@ class TestSafeJsonable:
     @given(obj=st.one_of(st.integers(), st.text(min_size=0, max_size=10), st.none()))
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_primitives_always_jsonable(self, obj):
+    def test_primitives_always_jsonable(self, obj: Any):
         result = safe_jsonable(obj)
         assert result == obj
 

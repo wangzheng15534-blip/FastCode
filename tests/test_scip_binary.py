@@ -1,5 +1,9 @@
 """Tests for binary SCIP protobuf parsing."""
 
+from __future__ import annotations
+
+import pathlib
+
 import pytest
 
 try:
@@ -24,7 +28,7 @@ def test_scip_pb2_module_importable():
 
 
 @requires_protobuf
-def test_load_binary_scip_artifact(tmp_path):
+def test_load_binary_scip_artifact(tmp_path: pathlib.Path):
     """Binary .scip files parse without external CLI."""
     from fastcode.scip_pb2 import Index
 
@@ -56,7 +60,7 @@ def test_load_binary_scip_artifact(tmp_path):
 
 
 @requires_protobuf
-def test_binary_scip_with_occurrences(tmp_path):
+def test_binary_scip_with_occurrences(tmp_path: pathlib.Path):
     """Binary SCIP with occurrences converts correctly."""
     from fastcode.scip_pb2 import Index, SymbolInformation
 
@@ -111,7 +115,7 @@ def test_binary_scip_with_occurrences(tmp_path):
 
 
 @requires_protobuf
-def test_binary_scip_empty_index(tmp_path):
+def test_binary_scip_empty_index(tmp_path: pathlib.Path):
     """Empty SCIP index produces empty SCIPIndex."""
     from fastcode.scip_pb2 import Index
 
@@ -130,7 +134,7 @@ def test_binary_scip_empty_index(tmp_path):
 
 
 @requires_protobuf
-def test_binary_scip_to_ir_round_trip(tmp_path):
+def test_binary_scip_to_ir_round_trip(tmp_path: pathlib.Path):
     """Binary SCIP -> SCIPIndex -> IRSnapshot produces valid IR."""
     from fastcode.adapters.scip_to_ir import build_ir_from_scip
     from fastcode.scip_loader import load_scip_artifact
@@ -176,7 +180,7 @@ def test_binary_scip_to_ir_round_trip(tmp_path):
     assert len(snapshot.edges) == 2  # containment + ref edge
 
 
-def test_run_scip_python_index_delegates_to_scip_indexers(tmp_path):
+def test_run_scip_python_index_delegates_to_scip_indexers(tmp_path: pathlib.Path):
     """run_scip_python_index delegates to scip_indexers.run_scip_indexer."""
     from unittest.mock import patch
 

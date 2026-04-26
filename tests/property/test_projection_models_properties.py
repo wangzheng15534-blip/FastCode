@@ -36,7 +36,7 @@ class TestProjectionScope:
     @given(kind=small_text, snap_id=small_text, key=small_text)
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_to_dict_roundtrip(self, kind, snap_id, key):
+    def test_to_dict_roundtrip(self, kind: bool, snap_id: str, key: str):
         """HAPPY: ProjectionScope to_dict preserves all fields."""
         scope = ProjectionScope(scope_kind=kind, snapshot_id=snap_id, scope_key=key)
         d = scope.to_dict()
@@ -55,7 +55,7 @@ class TestProjectionScope:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_scope_with_query(self, kind, snap_id, key, query):
+    def test_scope_with_query(self, kind: bool, snap_id: str, key: str, query: str):
         """HAPPY: ProjectionScope with optional query."""
         scope = ProjectionScope(
             scope_kind=kind, snapshot_id=snap_id, scope_key=key, query=query
@@ -66,7 +66,7 @@ class TestProjectionScope:
     @given(kind=small_text, snap_id=small_text, key=small_text)
     @settings(max_examples=10)
     @pytest.mark.edge
-    def test_scope_default_filters_empty(self, kind, snap_id, key):
+    def test_scope_default_filters_empty(self, kind: bool, snap_id: str, key: str):
         """EDGE: default filters is empty dict."""
         scope = ProjectionScope(scope_kind=kind, snapshot_id=snap_id, scope_key=key)
         assert scope.filters == {}

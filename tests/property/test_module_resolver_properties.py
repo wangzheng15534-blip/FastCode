@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -16,19 +17,17 @@ segment_st = st.text(
     max_size=5,
 )
 
-module_path_st = st.lists(segment_st, min_size=1, max_size=4).map(
-    ".".join
-)
+module_path_st = st.lists(segment_st, min_size=1, max_size=4).map(".".join)
 
 
 class _FakeIndex:
     """Minimal fake GlobalIndexBuilder for testing."""
 
-    def __init__(self, module_map=None):
+    def __init__(self, module_map: dict | None = None) -> None:
         self.module_map = module_map or {}
 
 
-def _make_resolver(module_map=None):
+def _make_resolver(module_map: dict | None = None) -> Any:
     return ModuleResolver(_FakeIndex(module_map))
 
 
@@ -130,7 +129,7 @@ class TestResolveRelativeImport:
     )
     @settings(max_examples=20)
     @pytest.mark.happy
-    def test_relative_always_checks_map(self, current, target):
+    def test_relative_always_checks_map(self, current: bool, target: Any):
         """HAPPY: relative import always looks up in module map."""
         resolver = _make_resolver()
         result = resolver.resolve_import(current, target, level=1)

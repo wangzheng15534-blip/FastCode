@@ -32,7 +32,10 @@ class DefinitionExtractor:
         if not self.ts_parser.is_healthy():
             raise RuntimeError("TSParser could not be initialized.")
 
-        self.query = Query(self.ts_parser.language, self.DEFINITION_QUERY_SCM)
+        lang = self.ts_parser.language
+        if lang is None:
+            raise RuntimeError("TSParser language is not available")
+        self.query = Query(lang, self.DEFINITION_QUERY_SCM)
 
     def extract_definitions(self, code: str, file_path: str) -> list[dict[str, Any]]:
         """
@@ -53,25 +56,11 @@ class DefinitionExtractor:
         definitions = []
 
         cursor = QueryCursor(self.query)
-        captures = cursor.captures(root_node)  # Returns Dict[str, List[Node]]
+        captures = cursor.captures(root_node)
 
-        # Process all captured nodes - handle both old and new API
-        if isinstance(captures, dict):
-            # Old API
-            for capture_name, nodes in captures.items():
-                for node in nodes:
-                    try:
-                        definition = self._process_definition_node(
-                            node, capture_name, code, file_path
-                        )
-                        if definition:
-                            definitions.append(definition)
-                    except Exception as e:
-                        self.logger.warning(f"Failed to process definition node: {e}")
-                        continue
-        else:
-            # New API (tree-sitter 0.25+): List[Tuple[Node, str]]
-            for node, capture_name in captures:
+        # Process all captured nodes
+        for capture_name, nodes in captures.items():
+            for node in nodes:
                 try:
                     definition = self._process_definition_node(
                         node, capture_name, code, file_path

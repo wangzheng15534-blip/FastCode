@@ -10,14 +10,25 @@ from typing import Any
 from .utils import safe_jsonable
 
 
+_T = dict[str, Any]
+
+
 def _sorted_set(values: set[str]) -> list[str]:
     return sorted(v for v in values if v)
 
 
-def _normalize_set(values: list[str] | set[str] | tuple[str, ...] | None) -> set[str]:
+def _normalize_set(values: Any) -> set[str]:
     if not values:
         return set()
     return {str(v) for v in values if v}
+
+
+def _copy_dict(data: dict[str, Any]) -> _T:
+    """Copy a dict while preserving the key type as str."""
+    result: _T = {}
+    for k, v in data.items():
+        result[str(k)] = v
+    return result
 
 
 def _resolution_to_confidence(resolution_state: str) -> str:
@@ -61,7 +72,7 @@ class IRDocument:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IRDocument:
-        payload = dict(data)
+        payload = _copy_dict(data)
         payload["source_set"] = _normalize_set(payload.get("source_set"))
         return cls(**payload)
 
@@ -92,7 +103,7 @@ class IRSymbol:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IRSymbol:
-        payload = dict(data)
+        payload = _copy_dict(data)
         payload["source_set"] = _normalize_set(payload.get("source_set"))
         payload["metadata"] = safe_jsonable(payload.get("metadata", {}))
         return cls(**payload)
@@ -118,7 +129,7 @@ class IROccurrence:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IROccurrence:
-        payload = dict(data)
+        payload = _copy_dict(data)
         payload["metadata"] = safe_jsonable(payload.get("metadata", {}))
         return cls(**payload)
 
@@ -141,7 +152,7 @@ class IREdge:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IREdge:
-        payload = dict(data)
+        payload = _copy_dict(data)
         payload["metadata"] = safe_jsonable(payload.get("metadata", {}))
         return cls(**payload)
 
@@ -165,7 +176,7 @@ class IRAttachment:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IRAttachment:
-        payload = dict(data)
+        payload = _copy_dict(data)
         payload["payload"] = safe_jsonable(payload.get("payload", {}))
         payload["metadata"] = safe_jsonable(payload.get("metadata", {}))
         return cls(**payload)
@@ -224,7 +235,7 @@ class IRCodeUnit:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IRCodeUnit:
-        payload = dict(data)
+        payload = _copy_dict(data)
         payload["source_set"] = _normalize_set(payload.get("source_set"))
         payload["metadata"] = safe_jsonable(payload.get("metadata", {}))
         payload["anchor_symbol_ids"] = [
@@ -262,7 +273,7 @@ class IRUnitSupport:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IRUnitSupport:
-        payload = dict(data)
+        payload = _copy_dict(data)
         payload["metadata"] = safe_jsonable(payload.get("metadata", {}))
         return cls(**payload)
 
@@ -317,7 +328,7 @@ class IRRelation:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IRRelation:
-        payload = dict(data)
+        payload = _copy_dict(data)
         payload["support_sources"] = _normalize_set(payload.get("support_sources"))
         payload["support_ids"] = [str(v) for v in payload.get("support_ids", []) if v]
         payload["metadata"] = safe_jsonable(payload.get("metadata", {}))
@@ -342,7 +353,7 @@ class IRUnitEmbedding:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IRUnitEmbedding:
-        payload = dict(data)
+        payload = _copy_dict(data)
         payload["vector"] = safe_jsonable(payload.get("vector"))
         payload["metadata"] = safe_jsonable(payload.get("metadata", {}))
         return cls(**payload)
@@ -512,7 +523,7 @@ class IRSnapshot:
                 )
             )
 
-        snapshot_annotations = []
+        snapshot_annotations: list[dict[str, Any]] = []
         for attachment in attachments:
             if (
                 attachment.target_type == "symbol"
@@ -577,10 +588,11 @@ class IRSnapshot:
         for unit in self.units:
             if unit.kind in {"file", "doc"}:
                 continue
-            metadata = safe_jsonable(unit.metadata)
-            alias_ids = list(
+            metadata: dict[str, Any] = safe_jsonable(unit.metadata)
+            raw_aliases: list[Any] = metadata.get("aliases") or []
+            alias_ids: list[str] = list(
                 dict.fromkeys(
-                    (metadata.get("aliases") or []) + unit.candidate_anchor_symbol_ids
+                    [str(a) for a in raw_aliases] + unit.candidate_anchor_symbol_ids
                 )
             )
             if alias_ids:
@@ -709,7 +721,10 @@ class IRSnapshot:
                 )
             )
         for annotation in self.metadata.get("snapshot_annotations", []) or []:
-            attachments.append(IRAttachment.from_dict(annotation))
+            ann_data: dict[str, Any] = (
+                annotation if isinstance(annotation, dict) else {}
+            )
+            attachments.append(IRAttachment.from_dict(ann_data))
         return attachments
 
     def to_dict(self) -> dict[str, Any]:

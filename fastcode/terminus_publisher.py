@@ -272,7 +272,7 @@ class TerminusPublisher:
                     "dst": snapshot_node_id,
                 }
             )
-            parent_ids = git_meta.get("parent_commit_ids") or []
+            parent_ids: list[Any] = git_meta.get("parent_commit_ids") or []
             if not parent_ids and git_meta.get("parent_commit_id"):
                 parent_ids = [git_meta.get("parent_commit_id")]
             for parent_id in parent_ids:
@@ -319,10 +319,10 @@ class TerminusPublisher:
                     }
                 )
 
-        documents = snapshot.get("documents") or []
-        symbols = snapshot.get("symbols") or []
+        documents: list[dict[str, Any]] = snapshot.get("documents") or []
+        symbols: list[dict[str, Any]] = snapshot.get("symbols") or []
         for doc in documents:
-            doc_id = doc.get("doc_id")
+            doc_id: str | None = doc.get("doc_id")
             if not doc_id:
                 continue
             node_id = f"doc:{snapshot_id}:{doc_id}"
@@ -334,7 +334,7 @@ class TerminusPublisher:
                         "doc_id": doc_id,
                         "path": doc.get("path"),
                         "language": doc.get("language"),
-                    },
+                    },  # type: ignore[dict-item]
                 }
             )
             edges.append(

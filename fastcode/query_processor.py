@@ -268,7 +268,7 @@ class QueryProcessor:
                     else:
                         keywords.extend(selected_keywords)
                     # Remove duplicates while preserving order
-                    seen = set()
+                    seen: set[str] = set()
                     keywords = [k for k in keywords if not (k in seen or seen.add(k))]
 
                 self.logger.info(f"LLM enhancement applied for query: {query[:50]}...")
@@ -295,19 +295,19 @@ class QueryProcessor:
         query_lower = query.lower()
 
         # Check for each intent
-        intent_scores = {}
+        intent_scores: dict[str, int] = {}
         for intent, patterns in self.intent_patterns.items():
             score = sum(1 for pattern in patterns if pattern in query_lower)
             intent_scores[intent] = score
 
         # Get intent with highest score
         if intent_scores:
-            max_score = max(intent_scores.values())
+            max_score: float = max(intent_scores.values())
             if max_score > 0:
-                for intent, score in intent_scores.items():
-                    if score == max_score:
-                        self.logger.debug(f"Detected intent: {intent}")
-                        return intent
+                for intent_key, intent_val in intent_scores.items():
+                    if intent_val == max_score:
+                        self.logger.debug(f"Detected intent: {intent_key}")
+                        return intent_key
 
         return "general"
 
@@ -376,7 +376,7 @@ class QueryProcessor:
 
     def _extract_filters(self, query: str) -> dict[str, Any]:
         """Extract filters from query (file type, language, etc.)"""
-        filters = {}
+        filters: dict[str, Any] = {}
 
         # Extract file types
         file_type_pattern = r"\.(py|js|ts|java|go|cpp|c|rs|rb|php|cs)\b"
@@ -461,7 +461,7 @@ class QueryProcessor:
             "test": ["test", "unittest", "spec", "testing"],
         }
 
-        expanded_terms = []
+        expanded_terms: list[str] = []
         words = query.lower().split()
 
         for word in words:
@@ -472,8 +472,8 @@ class QueryProcessor:
                 expanded_terms.append(word)
 
         # Remove duplicates while preserving order
-        seen = set()
-        unique_terms = []
+        seen: set[str] = set()
+        unique_terms: list[str] = []
         for term in expanded_terms:
             if term not in seen:
                 seen.add(term)
@@ -492,14 +492,14 @@ class QueryProcessor:
         if len(query.split()) < 10:
             return []  # Too short to decompose
 
-        subqueries = []
+        subqueries: list[str] = []
 
         # Split by common separators
         separators = [" and ", " or ", ", ", "; "]
-        parts = [query]
+        parts: list[str] = [query]
 
         for sep in separators:
-            new_parts = []
+            new_parts: list[str] = []
             for part in parts:
                 new_parts.extend(part.split(sep))
             parts = new_parts
@@ -724,6 +724,8 @@ Be concise and focus on improving code retrieval accuracy."""
 
     def _call_anthropic(self, prompt: str) -> str:
         """Call Anthropic API for query enhancement"""
+        if self.llm_client is None:
+            raise RuntimeError("Anthropic client not initialized")
         response = self.llm_client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
@@ -745,7 +747,7 @@ Be concise and focus on improving code retrieval accuracy."""
         Returns:
             Dictionary with parsed enhancements
         """
-        enhancements = {}
+        enhancements: dict[str, Any] = {}
 
         def clean_markdown(text: str) -> str:
             """Remove markdown formatting from text"""

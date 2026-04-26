@@ -1,7 +1,4 @@
-"""Pure JSON parsing functions for handling LLM-generated JSON responses.
-
-All functions are pure string/JSON operations with no I/O or state dependencies.
-"""
+"""Domain-independent JSON utilities."""
 
 from __future__ import annotations
 
@@ -9,6 +6,43 @@ import ast
 import json
 import re
 from typing import Any
+
+_MAX_SAFE_JSONABLE_DEPTH = 12
+
+
+def safe_jsonable(obj: Any, *, _depth: int = 0) -> Any:  # noqa: PLR0911
+    """Recursively convert objects to JSON-serializable structures.
+
+    Handles dicts, lists/tuples/sets, objects with ``to_dict()``, and
+    arbitrary objects via ``vars()``.  Non-serializable values fall back
+    to ``repr()``.  Depth is capped to prevent infinite recursion on
+    circular references.
+    """
+    if _depth > _MAX_SAFE_JSONABLE_DEPTH:
+        return repr(obj)
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    if isinstance(obj, dict):
+        safe_dict = {}
+        for k, v in obj.items():
+            try:
+                safe_dict[str(k)] = safe_jsonable(v, _depth=_depth + 1)
+            except Exception:
+                safe_dict[str(k)] = repr(v)
+        return safe_dict
+    if isinstance(obj, (list, tuple, set)):
+        return [safe_jsonable(v, _depth=_depth + 1) for v in obj]
+    if hasattr(obj, "to_dict"):
+        try:
+            return safe_jsonable(obj.to_dict(), _depth=_depth + 1)
+        except Exception:
+            return {"repr": repr(obj)}
+    if hasattr(obj, "__dict__"):
+        try:
+            return safe_jsonable(vars(obj), _depth=_depth + 1)
+        except Exception:
+            return {"repr": repr(obj)}
+    return repr(obj)
 
 
 def extract_json_from_response(response: str) -> str:
@@ -79,7 +113,7 @@ def extract_json_from_response(response: str) -> str:
     return sanitize_json_string(json_str)
 
 
-def sanitize_json_string(json_str: str) -> str:
+def sanitize_json_string(json_str: str) -> str:  # noqa: PLR0912
     """Sanitize JSON string to fix common issues from small models.
 
     Handles:
@@ -134,7 +168,7 @@ def sanitize_json_string(json_str: str) -> str:
                 cleaned.append("\\r")
             elif char == "\t":
                 cleaned.append("\\t")
-            elif ord(char) < 32:  # Other control characters
+            elif ord(char) < 32:  # noqa: PLR2004 Other control characters
                 # Skip or replace with space
                 cleaned.append(" ")
             else:
@@ -263,7 +297,7 @@ def robust_json_parse(json_str: str) -> Any:
             r"([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)", r'\1"\2"\3', json_str
         )
         return json.loads(fixed)
-    except (json.JSONDecodeError, Exception):
+    except (json.JSONDecodeError, Exception):  # noqa: S110
         pass
 
     # Strategy 4: Use ast.literal_eval as safer alternative (can handle Python-style dicts)
@@ -272,7 +306,7 @@ def robust_json_parse(json_str: str) -> Any:
         result = ast.literal_eval(json_str)
         if isinstance(result, (dict, list)):
             return result
-    except (ValueError, SyntaxError, Exception):
+    except (ValueError, SyntaxError, Exception):  # noqa: S110
         pass
 
     # Strategy 5: Try to extract and parse just the first complete object
@@ -285,9 +319,9 @@ def robust_json_parse(json_str: str) -> Any:
                     subset = json_str[start:end]
                     if subset.count("{") == subset.count("}"):
                         return json.loads(subset)
-                except Exception:
+                except Exception:  # noqa: S112
                     continue
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     # All strategies failed

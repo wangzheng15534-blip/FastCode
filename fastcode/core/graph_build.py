@@ -3,16 +3,9 @@
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 
 from fastcode.schema.ir import _resolution_to_confidence
-
-
-def deterministic_event_id(snapshot_id: str, payload: str) -> str:
-    """Generate a deterministic event ID from snapshot_id + payload hash."""
-    h = hashlib.sha256(f"{snapshot_id}:{payload}".encode()).hexdigest()[:32]
-    return f"outbox:{snapshot_id}:{h}"
 
 
 def build_code_graph_payload(snapshot: dict[str, Any]) -> dict[str, Any]:

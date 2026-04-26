@@ -185,6 +185,18 @@ ignore = [
     "RUF059",  # Unused unpacked variable (pre-existing)
     "C901",    # Too complex (pre-existing)
 ]
+"fastcode/answer_generator.py" = [
+    "ANN201",  # Missing return type for public functions (pre-existing)
+    "ANN202",  # Missing return type for private functions (pre-existing)
+    "ANN204",  # Missing return type for __init__ (pre-existing)
+    "PLR0912", # Too many branches (pre-existing)
+    "PLR0915", # Too many statements (pre-existing)
+    "PLR2004", # Magic values (pre-existing)
+    "PLC0415", # Lazy imports (pre-existing)
+    "RET504",  # Unnecessary assignment before return (pre-existing)
+    "W291",    # Trailing whitespace (pre-existing)
+    "UP028",   # Yield in generator (pre-existing)
+]
 
 [tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false

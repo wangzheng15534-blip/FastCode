@@ -13,9 +13,13 @@ Requirements:
 Mark with pytest.mark.skipif if services are unavailable.
 """
 
+from __future__ import annotations
+
 import contextlib
 import os
+import pathlib
 import subprocess
+from typing import Any
 from unittest.mock import MagicMock
 
 import networkx as nx
@@ -84,8 +88,9 @@ _skip_pg = pytest.mark.skipif(not _pg_available(), reason="PostgreSQL not availa
 _TEST_PYTHON_SOURCE = '''\
 """Math utilities for vector operations."""
 
+import pathlib
 import math
-from typing import List, Tuple
+from typing import List, Tuple, Any
 
 
 class Vector:
@@ -147,7 +152,7 @@ The vector module provides 2D vector operations for geometric algorithms.
 """
 
 
-def _build_test_repo(tmp_path):
+def _build_test_repo(tmp_path: pathlib.Path) -> Any:
     """Create a minimal git repo with Python source + docs."""
     repo_dir = tmp_path / "test_repo"
     repo_dir.mkdir()
@@ -193,7 +198,13 @@ def _build_test_repo(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _base_config(tmp_path, *, backend="sqlite", pg_dsn="", enable_docs=False):
+def _base_config(
+    tmp_path: pathlib.Path,
+    *,
+    backend: Any = "sqlite",
+    pg_dsn: Any = "",
+    enable_docs: Any = False,
+) -> None:
     """Return a minimal config dict with all paths under tmp_path."""
     persist_dir = str(tmp_path / "persist")
     repo_root = str(tmp_path / "repos")
@@ -260,7 +271,7 @@ def _base_config(tmp_path, *, backend="sqlite", pg_dsn="", enable_docs=False):
 # ---------------------------------------------------------------------------
 
 
-def _build_fastcode(config):
+def _build_fastcode(config: dict) -> Any:
     """Construct a FastCode instance, wiring real components from config."""
     fc = FastCode.__new__(FastCode)
     fc.config = config
@@ -334,7 +345,7 @@ def _build_fastcode(config):
 
 
 @_skip_ollama
-def test_e2e_indexing_sqlite_real_embeddings(tmp_path):
+def test_e2e_indexing_sqlite_real_embeddings(tmp_path: pathlib.Path):
     """Full indexing pipeline with SQLite backend and real Ollama embeddings."""
     repo_path = _build_test_repo(tmp_path)
     config = _base_config(tmp_path, backend="sqlite")
@@ -407,7 +418,7 @@ def test_e2e_indexing_sqlite_real_embeddings(tmp_path):
 
 @_skip_ollama
 @_skip_pg
-def test_e2e_indexing_pg_real_embeddings(tmp_path):
+def test_e2e_indexing_pg_real_embeddings(tmp_path: pathlib.Path):
     """Full indexing pipeline with real PG backend and real Ollama embeddings.
 
     Verifies:
@@ -470,7 +481,7 @@ def test_e2e_indexing_pg_real_embeddings(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _pg_execute(dsn: str, sql: str, params=None) -> list | None:
+def _pg_execute(dsn: str, sql: str, params: dict = None) -> list | None:
     """Execute a query against the test PG database."""
     import psycopg
 
@@ -482,7 +493,7 @@ def _pg_execute(dsn: str, sql: str, params=None) -> list | None:
         return None
 
 
-def _cleanup_pg_tables(dsn: str):
+def _cleanup_pg_tables(dsn: str) -> None:
     """Remove test data from PG tables."""
     for table in (
         "embedding_vectors",
@@ -496,7 +507,7 @@ def _cleanup_pg_tables(dsn: str):
             )
 
 
-def _verify_pg_elements(dsn: str, snapshot_id: str):
+def _verify_pg_elements(dsn: str, snapshot_id: str) -> None:
     """Assert embedding_vectors table has real rows for the snapshot."""
     rows = _pg_execute(
         dsn,
@@ -508,7 +519,7 @@ def _verify_pg_elements(dsn: str, snapshot_id: str):
     assert count >= 1, f"Expected >= 1 row in embedding_vectors, got {count}"
 
 
-def _verify_pg_search_documents(dsn: str, snapshot_id: str):
+def _verify_pg_search_documents(dsn: str, snapshot_id: str) -> None:
     """Assert search_documents table has real rows for the snapshot."""
     rows = _pg_execute(
         dsn,

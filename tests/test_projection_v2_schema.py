@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from typing import Any
 import networkx as nx
 
 from fastcode.projection_models import ProjectionScope
@@ -6,7 +9,9 @@ from fastcode.semantic_ir import IRDocument, IREdge, IRSnapshot, IRSymbol
 
 
 def _sample_snapshot() -> IRSnapshot:
-    doc = IRDocument(doc_id="doc:1", path="app/service.py", language="python", source_set={"ast"})
+    doc = IRDocument(
+        doc_id="doc:1", path="app/service.py", language="python", source_set={"ast"}
+    )
     sym_a = IRSymbol(
         symbol_id="ast:snap:repo:abc:python:app/service.py:function:login:10:20",
         external_symbol_id=None,
@@ -61,7 +66,7 @@ def _sample_snapshot() -> IRSnapshot:
     )
 
 
-def _sample_graphs():
+def _sample_graphs() -> Any:
     from fastcode.ir_graph_builder import IRGraphs
 
     return IRGraphs(
@@ -76,8 +81,12 @@ def _sample_graphs():
 def test_projection_schema_has_hierarchy_and_relations():
     snapshot = _sample_snapshot()
     transformer = ProjectionTransformer(config={"projection": {"enable_leiden": False}})
-    scope = ProjectionScope(scope_kind="snapshot", snapshot_id=snapshot.snapshot_id, scope_key="k2")
-    result = transformer.build(scope=scope, snapshot=snapshot, ir_graphs=_sample_graphs())
+    scope = ProjectionScope(
+        scope_kind="snapshot", snapshot_id=snapshot.snapshot_id, scope_key="k2"
+    )
+    result = transformer.build(
+        scope=scope, snapshot=snapshot, ir_graphs=_sample_graphs()
+    )
 
     l1_content = result.l1["content"]
     assert "relations" in l1_content
@@ -101,8 +110,12 @@ def test_projection_schema_has_hierarchy_and_relations():
 def test_projection_l2_chunk_has_all_required_metadata():
     snapshot = _sample_snapshot()
     transformer = ProjectionTransformer(config={"projection": {"enable_leiden": False}})
-    scope = ProjectionScope(scope_kind="snapshot", snapshot_id=snapshot.snapshot_id, scope_key="k3")
-    result = transformer.build(scope=scope, snapshot=snapshot, ir_graphs=_sample_graphs())
+    scope = ProjectionScope(
+        scope_kind="snapshot", snapshot_id=snapshot.snapshot_id, scope_key="k3"
+    )
+    result = transformer.build(
+        scope=scope, snapshot=snapshot, ir_graphs=_sample_graphs()
+    )
 
     for chunk in result.chunks:
         assert chunk["version"] == "v1", f"chunk {chunk['chunk_id']} missing version"
@@ -118,8 +131,12 @@ def test_projection_l2_chunk_has_all_required_metadata():
 def test_projection_l1_xref_relations_have_confidence():
     snapshot = _sample_snapshot()
     transformer = ProjectionTransformer(config={"projection": {"enable_leiden": False}})
-    scope = ProjectionScope(scope_kind="snapshot", snapshot_id=snapshot.snapshot_id, scope_key="k4")
-    result = transformer.build(scope=scope, snapshot=snapshot, ir_graphs=_sample_graphs())
+    scope = ProjectionScope(
+        scope_kind="snapshot", snapshot_id=snapshot.snapshot_id, scope_key="k4"
+    )
+    result = transformer.build(
+        scope=scope, snapshot=snapshot, ir_graphs=_sample_graphs()
+    )
 
     l1_content = result.l1["content"]
     xrefs = l1_content["relations"]["xref"]

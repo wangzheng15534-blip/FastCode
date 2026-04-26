@@ -68,7 +68,7 @@ def _make_scip_index(doc_count: int, syms_per_doc: int) -> dict:
 
 
 @pytest.mark.parametrize("element_count", [10, 100, 500, 1000])
-def test_merge_throughput(element_count, benchmark):
+def test_merge_throughput(element_count: int, benchmark: pytest.BenchmarkFixture):
     """Benchmark merge_ir throughput for varying AST sizes."""
     elements = _make_code_elements(element_count)
     scip = _make_scip_index(max(1, element_count // 10), 10)
@@ -84,7 +84,7 @@ def test_merge_throughput(element_count, benchmark):
 
 
 @pytest.mark.parametrize("element_count", [10, 100, 500])
-def test_ast_adapter_throughput(element_count, benchmark):
+def test_ast_adapter_throughput(element_count: int, benchmark: pytest.BenchmarkFixture):
     """Benchmark AST-to-IR adapter throughput."""
     elements = _make_code_elements(element_count)
 
@@ -96,7 +96,9 @@ def test_ast_adapter_throughput(element_count, benchmark):
 
 
 @pytest.mark.parametrize("doc_count,syms_per_doc", [(5, 20), (50, 20), (100, 10)])
-def test_scip_adapter_throughput(doc_count, syms_per_doc, benchmark):
+def test_scip_adapter_throughput(
+    doc_count: int, syms_per_doc: int, benchmark: pytest.BenchmarkFixture
+):
     """Benchmark SCIP-to-IR adapter throughput."""
     scip = _make_scip_index(doc_count, syms_per_doc)
 

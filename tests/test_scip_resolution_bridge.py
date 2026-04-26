@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import Never, Any
 
 from fastcode.scip_resolution_bridge import (
     SCIPResolutionBridge,
@@ -418,7 +419,7 @@ class TestEdgeCases:
         """If embed_batch fails during index build, semantic is silently disabled."""
 
         class _BrokenEmbedder:
-            def embed_batch(self, texts):
+            def embed_batch(self, texts: Any) -> Never:
                 raise RuntimeError("embedding service down")
 
         unit = _make_unit("u:1", "Foo")

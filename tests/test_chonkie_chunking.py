@@ -9,19 +9,22 @@ These tests define the desired behavior BEFORE implementation:
 5. Empty/short text handled correctly
 """
 
+from __future__ import annotations
+
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from fastcode.doc_ingester import KeyDocIngester
 
 
 class _DummyEmbedder:
-    def embed_text(self, text: str):
+    def embed_text(self, text: str) -> Any:
         if not text:
             return None
         return [0.1, 0.2, 0.3]
 
 
-def _make_config(**overrides):
+def _make_config(**overrides) -> Any:
     """Build a docs_integration config with sensible defaults."""
     cfg = {
         "docs_integration": {

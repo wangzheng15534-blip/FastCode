@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -223,7 +224,7 @@ class TestIRDocumentProperties:
     @settings(max_examples=30)
     @pytest.mark.happy
     def test_document_from_dict_with_source_set_present(
-        self, doc_id, path, language, source_set
+        self, doc_id: str, path: str, language: str, source_set: Any
     ):
         """HAPPY: from_dict with source_set present exercises lines 27-29 (dict copy + set conversion + cls construction)."""
         data = {
@@ -258,7 +259,7 @@ class TestIRDocumentProperties:
     @settings(max_examples=20)
     @pytest.mark.edge
     def test_document_from_dict_extra_keys_raise_typeerror(
-        self, doc_id, path, language, extra_key, extra_val
+        self, doc_id: str, path: str, language: str, extra_key: Any, extra_val: Any
     ):
         """EDGE: from_dict with extra unknown key raises TypeError (dataclass rejects unexpected kwargs)."""
         data = {
@@ -390,14 +391,14 @@ class TestIRSymbolProperties:
     @pytest.mark.happy
     def test_symbol_from_dict_with_source_set_present(
         self,
-        symbol_id,
-        external_symbol_id,
-        path,
-        display_name,
-        kind,
-        language,
-        source_set,
-        metadata,
+        symbol_id: str,
+        external_symbol_id: Any,
+        path: str,
+        display_name: Any,
+        kind: bool,
+        language: str,
+        source_set: Any,
+        metadata: dict,
     ):
         """HAPPY: from_dict with source_set present exercises lines 57-59 (dict copy + set conversion + cls construction)."""
         data = {
@@ -437,7 +438,13 @@ class TestIRSymbolProperties:
     @settings(max_examples=20)
     @pytest.mark.edge
     def test_symbol_from_dict_empty_source_set_list(
-        self, symbol_id, external_symbol_id, path, display_name, kind, language
+        self,
+        symbol_id: str,
+        external_symbol_id: Any,
+        path: str,
+        display_name: Any,
+        kind: bool,
+        language: str,
     ):
         """EDGE: from_dict with empty list for source_set produces empty set."""
         data = {
@@ -550,7 +557,13 @@ class TestIROccurrenceProperties:
     @settings(max_examples=20)
     @pytest.mark.happy
     def test_occurrence_from_dict_with_metadata(
-        self, occurrence_id, symbol_id, doc_id, role, source, metadata
+        self,
+        occurrence_id: str,
+        symbol_id: str,
+        doc_id: str,
+        role: str,
+        source: str,
+        metadata: dict,
     ):
         """HAPPY: from_dict with metadata exercises line 80 (cls(**data)) including metadata field."""
         data = {
@@ -579,7 +592,7 @@ class TestIROccurrenceProperties:
     @settings(max_examples=20)
     @pytest.mark.edge
     def test_occurrence_from_dict_no_metadata_key(
-        self, occurrence_id, symbol_id, doc_id, role, source
+        self, occurrence_id: str, symbol_id: str, doc_id: str, role: str, source: str
     ):
         """EDGE: from_dict without metadata key uses dataclass default (line 80), which is empty dict."""
         data = {
@@ -698,7 +711,15 @@ class TestIREdgeProperties:
     @settings(max_examples=30)
     @pytest.mark.happy
     def test_edge_from_dict_with_all_fields(
-        self, edge_id, src_id, dst_id, edge_type, source, confidence, doc_id, metadata
+        self,
+        edge_id: str,
+        src_id: str,
+        dst_id: str,
+        edge_type: str,
+        source: str,
+        confidence: Any,
+        doc_id: str,
+        metadata: dict,
     ):
         """HAPPY: from_dict with all fields exercises line 99 (cls(**data)) completely."""
         data = {
@@ -731,7 +752,7 @@ class TestIREdgeProperties:
     @settings(max_examples=20)
     @pytest.mark.edge
     def test_edge_from_dict_no_optional_keys(
-        self, edge_id, src_id, dst_id, edge_type, source
+        self, edge_id: str, src_id: str, dst_id: str, edge_type: str, source: str
     ):
         """EDGE: from_dict without doc_id/metadata keys uses dataclass defaults (line 99)."""
         data = {

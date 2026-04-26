@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 import logging
 
 import pytest
@@ -11,7 +12,7 @@ from hypothesis import strategies as st
 from fastcode.repo_selector import RepositorySelector
 
 
-def _make_selector():
+def _make_selector() -> Any:
     """Create minimal selector with logger for testing pure methods."""
     selector = RepositorySelector.__new__(RepositorySelector)
     selector.logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ class TestNormalize:
     @given(name=st.text(min_size=1, max_size=20))
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_always_returns_lowercase(self, name):
+    def test_always_returns_lowercase(self, name: str):
         """HAPPY: _normalize always returns lowercase regardless of input case."""
         result = RepositorySelector._normalize(name)
         assert result == result.lower()
@@ -78,7 +79,7 @@ class TestNormalize:
     @given(name=st.text(min_size=0, max_size=20))
     @settings(max_examples=20)
     @pytest.mark.happy
-    def test_always_returns_string(self, name):
+    def test_always_returns_string(self, name: str):
         """HAPPY: _normalize always returns a string."""
         result = RepositorySelector._normalize(name)
         assert isinstance(result, str)
@@ -153,7 +154,7 @@ class TestFuzzyMatchRepo:
     @given(candidate=name_st, available=names_list_st)
     @settings(max_examples=20)
     @pytest.mark.happy
-    def test_result_is_none_or_member(self, candidate, available):
+    def test_result_is_none_or_member(self, candidate: Any, available: Any):
         """HAPPY: result is always None or one of available names."""
         selector = _make_selector()
         result = selector._fuzzy_match_repo(candidate, available)

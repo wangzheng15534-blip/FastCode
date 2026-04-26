@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -15,17 +16,21 @@ from fastcode.symbol_resolver import SymbolResolver
 class _FakeModuleResolver:
     """Minimal fake module resolver."""
 
-    def __init__(self, mappings=None):
+    def __init__(self, mappings: Any = None) -> None:
         self._mappings = mappings or {}
 
     def resolve_import(
-        self, current_module_path, import_name, level=0, is_package=False
-    ):
+        self,
+        current_module_path: str,
+        import_name: str,
+        level: int = 0,
+        is_package: bool = False,
+    ) -> Any:
         key = (current_module_path, import_name, level)
         return self._mappings.get(key)
 
 
-def _make_index(module_map=None, export_map=None):
+def _make_index(module_map: dict | None = None, export_map: dict | None = None) -> Any:
     """Build a GlobalIndexBuilder with pre-populated maps."""
     idx = GlobalIndexBuilder()
     idx.module_map = module_map or {}
@@ -34,7 +39,11 @@ def _make_index(module_map=None, export_map=None):
     return idx
 
 
-def _make_resolver(module_map=None, export_map=None, import_mappings=None):
+def _make_resolver(
+    module_map: dict | None = None,
+    export_map: dict | None = None,
+    import_mappings: dict | None = None,
+) -> Any:
     idx = _make_index(module_map, export_map)
     mr = _FakeModuleResolver(import_mappings)
     return SymbolResolver(idx, mr)
@@ -265,7 +274,7 @@ class TestGetResolutionStats:
     @given(symbol=name_st)
     @settings(max_examples=15)
     @pytest.mark.edge
-    def test_resolve_always_returns_none_or_str(self, symbol):
+    def test_resolve_always_returns_none_or_str(self, symbol: str):
         """EDGE: resolve_symbol always returns None or str."""
         resolver = _make_resolver()
         result = resolver.resolve_symbol(symbol, "file:unknown", [])

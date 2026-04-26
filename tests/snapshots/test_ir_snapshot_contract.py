@@ -17,7 +17,7 @@ from fastcode.semantic_ir import (
 @pytest.mark.snapshot
 @pytest.mark.happy
 class TestIRSnapshotContract:
-    def test_ir_document_serialization(self, snapshot):
+    def test_ir_document_serialization(self, snapshot: IRSnapshot):
         doc = IRDocument(
             doc_id="doc:abc123",
             path="src/main.py",
@@ -28,7 +28,7 @@ class TestIRSnapshotContract:
         )
         snapshot.assert_match(doc.to_dict())
 
-    def test_ir_symbol_serialization(self, snapshot):
+    def test_ir_symbol_serialization(self, snapshot: IRSnapshot):
         sym = IRSymbol(
             symbol_id="scip:snap:1:pkg.main.MyClass.my_method",
             external_symbol_id="pkg.main.MyClass.my_method",
@@ -48,7 +48,7 @@ class TestIRSnapshotContract:
         )
         snapshot.assert_match(sym.to_dict())
 
-    def test_ir_occurrence_serialization(self, snapshot):
+    def test_ir_occurrence_serialization(self, snapshot: IRSnapshot):
         occ = IROccurrence(
             occurrence_id="occ:abc123",
             symbol_id="scip:snap:1:pkg.main.foo",
@@ -63,7 +63,7 @@ class TestIRSnapshotContract:
         )
         snapshot.assert_match(occ.to_dict())
 
-    def test_ir_edge_serialization(self, snapshot):
+    def test_ir_edge_serialization(self, snapshot: IRSnapshot):
         edge = IREdge(
             edge_id="edge:abc123",
             src_id="doc:abc123",
@@ -76,7 +76,7 @@ class TestIRSnapshotContract:
         )
         snapshot.assert_match(edge.to_dict())
 
-    def test_ir_attachment_serialization(self, snapshot):
+    def test_ir_attachment_serialization(self, snapshot: IRSnapshot):
         attachment = IRAttachment(
             attachment_id="att:abc123",
             target_id="sym:abc123",
@@ -89,7 +89,7 @@ class TestIRSnapshotContract:
         )
         snapshot.assert_match(attachment.to_dict())
 
-    def test_ir_snapshot_full_serialization(self, snapshot):
+    def test_ir_snapshot_full_serialization(self, snapshot: IRSnapshot):
         doc = IRDocument(
             doc_id="doc:1",
             path="app.py",
@@ -153,7 +153,7 @@ class TestIRSnapshotContract:
         snapshot.assert_match(snap.to_dict())
 
     @pytest.mark.edge
-    def test_ir_snapshot_empty_collections_serialization(self, snapshot):
+    def test_ir_snapshot_empty_collections_serialization(self, snapshot: IRSnapshot):
         """EDGE: empty snapshot with no documents, symbols, occurrences, edges."""
         snap = IRSnapshot(
             repo_name="empty-repo",

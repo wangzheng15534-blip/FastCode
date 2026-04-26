@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from typing import Any
 import tempfile
 from pathlib import Path
 
@@ -6,7 +9,7 @@ from fastcode.semantic_ir import IRSnapshot, IRSymbol
 
 
 class _DummyEmbedder:
-    def embed_text(self, text: str):
+    def embed_text(self, text: str) -> Any:
         if not text:
             return None
         return [0.1, 0.2, 0.3]
@@ -18,7 +21,8 @@ def test_doc_ingester_selects_curated_files_and_extracts_mentions():
         (root / "docs" / "design").mkdir(parents=True, exist_ok=True)
         (root / "docs" / "private").mkdir(parents=True, exist_ok=True)
         (root / "docs" / "design" / "pipeline.md").write_text(
-            "# Pipeline Design\nThe BranchIndexer coordinates indexing.\n", encoding="utf-8"
+            "# Pipeline Design\nThe BranchIndexer coordinates indexing.\n",
+            encoding="utf-8",
         )
         (root / "docs" / "private" / "secret.md").write_text(
             "# Secret\nShould not be ingested.\n", encoding="utf-8"
@@ -62,6 +66,7 @@ def test_doc_ingester_selects_curated_files_and_extracts_mentions():
         assert result["elements"]
         assert all(e["type"] == "design_document" for e in result["elements"])
         assert all("docs/design/" in e["relative_path"] for e in result["elements"])
-        assert all("docs/private/" not in e["relative_path"] for e in result["elements"])
+        assert all(
+            "docs/private/" not in e["relative_path"] for e in result["elements"]
+        )
         assert any(m["symbol_id"] == "sym:branchindexer" for m in result["mentions"])
-

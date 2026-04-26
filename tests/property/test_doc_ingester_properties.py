@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from typing import Never, Any
 
 import pytest
 from hypothesis import given, settings
@@ -23,11 +24,11 @@ small_text = st.text(
 class _FakeEmbedder:
     """Minimal embedder that returns fixed vectors."""
 
-    def embed_text(self, text):
+    def embed_text(self, text: str) -> Any:
         return [0.1] * 8
 
 
-def _make_ingester(**overrides):
+def _make_ingester(**overrides) -> Any:
     defaults = {
         "config": {"embedding": {}},
         "embedder": _FakeEmbedder(),
@@ -84,7 +85,7 @@ class TestReadFileContent:
     @given(ext=st.sampled_from([".pdf", ".zip", ".gz", ".pyc", ".so", ".dll", ".woff"]))
     @settings(max_examples=10)
     @pytest.mark.edge
-    def test_binary_extensions_return_empty(self, ext):
+    def test_binary_extensions_return_empty(self, ext: Any):
         """EDGE: known binary extensions return empty string."""
         ingester = _make_ingester()
         with tempfile.NamedTemporaryFile(mode="w", suffix=ext, delete=False) as f:
@@ -97,7 +98,7 @@ class TestReadFileContent:
     @given(text=small_text)
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_read_roundtrip(self, text):
+    def test_read_roundtrip(self, text: str):
         """HAPPY: written content is readable."""
         ingester = _make_ingester()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -135,7 +136,7 @@ class TestChunkSectionFallback:
     @given(n_words=st.integers(min_value=1, max_value=50))
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_fallback_produces_pieces(self, n_words):
+    def test_fallback_produces_pieces(self, n_words: Any):
         """HAPPY: fallback produces at least one piece for any non-empty text."""
         ingester = _make_ingester()
         text = " ".join(f"w{i}" for i in range(n_words))
@@ -183,7 +184,7 @@ class TestDetectDocType:
     @given(path=small_text)
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_always_returns_known_type(self, path):
+    def test_always_returns_known_type(self, path: str):
         """HAPPY: _detect_doc_type always returns a known type."""
         result = KeyDocIngester._detect_doc_type(path)
         assert result in ("design", "research", "adr", "rfc", "readme", "doc")
@@ -216,7 +217,7 @@ class TestChunkId:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_chunk_id_unique_per_inputs(self, snap_id, path, idx):
+    def test_chunk_id_unique_per_inputs(self, snap_id: str, path: str, idx: int):
         """HAPPY: different inputs produce different IDs."""
         id1 = KeyDocIngester._chunk_id(snap_id, path, idx)
         id2 = KeyDocIngester._chunk_id(snap_id + "x", path, idx)
@@ -238,7 +239,7 @@ class TestEmbed:
         """EDGE: _embed returns None when embedder raises."""
 
         class BrokenEmbedder:
-            def embed_text(self, text):
+            def embed_text(self, text: str) -> Never:
                 raise RuntimeError("broken")
 
         ingester = _make_ingester(embedder=BrokenEmbedder())
@@ -250,7 +251,7 @@ class TestEmbed:
         """EDGE: _embed returns None when embedder returns None."""
 
         class NoneEmbedder:
-            def embed_text(self, text):
+            def embed_text(self, text: str) -> None:
                 return None
 
         ingester = _make_ingester(embedder=NoneEmbedder())

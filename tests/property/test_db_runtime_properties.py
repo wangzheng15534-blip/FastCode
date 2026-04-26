@@ -511,7 +511,7 @@ class TestRowToDict:
 
     @pytest.mark.parametrize("falsy_val", ["", 0, [], {}])
     @pytest.mark.edge
-    def test_falsy_values_return_none(self, falsy_val) -> None:
+    def test_falsy_values_return_none(self, falsy_val: Any) -> None:
         """Line 116: all falsy inputs return None."""
         assert DBRuntime.row_to_dict(falsy_val) is None
 
@@ -636,7 +636,7 @@ class TestConnectionPooling:
             rt.execute(outer, "CREATE TABLE t (id INTEGER)")
             rt.execute(outer, "INSERT INTO t VALUES (?)", (1,))
             with rt.connect() as inner, pytest.raises(sqlite3.OperationalError):
-                    rt.execute(inner, "SELECT * FROM t")
+                rt.execute(inner, "SELECT * FROM t")
 
 
 # --- Rollback and error handling ---

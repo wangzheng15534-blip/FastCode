@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -58,27 +59,27 @@ alias_metadata_st = st.dictionaries(
 
 
 # Symbol strategy with controlled fields
-def _mk_sym(sid, name, qname, path, meta):
+def _mk_sym(sid: str, name: str, qname: str, path: str, meta: dict) -> Any:
     return _sym(sid, name, qname, path, meta)
 
 
-def _mk_snap(sid, syms):
+def _mk_snap(sid: str, syms: list) -> Any:
     return _snapshot(sid, syms)
 
 
-def _mk_sym_id(x):
+def _mk_sym_id(x: Any) -> str:
     return f"sym:{x}"
 
 
-def _mk_qname(x):
+def _mk_qname(x: Any) -> str:
     return f"pkg.{x}"
 
 
-def _mk_path(a, b):
+def _mk_path(a: Any, b: Any) -> str:
     return f"{a}/{b}.py"
 
 
-def _mk_snap_id(x):
+def _mk_snap_id(x: Any) -> str:
     return f"snap:{x}"
 
 
@@ -87,9 +88,7 @@ symbol_st = st.builds(
     sid=st.builds(_mk_sym_id, identifier),
     name=st.one_of(st.just(""), identifier),
     qname=st.one_of(st.none(), st.builds(_mk_qname, identifier)),
-    path=st.one_of(
-        st.just(""), st.builds(_mk_path, identifier, identifier)
-    ),
+    path=st.one_of(st.just(""), st.builds(_mk_path, identifier, identifier)),
     meta=st.one_of(
         st.none(),
         st.dictionaries(st.text(min_size=1), st.integers()),

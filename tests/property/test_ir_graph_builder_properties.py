@@ -23,7 +23,7 @@ def _edge(edge_id: str, src: str, dst: str, edge_type: str = "call") -> IREdge:
     )
 
 
-def _snapshot(edges):
+def _snapshot(edges: list) -> None:
     return IRSnapshot(repo_name="repo", snapshot_id="snap:1", edges=edges)
 
 
@@ -189,7 +189,7 @@ class TestIRGraphBuilder:
     )
     @settings(max_examples=20)
     @pytest.mark.happy
-    def test_edge_count_matches(self, edge_type, n_edges):
+    def test_edge_count_matches(self, edge_type: str, n_edges: int):
         """HAPPY: number of edges matches snapshot edges."""
         builder = IRGraphBuilder()
         edges = [

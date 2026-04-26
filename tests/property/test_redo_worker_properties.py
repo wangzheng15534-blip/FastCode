@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 import json
 
 import pytest
@@ -16,38 +17,38 @@ from fastcode.redo_worker import RedoWorker
 class _FakeSnapshotStore:
     """Fake snapshot store for testing RedoWorker."""
 
-    def __init__(self, tasks=None):
+    def __init__(self, tasks: Any = None) -> None:
         self._tasks = list(tasks or [])
         self.done_ids = []
         self.failed_ids = []
 
-    def claim_redo_task(self):
+    def claim_redo_task(self) -> Any:
         if self._tasks:
             return self._tasks.pop(0)
         return None
 
-    def mark_redo_task_done(self, task_id):
+    def mark_redo_task_done(self, task_id: str) -> None:
         self.done_ids.append(task_id)
 
-    def mark_redo_task_failed(self, task_id, error):
+    def mark_redo_task_failed(self, task_id: str, error: Exception) -> None:
         self.failed_ids.append((task_id, error))
 
 
 class _FakeFastCode:
     """Minimal FastCode fake for RedoWorker."""
 
-    def __init__(self, snapshot_store=None, retry_raises=None):
+    def __init__(self, snapshot_store: Any = None, retry_raises: Any = None) -> None:
         self.snapshot_store = snapshot_store or _FakeSnapshotStore()
         self._retry_raises = retry_raises
         self.retried_runs = []
 
-    def retry_index_run_recovery(self, run_id, payload):
+    def retry_index_run_recovery(self, run_id: str, payload: Any) -> None:
         self.retried_runs.append(run_id)
         if self._retry_raises:
             raise self._retry_raises
 
 
-def _make_worker(fastcode=None, poll=30):
+def _make_worker(fastcode: Any = None, poll: int = 30) -> Any:
     if fastcode is None:
         fastcode = _FakeFastCode()
     return RedoWorker(fastcode, poll_interval_seconds=poll)
@@ -80,7 +81,7 @@ class TestRedoWorkerInit:
     @given(poll=st.integers(min_value=1, max_value=300))
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_poll_interval_preserved(self, poll):
+    def test_poll_interval_preserved(self, poll: int):
         """HAPPY: valid poll interval preserved."""
         w = _make_worker(poll=poll)
         assert w.poll_interval_seconds == poll

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -12,12 +13,10 @@ from fastcode.global_index_builder import GlobalIndexBuilder
 
 segment_st = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=8)
 
-module_path_st = st.lists(segment_st, min_size=1, max_size=4).map(
-    ".".join
-)
+module_path_st = st.lists(segment_st, min_size=1, max_size=4).map(".".join)
 
 
-def _make_builder():
+def _make_builder() -> Any:
     """Create a builder pre-populated with some test data."""
     builder = GlobalIndexBuilder()
     builder.file_map = {
@@ -85,7 +84,7 @@ class TestGetFileIdByModule:
     @given(mod=module_path_st)
     @settings(max_examples=15)
     @pytest.mark.edge
-    def test_arbitrary_module_returns_none_or_id(self, mod):
+    def test_arbitrary_module_returns_none_or_id(self, mod: Any):
         """EDGE: arbitrary module returns None or valid ID."""
         builder = _make_builder()
         result = builder.get_file_id_by_module(mod)

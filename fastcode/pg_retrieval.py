@@ -140,6 +140,7 @@ class PgRetrievalStore:
                         str(elem.get("code") or "")[:2000],
                     ]
                 )
+
                 # Strip numpy arrays and other non-serializable values from metadata
                 # before JSON encoding. Embeddings are stored separately in the
                 # embedding/embedding_arr columns.
@@ -154,10 +155,7 @@ class PgRetrievalStore:
                         return bool(val)
                     return val
 
-                serializable_elem = {
-                    k: _make_json_safe(v)
-                    for k, v in elem.items()
-                }
+                serializable_elem = {k: _make_json_safe(v) for k, v in elem.items()}
                 if isinstance(serializable_elem.get("metadata"), dict):
                     serializable_elem["metadata"] = {
                         k: _make_json_safe(v)
@@ -259,7 +257,14 @@ class PgRetrievalStore:
                         ORDER BY embedding <=> %s::vector
                         LIMIT %s
                         """,
-                        (vector_literal, snapshot_id, repo_filter, element_types, vector_literal, top_k),
+                        (
+                            vector_literal,
+                            snapshot_id,
+                            repo_filter,
+                            element_types,
+                            vector_literal,
+                            top_k,
+                        ),
                     )
                 elif repo_filter:
                     cur.execute(
@@ -271,7 +276,13 @@ class PgRetrievalStore:
                         ORDER BY embedding <=> %s::vector
                         LIMIT %s
                         """,
-                        (vector_literal, snapshot_id, repo_filter, vector_literal, top_k),
+                        (
+                            vector_literal,
+                            snapshot_id,
+                            repo_filter,
+                            vector_literal,
+                            top_k,
+                        ),
                     )
                 elif element_types:
                     cur.execute(
@@ -283,7 +294,13 @@ class PgRetrievalStore:
                         ORDER BY embedding <=> %s::vector
                         LIMIT %s
                         """,
-                        (vector_literal, snapshot_id, element_types, vector_literal, top_k),
+                        (
+                            vector_literal,
+                            snapshot_id,
+                            element_types,
+                            vector_literal,
+                            top_k,
+                        ),
                     )
                 else:
                     cur.execute(
@@ -299,7 +316,9 @@ class PgRetrievalStore:
                 rows = cur.fetchall()
                 out = []
                 for row in rows:
-                    raw_meta = row.get("metadata_json") if isinstance(row, dict) else row[0]
+                    raw_meta = (
+                        row.get("metadata_json") if isinstance(row, dict) else row[0]
+                    )
                     raw_score = row.get("score") if isinstance(row, dict) else row[1]
                     if isinstance(raw_meta, dict):
                         meta = raw_meta
@@ -313,7 +332,9 @@ class PgRetrievalStore:
                     out.append((meta, float(raw_score or 0.0)))
                 return out
             except Exception as exc:
-                self.logger.debug("pgvector query failed, falling back to client-side cosine: %s", exc)
+                self.logger.debug(
+                    "pgvector query failed, falling back to client-side cosine: %s", exc
+                )
                 # Fallback: compute cosine with embedding_arr client-side.
                 if repo_filter and element_types:
                     cur.execute(
@@ -371,7 +392,9 @@ class PgRetrievalStore:
                     emb = np.array(emb_arr, dtype=np.float32)
                     denom = (float(np.linalg.norm(emb)) or 1.0) * q_norm
                     score = float(np.dot(emb, q) / denom)
-                    meta = meta_raw if isinstance(meta_raw, dict) else json.loads(meta_raw)
+                    meta = (
+                        meta_raw if isinstance(meta_raw, dict) else json.loads(meta_raw)
+                    )
                     if allowed_types:
                         meta_type = meta.get("type") or meta.get("element_type")
                         if meta_type not in allowed_types:
@@ -396,7 +419,13 @@ class PgRetrievalStore:
         if not self.enabled or not query.strip():
             return []
         try:
-            return self._keyword_search_inner(snapshot_id, query, repo_filter=repo_filter, element_types=element_types, top_k=top_k)
+            return self._keyword_search_inner(
+                snapshot_id,
+                query,
+                repo_filter=repo_filter,
+                element_types=element_types,
+                top_k=top_k,
+            )
         except Exception as exc:
             self.logger.warning("keyword_search failed: %s", exc)
             return []

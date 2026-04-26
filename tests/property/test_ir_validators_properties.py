@@ -17,7 +17,9 @@ from fastcode.semantic_ir import (
 
 # --- Local strategies (reused from conftest patterns) ---
 
-edge_type_st = st.sampled_from(["dependency", "call", "inheritance", "reference", "contain"])
+edge_type_st = st.sampled_from(
+    ["dependency", "call", "inheritance", "reference", "contain"]
+)
 
 
 def _snapshot_st(
@@ -147,6 +149,7 @@ def _edge(
 
 small_id = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=8)
 
+
 # Strategy for a well-formed snapshot (valid by construction)
 @st.composite
 def valid_snapshot_st(draw):
@@ -174,7 +177,6 @@ def valid_snapshot_st(draw):
 
 @pytest.mark.property
 class TestValidateSnapshotProperties:
-
     # --- HAPPY path: valid snapshots produce no errors ---
 
     @given(doc_id=small_id, path=st.builds(lambda x: f"{x}.py", small_id))
@@ -506,7 +508,9 @@ class TestValidateSnapshotProperties:
     )
     @settings(max_examples=20)
     @pytest.mark.edge
-    def test_occurrence_dangling_refs_always_flagged(self, bad_doc_id: str, bad_sym_id: str):
+    def test_occurrence_dangling_refs_always_flagged(
+        self, bad_doc_id: str, bad_sym_id: str
+    ):
         """EDGE: occurrences referencing nonexistent IDs always flagged."""
         doc = _doc("d1", "a.py")
         sym = _sym("sym:1", "a.py", "foo")
@@ -575,7 +579,9 @@ class TestValidateSnapshotProperties:
     )
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_all_edge_types_valid(self, doc_id: str, path: str, sym_id: str, edge_type: str):
+    def test_all_edge_types_valid(
+        self, doc_id: str, path: str, sym_id: str, edge_type: str
+    ):
         """HAPPY: all valid edge_types pass validation with correct node refs."""
         doc = _doc(doc_id, path)
         sym = _sym(sym_id, path, f"fn_{sym_id}")

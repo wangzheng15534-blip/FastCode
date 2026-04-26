@@ -15,12 +15,14 @@ from fastcode.doc_ingester import KeyDocIngester
 
 small_text = st.text(
     alphabet="abcdefghijklmnopqrstuvwxyz0123456789 ",
-    min_size=1, max_size=30,
+    min_size=1,
+    max_size=30,
 )
 
 
 class _FakeEmbedder:
     """Minimal embedder that returns fixed vectors."""
+
     def embed_text(self, text):
         return [0.1] * 8
 
@@ -39,7 +41,6 @@ def _make_ingester(**overrides):
 
 @pytest.mark.property
 class TestReadFileContent:
-
     @pytest.mark.happy
     def test_read_utf8_file(self):
         """HAPPY: reads UTF-8 file content."""
@@ -109,7 +110,6 @@ class TestReadFileContent:
 
 @pytest.mark.property
 class TestChunkSectionFallback:
-
     @pytest.mark.happy
     def test_short_text_single_piece(self):
         """HAPPY: short text produces single piece."""
@@ -148,7 +148,6 @@ class TestChunkSectionFallback:
 
 @pytest.mark.property
 class TestDetectDocType:
-
     @pytest.mark.happy
     def test_design_path(self):
         assert KeyDocIngester._detect_doc_type("docs/design/arch.md") == "design"
@@ -192,7 +191,6 @@ class TestDetectDocType:
 
 @pytest.mark.property
 class TestChunkId:
-
     @pytest.mark.happy
     def test_chunk_id_deterministic(self):
         """HAPPY: same inputs produce same chunk ID."""
@@ -213,7 +211,9 @@ class TestChunkId:
         # "docchunk:" (9) + 24 hex chars
         assert len(cid) == 33
 
-    @given(snap_id=small_text, path=small_text, idx=st.integers(min_value=0, max_value=100))
+    @given(
+        snap_id=small_text, path=small_text, idx=st.integers(min_value=0, max_value=100)
+    )
     @settings(max_examples=15)
     @pytest.mark.happy
     def test_chunk_id_unique_per_inputs(self, snap_id, path, idx):
@@ -225,7 +225,6 @@ class TestChunkId:
 
 @pytest.mark.property
 class TestEmbed:
-
     @pytest.mark.happy
     def test_embed_returns_vector(self):
         """HAPPY: _embed returns float list from embedder."""
@@ -237,9 +236,11 @@ class TestEmbed:
     @pytest.mark.edge
     def test_embed_returns_none_on_error(self):
         """EDGE: _embed returns None when embedder raises."""
+
         class BrokenEmbedder:
             def embed_text(self, text):
                 raise RuntimeError("broken")
+
         ingester = _make_ingester(embedder=BrokenEmbedder())
         result = ingester._embed("test")
         assert result is None
@@ -247,9 +248,11 @@ class TestEmbed:
     @pytest.mark.edge
     def test_embed_returns_none_on_none(self):
         """EDGE: _embed returns None when embedder returns None."""
+
         class NoneEmbedder:
             def embed_text(self, text):
                 return None
+
         ingester = _make_ingester(embedder=NoneEmbedder())
         result = ingester._embed("test")
         assert result is None
@@ -257,7 +260,6 @@ class TestEmbed:
 
 @pytest.mark.property
 class TestDocIngesterEdgeCases:
-
     @pytest.mark.edge
     def test_read_empty_file(self):
         """EDGE: empty file returns empty string."""

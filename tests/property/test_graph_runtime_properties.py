@@ -12,12 +12,14 @@ from fastcode.graph_runtime import LadybugGraphRuntime, _esc
 
 text_st = st.text(
     alphabet="abcdefghijklmnopqrstuvwxyz0123456789 _-./:@?&=%+",
-    min_size=0, max_size=50,
+    min_size=0,
+    max_size=50,
 )
 
 unsafe_text_st = st.text(
     alphabet="abcdefghijklmnopqrstuvwxyz\n\r\x00\"';\\",
-    min_size=0, max_size=30,
+    min_size=0,
+    max_size=30,
 )
 
 
@@ -26,7 +28,6 @@ unsafe_text_st = st.text(
 
 @pytest.mark.property
 class TestEscFunction:
-
     @given(val=text_st)
     @settings(max_examples=30)
     @pytest.mark.happy
@@ -123,7 +124,6 @@ class TestEscFunction:
 
 @pytest.mark.property
 class TestSanitizeAttachDsn:
-
     @pytest.mark.happy
     def test_valid_postgres_dsn(self):
         """HAPPY: valid postgres DSN passes sanitization."""

@@ -35,13 +35,26 @@ file_path_st = st.tuples(identifier, identifier).map(lambda t: f"{t[0]}/{t[1]}.p
 
 role_st = st.sampled_from(["definition", "reference", "import", "implementation"])
 
-edge_type_st = st.sampled_from(["dependency", "call", "inheritance", "reference", "contain"])
+edge_type_st = st.sampled_from(
+    ["dependency", "call", "inheritance", "reference", "contain"]
+)
 
 source_st = st.sampled_from(["ast", "fc_structure", "scip"])
-attachment_source_st = st.sampled_from(["fc_structure", "fc_embedding", "llm_annotation"])
+attachment_source_st = st.sampled_from(
+    ["fc_structure", "fc_embedding", "llm_annotation"]
+)
 
 kind_st = st.sampled_from(
-    ["function", "method", "class", "variable", "module", "interface", "enum", "constant"]
+    [
+        "function",
+        "method",
+        "class",
+        "variable",
+        "module",
+        "interface",
+        "enum",
+        "constant",
+    ]
 )
 
 language_st = st.sampled_from(
@@ -56,7 +69,8 @@ ir_document_st = st.builds(
     path=file_path_st,
     language=language_st,
     blob_oid=st.none() | st.text(alphabet="0123456789abcdef", min_size=40, max_size=40),
-    content_hash=st.none() | st.text(alphabet="0123456789abcdef", min_size=40, max_size=40),
+    content_hash=st.none()
+    | st.text(alphabet="0123456789abcdef", min_size=40, max_size=40),
     source_set=st.sets(source_st, max_size=2),
 )
 
@@ -142,7 +156,8 @@ def snapshot_st(
         repo_name=identifier,
         snapshot_id=st.builds(lambda x: f"snap:{x}", identifier),
         branch=st.none() | st.just("main"),
-        commit_id=st.none() | st.text(alphabet="0123456789abcdef", min_size=7, max_size=40),
+        commit_id=st.none()
+        | st.text(alphabet="0123456789abcdef", min_size=7, max_size=40),
         tree_id=st.none() | identifier,
         documents=st.lists(ir_document_st, max_size=max_docs),
         symbols=st.lists(ir_symbol_st, max_size=max_syms),
@@ -151,7 +166,9 @@ def snapshot_st(
         attachments=st.lists(ir_attachment_st, max_size=4),
         metadata=st.dictionaries(
             st.sampled_from(["source_modes", "version", "tool"]),
-            st.one_of(st.just(["ast"]), st.just(["scip"]), st.just(1), st.just("fastcode")),
+            st.one_of(
+                st.just(["ast"]), st.just(["scip"]), st.just(1), st.just("fastcode")
+            ),
         ),
     )
 
@@ -176,44 +193,53 @@ def connected_snapshot_st(
     for i in range(nd):
         path = f"dir{i % 3}/file{i}.py"
         doc_id = f"doc:{draw(identifier)}"
-        docs.append(IRDocument(
-            doc_id=doc_id, path=path,
-            language=draw(language_st),
-            source_set={"fc_structure"},
-        ))
+        docs.append(
+            IRDocument(
+                doc_id=doc_id,
+                path=path,
+                language=draw(language_st),
+                source_set={"fc_structure"},
+            )
+        )
 
         for j in range(ns):
             sym_id = f"sym:{draw(identifier)}"
-            symbols.append(IRSymbol(
-                symbol_id=sym_id,
-                external_symbol_id=None,
-                path=path,
-                display_name=f"func_{j}",
-                kind=draw(kind_st),
-                language=docs[-1].language,
-                source_priority=50,
-                source_set={"fc_structure"},
-                start_line=draw(st.integers(min_value=1, max_value=500)),
-            ))
-            occurrences.append(IROccurrence(
-                occurrence_id=f"occ:{draw(identifier)}",
-                symbol_id=sym_id,
-                doc_id=doc_id,
-                role="definition",
-                start_line=symbols[-1].start_line or 1,
-                start_col=0,
-                end_line=symbols[-1].start_line or 1,
-                end_col=0,
-                source="fc_structure",
-            ))
-            edges.append(IREdge(
-                edge_id=f"edge:{draw(identifier)}",
-                src_id=doc_id,
-                dst_id=sym_id,
-                edge_type="contain",
-                source="fc_structure",
-                confidence="resolved",
-            ))
+            symbols.append(
+                IRSymbol(
+                    symbol_id=sym_id,
+                    external_symbol_id=None,
+                    path=path,
+                    display_name=f"func_{j}",
+                    kind=draw(kind_st),
+                    language=docs[-1].language,
+                    source_priority=50,
+                    source_set={"fc_structure"},
+                    start_line=draw(st.integers(min_value=1, max_value=500)),
+                )
+            )
+            occurrences.append(
+                IROccurrence(
+                    occurrence_id=f"occ:{draw(identifier)}",
+                    symbol_id=sym_id,
+                    doc_id=doc_id,
+                    role="definition",
+                    start_line=symbols[-1].start_line or 1,
+                    start_col=0,
+                    end_line=symbols[-1].start_line or 1,
+                    end_col=0,
+                    source="fc_structure",
+                )
+            )
+            edges.append(
+                IREdge(
+                    edge_id=f"edge:{draw(identifier)}",
+                    src_id=doc_id,
+                    dst_id=sym_id,
+                    edge_type="contain",
+                    source="fc_structure",
+                    confidence="resolved",
+                )
+            )
 
     return IRSnapshot(
         repo_name=repo,
@@ -260,7 +286,6 @@ metadata_st = st.dictionaries(
 
 @pytest.mark.property
 class TestSnapshotSaveLoadProperties:
-
     @given(snap=snapshot_st())
     @settings(max_examples=30)
     @pytest.mark.happy
@@ -329,16 +354,16 @@ class TestSnapshotSaveLoadProperties:
         store.save_snapshot(snap)
         loaded = store.load_snapshot(snap.snapshot_id)
         assert loaded is not None
-        for orig, rest in zip(snap.documents, loaded.documents):
+        for orig, rest in zip(snap.documents, loaded.documents, strict=True):
             assert orig.doc_id == rest.doc_id
             assert orig.path == rest.path
             assert orig.language == rest.language
             assert orig.source_set == rest.source_set
-        for orig, rest in zip(snap.symbols, loaded.symbols):
+        for orig, rest in zip(snap.symbols, loaded.symbols, strict=True):
             assert orig.symbol_id == rest.symbol_id
             assert orig.display_name == rest.display_name
             assert orig.kind == rest.kind
-        for orig, rest in zip(snap.attachments, loaded.attachments):
+        for orig, rest in zip(snap.attachments, loaded.attachments, strict=True):
             assert orig.attachment_id == rest.attachment_id
             assert orig.payload == rest.payload
 
@@ -375,7 +400,9 @@ class TestSnapshotSaveLoadProperties:
     @given(repo=identifier, branch=identifier)
     @settings(max_examples=15)
     @pytest.mark.edge
-    def test_resolve_snapshot_for_ref_missing_returns_none(self, repo: str, branch: str):
+    def test_resolve_snapshot_for_ref_missing_returns_none(
+        self, repo: str, branch: str
+    ):
         """EDGE: resolve_snapshot_for_ref returns None for unknown ref."""
         store = _make_store()
         assert store.resolve_snapshot_for_ref(repo, branch) is None
@@ -397,7 +424,6 @@ class TestSnapshotSaveLoadProperties:
 
 @pytest.mark.property
 class TestSnapshotStoreQueries:
-
     @given(snap=snapshot_st())
     @settings(max_examples=20)
     @pytest.mark.happy
@@ -447,10 +473,13 @@ class TestSnapshotStoreQueries:
     def test_different_repos_independent(self, snap1: IRSnapshot, snap2: IRSnapshot):
         """EDGE: snapshots from different repos queried independently."""
         from hypothesis import assume
+
         assume(snap1.snapshot_id != snap2.snapshot_id)
         # Force different repo names to test isolation
         snap2 = IRSnapshot(
-            repo_name=snap2.repo_name if snap2.repo_name != snap1.repo_name else snap2.repo_name + "_b",
+            repo_name=snap2.repo_name
+            if snap2.repo_name != snap1.repo_name
+            else snap2.repo_name + "_b",
             snapshot_id=snap2.snapshot_id,
             branch=snap2.branch,
             commit_id=snap2.commit_id,
@@ -478,7 +507,9 @@ class TestSnapshotStoreQueries:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_update_snapshot_metadata(self, snap: IRSnapshot, metadata1: dict, metadata2: dict):
+    def test_update_snapshot_metadata(
+        self, snap: IRSnapshot, metadata1: dict, metadata2: dict
+    ):
         """HAPPY: update_snapshot_metadata overwrites stored metadata."""
         store = _make_store()
         store.save_snapshot(snap, metadata=metadata1)
@@ -513,7 +544,6 @@ class TestSnapshotStoreQueries:
 
 @pytest.mark.property
 class TestScipArtifactRefProperties:
-
     @given(
         snapshot_id=identifier,
         indexer_name=identifier,
@@ -524,7 +554,12 @@ class TestScipArtifactRefProperties:
     @settings(max_examples=20)
     @pytest.mark.happy
     def test_save_and_get_scip_artifact_ref(
-        self, snapshot_id: str, indexer_name: str, indexer_version, artifact_path: str, checksum: str
+        self,
+        snapshot_id: str,
+        indexer_name: str,
+        indexer_version,
+        artifact_path: str,
+        checksum: str,
     ):
         """HAPPY: save_scip_artifact_ref then get_scip_artifact_ref roundtrip."""
         store = _make_store()
@@ -572,7 +607,7 @@ class TestScipArtifactRefProperties:
     def test_save_scip_artifact_ref_upsert(self, snapshot_id: str):
         """HAPPY: saving SCIP artifact ref twice updates the record."""
         store = _make_store()
-        r1 = store.save_scip_artifact_ref(snapshot_id, indexer_name="v1")
+        store.save_scip_artifact_ref(snapshot_id, indexer_name="v1")
         r2 = store.save_scip_artifact_ref(snapshot_id, indexer_name="v2")
         assert r2["indexer_name"] == "v2"
         loaded = store.get_scip_artifact_ref(snapshot_id)
@@ -584,7 +619,6 @@ class TestScipArtifactRefProperties:
 
 @pytest.mark.property
 class TestSnapshotStoreRelationalFacts:
-
     @given(snap=snapshot_st())
     @settings(max_examples=15)
     @pytest.mark.edge
@@ -608,7 +642,6 @@ class TestSnapshotStoreRelationalFacts:
 
 @pytest.mark.property
 class TestSnapshotStoreStaging:
-
     @given(snap=snapshot_st())
     @settings(max_examples=15)
     @pytest.mark.happy
@@ -645,7 +678,6 @@ class TestSnapshotStoreStaging:
 
 @pytest.mark.property
 class TestSnapshotStoreLockProperties:
-
     @given(lock_name=identifier, owner_id=identifier)
     @settings(max_examples=15)
     @pytest.mark.happy
@@ -683,7 +715,9 @@ class TestSnapshotStoreLockProperties:
     @given(lock_name=identifier, owner_id=identifier)
     @settings(max_examples=15)
     @pytest.mark.edge
-    def test_lock_acquire_validate_release_sequence(self, lock_name: str, owner_id: str):
+    def test_lock_acquire_validate_release_sequence(
+        self, lock_name: str, owner_id: str
+    ):
         """EDGE: acquire, validate, release sequence completes without error on SQLite."""
         store = _make_store()
         token = store.acquire_lock(lock_name, owner_id)
@@ -697,7 +731,6 @@ class TestSnapshotStoreLockProperties:
 
 @pytest.mark.property
 class TestSnapshotStoreRedoProperties:
-
     @given(
         task_type=identifier,
         payload=st.dictionaries(identifier, st.integers(), max_size=3),
@@ -753,7 +786,9 @@ class TestSnapshotStoreRedoProperties:
     def test_mark_redo_task_failed_sqlite_noop(self):
         """EDGE: mark_redo_task_failed is no-op on SQLite (returns None, no error)."""
         store = _make_store()
-        store.mark_redo_task_failed(task_id="redo_test123", error="fail", max_attempts=3)
+        store.mark_redo_task_failed(
+            task_id="redo_test123", error="fail", max_attempts=3
+        )
 
 
 # --- TestIRGraphsRoundtrip ---
@@ -761,7 +796,6 @@ class TestSnapshotStoreRedoProperties:
 
 @pytest.mark.property
 class TestIRGraphsRoundtrip:
-
     @given(
         snap=snapshot_st(),
         graph_data=st.dictionaries(
@@ -810,7 +844,11 @@ class TestIRGraphsRoundtrip:
 
     @given(
         snap=snapshot_st(),
-        graph_obj=st.builds(lambda a, b: {a: [b, b + 1]}, identifier, st.integers(min_value=0, max_value=50)),
+        graph_obj=st.builds(
+            lambda a, b: {a: [b, b + 1]},
+            identifier,
+            st.integers(min_value=0, max_value=50),
+        ),
     )
     @settings(max_examples=15)
     @pytest.mark.happy

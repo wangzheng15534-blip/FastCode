@@ -35,7 +35,9 @@ identifier = st.text(
 # --- Strategies ---
 
 _repo_name_st = st.text(
-    alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=12,
+    alphabet="abcdefghijklmnopqrstuvwxyz",
+    min_size=1,
+    max_size=12,
 )
 _commit_st = st.text(alphabet="0123456789abcdef", min_size=7, max_size=40)
 _branch_st = st.sampled_from(["main", "dev", "feature", "release"])
@@ -56,6 +58,7 @@ _unicode_text = st.text(
 
 # --- Helpers ---
 
+
 def _make_store() -> SnapshotStore:
     tmpdir = tempfile.mkdtemp(prefix="ss_db_prop_")
     return SnapshotStore(tmpdir)
@@ -75,32 +78,52 @@ def _build_snapshot(
     edges = []
     for i in range(n_docs):
         doc_id = f"doc:f{i}"
-        docs.append(IRDocument(
-            doc_id=doc_id, path=f"src/f{i}.py",
-            language="python", source_set={"ast"},
-        ))
+        docs.append(
+            IRDocument(
+                doc_id=doc_id,
+                path=f"src/f{i}.py",
+                language="python",
+                source_set={"ast"},
+            )
+        )
         for j in range(n_symbols):
             sym_id = f"sym:f{i}_s{j}"
-            syms.append(IRSymbol(
-                symbol_id=sym_id, external_symbol_id=None,
-                path=f"src/f{i}.py",
-                display_name=f"fn_{j}", kind="function",
-                language="python", source_priority=10,
-                source_set={"ast"}, start_line=j + 1,
-            ))
-            occs.append(IROccurrence(
-                occurrence_id=f"occ:f{i}_s{j}",
-                symbol_id=sym_id, doc_id=doc_id,
-                role="definition", start_line=j + 1,
-                start_col=0, end_line=j + 1, end_col=0,
-                source="ast",
-            ))
-            edges.append(IREdge(
-                edge_id=f"edge:contain:{doc_id}:{sym_id}",
-                src_id=doc_id, dst_id=sym_id,
-                edge_type="contain", source="ast",
-                confidence="resolved",
-            ))
+            syms.append(
+                IRSymbol(
+                    symbol_id=sym_id,
+                    external_symbol_id=None,
+                    path=f"src/f{i}.py",
+                    display_name=f"fn_{j}",
+                    kind="function",
+                    language="python",
+                    source_priority=10,
+                    source_set={"ast"},
+                    start_line=j + 1,
+                )
+            )
+            occs.append(
+                IROccurrence(
+                    occurrence_id=f"occ:f{i}_s{j}",
+                    symbol_id=sym_id,
+                    doc_id=doc_id,
+                    role="definition",
+                    start_line=j + 1,
+                    start_col=0,
+                    end_line=j + 1,
+                    end_col=0,
+                    source="ast",
+                )
+            )
+            edges.append(
+                IREdge(
+                    edge_id=f"edge:contain:{doc_id}:{sym_id}",
+                    src_id=doc_id,
+                    dst_id=sym_id,
+                    edge_type="contain",
+                    source="ast",
+                    confidence="resolved",
+                )
+            )
     return IRSnapshot(
         repo_name=repo,
         snapshot_id=f"snap:{repo}:{commit}",
@@ -119,7 +142,6 @@ def _build_snapshot(
 
 @pytest.mark.property
 class TestSchemaMigration:
-
     @pytest.mark.happy
     def test_init_db_idempotent(self):
         """HAPPY: calling _init_db twice does not raise."""
@@ -168,7 +190,6 @@ class TestSchemaMigration:
 
 @pytest.mark.property
 class TestSnapshotsTableConstraints:
-
     @given(
         repo=_repo_name_st,
         commit=_commit_st,
@@ -221,7 +242,6 @@ class TestSnapshotsTableConstraints:
 
 @pytest.mark.property
 class TestSnapshotRefsConstraints:
-
     @given(
         repo=_repo_name_st,
         commit=_commit_st,
@@ -271,7 +291,6 @@ class TestSnapshotRefsConstraints:
 
 @pytest.mark.property
 class TestScipArtifactsTable:
-
     @given(
         repo=_repo_name_st,
         commit=_commit_st,
@@ -327,7 +346,6 @@ class TestScipArtifactsTable:
 
 @pytest.mark.property
 class TestMultipleSnapshotsSameRepo:
-
     @given(
         repo=_repo_name_st,
         commits=st.lists(_commit_st, min_size=2, max_size=4, unique=True),
@@ -369,7 +387,6 @@ class TestMultipleSnapshotsSameRepo:
 
 @pytest.mark.property
 class TestLargeMetadataRoundtrip:
-
     @given(
         repo=_repo_name_st,
         commit=_commit_st,
@@ -394,7 +411,6 @@ class TestLargeMetadataRoundtrip:
 
 @pytest.mark.property
 class TestUnicodeMetadata:
-
     @given(
         repo=_repo_name_st,
         commit=_commit_st,
@@ -404,7 +420,9 @@ class TestUnicodeMetadata:
     )
     @settings(max_examples=15)
     @pytest.mark.edge
-    def test_unicode_metadata_preserved(self, repo, commit, branch, unicode_key, unicode_val):
+    def test_unicode_metadata_preserved(
+        self, repo, commit, branch, unicode_key, unicode_val
+    ):
         """EDGE: Unicode characters in metadata survive save/load."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
@@ -419,7 +437,6 @@ class TestUnicodeMetadata:
 
 @pytest.mark.property
 class TestIRGraphsPickleRoundtrip:
-
     @given(
         repo=_repo_name_st,
         commit=_commit_st,
@@ -480,7 +497,6 @@ class TestIRGraphsPickleRoundtrip:
 
 @pytest.mark.property
 class TestSnapshotWithNoneFields:
-
     @pytest.mark.edge
     def test_snapshot_all_optional_fields_none(self):
         """EDGE: snapshot with all optional fields None still works."""
@@ -521,7 +537,6 @@ class TestSnapshotWithNoneFields:
 
 @pytest.mark.property
 class TestFindLatestBehavior:
-
     @given(
         repo=_repo_name_st,
         commit=_commit_st,
@@ -548,7 +563,9 @@ class TestFindLatestBehavior:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_find_by_repo_commit_distinguishes_commits(self, repo, commit1, commit2, branch):
+    def test_find_by_repo_commit_distinguishes_commits(
+        self, repo, commit1, commit2, branch
+    ):
         """HAPPY: different commits for same repo return distinct records."""
         assume(commit1 != commit2)
         store = _make_store()
@@ -572,7 +589,9 @@ class TestFindLatestBehavior:
     )
     @settings(max_examples=10)
     @pytest.mark.happy
-    def test_resolve_snapshot_for_ref_distinguishes_branches(self, repo, commit1, commit2, branch1, branch2):
+    def test_resolve_snapshot_for_ref_distinguishes_branches(
+        self, repo, commit1, commit2, branch1, branch2
+    ):
         """HAPPY: resolve_snapshot_for_ref distinguishes branches."""
         assume(branch1 != branch2)
         assume(commit1 != commit2)
@@ -592,7 +611,6 @@ class TestFindLatestBehavior:
 
 @pytest.mark.property
 class TestArtifactKeyGeneration:
-
     @given(
         snap_id=st.builds(lambda x: f"snap:{x}", identifier),
     )
@@ -623,7 +641,6 @@ class TestArtifactKeyGeneration:
 
 @pytest.mark.property
 class TestSnapshotDir:
-
     @given(
         snap_id=st.builds(lambda x: f"snap:{x}", identifier),
     )
@@ -634,6 +651,7 @@ class TestSnapshotDir:
         store = _make_store()
         d = store.snapshot_dir(snap_id)
         import os
+
         assert os.path.isdir(d)
 
     @given(
@@ -651,7 +669,6 @@ class TestSnapshotDir:
 
 @pytest.mark.property
 class TestFindbyArtifactKey:
-
     @given(
         repo=_repo_name_st,
         commit=_commit_st,
@@ -679,7 +696,6 @@ class TestFindbyArtifactKey:
 
 @pytest.mark.property
 class TestSnapshotRecordFields:
-
     @given(
         repo=_repo_name_st,
         commit=_commit_st,
@@ -696,8 +712,14 @@ class TestSnapshotRecordFields:
         record = store.get_snapshot_record(snap.snapshot_id)
         assert record is not None
         expected_keys = {
-            "snapshot_id", "repo_name", "branch", "commit_id",
-            "tree_id", "artifact_key", "ir_path", "created_at",
+            "snapshot_id",
+            "repo_name",
+            "branch",
+            "commit_id",
+            "tree_id",
+            "artifact_key",
+            "ir_path",
+            "created_at",
             "metadata_json",
         }
         assert expected_keys.issubset(set(record.keys()))
@@ -712,6 +734,7 @@ class TestSnapshotRecordFields:
     def test_ir_path_points_to_real_file(self, repo, commit, branch):
         """HAPPY: ir_path in snapshot record points to an existing file."""
         import os
+
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
         store.save_snapshot(snap)
@@ -722,7 +745,6 @@ class TestSnapshotRecordFields:
 
 @pytest.mark.property
 class TestEdgeCases:
-
     @pytest.mark.edge
     def test_save_load_snapshot_preserves_documents(self):
         """EDGE: documents survive full save/load cycle."""

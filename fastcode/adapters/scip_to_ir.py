@@ -26,7 +26,9 @@ def _normalize_kind(kind: str | None) -> str:
     }.get(kind_value, kind_value)
 
 
-def _normalize_range(raw: list[int | None] | tuple[int | None, ...] | None) -> tuple[int, int, int, int]:
+def _normalize_range(
+    raw: list[int | None] | tuple[int | None, ...] | None,
+) -> tuple[int, int, int, int]:
     values = list(raw or [])[:4]
     while len(values) < 4:
         values.append(None)
@@ -42,7 +44,11 @@ def _qualified_name(raw_symbol: dict[str, Any]) -> str | None:
 
 
 def _symbol_display_name(raw_symbol: dict[str, Any], external_symbol: str) -> str:
-    return str(raw_symbol.get("name") or external_symbol.rsplit("/", maxsplit=1)[-1] or external_symbol)
+    return str(
+        raw_symbol.get("name")
+        or external_symbol.rsplit("/", maxsplit=1)[-1]
+        or external_symbol
+    )
 
 
 def build_ir_from_scip(
@@ -102,7 +108,9 @@ def build_ir_from_scip(
             external_symbol = str(raw_symbol.get("symbol") or "")
             if not external_symbol:
                 continue
-            start_line, start_col, end_line, end_col = _normalize_range(raw_symbol.get("range"))
+            start_line, start_col, end_line, end_col = _normalize_range(
+                raw_symbol.get("range")
+            )
             unit_id = f"scip:{snapshot_id}:{external_symbol}"
             unit = IRCodeUnit(
                 unit_id=unit_id,
@@ -128,7 +136,9 @@ def build_ir_from_scip(
                     "indexer_name": indexer_name,
                     "indexer_version": indexer_version,
                     "documentation": raw_symbol.get("documentation"),
-                    "signature_documentation": raw_symbol.get("signature_documentation"),
+                    "signature_documentation": raw_symbol.get(
+                        "signature_documentation"
+                    ),
                     "relationships": raw_symbol.get("relationships", []),
                 },
             )
@@ -136,7 +146,9 @@ def build_ir_from_scip(
             symbol_units[(path, external_symbol)] = unit
             supports.append(
                 IRUnitSupport(
-                    support_id=_hid("support", f"{snapshot_id}:{path}:{external_symbol}:symbol"),
+                    support_id=_hid(
+                        "support", f"{snapshot_id}:{path}:{external_symbol}:symbol"
+                    ),
                     unit_id=unit.unit_id,
                     source=SCIP_SOURCE,
                     support_kind="anchor",
@@ -161,7 +173,9 @@ def build_ir_from_scip(
             )
             relations.append(
                 IRRelation(
-                    relation_id=_hid("rel", f"contain:{file_unit.unit_id}:{unit.unit_id}"),
+                    relation_id=_hid(
+                        "rel", f"contain:{file_unit.unit_id}:{unit.unit_id}"
+                    ),
                     src_unit_id=file_unit.unit_id,
                     dst_unit_id=unit.unit_id,
                     relation_type="contain",
@@ -183,7 +197,9 @@ def build_ir_from_scip(
                 continue
             unit = symbol_units.get((path, external_symbol))
             unit_id = unit.unit_id if unit else f"scip:{snapshot_id}:{external_symbol}"
-            start_line, start_col, end_line, end_col = _normalize_range(raw_occurrence.get("range"))
+            start_line, start_col, end_line, end_col = _normalize_range(
+                raw_occurrence.get("range")
+            )
             role = raw_occurrence.get("role")
             role = str(role) if role is not None else "reference"
             supports.append(

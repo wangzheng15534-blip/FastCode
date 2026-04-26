@@ -58,12 +58,38 @@ alias_metadata_st = st.dictionaries(
 
 
 # Symbol strategy with controlled fields
+def _mk_sym(sid, name, qname, path, meta):
+    return _sym(sid, name, qname, path, meta)
+
+
+def _mk_snap(sid, syms):
+    return _snapshot(sid, syms)
+
+
+def _mk_sym_id(x):
+    return f"sym:{x}"
+
+
+def _mk_qname(x):
+    return f"pkg.{x}"
+
+
+def _mk_path(a, b):
+    return f"{a}/{b}.py"
+
+
+def _mk_snap_id(x):
+    return f"snap:{x}"
+
+
 symbol_st = st.builds(
-    lambda sid, name, qname, path, meta: _sym(sid, name, qname, path, meta),
-    sid=st.builds(lambda x: f"sym:{x}", identifier),
+    _mk_sym,
+    sid=st.builds(_mk_sym_id, identifier),
     name=st.one_of(st.just(""), identifier),
-    qname=st.one_of(st.none(), st.builds(lambda x: f"pkg.{x}", identifier)),
-    path=st.one_of(st.just(""), st.builds(lambda a, b: f"{a}/{b}.py", identifier, identifier)),
+    qname=st.one_of(st.none(), st.builds(_mk_qname, identifier)),
+    path=st.one_of(
+        st.just(""), st.builds(_mk_path, identifier, identifier)
+    ),
     meta=st.one_of(
         st.none(),
         st.dictionaries(st.text(min_size=1), st.integers()),
@@ -73,8 +99,8 @@ symbol_st = st.builds(
 
 
 snapshot_st = st.builds(
-    lambda sid, syms: _snapshot(sid, syms),
-    sid=st.builds(lambda x: f"snap:{x}", identifier),
+    _mk_snap,
+    sid=st.builds(_mk_snap_id, identifier),
     syms=st.lists(symbol_st, max_size=10),
 )
 
@@ -86,9 +112,12 @@ snapshot_st = st.builds(
 def test_register_snapshot_basic():
     """Registering a snapshot stores it so has_snapshot returns True."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:basic", [
-        _sym("sym:foo", display_name="foo", path="a.py"),
-    ])
+    snap = _snapshot(
+        "snap:basic",
+        [
+            _sym("sym:foo", display_name="foo", path="a.py"),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.has_snapshot("snap:basic")
 
@@ -97,9 +126,12 @@ def test_register_snapshot_basic():
 def test_register_snapshot_canonical_by_alias_self():
     """Each symbol's own ID is registered as a self-alias."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:self", [
-        _sym("sym:alpha", display_name="alpha"),
-    ])
+    snap = _snapshot(
+        "snap:self",
+        [
+            _sym("sym:alpha", display_name="alpha"),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.canonicalize_symbol("snap:self", "sym:alpha") == "sym:alpha"
 
@@ -108,9 +140,12 @@ def test_register_snapshot_canonical_by_alias_self():
 def test_register_snapshot_display_name_indexed():
     """display_name is indexed in symbols_by_name."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:dn", [
-        _sym("sym:myfunc", display_name="myfunc"),
-    ])
+    snap = _snapshot(
+        "snap:dn",
+        [
+            _sym("sym:myfunc", display_name="myfunc"),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.resolve_symbol("snap:dn", name="myfunc") == "sym:myfunc"
 
@@ -119,9 +154,12 @@ def test_register_snapshot_display_name_indexed():
 def test_register_snapshot_qualified_name_indexed():
     """qualified_name is indexed in symbols_by_name."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:qn", [
-        _sym("sym:myfunc", display_name="myfunc", qualified_name="pkg.myfunc"),
-    ])
+    snap = _snapshot(
+        "snap:qn",
+        [
+            _sym("sym:myfunc", display_name="myfunc", qualified_name="pkg.myfunc"),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.resolve_symbol("snap:qn", name="pkg.myfunc") == "sym:myfunc"
 
@@ -130,9 +168,12 @@ def test_register_snapshot_qualified_name_indexed():
 def test_register_snapshot_path_indexed():
     """symbol path is indexed in symbols_by_path."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:path", [
-        _sym("sym:cls", display_name="cls", path="src/main.py"),
-    ])
+    snap = _snapshot(
+        "snap:path",
+        [
+            _sym("sym:cls", display_name="cls", path="src/main.py"),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.resolve_symbol("snap:path", path="src/main.py") == "sym:cls"
 
@@ -141,30 +182,40 @@ def test_register_snapshot_path_indexed():
 def test_register_snapshot_aliases_from_metadata():
     """Aliases in symbol metadata are registered."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:aliases", [
-        _sym(
-            "sym:real",
-            display_name="real",
-            metadata={"aliases": ["alias1", "alias2"]},
-        ),
-    ])
+    snap = _snapshot(
+        "snap:aliases",
+        [
+            _sym(
+                "sym:real",
+                display_name="real",
+                metadata={"aliases": ["alias1", "alias2"]},
+            ),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.canonicalize_symbol("snap:aliases", "alias1") == "sym:real"
     assert idx.canonicalize_symbol("snap:aliases", "alias2") == "sym:real"
-    assert idx.get_aliases("snap:aliases", "sym:real") == ["alias1", "alias2", "sym:real"]
+    assert idx.get_aliases("snap:aliases", "sym:real") == [
+        "alias1",
+        "alias2",
+        "sym:real",
+    ]
 
 
 @pytest.mark.happy
 def test_get_aliases_returns_sorted():
     """get_aliases returns a sorted list."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:sorted", [
-        _sym(
-            "sym:zeta",
-            display_name="zeta",
-            metadata={"aliases": ["beta_alias", "alpha_alias"]},
-        ),
-    ])
+    snap = _snapshot(
+        "snap:sorted",
+        [
+            _sym(
+                "sym:zeta",
+                display_name="zeta",
+                metadata={"aliases": ["beta_alias", "alpha_alias"]},
+            ),
+        ],
+    )
     idx.register_snapshot(snap)
     aliases = idx.get_aliases("snap:sorted", "sym:zeta")
     assert aliases == sorted(aliases)
@@ -174,9 +225,12 @@ def test_get_aliases_returns_sorted():
 def test_resolve_symbol_by_symbol_id():
     """resolve_symbol with symbol_id canonicalizes via alias map."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:resolve_id", [
-        _sym("sym:orig", display_name="orig", metadata={"aliases": ["aka"]}),
-    ])
+    snap = _snapshot(
+        "snap:resolve_id",
+        [
+            _sym("sym:orig", display_name="orig", metadata={"aliases": ["aka"]}),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.resolve_symbol("snap:resolve_id", symbol_id="aka") == "sym:orig"
 
@@ -185,9 +239,12 @@ def test_resolve_symbol_by_symbol_id():
 def test_resolve_symbol_by_name():
     """resolve_symbol with name finds via symbols_by_name."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:resolve_name", [
-        _sym("sym:foo", display_name="foo"),
-    ])
+    snap = _snapshot(
+        "snap:resolve_name",
+        [
+            _sym("sym:foo", display_name="foo"),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.resolve_symbol("snap:resolve_name", name="foo") == "sym:foo"
 
@@ -196,9 +253,12 @@ def test_resolve_symbol_by_name():
 def test_resolve_symbol_by_path():
     """resolve_symbol with path finds via symbols_by_path."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:resolve_path", [
-        _sym("sym:bar", display_name="bar", path="x/y.py"),
-    ])
+    snap = _snapshot(
+        "snap:resolve_path",
+        [
+            _sym("sym:bar", display_name="bar", path="x/y.py"),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.resolve_symbol("snap:resolve_path", path="x/y.py") == "sym:bar"
 
@@ -207,13 +267,20 @@ def test_resolve_symbol_by_path():
 def test_resolve_symbol_priority_symbol_id_over_name():
     """symbol_id is checked before name."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:prio", [
-        _sym("sym:first", display_name="first", metadata={"aliases": ["shared_name"]}),
-        _sym("sym:second", display_name="shared_name"),
-    ])
+    snap = _snapshot(
+        "snap:prio",
+        [
+            _sym(
+                "sym:first", display_name="first", metadata={"aliases": ["shared_name"]}
+            ),
+            _sym("sym:second", display_name="shared_name"),
+        ],
+    )
     idx.register_snapshot(snap)
     # symbol_id lookup finds via alias map
-    result = idx.resolve_symbol("snap:prio", symbol_id="shared_name", name="shared_name")
+    result = idx.resolve_symbol(
+        "snap:prio", symbol_id="shared_name", name="shared_name"
+    )
     assert result == "sym:first"
 
 
@@ -221,10 +288,13 @@ def test_resolve_symbol_priority_symbol_id_over_name():
 def test_multiple_symbols_same_path():
     """Multiple symbols on the same path are all indexed."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:mpath", [
-        _sym("sym:a", display_name="a", path="shared.py"),
-        _sym("sym:b", display_name="b", path="shared.py"),
-    ])
+    snap = _snapshot(
+        "snap:mpath",
+        [
+            _sym("sym:a", display_name="a", path="shared.py"),
+            _sym("sym:b", display_name="b", path="shared.py"),
+        ],
+    )
     idx.register_snapshot(snap)
     result = idx.resolve_symbol("snap:mpath", path="shared.py")
     assert result in ("sym:a", "sym:b")
@@ -327,9 +397,12 @@ def test_register_snapshot_empty_symbols():
 def test_register_snapshot_empty_alias_skipped():
     """Empty-string aliases are skipped during registration."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:empty_alias", [
-        _sym("sym:x", display_name="x", metadata={"aliases": ["", "valid_alias"]}),
-    ])
+    snap = _snapshot(
+        "snap:empty_alias",
+        [
+            _sym("sym:x", display_name="x", metadata={"aliases": ["", "valid_alias"]}),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.canonicalize_symbol("snap:empty_alias", "") is None
     assert idx.canonicalize_symbol("snap:empty_alias", "valid_alias") == "sym:x"
@@ -339,9 +412,12 @@ def test_register_snapshot_empty_alias_skipped():
 def test_register_snapshot_none_alias_skipped():
     """None values in aliases list are skipped."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:none_alias", [
-        _sym("sym:y", display_name="y", metadata={"aliases": [None, "real_alias"]}),
-    ])
+    snap = _snapshot(
+        "snap:none_alias",
+        [
+            _sym("sym:y", display_name="y", metadata={"aliases": [None, "real_alias"]}),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.canonicalize_symbol("snap:none_alias", "real_alias") == "sym:y"
 
@@ -350,9 +426,12 @@ def test_register_snapshot_none_alias_skipped():
 def test_register_snapshot_none_metadata():
     """Symbol with metadata=None is handled gracefully."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:null_meta", [
-        _sym("sym:z", display_name="z", metadata=None),
-    ])
+    snap = _snapshot(
+        "snap:null_meta",
+        [
+            _sym("sym:z", display_name="z", metadata=None),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.canonicalize_symbol("snap:null_meta", "sym:z") == "sym:z"
 
@@ -361,9 +440,12 @@ def test_register_snapshot_none_metadata():
 def test_register_snapshot_empty_display_name_not_indexed():
     """Empty display_name does not create an entry in symbols_by_name."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:empty_dn", [
-        _sym("sym:empty", display_name="", qualified_name=None),
-    ])
+    snap = _snapshot(
+        "snap:empty_dn",
+        [
+            _sym("sym:empty", display_name="", qualified_name=None),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.resolve_symbol("snap:empty_dn", name="") is None
 
@@ -372,9 +454,12 @@ def test_register_snapshot_empty_display_name_not_indexed():
 def test_register_snapshot_empty_path_not_indexed():
     """Empty path does not create an entry in symbols_by_path."""
     idx = SnapshotSymbolIndex()
-    snap = _snapshot("snap:empty_path", [
-        _sym("sym:nopath", display_name="nopath", path=""),
-    ])
+    snap = _snapshot(
+        "snap:empty_path",
+        [
+            _sym("sym:nopath", display_name="nopath", path=""),
+        ],
+    )
     idx.register_snapshot(snap)
     assert idx.resolve_symbol("snap:empty_path", path="") is None
 
@@ -481,7 +566,9 @@ def test_canonicalize_wrong_snapshot_returns_none(snap: IRSnapshot):
     """canonicalize_symbol with wrong snapshot_id returns None."""
     idx = SnapshotSymbolIndex()
     idx.register_snapshot(snap)
-    result = idx.canonicalize_symbol("snap:wrong_snapshot", snap.symbols[0].symbol_id if snap.symbols else "sym:x")
+    result = idx.canonicalize_symbol(
+        "snap:wrong_snapshot", snap.symbols[0].symbol_id if snap.symbols else "sym:x"
+    )
     assert result is None
 
 

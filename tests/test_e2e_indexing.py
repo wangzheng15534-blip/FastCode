@@ -13,6 +13,7 @@ Requirements:
 Mark with pytest.mark.skipif if services are unavailable.
 """
 
+import contextlib
 import os
 import subprocess
 from unittest.mock import MagicMock
@@ -41,9 +42,11 @@ from fastcode.vector_store import VectorStore
 # Service availability checks
 # ---------------------------------------------------------------------------
 
+
 def _ollama_available() -> bool:
     try:
         import urllib.request
+
         req = urllib.request.Request(
             "http://127.0.0.1:11434/api/embeddings",
             data=b'{"model":"nomic-embed-text-v2-moe","prompt":"probe"}',
@@ -63,6 +66,7 @@ def _pg_available() -> bool:
     )
     try:
         import psycopg
+
         psycopg.connect(dsn).close()
         return True
     except Exception:
@@ -154,17 +158,40 @@ def _build_test_repo(tmp_path):
     docs_dir.mkdir(parents=True)
     (docs_dir / "arch.md").write_text(_TEST_DESIGN_DOC, encoding="utf-8")
 
-    subprocess.run(["git", "init", "-b", "main"], cwd=str(repo_dir), check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "e2e@test.com"], cwd=str(repo_dir), check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "E2E Test"], cwd=str(repo_dir), check=True, capture_output=True)
-    subprocess.run(["git", "add", "-A"], cwd=str(repo_dir), check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "initial"], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=str(repo_dir),
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "e2e@test.com"],
+        cwd=str(repo_dir),
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "E2E Test"],
+        cwd=str(repo_dir),
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "add", "-A"], cwd=str(repo_dir), check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=str(repo_dir),
+        check=True,
+        capture_output=True,
+    )
     return str(repo_dir)
 
 
 # ---------------------------------------------------------------------------
 # Config builder
 # ---------------------------------------------------------------------------
+
 
 def _base_config(tmp_path, *, backend="sqlite", pg_dsn="", enable_docs=False):
     """Return a minimal config dict with all paths under tmp_path."""
@@ -232,6 +259,7 @@ def _base_config(tmp_path, *, backend="sqlite", pg_dsn="", enable_docs=False):
 # FastCode builder (bypasses __init__ to avoid heavy setup)
 # ---------------------------------------------------------------------------
 
+
 def _build_fastcode(config):
     """Construct a FastCode instance, wiring real components from config."""
     fc = FastCode.__new__(FastCode)
@@ -260,7 +288,10 @@ def _build_fastcode(config):
 
     config_repo_root = config.get("repo_root", "./repos")
     fc.retriever = HybridRetriever(
-        config, fc.vector_store, fc.embedder, fc.graph_builder,
+        config,
+        fc.vector_store,
+        fc.embedder,
+        fc.graph_builder,
         repo_root=config_repo_root,
     )
     fc.query_processor = QueryProcessor(config)
@@ -300,6 +331,7 @@ def _build_fastcode(config):
 # ---------------------------------------------------------------------------
 # Test 1: SQLite-only E2E (real Ollama embeddings)
 # ---------------------------------------------------------------------------
+
 
 @_skip_ollama
 def test_e2e_indexing_sqlite_real_embeddings(tmp_path):
@@ -372,6 +404,7 @@ def test_e2e_indexing_sqlite_real_embeddings(tmp_path):
 # Test 2: PostgreSQL + doc ingestion (real Ollama + real PG)
 # ---------------------------------------------------------------------------
 
+
 @_skip_ollama
 @_skip_pg
 def test_e2e_indexing_pg_real_embeddings(tmp_path):
@@ -383,7 +416,9 @@ def test_e2e_indexing_pg_real_embeddings(tmp_path):
     - IR snapshot is persisted and loadable
     - Manifest is published
     """
-    pg_dsn = os.environ.get("PG_E2E_DSN", "postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e")
+    pg_dsn = os.environ.get(
+        "PG_E2E_DSN", "postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e"
+    )
     repo_path = _build_test_repo(tmp_path)
     config = _base_config(tmp_path, backend="postgres", pg_dsn=pg_dsn, enable_docs=True)
     fc = _build_fastcode(config)
@@ -434,9 +469,11 @@ def test_e2e_indexing_pg_real_embeddings(tmp_path):
 # PG verification helpers
 # ---------------------------------------------------------------------------
 
+
 def _pg_execute(dsn: str, sql: str, params=None) -> list | None:
     """Execute a query against the test PG database."""
     import psycopg
+
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(sql, params or ())  # type: ignore[arg-type]
         if cur.description:
@@ -447,11 +484,16 @@ def _pg_execute(dsn: str, sql: str, params=None) -> list | None:
 
 def _cleanup_pg_tables(dsn: str):
     """Remove test data from PG tables."""
-    for table in ("embedding_vectors", "search_documents", "design_documents", "design_doc_mentions"):
-        try:
-            _pg_execute(dsn, f"DELETE FROM {table} WHERE snapshot_id LIKE 'snap:test_repo:%'")
-        except Exception:
-            pass  # Table may not exist yet.
+    for table in (
+        "embedding_vectors",
+        "search_documents",
+        "design_documents",
+        "design_doc_mentions",
+    ):
+        with contextlib.suppress(Exception):
+            _pg_execute(
+                dsn, f"DELETE FROM {table} WHERE snapshot_id LIKE 'snap:test_repo:%'"
+            )
 
 
 def _verify_pg_elements(dsn: str, snapshot_id: str):

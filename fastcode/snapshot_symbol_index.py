@@ -87,4 +87,3 @@ class SnapshotSymbolIndex:
             if candidates:
                 return sorted(candidates)[0]
         return None
-

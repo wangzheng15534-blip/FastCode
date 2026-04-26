@@ -18,6 +18,7 @@ from .llm_utils import openai_chat_completion
 @dataclass
 class ProcessedQuery:
     """Processed query with extracted information"""
+
     original: str
     expanded: str
     keywords: list[str]
@@ -61,10 +62,14 @@ class QueryProcessor:
 
         # NEW: LLM-based enhancement settings
         self.use_llm_enhancement = self.query_config.get("use_llm_enhancement", True)
-        self.llm_enhancement_mode = self.query_config.get("llm_enhancement_mode", "adaptive")  # adaptive, always, off
+        self.llm_enhancement_mode = self.query_config.get(
+            "llm_enhancement_mode", "adaptive"
+        )  # adaptive, always, off
 
         # Multi-turn dialogue settings
-        self.history_summary_rounds = self.query_config.get("history_summary_rounds", 10)
+        self.history_summary_rounds = self.query_config.get(
+            "history_summary_rounds", 10
+        )
         self.max_summary_words = self.query_config.get("max_summary_words", 250)
 
         # LLM settings
@@ -88,7 +93,15 @@ class QueryProcessor:
             "how": ["how", "implement", "create", "build", "make"],
             "what": ["what", "is", "are", "does", "define", "purpose"],
             "where": ["where", "locate", "find", "which file"],
-            "debug": ["error", "bug", "issue", "problem", "fix", "why not", "doesn't work"],
+            "debug": [
+                "error",
+                "bug",
+                "issue",
+                "problem",
+                "fix",
+                "why not",
+                "doesn't work",
+            ],
             "explain": ["explain", "describe", "tell me about", "understand"],
             "find": ["find", "search", "locate", "show me", "list"],
             "implement": ["implement", "write", "code", "develop", "algorithm"],
@@ -96,11 +109,32 @@ class QueryProcessor:
 
         # Code-related keywords
         self.code_keywords = {
-            "function", "method", "class", "module", "variable", "parameter",
-            "return", "import", "export", "api", "endpoint", "route",
-            "database", "query", "model", "schema", "table",
-            "authentication", "auth", "login", "user", "session",
-            "test", "unittest", "spec", "testing",
+            "function",
+            "method",
+            "class",
+            "module",
+            "variable",
+            "parameter",
+            "return",
+            "import",
+            "export",
+            "api",
+            "endpoint",
+            "route",
+            "database",
+            "query",
+            "model",
+            "schema",
+            "table",
+            "authentication",
+            "auth",
+            "login",
+            "user",
+            "session",
+            "test",
+            "unittest",
+            "spec",
+            "testing",
         }
 
     def _initialize_llm_client(self):
@@ -109,28 +143,36 @@ class QueryProcessor:
             if self.provider == "openai":
                 api_key = self.api_key
                 if not api_key:
-                    self.logger.warning("OPENAI_API_KEY not set, LLM enhancement disabled")
+                    self.logger.warning(
+                        "OPENAI_API_KEY not set, LLM enhancement disabled"
+                    )
                     return None
                 return OpenAI(api_key=api_key, base_url=self.base_url)
 
             if self.provider == "anthropic":
                 api_key = self.anthropic_api_key
                 if not api_key:
-                    self.logger.warning("ANTHROPIC_API_KEY not set, LLM enhancement disabled")
+                    self.logger.warning(
+                        "ANTHROPIC_API_KEY not set, LLM enhancement disabled"
+                    )
                     return None
                 return Anthropic(api_key=api_key, base_url=self.base_url)
 
-            self.logger.warning(f"Unknown provider: {self.provider}, LLM enhancement disabled")
+            self.logger.warning(
+                f"Unknown provider: {self.provider}, LLM enhancement disabled"
+            )
             return None
         except Exception as e:
-            self.logger.warning(f"Failed to initialize LLM client: {e}, LLM enhancement disabled")
+            self.logger.warning(
+                f"Failed to initialize LLM client: {e}, LLM enhancement disabled"
+            )
             return None
 
     def process(
         self,
         query: str,
         dialogue_history: list[dict[str, Any]] | None = None,
-        use_llm_enhancement: bool | None = None
+        use_llm_enhancement: bool | None = None,
     ) -> ProcessedQuery:
         """
         Process user query with LLM-based enhancement
@@ -150,17 +192,25 @@ class QueryProcessor:
         query = query.strip()
 
         # Determine if we should use LLM enhancement
-        should_use_llm = self.use_llm_enhancement if use_llm_enhancement is None else use_llm_enhancement
+        should_use_llm = (
+            self.use_llm_enhancement
+            if use_llm_enhancement is None
+            else use_llm_enhancement
+        )
 
         # Multi-turn mode: reference resolution and query rewriting
         # IMPORTANT: Skip this if iterative agent is enabled (use_llm_enhancement=False)
         # because iterative agent will handle dialogue history integration
         if dialogue_history and len(dialogue_history) > 0 and should_use_llm:
-            self.logger.info("Multi-turn mode: performing reference resolution and query rewriting")
+            self.logger.info(
+                "Multi-turn mode: performing reference resolution and query rewriting"
+            )
             query = self._resolve_references_and_rewrite(query, dialogue_history)
             self.logger.info(f"Rewritten query: {query}")
         elif dialogue_history and len(dialogue_history) > 0 and not should_use_llm:
-            self.logger.info("Multi-turn mode with iterative agent: skipping reference resolution (will be handled by iterative agent)")
+            self.logger.info(
+                "Multi-turn mode with iterative agent: skipping reference resolution (will be handled by iterative agent)"
+            )
 
         # Detect intent (rule-based first)
         intent = self._detect_intent(query) if self.detect_intent else "general"
@@ -185,7 +235,9 @@ class QueryProcessor:
 
         if should_use_llm and self._should_use_llm_enhancement(query, intent):
             try:
-                llm_enhancements = self._enhance_with_llm(query, intent, keywords, filters)
+                llm_enhancements = self._enhance_with_llm(
+                    query, intent, keywords, filters
+                )
                 rewritten_query = llm_enhancements.get("rewritten_query")
                 # repo_matching_terms = llm_enhancements.get("repo_matching_terms") if llm_enhancements.get("repo_matching_terms") else []
                 pseudocode_hints = llm_enhancements.get("pseudocode_hints")
@@ -195,8 +247,12 @@ class QueryProcessor:
                 # self.logger.info(f"Repo matching terms: {repo_matching_terms}")
                 self.logger.info(f"pseudocode_hints: {pseudocode_hints}")
                 self.logger.info(f"search_strategy: {search_strategy}")
-                self.logger.info(f"refined_intent: {llm_enhancements.get('refined_intent')}")
-                self.logger.info(f"selected_keywords: {llm_enhancements.get('selected_keywords')}")
+                self.logger.info(
+                    f"refined_intent: {llm_enhancements.get('refined_intent')}"
+                )
+                self.logger.info(
+                    f"selected_keywords: {llm_enhancements.get('selected_keywords')}"
+                )
                 self.logger.info(f"query: {query}")
                 self.logger.info(f"keywords: {keywords}")
 
@@ -217,7 +273,9 @@ class QueryProcessor:
 
                 self.logger.info(f"LLM enhancement applied for query: {query[:50]}...")
             except Exception as e:
-                self.logger.warning(f"LLM enhancement failed, using rule-based only: {e}")
+                self.logger.warning(
+                    f"LLM enhancement failed, using rule-based only: {e}"
+                )
 
         return ProcessedQuery(
             original=query,
@@ -257,15 +315,57 @@ class QueryProcessor:
         """Extract important keywords from query"""
         # Remove common words
         stopwords = {
-            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
-            "of", "with", "by", "from", "as", "is", "was", "are", "were", "be",
-            "been", "being", "have", "has", "had", "do", "does", "did", "will",
-            "would", "could", "should", "may", "might", "can", "this", "that",
-            "these", "those", "i", "you", "he", "she", "it", "we", "they",
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "but",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "of",
+            "with",
+            "by",
+            "from",
+            "as",
+            "is",
+            "was",
+            "are",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "can",
+            "this",
+            "that",
+            "these",
+            "those",
+            "i",
+            "you",
+            "he",
+            "she",
+            "it",
+            "we",
+            "they",
         }
 
         # Tokenize and filter
-        words = re.findall(r'\b\w+\b', query.lower())
+        words = re.findall(r"\b\w+\b", query.lower())
         keywords = [w for w in words if w not in stopwords and len(w) > 2]
 
         # Prioritize code-related keywords
@@ -279,7 +379,7 @@ class QueryProcessor:
         filters = {}
 
         # Extract file types
-        file_type_pattern = r'\.(py|js|ts|java|go|cpp|c|rs|rb|php|cs)\b'
+        file_type_pattern = r"\.(py|js|ts|java|go|cpp|c|rs|rb|php|cs)\b"
         file_types = re.findall(file_type_pattern, query.lower())
         if file_types:
             filters["extension"] = f".{file_types[0]}"
@@ -289,46 +389,46 @@ class QueryProcessor:
         # This prevents matching repo names like "Django", "requests", "go-kit", etc.
         language_context_patterns = {
             "python": [
-                r'\bin\s+python\b',  # "in Python"
-                r'\bpython\s+(code|implementation|script|function|class|module)\b',
-                r'\busing\s+python\b',
-                r'\bwritten\s+in\s+python\b',
-                r'\bpython\s+implement',  # "Python implements"
+                r"\bin\s+python\b",  # "in Python"
+                r"\bpython\s+(code|implementation|script|function|class|module)\b",
+                r"\busing\s+python\b",
+                r"\bwritten\s+in\s+python\b",
+                r"\bpython\s+implement",  # "Python implements"
             ],
             "javascript": [
-                r'\bin\s+javascript\b',
-                r'\bjavascript\s+(code|implementation|function|class|module)\b',
-                r'\busing\s+javascript\b',
-                r'\bin\s+js\b',
-                r'\bjs\s+(code|implementation)\b',
+                r"\bin\s+javascript\b",
+                r"\bjavascript\s+(code|implementation|function|class|module)\b",
+                r"\busing\s+javascript\b",
+                r"\bin\s+js\b",
+                r"\bjs\s+(code|implementation)\b",
             ],
             "typescript": [
-                r'\bin\s+typescript\b',
-                r'\btypescript\s+(code|implementation|function|class|module)\b',
-                r'\busing\s+typescript\b',
-                r'\bts\s+(code|implementation)\b',  # "ts code"
+                r"\bin\s+typescript\b",
+                r"\btypescript\s+(code|implementation|function|class|module)\b",
+                r"\busing\s+typescript\b",
+                r"\bts\s+(code|implementation)\b",  # "ts code"
             ],
             "java": [
-                r'\bin\s+java\b',
-                r'\bjava\s+(code|implementation|class|method)\b',
-                r'\busing\s+java\b',
+                r"\bin\s+java\b",
+                r"\bjava\s+(code|implementation|class|method)\b",
+                r"\busing\s+java\b",
             ],
             "go": [
-                r'\bin\s+go\b',
-                r'\bgo\s+(code|implementation|function|package)\b',
-                r'\busing\s+go\b',
-                r'\bin\s+golang\b',
-                r'\bgolang\s+(code|implementation)\b',
+                r"\bin\s+go\b",
+                r"\bgo\s+(code|implementation|function|package)\b",
+                r"\busing\s+go\b",
+                r"\bin\s+golang\b",
+                r"\bgolang\s+(code|implementation)\b",
             ],
             "cpp": [
-                r'\bin\s+c\+\+\b',
-                r'\bc\+\+\s+(code|implementation|class|function)\b',
-                r'\busing\s+c\+\+\b',
+                r"\bin\s+c\+\+\b",
+                r"\bc\+\+\s+(code|implementation|class|function)\b",
+                r"\busing\s+c\+\+\b",
             ],
             "rust": [
-                r'\bin\s+rust\b',
-                r'\brust\s+(code|implementation|function|module)\b',
-                r'\busing\s+rust\b',
+                r"\bin\s+rust\b",
+                r"\brust\s+(code|implementation|function|module)\b",
+                r"\busing\s+rust\b",
             ],
         }
 
@@ -411,7 +511,7 @@ class QueryProcessor:
                 subqueries.append(part)
 
         # Limit number of subqueries
-        subqueries = subqueries[:self.max_subqueries]
+        subqueries = subqueries[: self.max_subqueries]
 
         if subqueries:
             self.logger.debug(f"Decomposed into {len(subqueries)} sub-queries")
@@ -424,9 +524,20 @@ class QueryProcessor:
 
         # Check for code-related keywords
         code_indicators = [
-            "function", "class", "method", "variable", "code",
-            "implementation", "how to", "algorithm", "logic",
-            "file", "module", "import", "api", "endpoint",
+            "function",
+            "class",
+            "method",
+            "variable",
+            "code",
+            "implementation",
+            "how to",
+            "algorithm",
+            "logic",
+            "file",
+            "module",
+            "import",
+            "api",
+            "endpoint",
         ]
 
         return any(indicator in query_lower for indicator in code_indicators)
@@ -434,17 +545,17 @@ class QueryProcessor:
     def extract_code_entity(self, query: str) -> tuple[str, str] | None:
         """
         Extract code entity mention from query
-        
+
         Returns:
             Tuple of (entity_type, entity_name) or None
         """
         # Pattern: "function named X", "class X", "X function", etc.
         patterns = [
-            (r'function\s+(?:named\s+)?[\"\']?(\w+)[\"\']?', 'function'),
-            (r'class\s+(?:named\s+)?[\"\']?(\w+)[\"\']?', 'class'),
-            (r'method\s+(?:named\s+)?[\"\']?(\w+)[\"\']?', 'function'),
-            (r'[\"\'](\w+)[\"\']?\s+function', 'function'),
-            (r'[\"\'](\w+)[\"\']?\s+class', 'class'),
+            (r"function\s+(?:named\s+)?[\"\']?(\w+)[\"\']?", "function"),
+            (r"class\s+(?:named\s+)?[\"\']?(\w+)[\"\']?", "class"),
+            (r"method\s+(?:named\s+)?[\"\']?(\w+)[\"\']?", "function"),
+            (r"[\"\'](\w+)[\"\']?\s+function", "function"),
+            (r"[\"\'](\w+)[\"\']?\s+class", "class"),
         ]
 
         query_lower = query.lower()
@@ -460,11 +571,11 @@ class QueryProcessor:
     def _should_use_llm_enhancement(self, query: str, intent: str) -> bool:
         """
         Determine if LLM enhancement should be used for this query
-        
+
         Args:
             query: The user query
             intent: Detected intent
-        
+
         Returns:
             True if LLM enhancement should be applied
         """
@@ -489,13 +600,24 @@ class QueryProcessor:
 
         # Check for implementation intent
         implementation_indicators = [
-            "implement", "how to", "write", "create", "build", "develop",
-            "algorithm", "logic", "code for", "function that", "method that"
+            "implement",
+            "how to",
+            "write",
+            "create",
+            "build",
+            "develop",
+            "algorithm",
+            "logic",
+            "code for",
+            "function that",
+            "method that",
         ]
         is_implementation = any(ind in query_lower for ind in implementation_indicators)
 
         # Check for complexity (multiple technical terms)
-        tech_term_count = sum(1 for keyword in self.code_keywords if keyword in query_lower)
+        tech_term_count = sum(
+            1 for keyword in self.code_keywords if keyword in query_lower
+        )
         is_complex = tech_term_count >= 3 or len(query.split()) >= 15
 
         # Check for ambiguity (short and vague)
@@ -504,22 +626,25 @@ class QueryProcessor:
         should_enhance = is_implementation or is_complex or is_ambiguous
 
         if should_enhance:
-            self.logger.debug(f"LLM enhancement enabled: impl={is_implementation}, "
-                            f"complex={is_complex}, ambiguous={is_ambiguous}")
+            self.logger.debug(
+                f"LLM enhancement enabled: impl={is_implementation}, "
+                f"complex={is_complex}, ambiguous={is_ambiguous}"
+            )
 
         return should_enhance
 
-    def _enhance_with_llm(self, query: str, intent: str,
-                         keywords: list[str], filters: dict[str, Any]) -> dict[str, Any]:
+    def _enhance_with_llm(
+        self, query: str, intent: str, keywords: list[str], filters: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Use LLM to enhance query understanding and expansion
-        
+
         Args:
             query: Original user query
             intent: Detected intent
             keywords: Extracted keywords
             filters: Extracted filters
-        
+
         Returns:
             Dictionary with enhancement information
         """
@@ -536,24 +661,23 @@ class QueryProcessor:
             print(f"LLM response of _enhance_with_llm: {response}")
 
             # Parse LLM response
-            enhancements = self._parse_llm_response(response, intent)
-            return enhancements
+            return self._parse_llm_response(response, intent)
 
         except Exception as e:
             self.logger.error(f"LLM enhancement error: {e}")
             return {}
 
-    def _build_enhancement_prompt(self, query: str, intent: str,
-                                  keywords: list[str], filters: dict[str, Any]) -> str:
+    def _build_enhancement_prompt(
+        self, query: str, intent: str, keywords: list[str], filters: dict[str, Any]
+    ) -> str:
         """Build prompt for LLM query enhancement"""
 
         # Standard mode (backward compatible)
-        prompt = f"""You are a code search query analyzer. Analyze this query to help retrieve relevant code. 
+        return f"""You are a code search query analyzer. Analyze this query to help retrieve relevant code.
 
 User Query: "{query}"
-Extracted Keywords: {', '.join(keywords) if keywords else 'None'}
-Filters: {filters if filters else 'None'}
-
+Extracted Keywords: {", ".join(keywords) if keywords else "None"}
+Filters: {filters if filters else "None"}
 CRITICAL INSTRUCTION: Regardless of the language used in the above content, **ALL your output fields below MUST be generated in ENGLISH.**
 
 Please provide:
@@ -587,8 +711,6 @@ IMPORTANT FORMATTING RULES:
 
 Be concise and focus on improving code retrieval accuracy."""
 
-        return prompt
-
     def _call_openai(self, prompt: str) -> str:
         """Call OpenAI API for query enhancement"""
         response = openai_chat_completion(
@@ -606,18 +728,20 @@ Be concise and focus on improving code retrieval accuracy."""
             model=self.model,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
         )
         return response.content[0].text
 
-    def _parse_llm_response(self, response: str, original_intent: str) -> dict[str, Any]:
+    def _parse_llm_response(
+        self, response: str, original_intent: str
+    ) -> dict[str, Any]:
         """
         Parse LLM response to extract enhancements
-        
+
         Args:
             response: Raw LLM response text
             original_intent: Original detected intent (fallback)
-        
+
         Returns:
             Dictionary with parsed enhancements
         """
@@ -626,16 +750,15 @@ Be concise and focus on improving code retrieval accuracy."""
         def clean_markdown(text: str) -> str:
             """Remove markdown formatting from text"""
             # Remove bold markers
-            text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+            text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
             # Remove italic markers
-            text = re.sub(r'\*([^*]+)\*', r'\1', text)
+            text = re.sub(r"\*([^*]+)\*", r"\1", text)
             # Remove inline code backticks (single backticks)
-            text = re.sub(r'`([^`]+)`', r'\1', text)
+            text = re.sub(r"`([^`]+)`", r"\1", text)
             # Remove any remaining backticks
-            text = text.replace('`', '')
+            text = text.replace("`", "")
             # Remove leading/trailing asterisks
-            text = text.strip('*').strip()
-            return text
+            return text.strip("*").strip()
 
         try:
             # Debug: log the response for troubleshooting
@@ -643,7 +766,11 @@ Be concise and focus on improving code retrieval accuracy."""
 
             # Parse REFINED_INTENT
             # Handle variations: **REFINED_INTENT:** **Code QA** or REFINED_INTENT: Code QA or **REFINED_INTENT:** Code QA
-            refined_intent_match = re.search(r'\*{0,2}REFINED_INTENT\*{0,2}:\s*(.+?)(?:\n|$)', response, re.IGNORECASE)
+            refined_intent_match = re.search(
+                r"\*{0,2}REFINED_INTENT\*{0,2}:\s*(.+?)(?:\n|$)",
+                response,
+                re.IGNORECASE,
+            )
             if refined_intent_match:
                 intent = refined_intent_match.group(1).strip()
                 # Clean markdown formatting
@@ -658,19 +785,25 @@ Be concise and focus on improving code retrieval accuracy."""
                     "architecture": "architecture",
                     "cross-repo": "cross_repo",
                 }
-                enhancements["refined_intent"] = intent_mapping.get(intent, intent.replace(" ", "_"))
+                enhancements["refined_intent"] = intent_mapping.get(
+                    intent, intent.replace(" ", "_")
+                )
 
             # Parse REWRITTEN_QUERY (note: handle both REWRITTEN and REWRITEN typo)
             # Match until next field (look ahead for next uppercase field) - use DOTALL for multi-line
-            rewritten_match = re.search(r'\*{0,2}REWRIT(?:T|)EN_QUERY\*{0,2}:\s*(.+?)(?=\n\s*\*{0,2}[A-Z_]+\*{0,2}:|$)', response, re.IGNORECASE | re.DOTALL)
+            rewritten_match = re.search(
+                r"\*{0,2}REWRIT(?:T|)EN_QUERY\*{0,2}:\s*(.+?)(?=\n\s*\*{0,2}[A-Z_]+\*{0,2}:|$)",
+                response,
+                re.IGNORECASE | re.DOTALL,
+            )
             if rewritten_match:
                 rewritten = rewritten_match.group(1).strip()
                 # Clean markdown formatting
                 rewritten = clean_markdown(rewritten)
                 # Remove quotes if present
-                rewritten = re.sub(r'^["\']|["\']$', '', rewritten)
+                rewritten = re.sub(r'^["\']|["\']$', "", rewritten)
                 # Join multi-line content into single line
-                rewritten = ' '.join(rewritten.split())
+                rewritten = " ".join(rewritten.split())
                 if rewritten:
                     enhancements["rewritten_query"] = rewritten
             else:
@@ -679,42 +812,63 @@ Be concise and focus on improving code retrieval accuracy."""
             # Parse SELECTED_KEYWORDS
             # Handle both single-line and potential multi-line keywords with backticks
             # Match from SELECTED_KEYWORDS to the next field or end
-            keywords_match = re.search(r'\*{0,2}SELECTED_KEYWORDS\*{0,2}:\s*(.+?)(?=\n\s*\*{0,2}[A-Z_]+\*{0,2}:|$)', response, re.IGNORECASE | re.DOTALL)
+            keywords_match = re.search(
+                r"\*{0,2}SELECTED_KEYWORDS\*{0,2}:\s*(.+?)(?=\n\s*\*{0,2}[A-Z_]+\*{0,2}:|$)",
+                response,
+                re.IGNORECASE | re.DOTALL,
+            )
             if keywords_match:
                 keywords_str = keywords_match.group(1).strip()
                 # Clean markdown formatting (including backticks)
                 keywords_str = clean_markdown(keywords_str)
                 # Remove newlines and extra spaces
-                keywords_str = ' '.join(keywords_str.split())
+                keywords_str = " ".join(keywords_str.split())
                 # Split by comma
-                keywords = [k.strip() for k in keywords_str.split(',') if k.strip() and k.strip().lower() != 'none']
+                keywords = [
+                    k.strip()
+                    for k in keywords_str.split(",")
+                    if k.strip() and k.strip().lower() != "none"
+                ]
                 # Additional cleaning: remove any remaining special characters
-                keywords = [re.sub(r'[`*]', '', k) for k in keywords]
+                keywords = [re.sub(r"[`*]", "", k) for k in keywords]
                 keywords = [k.strip() for k in keywords if k.strip()]
-                enhancements["selected_keywords"] = keywords[:10]  # Limit to 10 additional keywords
+                enhancements["selected_keywords"] = keywords[
+                    :10
+                ]  # Limit to 10 additional keywords
             else:
                 self.logger.debug("Failed to match SELECTED_KEYWORDS")
 
-
             # Parse PSEUDOCODE_HINTS
             # Handle both single-line and multi-line code blocks with triple backticks
-            pseudocode_match = re.search(r'\*{0,2}PSEUDOCODE_HINTS\*{0,2}:\s*(.+?)(?=\n\s*\*{0,2}[A-Z_]+\*{0,2}:|$)', response, re.IGNORECASE | re.DOTALL)
+            pseudocode_match = re.search(
+                r"\*{0,2}PSEUDOCODE_HINTS\*{0,2}:\s*(.+?)(?=\n\s*\*{0,2}[A-Z_]+\*{0,2}:|$)",
+                response,
+                re.IGNORECASE | re.DOTALL,
+            )
             if pseudocode_match:
                 pseudocode = pseudocode_match.group(1).strip()
                 # Remove code block markers if present (handle ```language or just ```)
-                pseudocode = re.sub(r'^```[\w]*\s*\n', '', pseudocode, flags=re.MULTILINE)
-                pseudocode = re.sub(r'\n\s*```\s*$', '', pseudocode, flags=re.MULTILINE)
+                pseudocode = re.sub(
+                    r"^```[\w]*\s*\n", "", pseudocode, flags=re.MULTILINE
+                )
+                pseudocode = re.sub(r"\n\s*```\s*$", "", pseudocode, flags=re.MULTILINE)
                 # Clean markdown formatting but preserve code structure
-                pseudocode = pseudocode.strip('*').strip()
+                pseudocode = pseudocode.strip("*").strip()
                 # Check if it's a meaningful value
-                if pseudocode and pseudocode.lower() not in ["n/a", "none", "not applicable"]:
+                if pseudocode and pseudocode.lower() not in [
+                    "n/a",
+                    "none",
+                    "not applicable",
+                ]:
                     # If it still starts with ```, it means the regex didn't work, try simpler approach
-                    if pseudocode.startswith('```'):
+                    if pseudocode.startswith("```"):
                         # Extract content between triple backticks
-                        code_block_match = re.search(r'```[\w]*\s*\n(.+?)\n```', pseudocode, re.DOTALL)
+                        code_block_match = re.search(
+                            r"```[\w]*\s*\n(.+?)\n```", pseudocode, re.DOTALL
+                        )
                         if code_block_match:
                             pseudocode = code_block_match.group(1).strip()
-                    if pseudocode and not pseudocode.startswith('```'):
+                    if pseudocode and not pseudocode.startswith("```"):
                         enhancements["pseudocode_hints"] = pseudocode
             else:
                 self.logger.debug("Failed to match PSEUDOCODE_HINTS")
@@ -726,24 +880,32 @@ Be concise and focus on improving code retrieval accuracy."""
 
         return enhancements
 
-    def _resolve_references_and_rewrite(self, query: str, dialogue_history: list[dict[str, Any]]) -> str:
+    def _resolve_references_and_rewrite(
+        self, query: str, dialogue_history: list[dict[str, Any]]
+    ) -> str:
         """
         Resolve references and rewrite query based on dialogue history
-        
+
         Args:
             query: Current user query
             dialogue_history: List of previous dialogue summaries
-        
+
         Returns:
             Rewritten query with resolved references
         """
         if not self.llm_client:
-            self.logger.warning("LLM client not available, skipping reference resolution")
+            self.logger.warning(
+                "LLM client not available, skipping reference resolution"
+            )
             return query
 
         try:
             # Get recent summaries (limited by history_summary_rounds)
-            recent_summaries = dialogue_history[-self.history_summary_rounds:] if len(dialogue_history) > self.history_summary_rounds else dialogue_history
+            recent_summaries = (
+                dialogue_history[-self.history_summary_rounds :]
+                if len(dialogue_history) > self.history_summary_rounds
+                else dialogue_history
+            )
 
             # Build prompt for reference resolution
             prompt = self._build_reference_resolution_prompt(query, recent_summaries)
@@ -765,14 +927,16 @@ Be concise and focus on improving code retrieval accuracy."""
             self.logger.error(f"Reference resolution failed: {e}")
             return query
 
-    def _build_reference_resolution_prompt(self, query: str, recent_summaries: list[dict[str, Any]]) -> str:
+    def _build_reference_resolution_prompt(
+        self, query: str, recent_summaries: list[dict[str, Any]]
+    ) -> str:
         """Build prompt for reference resolution and query rewriting"""
 
         prompt_parts = [
             "You are a query rewriting assistant for a code search system.",
             "Your task is to resolve references and rewrite the user's current query based on conversation history.",
             "",
-            "**Conversation History (Recent Summaries):**"
+            "**Conversation History (Recent Summaries):**",
         ]
 
         for summary_data in recent_summaries:
@@ -785,20 +949,22 @@ Be concise and focus on improving code retrieval accuracy."""
             if summary:
                 prompt_parts.append(f"Summary: {summary}")
 
-        prompt_parts.extend([
-            "",
-            f"**Current Query:** {query}",
-            "",
-            "**Instructions:**",
-            "1. Identify any ambiguous references in the current query (e.g., 'that function', 'the class mentioned above', 'it')",
-            "2. Resolve these references using information from the conversation history",
-            "3. Rewrite the query to be self-contained and clear, without ambiguous references",
-            "4. Keep the rewritten query concise but complete",
-            "5. If there are no ambiguous references, return the original query",
-            "6. IMPORTANT: Output ONLY the rewritten query text, nothing else",
-            "",
-            "Rewritten Query:"
-        ])
+        prompt_parts.extend(
+            [
+                "",
+                f"**Current Query:** {query}",
+                "",
+                "**Instructions:**",
+                "1. Identify any ambiguous references in the current query (e.g., 'that function', 'the class mentioned above', 'it')",
+                "2. Resolve these references using information from the conversation history",
+                "3. Rewrite the query to be self-contained and clear, without ambiguous references",
+                "4. Keep the rewritten query concise but complete",
+                "5. If there are no ambiguous references, return the original query",
+                "6. IMPORTANT: Output ONLY the rewritten query text, nothing else",
+                "",
+                "Rewritten Query:",
+            ]
+        )
 
         return "\n".join(prompt_parts)
 
@@ -816,11 +982,12 @@ Be concise and focus on improving code retrieval accuracy."""
 
         for prefix in prefixes_to_remove:
             if rewritten.lower().startswith(prefix):
-                rewritten = rewritten[len(prefix):].strip()
+                rewritten = rewritten[len(prefix) :].strip()
 
         # Remove quotes if present
-        if (rewritten.startswith('"') and rewritten.endswith('"')) or (rewritten.startswith("'") and rewritten.endswith("'")):
+        if (rewritten.startswith('"') and rewritten.endswith('"')) or (
+            rewritten.startswith("'") and rewritten.endswith("'")
+        ):
             rewritten = rewritten[1:-1]
 
         return rewritten if rewritten else None
-

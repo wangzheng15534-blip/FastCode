@@ -22,20 +22,32 @@ class CodeEmbedder:
         self.logger = logging.getLogger(__name__)
 
         self.provider = self.embedding_config.get("provider", "sentence_transformers")
-        self.model_name = self.embedding_config.get("model", "sentence-transformers/all-MiniLM-L6-v2")
+        self.model_name = self.embedding_config.get(
+            "model", "sentence-transformers/all-MiniLM-L6-v2"
+        )
         self.device = self.embedding_config.get("device", "auto")
         self.batch_size = self.embedding_config.get("batch_size", 32)
         self.max_seq_length = self.embedding_config.get("max_seq_length", 512)
         self.normalize = self.embedding_config.get("normalize_embeddings", True)
-        self.ollama_url = self.embedding_config.get("ollama_url", "http://127.0.0.1:11434/api/embeddings")
+        self.ollama_url = self.embedding_config.get(
+            "ollama_url", "http://127.0.0.1:11434/api/embeddings"
+        )
 
         # Auto-detect best available device: CUDA > MPS > CPU
         if self.device != "cpu":
-            self.device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+            self.device = (
+                "cuda"
+                if torch.cuda.is_available()
+                else "mps"
+                if torch.backends.mps.is_available()
+                else "cpu"
+            )
 
         self.model: SentenceTransformer | None = None
         if self.provider == "ollama":
-            self.logger.info(f"Using Ollama embeddings model: {self.model_name} ({self.ollama_url})")
+            self.logger.info(
+                f"Using Ollama embeddings model: {self.model_name} ({self.ollama_url})"
+            )
             probe = self._embed_text_ollama("embedding dimension probe")
             self.embedding_dim = len(probe)
         else:
@@ -54,10 +66,10 @@ class CodeEmbedder:
     def embed_text(self, text: str) -> np.ndarray:
         """
         Generate embedding for a single text
-        
+
         Args:
             text: Input text
-        
+
         Returns:
             Embedding vector
         """
@@ -66,10 +78,10 @@ class CodeEmbedder:
     def embed_batch(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings for a batch of texts
-        
+
         Args:
             texts: List of input texts
-        
+
         Returns:
             Array of embedding vectors
         """
@@ -81,25 +93,23 @@ class CodeEmbedder:
             return np.array(vectors, dtype=np.float32)
 
         encode_kwargs = {
-            'batch_size': self.batch_size,
-            'show_progress_bar': len(texts) > 100,
-            'normalize_embeddings': self.normalize,
-            'convert_to_numpy': True,
-            'device': self.device,
-            'convert_to_tensor': False,
+            "batch_size": self.batch_size,
+            "show_progress_bar": len(texts) > 100,
+            "normalize_embeddings": self.normalize,
+            "convert_to_numpy": True,
+            "device": self.device,
+            "convert_to_tensor": False,
         }
 
-        if platform.system() == 'Darwin':
-            encode_kwargs['pool'] = None
+        if platform.system() == "Darwin":
+            encode_kwargs["pool"] = None
 
-        embeddings = self.model.encode(texts, **encode_kwargs)
-
-        return embeddings
+        return self.model.encode(texts, **encode_kwargs)
 
     def _embed_text_ollama(self, text: str) -> np.ndarray:
         # Truncate text to avoid Ollama context window overflow
         if len(text) > self.max_seq_length:
-            text = text[:self.max_seq_length]
+            text = text[: self.max_seq_length]
         payload = {"model": self.model_name, "prompt": text}
         req = urllib.request.Request(
             self.ollama_url,
@@ -114,13 +124,15 @@ class CodeEmbedder:
             raise RuntimeError("Ollama embedding response missing 'embedding'")
         return np.array(vector, dtype=np.float32)
 
-    def embed_code_elements(self, elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def embed_code_elements(
+        self, elements: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """
         Generate embeddings for code elements (functions, classes, etc.)
-        
+
         Args:
             elements: List of code element dictionaries
-        
+
         Returns:
             List of elements with embeddings added
         """
@@ -133,10 +145,12 @@ class CodeEmbedder:
         # Generate embeddings
         self.logger.info(f"Generating embeddings for {len(texts)} code elements")
         embeddings = self.embed_batch(texts)
-        self.logger.info(f"✓ Successfully generated embeddings for {len(embeddings)} code elements")
+        self.logger.info(
+            f"✓ Successfully generated embeddings for {len(embeddings)} code elements"
+        )
 
         # Add embeddings to elements
-        for elem, embedding in zip(elements, embeddings):
+        for elem, embedding in zip(elements, embeddings, strict=True):
             elem["embedding"] = embedding
             elem["embedding_text"] = texts[elements.index(elem)]
 
@@ -145,7 +159,7 @@ class CodeEmbedder:
     def _prepare_code_text(self, element: dict[str, Any]) -> str:
         """
         Prepare code element for embedding
-        
+
         Combines various parts of the code element into a single text
         suitable for embedding
         """
@@ -180,14 +194,16 @@ class CodeEmbedder:
 
         return "\n".join(parts)
 
-    def compute_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
+    def compute_similarity(
+        self, embedding1: np.ndarray, embedding2: np.ndarray
+    ) -> float:
         """
         Compute cosine similarity between two embeddings
-        
+
         Args:
             embedding1: First embedding
             embedding2: Second embedding
-        
+
         Returns:
             Similarity score (0-1)
         """
@@ -201,15 +217,16 @@ class CodeEmbedder:
             return 0.0
         return float(np.dot(embedding1, embedding2) / (norm1 * norm2))
 
-    def compute_similarities(self, query_embedding: np.ndarray,
-                            embeddings: np.ndarray) -> np.ndarray:
+    def compute_similarities(
+        self, query_embedding: np.ndarray, embeddings: np.ndarray
+    ) -> np.ndarray:
         """
         Compute similarities between query and multiple embeddings
-        
+
         Args:
             query_embedding: Query embedding vector
             embeddings: Array of embedding vectors
-        
+
         Returns:
             Array of similarity scores
         """

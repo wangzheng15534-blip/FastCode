@@ -4,17 +4,21 @@ import pytest
 
 try:
     import google.protobuf  # noqa: F401
+
     _HAS_PROTOBUF = True
 except ImportError:
     _HAS_PROTOBUF = False
 
-requires_protobuf = pytest.mark.skipif(not _HAS_PROTOBUF, reason="protobuf not installed")
+requires_protobuf = pytest.mark.skipif(
+    not _HAS_PROTOBUF, reason="protobuf not installed"
+)
 
 
 @requires_protobuf
 def test_scip_pb2_module_importable():
     """Protobuf bindings module must be importable."""
     from fastcode.scip_pb2 import Index
+
     idx = Index()
     assert idx.metadata.tool_info.name == ""
 
@@ -41,6 +45,7 @@ def test_load_binary_scip_artifact(tmp_path):
     scip_path.write_bytes(idx.SerializeToString())
 
     from fastcode.scip_loader import load_scip_artifact
+
     result = load_scip_artifact(str(scip_path))
 
     assert len(result.documents) == 1
@@ -85,6 +90,7 @@ def test_binary_scip_with_occurrences(tmp_path):
     scip_path.write_bytes(idx.SerializeToString())
 
     from fastcode.scip_loader import load_scip_artifact
+
     result = load_scip_artifact(str(scip_path))
 
     assert result.indexer_name == "scip-java"
@@ -116,6 +122,7 @@ def test_binary_scip_empty_index(tmp_path):
     scip_path.write_bytes(idx.SerializeToString())
 
     from fastcode.scip_loader import load_scip_artifact
+
     result = load_scip_artifact(str(scip_path))
 
     assert len(result.documents) == 0
@@ -175,10 +182,10 @@ def test_run_scip_python_index_delegates_to_scip_indexers(tmp_path):
 
     from fastcode.scip_loader import run_scip_python_index
 
-    with patch("fastcode.scip_indexers.run_scip_indexer", return_value="/fake/output.scip") as mock_run:
+    with patch(
+        "fastcode.scip_indexers.run_scip_indexer", return_value="/fake/output.scip"
+    ) as mock_run:
         result = run_scip_python_index(str(tmp_path), "/fake/output.scip")
 
     mock_run.assert_called_once_with("python", str(tmp_path), "/fake/output.scip")
     assert result == "/fake/output.scip"
-
-

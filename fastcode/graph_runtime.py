@@ -172,12 +172,14 @@ class LadybugGraphRuntime:
             )
             rows = []
             for row in result:
-                rows.append({
-                    "chunk_id": row[0],
-                    "heading": row[1],
-                    "doc_type": row[2],
-                    "content": row[3],
-                })
+                rows.append(
+                    {
+                        "chunk_id": row[0],
+                        "heading": row[1],
+                        "doc_type": row[2],
+                        "content": row[3],
+                    }
+                )
             return rows
         except Exception as e:
             self.logger.warning(f"Ladybug query failed: {e}")

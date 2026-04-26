@@ -31,7 +31,9 @@ class CacheManager:
         self.cache_queries = self.cache_config.get("cache_queries", False)
 
         # Dialogue history TTL (default: 30 days for long-term conversation history)
-        self.dialogue_ttl = self.cache_config.get("dialogue_ttl", 2592000)  # 30 days in seconds
+        self.dialogue_ttl = self.cache_config.get(
+            "dialogue_ttl", 2592000
+        )  # 30 days in seconds
 
         self.cache = None
 
@@ -43,20 +45,18 @@ class CacheManager:
         if self.backend == "disk":
             Path(self.cache_directory).mkdir(parents=True, exist_ok=True)
             max_size_bytes = self.max_size_mb * 1024 * 1024
-            self.cache = DiskCache(
-                self.cache_directory,
-                size_limit=max_size_bytes
-            )
+            self.cache = DiskCache(self.cache_directory, size_limit=max_size_bytes)
             self.logger.info(f"Initialized disk cache at {self.cache_directory}")
 
         elif self.backend == "redis":
             try:
                 import redis
+
                 self.cache = redis.Redis(
                     host=os.getenv("REDIS_HOST", "localhost"),
                     port=int(os.getenv("REDIS_PORT", 6379)),
                     db=0,
-                    decode_responses=False
+                    decode_responses=False,
                 )
                 self.cache.ping()
                 self.logger.info("Initialized Redis cache")
@@ -206,10 +206,16 @@ class CacheManager:
 
     # ===== Multi-turn Dialogue Session Cache Methods =====
 
-    def save_dialogue_turn(self, session_id: str, turn_number: int,
-                           query: str, answer: str, summary: str,
-                           retrieved_elements: list[dict[str, Any]] | None = None,
-                           metadata: dict[str, Any] | None = None) -> bool:
+    def save_dialogue_turn(
+        self,
+        session_id: str,
+        turn_number: int,
+        query: str,
+        answer: str,
+        summary: str,
+        retrieved_elements: list[dict[str, Any]] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
         """
         Save a single dialogue turn to cache
 
@@ -238,7 +244,7 @@ class CacheManager:
                 "answer": answer,
                 "summary": summary,
                 "retrieved_elements": retrieved_elements or [],
-                "metadata": metadata or {}
+                "metadata": metadata or {},
             }
 
             # Generate key
@@ -259,14 +265,16 @@ class CacheManager:
             self.logger.error(f"Failed to save dialogue turn: {e}")
             return False
 
-    def get_dialogue_turn(self, session_id: str, turn_number: int) -> dict[str, Any] | None:
+    def get_dialogue_turn(
+        self, session_id: str, turn_number: int
+    ) -> dict[str, Any] | None:
         """
         Get a specific dialogue turn from cache
-        
+
         Args:
             session_id: Session identifier
             turn_number: Turn number to retrieve
-        
+
         Returns:
             Turn data dictionary or None
         """
@@ -276,14 +284,16 @@ class CacheManager:
         key = f"dialogue_{session_id}_turn_{turn_number}"
         return self.get(key)
 
-    def get_dialogue_history(self, session_id: str, max_turns: int | None = None) -> list[dict[str, Any]]:
+    def get_dialogue_history(
+        self, session_id: str, max_turns: int | None = None
+    ) -> list[dict[str, Any]]:
         """
         Get dialogue history for a session
-        
+
         Args:
             session_id: Session identifier
             max_turns: Maximum number of recent turns to retrieve (None = all)
-        
+
         Returns:
             List of turn data dictionaries, ordered from oldest to newest
         """
@@ -319,14 +329,16 @@ class CacheManager:
             self.logger.error(f"Failed to get dialogue history: {e}")
             return []
 
-    def get_recent_summaries(self, session_id: str, num_rounds: int) -> list[dict[str, Any]]:
+    def get_recent_summaries(
+        self, session_id: str, num_rounds: int
+    ) -> list[dict[str, Any]]:
         """
         Get recent dialogue summaries for context
-        
+
         Args:
             session_id: Session identifier
             num_rounds: Number of recent rounds to retrieve
-        
+
         Returns:
             List of summary data with turn_number, query, and summary
         """
@@ -338,11 +350,13 @@ class CacheManager:
 
             summaries = []
             for turn in history:
-                summaries.append({
-                    "turn_number": turn.get("turn_number"),
-                    "query": turn.get("query"),
-                    "summary": turn.get("summary"),
-                })
+                summaries.append(
+                    {
+                        "turn_number": turn.get("turn_number"),
+                        "query": turn.get("query"),
+                        "summary": turn.get("summary"),
+                    }
+                )
 
             return summaries
 
@@ -350,8 +364,9 @@ class CacheManager:
             self.logger.error(f"Failed to get recent summaries: {e}")
             return []
 
-    def _update_session_index(self, session_id: str, turn_number: int,
-                              multi_turn: bool | None = None) -> bool:
+    def _update_session_index(
+        self, session_id: str, turn_number: int, multi_turn: bool | None = None
+    ) -> bool:
         """Update session index with new turn"""
         try:
             key = f"dialogue_session_{session_id}_index"
@@ -360,10 +375,12 @@ class CacheManager:
                 "created_at": time.time(),
                 "total_turns": 0,
                 "last_updated": time.time(),
-                "multi_turn": False
+                "multi_turn": False,
             }
 
-            session_index["total_turns"] = max(session_index["total_turns"], turn_number)
+            session_index["total_turns"] = max(
+                session_index["total_turns"], turn_number
+            )
             session_index["last_updated"] = time.time()
 
             # Once a session is marked as multi_turn, keep it that way
@@ -386,10 +403,10 @@ class CacheManager:
     def delete_session(self, session_id: str) -> bool:
         """
         Delete an entire dialogue session
-        
+
         Args:
             session_id: Session identifier
-        
+
         Returns:
             True if successful, False otherwise
         """
@@ -423,7 +440,7 @@ class CacheManager:
     def list_sessions(self) -> list[dict[str, Any]]:
         """
         List all dialogue sessions
-        
+
         Returns:
             List of session metadata dictionaries
         """
@@ -436,7 +453,11 @@ class CacheManager:
             if self.backend == "disk":
                 # Scan for session index keys
                 for key in self.cache.iterkeys():
-                    if isinstance(key, str) and key.startswith("dialogue_session_") and key.endswith("_index"):
+                    if (
+                        isinstance(key, str)
+                        and key.startswith("dialogue_session_")
+                        and key.endswith("_index")
+                    ):
                         session_data = self.get(key)
                         if session_data:
                             sessions.append(session_data)
@@ -444,21 +465,19 @@ class CacheManager:
             elif self.backend == "redis":
                 # Scan for session index keys
                 for key in self.cache.scan_iter(match="dialogue_session_*_index"):
-                    session_data = self.get(key.decode() if isinstance(key, bytes) else key)
+                    session_data = self.get(
+                        key.decode() if isinstance(key, bytes) else key
+                    )
                     if session_data:
                         sessions.append(session_data)
 
             # Sort by creation time descending (fallback to last_updated)
             sessions.sort(
-                key=lambda x: (
-                    x.get("created_at", 0),
-                    x.get("last_updated", 0)
-                ),
-                reverse=True
+                key=lambda x: (x.get("created_at", 0), x.get("last_updated", 0)),
+                reverse=True,
             )
             return sessions
 
         except Exception as e:
             self.logger.error(f"Failed to list sessions: {e}")
             return []
-

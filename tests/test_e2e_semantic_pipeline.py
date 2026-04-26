@@ -13,6 +13,7 @@ Requirements:
 - LadybugDB (optional, graceful skip)
 """
 
+import contextlib
 import os
 import subprocess
 from unittest.mock import MagicMock
@@ -40,9 +41,11 @@ from fastcode.vector_store import VectorStore
 # Service availability checks
 # ---------------------------------------------------------------------------
 
+
 def _ollama_available() -> bool:
     try:
         import urllib.request
+
         req = urllib.request.Request(
             "http://127.0.0.1:11434/api/embeddings",
             data=b'{"model":"nomic-embed-text-v2-moe","prompt":"probe"}',
@@ -62,6 +65,7 @@ def _pg_available() -> bool:
     )
     try:
         import psycopg
+
         psycopg.connect(dsn).close()
         return True
     except Exception:
@@ -71,6 +75,7 @@ def _pg_available() -> bool:
 def _ladybug_available() -> bool:
     try:
         from real_ladybug import Connection  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -78,7 +83,9 @@ def _ladybug_available() -> bool:
 
 _skip_ollama = pytest.mark.skipif(not _ollama_available(), reason="Ollama not running")
 _skip_pg = pytest.mark.skipif(not _pg_available(), reason="PostgreSQL not available")
-_skip_ladybug = pytest.mark.skipif(not _ladybug_available(), reason="LadybugDB not installed")
+_skip_ladybug = pytest.mark.skipif(
+    not _ladybug_available(), reason="LadybugDB not installed"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -157,24 +164,34 @@ def _build_test_repo(tmp_path):
     (docs_dir / "arch.md").write_text(_TEST_DESIGN_DOC, encoding="utf-8")
 
     subprocess.run(
-        ["git", "init", "-b", "main"], cwd=str(repo_dir),
-        check=True, capture_output=True,
+        ["git", "init", "-b", "main"],
+        cwd=str(repo_dir),
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
-        ["git", "config", "user.email", "e2e@test.com"], cwd=str(repo_dir),
-        check=True, capture_output=True,
+        ["git", "config", "user.email", "e2e@test.com"],
+        cwd=str(repo_dir),
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
-        ["git", "config", "user.name", "E2E Test"], cwd=str(repo_dir),
-        check=True, capture_output=True,
+        ["git", "config", "user.name", "E2E Test"],
+        cwd=str(repo_dir),
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
-        ["git", "add", "-A"], cwd=str(repo_dir),
-        check=True, capture_output=True,
+        ["git", "add", "-A"],
+        cwd=str(repo_dir),
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
-        ["git", "commit", "-m", "initial"], cwd=str(repo_dir),
-        check=True, capture_output=True,
+        ["git", "commit", "-m", "initial"],
+        cwd=str(repo_dir),
+        check=True,
+        capture_output=True,
     )
     return str(repo_dir)
 
@@ -183,8 +200,16 @@ def _build_test_repo(tmp_path):
 # Config builder
 # ---------------------------------------------------------------------------
 
-def _base_config(tmp_path, *, backend="sqlite", pg_dsn="", enable_docs=True,
-                 enable_ladybug=False, ladybug_db_path=""):
+
+def _base_config(
+    tmp_path,
+    *,
+    backend="sqlite",
+    pg_dsn="",
+    enable_docs=True,
+    enable_ladybug=False,
+    ladybug_db_path="",
+):
     """Return a minimal config dict with all paths under tmp_path."""
     persist_dir = str(tmp_path / "persist")
     repo_root = str(tmp_path / "repos")
@@ -267,6 +292,7 @@ def _base_config(tmp_path, *, backend="sqlite", pg_dsn="", enable_docs=True,
 # FastCode builder
 # ---------------------------------------------------------------------------
 
+
 def _build_fastcode(config):
     """Construct a FastCode instance with real components from config."""
     fc = FastCode.__new__(FastCode)
@@ -294,7 +320,10 @@ def _build_fastcode(config):
 
     config_repo_root = config.get("repo_root", "./repos")
     fc.retriever = HybridRetriever(
-        config, fc.vector_store, fc.embedder, fc.graph_builder,
+        config,
+        fc.vector_store,
+        fc.embedder,
+        fc.graph_builder,
         repo_root=config_repo_root,
     )
     fc.query_processor = QueryProcessor(config)
@@ -333,8 +362,10 @@ def _build_fastcode(config):
 # PG helpers
 # ---------------------------------------------------------------------------
 
+
 def _pg_execute(dsn: str, sql: str, params=None):
     import psycopg
+
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(sql, params or ())
         if cur.description:
@@ -344,17 +375,22 @@ def _pg_execute(dsn: str, sql: str, params=None):
 
 
 def _cleanup_pg_tables(dsn: str):
-    for table in ("embedding_vectors", "search_documents", "design_documents",
-                  "design_doc_mentions"):
-        try:
-            _pg_execute(dsn, f"DELETE FROM {table} WHERE snapshot_id LIKE 'snap:test_repo:%'")
-        except Exception:
-            pass
+    for table in (
+        "embedding_vectors",
+        "search_documents",
+        "design_documents",
+        "design_doc_mentions",
+    ):
+        with contextlib.suppress(Exception):
+            _pg_execute(
+                dsn, f"DELETE FROM {table} WHERE snapshot_id LIKE 'snap:test_repo:%'"
+            )
 
 
 # ===========================================================================
 # TEST 1: Chonkie uses project's configured embedding model
 # ===========================================================================
+
 
 @_skip_ollama
 def test_semantic_chunker_uses_configured_embedding_model(tmp_path):
@@ -409,6 +445,7 @@ The gateway handles authentication and rate limiting.
 # TEST 2: Full pipeline with PostgreSQL + semantic chunking
 # ===========================================================================
 
+
 @_skip_ollama
 @_skip_pg
 def test_e2e_semantic_indexing_with_postgres(tmp_path):
@@ -425,8 +462,7 @@ def test_e2e_semantic_indexing_with_postgres(tmp_path):
         "postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e",
     )
     repo_path = _build_test_repo(tmp_path)
-    config = _base_config(tmp_path, backend="postgres", pg_dsn=pg_dsn,
-                          enable_docs=True)
+    config = _base_config(tmp_path, backend="postgres", pg_dsn=pg_dsn, enable_docs=True)
     fc = _build_fastcode(config)
 
     # Verify real services wired
@@ -501,6 +537,7 @@ def test_e2e_semantic_indexing_with_postgres(tmp_path):
 # TEST 3: Ladybug graph sync with semantic chunks
 # ===========================================================================
 
+
 @_skip_ollama
 @_skip_ladybug
 def test_e2e_semantic_indexing_with_ladybug(tmp_path):
@@ -514,8 +551,13 @@ def test_e2e_semantic_indexing_with_ladybug(tmp_path):
     """
     ladybug_path = str(tmp_path / "ladybug" / "test.lb")
     repo_path = _build_test_repo(tmp_path)
-    config = _base_config(tmp_path, backend="sqlite", enable_docs=True,
-                          enable_ladybug=True, ladybug_db_path=ladybug_path)
+    config = _base_config(
+        tmp_path,
+        backend="sqlite",
+        enable_docs=True,
+        enable_ladybug=True,
+        ladybug_db_path=ladybug_path,
+    )
     fc = _build_fastcode(config)
 
     # Verify Ladybug is wired and enabled
@@ -580,6 +622,7 @@ def test_e2e_semantic_indexing_with_ladybug(tmp_path):
 # TEST 4: Full query pipeline retrieves semantically chunked docs
 # ===========================================================================
 
+
 @_skip_ollama
 @_skip_pg
 def test_e2e_semantic_query_pipeline_with_postgres(tmp_path):
@@ -595,8 +638,7 @@ def test_e2e_semantic_query_pipeline_with_postgres(tmp_path):
         "postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e",
     )
     repo_path = _build_test_repo(tmp_path)
-    config = _base_config(tmp_path, backend="postgres", pg_dsn=pg_dsn,
-                          enable_docs=True)
+    config = _base_config(tmp_path, backend="postgres", pg_dsn=pg_dsn, enable_docs=True)
     fc = _build_fastcode(config)
 
     _cleanup_pg_tables(pg_dsn)
@@ -626,10 +668,23 @@ def test_e2e_semantic_query_pipeline_with_postgres(tmp_path):
     all_text = " ".join(
         str(r.get("element", {}).get(k, ""))
         for r in query_result
-        for k in ("code", "text", "docstring", "name", "summary",
-                  "file_path", "relative_path", "content")
+        for k in (
+            "code",
+            "text",
+            "docstring",
+            "name",
+            "summary",
+            "file_path",
+            "relative_path",
+            "content",
+        )
     ).lower()
-    relevant = "vector" in all_text or "magnitude" in all_text or "math" in all_text or "math_utils" in all_text
+    relevant = (
+        "vector" in all_text
+        or "magnitude" in all_text
+        or "math" in all_text
+        or "math_utils" in all_text
+    )
     assert relevant, (
         f"Expected at least one result mentioning 'vector', 'magnitude', or 'math'. "
         f"Got names: {[r.get('element', {}).get('name', '?') for r in query_result[:5]]}"

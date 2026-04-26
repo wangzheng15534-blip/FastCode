@@ -52,9 +52,7 @@ def _kind_compatible(ast_kind: str, scip_kind: str) -> bool:
         return True
     if ast_kind in CALLABLE_KINDS and scip_kind in CALLABLE_KINDS:
         return True
-    if ast_kind in CONTAINER_KINDS and scip_kind in CONTAINER_KINDS:
-        return True
-    return False
+    return ast_kind in CONTAINER_KINDS and scip_kind in CONTAINER_KINDS
 
 
 def _normalize_name(value: str | None) -> str:
@@ -84,7 +82,11 @@ def _name_score(ast_unit: IRCodeUnit, scip_unit: IRCodeUnit) -> float:
         return 0.0
     if ast_name == scip_name:
         return 1.0
-    if ast_unit.qualified_name and scip_unit.qualified_name and ast_unit.qualified_name.lower() == scip_unit.qualified_name.lower():
+    if (
+        ast_unit.qualified_name
+        and scip_unit.qualified_name
+        and ast_unit.qualified_name.lower() == scip_unit.qualified_name.lower()
+    ):
         return 1.0
     if ast_name in scip_name or scip_name in ast_name:
         return 0.75
@@ -101,7 +103,11 @@ def _signature_param_count(signature: str | None) -> int | None:
 
 
 def _signature_score(ast_unit: IRCodeUnit, scip_unit: IRCodeUnit) -> float:
-    if ast_unit.signature and scip_unit.signature and ast_unit.signature.strip() == scip_unit.signature.strip():
+    if (
+        ast_unit.signature
+        and scip_unit.signature
+        and ast_unit.signature.strip() == scip_unit.signature.strip()
+    ):
         return 1.0
     ast_params = _signature_param_count(ast_unit.signature)
     scip_params = _signature_param_count(scip_unit.signature)
@@ -110,7 +116,9 @@ def _signature_score(ast_unit: IRCodeUnit, scip_unit: IRCodeUnit) -> float:
     return 0.0
 
 
-def _scip_parent_name(scip_unit: IRCodeUnit, scip_supports_by_unit: dict[str, list[IRUnitSupport]]) -> str:
+def _scip_parent_name(
+    scip_unit: IRCodeUnit, scip_supports_by_unit: dict[str, list[IRUnitSupport]]
+) -> str:
     for support in scip_supports_by_unit.get(scip_unit.unit_id, []):
         if support.enclosing_external_id:
             return _normalize_name(support.enclosing_external_id)
@@ -145,8 +153,14 @@ def _parent_context_score(
     return 0.0
 
 
-def _occurrence_support_score(scip_unit: IRCodeUnit, scip_supports_by_unit: dict[str, list[IRUnitSupport]]) -> float:
-    occurrences = [s for s in scip_supports_by_unit.get(scip_unit.unit_id, []) if s.support_kind == "occurrence"]
+def _occurrence_support_score(
+    scip_unit: IRCodeUnit, scip_supports_by_unit: dict[str, list[IRUnitSupport]]
+) -> float:
+    occurrences = [
+        s
+        for s in scip_supports_by_unit.get(scip_unit.unit_id, [])
+        if s.support_kind == "occurrence"
+    ]
     if not occurrences:
         return 0.0
     if any((s.role or "") == "definition" for s in occurrences):
@@ -176,12 +190,16 @@ def _candidate_score(
 ) -> float:
     overlap = _span_overlap_score(ast_unit, scip_unit)
     name_score = _name_score(ast_unit, scip_unit)
-    if ast_unit.path != scip_unit.path or not _kind_compatible(ast_unit.kind, scip_unit.kind):
+    if ast_unit.path != scip_unit.path or not _kind_compatible(
+        ast_unit.kind, scip_unit.kind
+    ):
         return 0.0
     if overlap <= 0.0 and name_score <= 0.0:
         return 0.0
     kind_score = 1.0
-    parent_score = _parent_context_score(ast_unit, scip_unit, ast_units_by_id, scip_supports_by_unit)
+    parent_score = _parent_context_score(
+        ast_unit, scip_unit, ast_units_by_id, scip_supports_by_unit
+    )
     signature_score = _signature_score(ast_unit, scip_unit)
     occurrence_score = _occurrence_support_score(scip_unit, scip_supports_by_unit)
     semantic_score = _embedding_score(ast_unit, scip_unit, ast_embeddings_by_unit)
@@ -208,7 +226,13 @@ def _select_matches(
     scores: dict[tuple[str, str], float] = {}
     for ast_unit in ast_units:
         for scip_unit in scip_units:
-            score = _candidate_score(ast_unit, scip_unit, ast_units_by_id, scip_supports_by_unit, ast_embeddings_by_unit)
+            score = _candidate_score(
+                ast_unit,
+                scip_unit,
+                ast_units_by_id,
+                scip_supports_by_unit,
+                ast_embeddings_by_unit,
+            )
             if score < CANDIDATE_MATCH_THRESHOLD:
                 continue
             left = f"ast::{ast_unit.unit_id}"
@@ -221,7 +245,9 @@ def _select_matches(
     if graph.number_of_edges() == 0:
         return primary_matches, candidate_matches
 
-    matching = nx.algorithms.matching.max_weight_matching(graph, maxcardinality=False, weight="weight")
+    matching = nx.algorithms.matching.max_weight_matching(
+        graph, maxcardinality=False, weight="weight"
+    )
     for left, right in matching:
         if left.startswith("scip::"):
             left, right = right, left
@@ -235,7 +261,9 @@ def _select_matches(
     return primary_matches, candidate_matches
 
 
-def _upsert_relation(merged: dict[tuple[str, str, str], IRRelation], relation: IRRelation) -> None:
+def _upsert_relation(
+    merged: dict[tuple[str, str, str], IRRelation], relation: IRRelation
+) -> None:
     key = (relation.src_unit_id, relation.dst_unit_id, relation.relation_type)
     existing = merged.get(key)
     if existing is None:
@@ -243,9 +271,13 @@ def _upsert_relation(merged: dict[tuple[str, str, str], IRRelation], relation: I
         return
     existing.support_sources.update(relation.support_sources)
     existing.support_ids = sorted(set(existing.support_ids) | set(relation.support_ids))
-    if _resolution_rank(relation.resolution_state) > _resolution_rank(existing.resolution_state):
+    if _resolution_rank(relation.resolution_state) > _resolution_rank(
+        existing.resolution_state
+    ):
         existing.resolution_state = relation.resolution_state
-    existing.metadata.update({k: v for k, v in relation.metadata.items() if v is not None})
+    existing.metadata.update(
+        {k: v for k, v in relation.metadata.items() if v is not None}
+    )
 
 
 def _resolution_rank(value: str) -> int:
@@ -262,9 +294,17 @@ def _find_enclosing_unit_id(
     for unit in merged_units:
         if unit.path != path or unit.kind in {"file", "doc"}:
             continue
-        if start_line is None or end_line is None or not unit.start_line or not unit.end_line:
+        if (
+            start_line is None
+            or end_line is None
+            or not unit.start_line
+            or not unit.end_line
+        ):
             continue
-        if unit.start_line <= start_line <= unit.end_line and unit.start_line <= end_line <= unit.end_line:
+        if (
+            unit.start_line <= start_line <= unit.end_line
+            and unit.start_line <= end_line <= unit.end_line
+        ):
             span = unit.end_line - unit.start_line
             candidates.append((span, unit.unit_id))
     if not candidates:
@@ -281,7 +321,9 @@ def _merge_unit(ast_unit: IRCodeUnit, scip_unit: IRCodeUnit, score: float) -> No
         ast_unit.signature = scip_unit.signature
     if scip_unit.primary_anchor_symbol_id:
         ast_unit.primary_anchor_symbol_id = scip_unit.primary_anchor_symbol_id
-    ast_unit.anchor_symbol_ids = sorted(set(ast_unit.anchor_symbol_ids) | set(scip_unit.anchor_symbol_ids))
+    ast_unit.anchor_symbol_ids = sorted(
+        set(ast_unit.anchor_symbol_ids) | set(scip_unit.anchor_symbol_ids)
+    )
     ast_unit.anchor_coverage = 1.0
     aliases = set((ast_unit.metadata or {}).get("aliases", []))
     aliases.add(scip_unit.unit_id)
@@ -309,7 +351,9 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
 
     merged_units = [_clone_unit(unit) for unit in ast_snapshot.units]
     merged_supports = [_clone_support(support) for support in ast_snapshot.supports]
-    merged_embeddings = [_clone_embedding(embedding) for embedding in ast_snapshot.embeddings]
+    merged_embeddings = [
+        _clone_embedding(embedding) for embedding in ast_snapshot.embeddings
+    ]
     relation_map: dict[tuple[str, str, str], IRRelation] = {}
     for relation in ast_snapshot.relations:
         _upsert_relation(relation_map, _clone_relation(relation))
@@ -317,29 +361,49 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
     merged_units_by_id = {unit.unit_id: unit for unit in merged_units}
     ast_units_by_id = merged_units_by_id
     scip_units_by_id = {unit.unit_id: unit for unit in scip_snapshot.units}
-    ast_embeddings_by_unit = {embedding.unit_id: embedding for embedding in merged_embeddings}
+    ast_embeddings_by_unit = {
+        embedding.unit_id: embedding for embedding in merged_embeddings
+    }
     scip_supports_by_unit: dict[str, list[IRUnitSupport]] = defaultdict(list)
     for support in scip_snapshot.supports:
         scip_supports_by_unit[support.unit_id].append(support)
 
-    ast_file_by_path = {unit.path: unit.unit_id for unit in merged_units if unit.kind == "file"}
+    ast_file_by_path = {
+        unit.path: unit.unit_id for unit in merged_units if unit.kind == "file"
+    }
     scip_to_canonical: dict[str, str] = {}
 
     for unit in scip_snapshot.units:
         if unit.kind == "file" and unit.path in ast_file_by_path:
             scip_to_canonical[unit.unit_id] = ast_file_by_path[unit.path]
 
-    ast_units_by_path_bucket: dict[tuple[str, str], list[IRCodeUnit]] = defaultdict(list)
-    scip_units_by_path_bucket: dict[tuple[str, str], list[IRCodeUnit]] = defaultdict(list)
+    ast_units_by_path_bucket: dict[tuple[str, str], list[IRCodeUnit]] = defaultdict(
+        list
+    )
+    scip_units_by_path_bucket: dict[tuple[str, str], list[IRCodeUnit]] = defaultdict(
+        list
+    )
     for unit in merged_units:
         if unit.kind == "file":
             continue
-        bucket = "container" if unit.kind in CONTAINER_KINDS else "callable" if unit.kind in CALLABLE_KINDS else "other"
+        bucket = (
+            "container"
+            if unit.kind in CONTAINER_KINDS
+            else "callable"
+            if unit.kind in CALLABLE_KINDS
+            else "other"
+        )
         ast_units_by_path_bucket[(unit.path, bucket)].append(unit)
     for unit in scip_snapshot.units:
         if unit.kind == "file":
             continue
-        bucket = "container" if unit.kind in CONTAINER_KINDS else "callable" if unit.kind in CALLABLE_KINDS else "other"
+        bucket = (
+            "container"
+            if unit.kind in CONTAINER_KINDS
+            else "callable"
+            if unit.kind in CALLABLE_KINDS
+            else "other"
+        )
         scip_units_by_path_bucket[(unit.path, bucket)].append(unit)
 
     candidate_anchor_hints: dict[str, set[str]] = defaultdict(set)
@@ -369,7 +433,9 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
         if ast_id not in ast_units_by_id:
             continue
         unit = ast_units_by_id[ast_id]
-        unit.candidate_anchor_symbol_ids = sorted(set(unit.candidate_anchor_symbol_ids) | anchors)
+        unit.candidate_anchor_symbol_ids = sorted(
+            set(unit.candidate_anchor_symbol_ids) | anchors
+        )
         if not unit.anchor_coverage and unit.candidate_anchor_symbol_ids:
             unit.anchor_coverage = 0.5
 
@@ -381,7 +447,9 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
         if synthetic.kind == "file" and synthetic.path in ast_file_by_path:
             continue
         if synthetic.kind != "file":
-            synthetic_parent = ast_file_by_path.get(synthetic.path, synthetic.parent_unit_id)
+            synthetic_parent = ast_file_by_path.get(
+                synthetic.path, synthetic.parent_unit_id
+            )
             synthetic.parent_unit_id = synthetic_parent
         merged_units.append(synthetic)
         merged_units_by_id[synthetic.unit_id] = synthetic
@@ -396,37 +464,60 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
                     relation_type="contain",
                     resolution_state="anchored",
                     support_sources={"scip"},
-                    metadata={"source": "scip", "doc_id": ast_file_by_path.get(synthetic.path, synthetic.parent_unit_id)},
+                    metadata={
+                        "source": "scip",
+                        "doc_id": ast_file_by_path.get(
+                            synthetic.path, synthetic.parent_unit_id
+                        ),
+                    },
                 ),
             )
 
     for support in scip_snapshot.supports:
         materialized = _clone_support(support)
-        materialized.unit_id = scip_to_canonical.get(materialized.unit_id, materialized.unit_id)
+        materialized.unit_id = scip_to_canonical.get(
+            materialized.unit_id, materialized.unit_id
+        )
         merged_supports.append(materialized)
 
     for relation in scip_snapshot.relations:
         materialized = _clone_relation(relation)
-        materialized.src_unit_id = scip_to_canonical.get(materialized.src_unit_id, materialized.src_unit_id)
-        materialized.dst_unit_id = scip_to_canonical.get(materialized.dst_unit_id, materialized.dst_unit_id)
+        materialized.src_unit_id = scip_to_canonical.get(
+            materialized.src_unit_id, materialized.src_unit_id
+        )
+        materialized.dst_unit_id = scip_to_canonical.get(
+            materialized.dst_unit_id, materialized.dst_unit_id
+        )
         _upsert_relation(relation_map, materialized)
 
     for support in merged_supports:
-        if support.source != "scip" or support.support_kind != "occurrence" or (support.role or "") not in REF_ROLES:
+        if (
+            support.source != "scip"
+            or support.support_kind != "occurrence"
+            or (support.role or "") not in REF_ROLES
+        ):
             continue
         unit_id = support.unit_id
         target = merged_units_by_id.get(unit_id)
         if target is None:
             continue
-        source_unit_id = _find_enclosing_unit_id(target.path, support.start_line, support.end_line, merged_units)
+        source_unit_id = _find_enclosing_unit_id(
+            target.path, support.start_line, support.end_line, merged_units
+        )
         if not source_unit_id:
             source_unit_id = ast_file_by_path.get(target.path) or next(
-                (unit.unit_id for unit in merged_units if unit.kind == "file" and unit.path == target.path),
+                (
+                    unit.unit_id
+                    for unit in merged_units
+                    if unit.kind == "file" and unit.path == target.path
+                ),
                 "",
             )
         if not source_unit_id:
             continue
-        resolution_state = "anchored" if target.primary_anchor_symbol_id else "candidate"
+        resolution_state = (
+            "anchored" if target.primary_anchor_symbol_id else "candidate"
+        )
         _upsert_relation(
             relation_map,
             IRRelation(

@@ -18,7 +18,9 @@ from fastcode.scip_indexers import (
 # --- Strategies ---
 
 language_st = st.sampled_from(list(SUPPORTED_LANGUAGES.keys()))
-unsupported_st = st.sampled_from(["brainfuck", "cobol", "fortran", "pascal", "assembly"])
+unsupported_st = st.sampled_from(
+    ["brainfuck", "cobol", "fortran", "pascal", "assembly"]
+)
 
 
 # --- Properties ---
@@ -26,7 +28,6 @@ unsupported_st = st.sampled_from(["brainfuck", "cobol", "fortran", "pascal", "as
 
 @pytest.mark.property
 class TestGetIndexerCommand:
-
     @given(language=language_st)
     @settings(max_examples=15)
     @pytest.mark.happy
@@ -61,7 +62,6 @@ class TestGetIndexerCommand:
 
 @pytest.mark.property
 class TestDetectScipLanguages:
-
     @pytest.mark.happy
     def test_python_files_detected(self):
         """HAPPY: .py files detected as python."""

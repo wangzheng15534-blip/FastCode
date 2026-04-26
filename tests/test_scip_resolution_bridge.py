@@ -213,7 +213,7 @@ class TestNamespaceStrategy:
 
     def test_different_directory_no_match(self):
         unit = _make_unit("u:1", "Helper", path="src/utils/helper.py")
-        bridge = SCIPResolutionBridge(_make_snapshot(unit))
+        SCIPResolutionBridge(_make_snapshot(unit))
         # Mention from different directory -- should not match via namespace
         # (also not lexical since display_name doesn't match mention_text exactly
         #  -- it does here, so this would be lexical. Let's use a non-matching name.)

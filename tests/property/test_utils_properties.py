@@ -32,8 +32,12 @@ from fastcode.utils import (
 
 # --- Helpers ---
 
-small_text = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789", min_size=1, max_size=20)
-extension_st = st.sampled_from([".py", ".js", ".ts", ".go", ".java", ".rs", ".rb", ".cpp", ".c", ".h"])
+small_text = st.text(
+    alphabet="abcdefghijklmnopqrstuvwxyz0123456789", min_size=1, max_size=20
+)
+extension_st = st.sampled_from(
+    [".py", ".js", ".ts", ".go", ".java", ".rs", ".rb", ".cpp", ".c", ".h"]
+)
 
 
 # --- Properties ---
@@ -41,7 +45,6 @@ extension_st = st.sampled_from([".py", ".js", ".ts", ".go", ".java", ".rs", ".rb
 
 @pytest.mark.property
 class TestUtcNow:
-
     @pytest.mark.happy
     def test_returns_iso_string(self):
         result = utc_now()
@@ -51,7 +54,6 @@ class TestUtcNow:
 
 @pytest.mark.property
 class TestComputeFileHash:
-
     @pytest.mark.happy
     def test_hash_deterministic(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
@@ -82,7 +84,6 @@ class TestComputeFileHash:
 
 @pytest.mark.property
 class TestIsTextFile:
-
     @pytest.mark.happy
     def test_text_file_true(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -102,7 +103,6 @@ class TestIsTextFile:
 
 @pytest.mark.property
 class TestGetFileExtension:
-
     @given(ext=extension_st)
     @settings(max_examples=10)
     @pytest.mark.happy
@@ -116,7 +116,6 @@ class TestGetFileExtension:
 
 @pytest.mark.property
 class TestIsSupportedFile:
-
     @pytest.mark.happy
     def test_supported(self):
         assert is_supported_file("main.py", [".py", ".js"]) is True
@@ -128,7 +127,6 @@ class TestIsSupportedFile:
 
 @pytest.mark.property
 class TestNormalizePath:
-
     @pytest.mark.happy
     def test_forward_slash(self):
         assert normalize_path("a/b/c") == "a/b/c"
@@ -138,7 +136,9 @@ class TestNormalizePath:
         result = normalize_path("a/../b")
         assert ".." not in result  # normpath collapses
 
-    @given(path=st.text(alphabet="abcdefghijklmnopqrstuvwxyz/", min_size=1, max_size=20))
+    @given(
+        path=st.text(alphabet="abcdefghijklmnopqrstuvwxyz/", min_size=1, max_size=20)
+    )
     @settings(max_examples=10)
     @pytest.mark.happy
     def test_no_backslashes(self, path):
@@ -148,7 +148,6 @@ class TestNormalizePath:
 
 @pytest.mark.property
 class TestGetLanguageFromExtension:
-
     @pytest.mark.happy
     def test_python(self):
         assert get_language_from_extension(".py") == "python"
@@ -168,7 +167,6 @@ class TestGetLanguageFromExtension:
 
 @pytest.mark.property
 class TestExtractCodeSnippet:
-
     @pytest.mark.happy
     def test_basic_extraction(self):
         content = "line0\nline1\nline2\nline3\nline4"
@@ -185,7 +183,6 @@ class TestExtractCodeSnippet:
 
 @pytest.mark.property
 class TestFormatCodeBlock:
-
     @pytest.mark.happy
     def test_basic_format(self):
         result = format_code_block("x = 1", "python")
@@ -205,7 +202,6 @@ class TestFormatCodeBlock:
 
 @pytest.mark.property
 class TestCalculateCodeComplexity:
-
     @pytest.mark.happy
     def test_simple_code(self):
         assert calculate_code_complexity("x = 1") == 1
@@ -222,7 +218,6 @@ class TestCalculateCodeComplexity:
 
 @pytest.mark.property
 class TestMergeDicts:
-
     @pytest.mark.happy
     def test_merge_two(self):
         assert merge_dicts({"a": 1}, {"b": 2}) == {"a": 1, "b": 2}
@@ -238,7 +233,6 @@ class TestMergeDicts:
 
 @pytest.mark.property
 class TestSafeGet:
-
     @pytest.mark.happy
     def test_simple_get(self):
         assert safe_get({"a": {"b": 1}}, "a", "b") == 1
@@ -258,7 +252,6 @@ class TestSafeGet:
 
 @pytest.mark.property
 class TestEnsureDir:
-
     @pytest.mark.happy
     def test_creates_directory(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -269,7 +262,6 @@ class TestEnsureDir:
 
 @pytest.mark.property
 class TestSafeJsonable:
-
     @pytest.mark.happy
     def test_primitives_passthrough(self):
         assert safe_jsonable(None) is None
@@ -297,6 +289,7 @@ class TestSafeJsonable:
         class Obj:
             def to_dict(self):
                 return {"x": 1}
+
         assert safe_jsonable(Obj()) == {"x": 1}
 
     @pytest.mark.edge
@@ -304,6 +297,7 @@ class TestSafeJsonable:
         class Obj:
             def __init__(self):
                 self.y = 2
+
         result = safe_jsonable(Obj())
         assert result == {"y": 2}
 
@@ -313,6 +307,7 @@ class TestSafeJsonable:
             def __init__(self, d=0):
                 self.d = d
                 self.child = Recursive(d + 1) if d < 15 else None
+
         result = safe_jsonable(Recursive())
         assert isinstance(result, (dict, str))
 
@@ -326,7 +321,6 @@ class TestSafeJsonable:
 
 @pytest.mark.property
 class TestGetRepoNameFromUrl:
-
     @pytest.mark.happy
     def test_github_https(self):
         assert get_repo_name_from_url("https://github.com/org/myrepo") == "myrepo"
@@ -348,7 +342,6 @@ class TestGetRepoNameFromUrl:
 
 @pytest.mark.property
 class TestCleanDocstring:
-
     @pytest.mark.happy
     def test_basic_clean(self):
         result = clean_docstring("  hello  ")
@@ -375,7 +368,6 @@ class TestCleanDocstring:
 
 @pytest.mark.property
 class TestResolveConfigPaths:
-
     @pytest.mark.happy
     def test_empty_config(self):
         assert resolve_config_paths({}, "/root") == {}
@@ -399,7 +391,6 @@ class TestResolveConfigPaths:
 
 @pytest.mark.property
 class TestTruncateToTokens:
-
     @pytest.mark.happy
     def test_short_text_unchanged(self):
         text = "hello world"
@@ -422,7 +413,6 @@ class TestTruncateToTokens:
 
 @pytest.mark.property
 class TestComputeFileHashEdge:
-
     @pytest.mark.edge
     def test_hash_empty_file(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
@@ -444,7 +434,6 @@ class TestComputeFileHashEdge:
 
 @pytest.mark.property
 class TestSafeJsonableEdge:
-
     @pytest.mark.edge
     def test_nested_dict_depth(self):
         d = {"a": {"b": {"c": {"d": 1}}}}
@@ -460,13 +449,13 @@ class TestSafeJsonableEdge:
     def test_object_without_to_dict(self):
         class Bare:
             pass
+
         result = safe_jsonable(Bare())
         assert isinstance(result, (dict, str))
 
 
 @pytest.mark.property
 class TestExtractCodeSnippetEdge:
-
     @pytest.mark.edge
     def test_start_beyond_content(self):
         result = extract_code_snippet("line0\nline1", 100, 101)
@@ -485,7 +474,6 @@ class TestExtractCodeSnippetEdge:
 
 @pytest.mark.property
 class TestCleanDocstringEdge:
-
     @pytest.mark.edge
     def test_leading_newlines(self):
         assert clean_docstring("\n\nhello") == "hello"
@@ -501,7 +489,6 @@ class TestCleanDocstringEdge:
 
 @pytest.mark.property
 class TestResolveConfigPathsEdge:
-
     @pytest.mark.edge
     def test_vector_store_path_resolved(self):
         cfg = {"vector_store": {"persist_directory": "data/vectors"}}
@@ -529,7 +516,6 @@ class TestResolveConfigPathsEdge:
 
 @pytest.mark.property
 class TestCalculateCodeComplexityEdge:
-
     @pytest.mark.edge
     def test_many_ifs(self):
         code = "if a:\n  pass\nif b:\n  pass\nif c:\n  pass"
@@ -544,7 +530,6 @@ class TestCalculateCodeComplexityEdge:
 
 @pytest.mark.property
 class TestFormatCodeBlockEdge:
-
     @pytest.mark.edge
     def test_with_line_number(self):
         result = format_code_block("x = 1", "python", "a.py", start_line=42)

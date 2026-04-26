@@ -29,15 +29,63 @@ sql_value = st.one_of(
 
 sql_value_list = st.lists(sql_value, min_size=0, max_size=10)
 
-_SQL_KEYWORDS = frozenset({
-    "select", "from", "where", "insert", "update", "delete", "create",
-    "drop", "alter", "table", "index", "in", "is", "not", "null", "and",
-    "or", "as", "on", "join", "set", "values", "into", "by", "order",
-    "group", "having", "limit", "offset", "union", "all", "exists",
-    "between", "like", "case", "when", "then", "else", "end", "begin",
-    "commit", "rollback", "primary", "key", "foreign", "references",
-    "unique", "check", "default", "if", "integer", "text", "real",
-})
+_SQL_KEYWORDS = frozenset(
+    {
+        "select",
+        "from",
+        "where",
+        "insert",
+        "update",
+        "delete",
+        "create",
+        "drop",
+        "alter",
+        "table",
+        "index",
+        "in",
+        "is",
+        "not",
+        "null",
+        "and",
+        "or",
+        "as",
+        "on",
+        "join",
+        "set",
+        "values",
+        "into",
+        "by",
+        "order",
+        "group",
+        "having",
+        "limit",
+        "offset",
+        "union",
+        "all",
+        "exists",
+        "between",
+        "like",
+        "case",
+        "when",
+        "then",
+        "else",
+        "end",
+        "begin",
+        "commit",
+        "rollback",
+        "primary",
+        "key",
+        "foreign",
+        "references",
+        "unique",
+        "check",
+        "default",
+        "if",
+        "integer",
+        "text",
+        "real",
+    }
+)
 
 safe_identifier = st.builds(
     lambda prefix, suffix: prefix + suffix,
@@ -75,7 +123,6 @@ def _make_postgres_runtime_fake() -> DBRuntime:
 
 @pytest.mark.property
 class TestInit:
-
     @pytest.mark.happy
     def test_sqlite_memory_creation(self) -> None:
         rt = _make_sqlite_runtime()
@@ -100,7 +147,9 @@ class TestInit:
 
     @pytest.mark.happy
     def test_pool_min_max_cast_to_int(self) -> None:
-        rt = DBRuntime(backend="sqlite", sqlite_path=":memory:", pool_min="2", pool_max="10")
+        rt = DBRuntime(
+            backend="sqlite", sqlite_path=":memory:", pool_min="2", pool_max="10"
+        )
         assert rt.pool_min == 2
         assert rt.pool_max == 10
         assert isinstance(rt.pool_min, int)
@@ -127,13 +176,17 @@ class TestInit:
     @pytest.mark.edge
     def test_postgres_without_dsn_raises(self) -> None:
         """Lines 46-47: postgres backend requires DSN."""
-        with pytest.raises(RuntimeError, match="postgres backend selected but no postgres_dsn"):
+        with pytest.raises(
+            RuntimeError, match="postgres backend selected but no postgres_dsn"
+        ):
             DBRuntime(backend="postgres", postgres_dsn=None)
 
     @pytest.mark.edge
     def test_postgres_empty_dsn_raises(self) -> None:
         """Lines 46-47: empty DSN raises."""
-        with pytest.raises(RuntimeError, match="postgres backend selected but no postgres_dsn"):
+        with pytest.raises(
+            RuntimeError, match="postgres backend selected but no postgres_dsn"
+        ):
             DBRuntime(backend="postgres", postgres_dsn="")
 
     @pytest.mark.edge
@@ -150,7 +203,9 @@ class TestInit:
             mod.psycopg = orig
 
     @pytest.mark.edge
-    def test_postgres_pool_not_available_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_postgres_pool_not_available_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Line 58: warning when psycopg_pool unavailable, pool set to None."""
         import fastcode.db_runtime as mod
 
@@ -160,9 +215,13 @@ class TestInit:
             mod.psycopg = True
             mod.ConnectionPool = None
             with caplog.at_level(logging.WARNING, logger="fastcode.db_runtime"):
-                rt = DBRuntime(backend="postgres", postgres_dsn="postgresql://localhost/db")
+                rt = DBRuntime(
+                    backend="postgres", postgres_dsn="postgresql://localhost/db"
+                )
             assert rt.pool is None
-            assert any("psycopg_pool not available" in r.message for r in caplog.records)
+            assert any(
+                "psycopg_pool not available" in r.message for r in caplog.records
+            )
         finally:
             mod.psycopg = orig_psycopg
             mod.ConnectionPool = orig_pool
@@ -173,7 +232,6 @@ class TestInit:
 
 @pytest.mark.property
 class TestFromStorageConfig:
-
     @pytest.mark.happy
     def test_defaults_to_sqlite(self) -> None:
         rt = DBRuntime.from_storage_config(sqlite_path=":memory:", storage_cfg=None)
@@ -211,7 +269,6 @@ class TestFromStorageConfig:
 
 @pytest.mark.property
 class TestAdaptSql:
-
     @pytest.mark.happy
     def test_sqlite_passthrough(self) -> None:
         rt = _make_sqlite_runtime()
@@ -262,7 +319,6 @@ class TestAdaptSql:
 
 @pytest.mark.property
 class TestConnect:
-
     @pytest.mark.happy
     def test_connect_yields_sqlite_connection(self) -> None:
         rt = _make_sqlite_runtime()
@@ -351,7 +407,6 @@ class TestConnect:
 
 @pytest.mark.property
 class TestExecute:
-
     @pytest.mark.happy
     def test_execute_basic_query(self) -> None:
         rt = _make_sqlite_runtime()
@@ -414,7 +469,9 @@ class TestExecute:
             cols = ", ".join(f"c{i}" for i in range(ncols))
             placeholders = ", ".join("?" for _ in range(ncols))
             conn.execute(f"CREATE TABLE t ({cols})")
-            rt.execute(conn, f"INSERT INTO t ({cols}) VALUES ({placeholders})", tuple(values))
+            rt.execute(
+                conn, f"INSERT INTO t ({cols}) VALUES ({placeholders})", tuple(values)
+            )
             cur = rt.execute(conn, f"SELECT {cols} FROM t")
             row = cur.fetchone()
             for i, v in enumerate(values):
@@ -447,7 +504,6 @@ class TestExecute:
 
 @pytest.mark.property
 class TestRowToDict:
-
     @pytest.mark.edge
     def test_none_returns_none(self) -> None:
         """Line 116: None input returns None."""
@@ -516,7 +572,6 @@ class TestRowToDict:
 
 @pytest.mark.property
 class TestBeginWrite:
-
     @pytest.mark.happy
     def test_begin_write_sqlite(self) -> None:
         """Line 123: BEGIN IMMEDIATE for sqlite."""
@@ -563,7 +618,6 @@ class TestBeginWrite:
 
 @pytest.mark.property
 class TestConnectionPooling:
-
     @given(n=st.integers(min_value=1, max_value=5))
     @settings(max_examples=10)
     @pytest.mark.happy
@@ -581,9 +635,7 @@ class TestConnectionPooling:
         with rt.connect() as outer:
             rt.execute(outer, "CREATE TABLE t (id INTEGER)")
             rt.execute(outer, "INSERT INTO t VALUES (?)", (1,))
-            with rt.connect() as inner:
-                # :memory: connections are isolated; inner has its own DB
-                with pytest.raises(sqlite3.OperationalError):
+            with rt.connect() as inner, pytest.raises(sqlite3.OperationalError):
                     rt.execute(inner, "SELECT * FROM t")
 
 
@@ -592,7 +644,6 @@ class TestConnectionPooling:
 
 @pytest.mark.property
 class TestRollbackBehavior:
-
     @pytest.mark.edge
     def test_constraint_violation_no_corruption(self) -> None:
         rt = _make_sqlite_runtime()
@@ -671,13 +722,14 @@ class TestRollbackBehavior:
 
 @pytest.mark.property
 class TestSchema:
-
     @pytest.mark.happy
     def test_join_query(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
             conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
-            conn.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, amount REAL)")
+            conn.execute(
+                "CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, amount REAL)"
+            )
             conn.execute("INSERT INTO users VALUES (1, 'alice')")
             conn.execute("INSERT INTO orders VALUES (100, 1, 9.99)")
             cur = rt.execute(
@@ -695,11 +747,15 @@ class TestSchema:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_dynamic_table_creation(self, table_name: str, col_name: str, value: int) -> None:
+    def test_dynamic_table_creation(
+        self, table_name: str, col_name: str, value: int
+    ) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
             conn.execute(f"CREATE TABLE {table_name} ({col_name} INTEGER)")
-            rt.execute(conn, f"INSERT INTO {table_name} ({col_name}) VALUES (?)", (value,))
+            rt.execute(
+                conn, f"INSERT INTO {table_name} ({col_name}) VALUES (?)", (value,)
+            )
             cur = rt.execute(conn, f"SELECT {col_name} FROM {table_name}")
             assert cur.fetchone()[0] == value
 
@@ -740,7 +796,6 @@ class TestSchema:
 
 @pytest.mark.property
 class TestDbRuntimeEdgeExtras:
-
     @pytest.mark.edge
     def test_execute_invalid_sql(self) -> None:
         rt = _make_sqlite_runtime()

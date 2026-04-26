@@ -35,20 +35,47 @@ language_st = st.sampled_from(
 scip_occurrence_st = st.builds(
     SCIPOccurrence,
     symbol=st.builds(lambda x: f"scip python pkg {x} method()", identifier),
-    role=st.sampled_from(["definition", "reference", "implementation", "import", "write_access",
-                          "type_definition", "forward_definition"]),
-    range=st.lists(st.none() | st.integers(min_value=0, max_value=500), min_size=0, max_size=4),
+    role=st.sampled_from(
+        [
+            "definition",
+            "reference",
+            "implementation",
+            "import",
+            "write_access",
+            "type_definition",
+            "forward_definition",
+        ]
+    ),
+    range=st.lists(
+        st.none() | st.integers(min_value=0, max_value=500), min_size=0, max_size=4
+    ),
 )
 
 scip_symbol_st = st.builds(
     SCIPSymbol,
     symbol=st.builds(lambda x: f"scip python pkg {x} func()", identifier),
     name=st.none() | identifier,
-    kind=st.sampled_from(["function", "method", "class", "variable", "module", "interface",
-                          "enum", "constant", "parameter", "type", "macro", "field"]),
+    kind=st.sampled_from(
+        [
+            "function",
+            "method",
+            "class",
+            "variable",
+            "module",
+            "interface",
+            "enum",
+            "constant",
+            "parameter",
+            "type",
+            "macro",
+            "field",
+        ]
+    ),
     qualified_name=st.none() | st.builds(lambda x: f"pkg.{x}", identifier),
     signature=st.none() | st.just("def foo(x: int) -> str"),
-    range=st.lists(st.none() | st.integers(min_value=0, max_value=500), min_size=0, max_size=4),
+    range=st.lists(
+        st.none() | st.integers(min_value=0, max_value=500), min_size=0, max_size=4
+    ),
 )
 
 scip_document_st = st.builds(
@@ -62,9 +89,12 @@ scip_document_st = st.builds(
 scip_index_st = st.builds(
     SCIPIndex,
     documents=st.lists(scip_document_st, max_size=3),
-    indexer_name=st.none() | st.sampled_from(["scip-python", "scip-java", "scip-go", "scip-typescript"]),
+    indexer_name=st.none()
+    | st.sampled_from(["scip-python", "scip-java", "scip-go", "scip-typescript"]),
     indexer_version=st.none() | st.just("1.0.0"),
-    metadata=st.dictionaries(identifier, st.integers(min_value=0, max_value=100), max_size=3),
+    metadata=st.dictionaries(
+        identifier, st.integers(min_value=0, max_value=100), max_size=3
+    ),
 )
 
 
@@ -73,7 +103,6 @@ scip_index_st = st.builds(
 
 @pytest.mark.property
 class TestSCIPOccurrenceRoundtrip:
-
     @given(occ=scip_occurrence_st)
     @settings(max_examples=50)
     @pytest.mark.happy
@@ -131,7 +160,6 @@ class TestSCIPOccurrenceRoundtrip:
 
 @pytest.mark.property
 class TestSCIPSymbolRoundtrip:
-
     @given(sym=scip_symbol_st)
     @settings(max_examples=50)
     @pytest.mark.happy
@@ -172,7 +200,14 @@ class TestSCIPSymbolRoundtrip:
     def test_to_dict_keys_stable(self, sym: SCIPSymbol):
         """HAPPY: to_dict always produces the same set of keys."""
         data = sym.to_dict()
-        assert set(data.keys()) == {"symbol", "name", "kind", "qualified_name", "signature", "range"}
+        assert set(data.keys()) == {
+            "symbol",
+            "name",
+            "kind",
+            "qualified_name",
+            "signature",
+            "range",
+        }
 
     @given(symbol=identifier)
     @settings(max_examples=10)
@@ -192,7 +227,6 @@ class TestSCIPSymbolRoundtrip:
 
 @pytest.mark.property
 class TestSCIPDocumentRoundtrip:
-
     @given(doc=scip_document_st)
     @settings(max_examples=50)
     @pytest.mark.happy
@@ -221,7 +255,7 @@ class TestSCIPDocumentRoundtrip:
         """HAPPY: nested symbols survive document roundtrip."""
         data = doc.to_dict()
         restored = SCIPDocument.from_dict(data)
-        for orig, rest in zip(doc.symbols, restored.symbols):
+        for orig, rest in zip(doc.symbols, restored.symbols, strict=True):
             assert orig.symbol == rest.symbol
             assert orig.name == rest.name
             assert orig.kind == rest.kind
@@ -233,7 +267,7 @@ class TestSCIPDocumentRoundtrip:
         """HAPPY: nested occurrences survive document roundtrip."""
         data = doc.to_dict()
         restored = SCIPDocument.from_dict(data)
-        for orig, rest in zip(doc.occurrences, restored.occurrences):
+        for orig, rest in zip(doc.occurrences, restored.occurrences, strict=True):
             assert orig.symbol == rest.symbol
             assert orig.role == rest.role
 
@@ -259,7 +293,6 @@ class TestSCIPDocumentRoundtrip:
 
 @pytest.mark.property
 class TestSCIPIndexRoundtrip:
-
     @given(index=scip_index_st)
     @settings(max_examples=50)
     @pytest.mark.happy
@@ -294,12 +327,16 @@ class TestSCIPIndexRoundtrip:
         assert len(index.documents) == len(valid_docs)
 
     @given(
-        extra_key=identifier.filter(lambda k: k not in {"documents", "indexer_name", "indexer_version"}),
+        extra_key=identifier.filter(
+            lambda k: k not in {"documents", "indexer_name", "indexer_version"}
+        ),
         extra_val=st.integers(min_value=0, max_value=100),
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_from_dict_sends_extra_keys_to_metadata(self, extra_key: str, extra_val: int):
+    def test_from_dict_sends_extra_keys_to_metadata(
+        self, extra_key: str, extra_val: int
+    ):
         """HAPPY: SCIPIndex.from_dict sends extra keys to metadata dict."""
         index = SCIPIndex.from_dict({extra_key: extra_val})
         assert extra_key in index.metadata
@@ -340,7 +377,6 @@ class TestSCIPIndexRoundtrip:
 
 @pytest.mark.property
 class TestSCIPArtifactRefRoundtrip:
-
     @given(
         snapshot_id=identifier,
         indexer_name=identifier,
@@ -352,7 +388,13 @@ class TestSCIPArtifactRefRoundtrip:
     @settings(max_examples=30)
     @pytest.mark.happy
     def test_artifact_ref_roundtrip(
-        self, snapshot_id: str, indexer_name: str, indexer_version, artifact_path: str, checksum: str, created_at: str
+        self,
+        snapshot_id: str,
+        indexer_name: str,
+        indexer_version,
+        artifact_path: str,
+        checksum: str,
+        created_at: str,
     ):
         """HAPPY: SCIPArtifactRef.to_dict() -> from_dict() roundtrip preserves all fields."""
         ref = SCIPArtifactRef(
@@ -410,7 +452,9 @@ class TestSCIPArtifactRefRoundtrip:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_to_dict_keys_stable(self, snapshot_id, indexer_name, artifact_path, checksum, created_at):
+    def test_to_dict_keys_stable(
+        self, snapshot_id, indexer_name, artifact_path, checksum, created_at
+    ):
         """HAPPY: to_dict always produces the same set of keys."""
         ref = SCIPArtifactRef(
             snapshot_id=snapshot_id,
@@ -421,5 +465,12 @@ class TestSCIPArtifactRefRoundtrip:
             created_at=created_at,
         )
         data = ref.to_dict()
-        expected_keys = {"snapshot_id", "indexer_name", "indexer_version", "artifact_path", "checksum", "created_at"}
+        expected_keys = {
+            "snapshot_id",
+            "indexer_name",
+            "indexer_version",
+            "artifact_path",
+            "checksum",
+            "created_at",
+        }
         assert set(data.keys()) == expected_keys

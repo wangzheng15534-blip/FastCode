@@ -1,4 +1,3 @@
-
 from fastcode.indexer import CodeElement
 from fastcode.retriever import HybridRetriever
 
@@ -17,7 +16,12 @@ def _mk_row(
     if trace_links is not None:
         metadata["trace_links"] = trace_links
     return {
-        "element": {"id": elem_id, "type": elem_type, "name": elem_id, "metadata": metadata},
+        "element": {
+            "id": elem_id,
+            "type": elem_type,
+            "name": elem_id,
+            "metadata": metadata,
+        },
         "semantic_score": total,
         "keyword_score": total * 0.5,
         "pseudocode_score": 0.0,
@@ -52,15 +56,29 @@ def test_doc_projection_builds_grounded_priors_from_doc_scores():
             "design_document",
             0.9,
             trace_links=[
-                {"unit_id": "ir:service", "weight": 0.8, "evidence_type": "exact_name_mention"},
-                {"unit_id": "ir:repo", "weight": 0.5, "evidence_type": "exact_name_mention"},
+                {
+                    "unit_id": "ir:service",
+                    "weight": 0.8,
+                    "evidence_type": "exact_name_mention",
+                },
+                {
+                    "unit_id": "ir:repo",
+                    "weight": 0.5,
+                    "evidence_type": "exact_name_mention",
+                },
             ],
         ),
         _mk_row(
             "doc:2",
             "design_document",
             0.6,
-            trace_links=[{"unit_id": "ir:service", "weight": 0.7, "evidence_type": "exact_name_mention"}],
+            trace_links=[
+                {
+                    "unit_id": "ir:service",
+                    "weight": 0.7,
+                    "evidence_type": "exact_name_mention",
+                }
+            ],
         ),
     ]
 
@@ -101,8 +119,16 @@ def test_doc_projection_seeds_existing_code_hits_and_adds_projected_only_hits():
             "design_document",
             0.9,
             trace_links=[
-                {"unit_id": "ir:service", "weight": 0.8, "evidence_type": "exact_name_mention"},
-                {"unit_id": "ir:repo", "weight": 0.9, "evidence_type": "exact_name_mention"},
+                {
+                    "unit_id": "ir:service",
+                    "weight": 0.8,
+                    "evidence_type": "exact_name_mention",
+                },
+                {
+                    "unit_id": "ir:repo",
+                    "weight": 0.9,
+                    "evidence_type": "exact_name_mention",
+                },
             ],
         )
     ]
@@ -138,4 +164,3 @@ def test_extract_trace_links_ignores_ungrounded_links():
     assert len(links) == 1
     assert links[0]["unit_id"] == "ir:repo"
     assert links[0]["weight"] == 0.8
-

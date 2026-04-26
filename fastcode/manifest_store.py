@@ -16,7 +16,9 @@ class ManifestStore:
         if isinstance(db_path_or_runtime, DBRuntime):
             self.db_runtime = db_path_or_runtime
         else:
-            self.db_runtime = DBRuntime(backend="sqlite", sqlite_path=db_path_or_runtime)
+            self.db_runtime = DBRuntime(
+                backend="sqlite", sqlite_path=db_path_or_runtime
+            )
         self._init_db()
 
     def _init_db(self) -> None:
@@ -34,14 +36,14 @@ class ManifestStore:
                     previous_manifest_id TEXT,
                     status TEXT NOT NULL
                 )
-                """
+                """,
             )
             self.db_runtime.execute(
                 conn,
                 """
                 CREATE INDEX IF NOT EXISTS idx_manifest_repo_ref_time
                 ON manifests (repo_name, ref_name, published_at DESC)
-                """
+                """,
             )
             self.db_runtime.execute(
                 conn,
@@ -54,7 +56,7 @@ class ManifestStore:
                     PRIMARY KEY (repo_name, ref_name),
                     FOREIGN KEY (manifest_id) REFERENCES manifests(manifest_id)
                 )
-                """
+                """,
             )
             self.db_runtime.execute(
                 conn,
@@ -100,7 +102,9 @@ class ManifestStore:
                 """,
                 (repo_name, ref_name),
             ).fetchone()
-            previous = self.db_runtime.row_to_dict(previous_row) if previous_row else None
+            previous = (
+                self.db_runtime.row_to_dict(previous_row) if previous_row else None
+            )
             previous_id = previous["manifest_id"] if previous else None
             self.db_runtime.execute(
                 conn,
@@ -145,7 +149,9 @@ class ManifestStore:
             "status": status,
         }
 
-    def get_branch_manifest(self, repo_name: str, ref_name: str) -> dict[str, Any] | None:
+    def get_branch_manifest(
+        self, repo_name: str, ref_name: str
+    ) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,

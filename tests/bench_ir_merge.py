@@ -46,9 +46,24 @@ def _make_scip_index(doc_count: int, syms_per_doc: int) -> dict:
         occurrences = []
         for s in range(syms_per_doc):
             sym_str = f"pkg {path} func_{d}_{s}()."
-            symbols.append({"symbol": sym_str, "name": f"func_{d}_{s}", "kind": "function"})
-            occurrences.append({"symbol": sym_str, "role": "reference", "range": [s * 5, 0, s * 5 + 3, 0]})
-        docs.append({"path": path, "language": "python", "symbols": symbols, "occurrences": occurrences})
+            symbols.append(
+                {"symbol": sym_str, "name": f"func_{d}_{s}", "kind": "function"}
+            )
+            occurrences.append(
+                {
+                    "symbol": sym_str,
+                    "role": "reference",
+                    "range": [s * 5, 0, s * 5 + 3, 0],
+                }
+            )
+        docs.append(
+            {
+                "path": path,
+                "language": "python",
+                "symbols": symbols,
+                "occurrences": occurrences,
+            }
+        )
     return {"indexer_name": "test", "indexer_version": "0.0.0", "documents": docs}
 
 

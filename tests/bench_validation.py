@@ -13,7 +13,10 @@ from fastcode.semantic_ir import IRDocument, IREdge, IROccurrence, IRSnapshot, I
 def _make_snapshot(num_symbols: int, num_occurrences: int) -> IRSnapshot:
     """Generate a valid snapshot with controlled size."""
     doc = IRDocument(
-        doc_id="doc:1", path="app.py", language="python", source_set={"ast"},
+        doc_id="doc:1",
+        path="app.py",
+        language="python",
+        source_set={"ast"},
     )
     symbols = [
         IRSymbol(
@@ -66,12 +69,15 @@ def _make_snapshot(num_symbols: int, num_occurrences: int) -> IRSnapshot:
     )
 
 
-@pytest.mark.parametrize("num_symbols,num_occurrences", [
-    (10, 10),
-    (100, 100),
-    (1000, 1000),
-    (1000, 5000),
-])
+@pytest.mark.parametrize(
+    "num_symbols,num_occurrences",
+    [
+        (10, 10),
+        (100, 100),
+        (1000, 1000),
+        (1000, 5000),
+    ],
+)
 def test_validation_throughput(num_symbols, num_occurrences, benchmark):
     """Benchmark validate_snapshot throughput."""
     snap = _make_snapshot(num_symbols, num_occurrences)

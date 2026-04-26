@@ -80,4 +80,3 @@ class IRGraphBuilder:
             reference_graph=ref,
             containment_graph=contain,
         )
-

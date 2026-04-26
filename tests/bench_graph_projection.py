@@ -14,7 +14,9 @@ from fastcode.semantic_ir import IRDocument, IREdge, IRSnapshot, IRSymbol
 
 def _make_snapshot(num_symbols: int, edges_per_symbol: int = 2) -> IRSnapshot:
     """Generate a synthetic IRSnapshot with controlled size."""
-    doc = IRDocument(doc_id="doc:1", path="app.py", language="python", source_set={"ast"})
+    doc = IRDocument(
+        doc_id="doc:1", path="app.py", language="python", source_set={"ast"}
+    )
     symbols = []
     edges = []
     for i in range(num_symbols):

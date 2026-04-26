@@ -17,7 +17,9 @@ class IndexRunStore:
         if isinstance(db_path_or_runtime, DBRuntime):
             self.db_runtime = db_path_or_runtime
         else:
-            self.db_runtime = DBRuntime(backend="sqlite", sqlite_path=db_path_or_runtime)
+            self.db_runtime = DBRuntime(
+                backend="sqlite", sqlite_path=db_path_or_runtime
+            )
         self._init_db()
 
     def _init_db(self) -> None:
@@ -39,7 +41,7 @@ class IndexRunStore:
                     started_at TEXT,
                     completed_at TEXT
                 )
-                """
+                """,
             )
             self.db_runtime.execute(
                 conn,
@@ -56,7 +58,7 @@ class IndexRunStore:
                     updated_at TEXT NOT NULL,
                     UNIQUE(run_id, snapshot_id, manifest_id, status)
                 )
-                """
+                """,
             )
             self.db_runtime.execute(
                 conn,
@@ -107,7 +109,16 @@ class IndexRunStore:
                     run_id, repo_name, snapshot_id, branch, commit_id, idempotency_key, status, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (run_id, repo_name, snapshot_id, branch, commit_id, idempotency_key, "queued", utc_now()),
+                (
+                    run_id,
+                    repo_name,
+                    snapshot_id,
+                    branch,
+                    commit_id,
+                    idempotency_key,
+                    "queued",
+                    utc_now(),
+                ),
             )
             conn.commit()
         return run_id
@@ -118,7 +129,9 @@ class IndexRunStore:
     def mark_status(self, run_id: str, status: str) -> None:
         self._set_run_fields(run_id, status=status)
 
-    def mark_completed(self, run_id: str, status: str = "succeeded", warnings: list | None = None) -> None:
+    def mark_completed(
+        self, run_id: str, status: str = "succeeded", warnings: list | None = None
+    ) -> None:
         self._set_run_fields(
             run_id,
             status=status,
@@ -127,7 +140,9 @@ class IndexRunStore:
         )
 
     def mark_failed(self, run_id: str, error_message: str) -> None:
-        self._set_run_fields(run_id, status="failed", error_message=error_message, completed_at=utc_now())
+        self._set_run_fields(
+            run_id, status="failed", error_message=error_message, completed_at=utc_now()
+        )
 
     def enqueue_publish_retry(
         self,
@@ -173,7 +188,17 @@ class IndexRunStore:
                     attempts, last_error, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (task_id, run_id, snapshot_id, manifest_id, "pending", 0, error_message, now, now),
+                (
+                    task_id,
+                    run_id,
+                    snapshot_id,
+                    manifest_id,
+                    "pending",
+                    0,
+                    error_message,
+                    now,
+                    now,
+                ),
             )
             conn.commit()
         self._set_run_fields(run_id, status="publish_pending")
@@ -244,12 +269,20 @@ class IndexRunStore:
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
-            row = self.db_runtime.execute(conn, "SELECT * FROM index_runs WHERE run_id=?", (run_id,)).fetchone()
+            row = self.db_runtime.execute(
+                conn, "SELECT * FROM index_runs WHERE run_id=?", (run_id,)
+            ).fetchone()
         return self.db_runtime.row_to_dict(row) if row else None
 
-    _ALLOWED_RUN_FIELDS = frozenset({
-        "status", "started_at", "completed_at", "error_message", "warnings_json",
-    })
+    _ALLOWED_RUN_FIELDS = frozenset(
+        {
+            "status",
+            "started_at",
+            "completed_at",
+            "error_message",
+            "warnings_json",
+        }
+    )
 
     def _set_run_fields(self, run_id: str, **fields: Any) -> None:
         if not fields:
@@ -260,5 +293,9 @@ class IndexRunStore:
         assignments = ", ".join(f"{k}=?" for k in fields)
         values = list(fields.values()) + [run_id]
         with self.db_runtime.connect() as conn:
-            self.db_runtime.execute(conn, f"UPDATE index_runs SET {assignments} WHERE run_id=?", tuple(values))
+            self.db_runtime.execute(
+                conn,
+                f"UPDATE index_runs SET {assignments} WHERE run_id=?",
+                tuple(values),
+            )
             conn.commit()

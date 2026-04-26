@@ -16,6 +16,7 @@ from fastcode.scip_models import SCIPIndex
 # Inline factory (mirrors tests.conftest._make_scip_payload)
 # ---------------------------------------------------------------------------
 
+
 def _make_scip_payload(
     n_docs: int = 1,
     n_symbols: int = 2,
@@ -26,25 +27,31 @@ def _make_scip_payload(
     for i in range(n_docs):
         syms = []
         for j in range(n_symbols):
-            syms.append({
-                "symbol": f"scip python test func_{j}()",
-                "name": f"func_{j}",
-                "kind": "function",
-                "range": [j + 1, 0, j + 1, 20],
-            })
+            syms.append(
+                {
+                    "symbol": f"scip python test func_{j}()",
+                    "name": f"func_{j}",
+                    "kind": "function",
+                    "range": [j + 1, 0, j + 1, 20],
+                }
+            )
         occs = []
         for k in range(n_occurrences):
-            occs.append({
-                "symbol": f"scip python test func_{k % n_symbols}()",
-                "role": "definition",
-                "range": [k + 1, 0, k + 1, 20],
-            })
-        documents.append({
-            "path": f"src/file{i}.py",
-            "language": "python",
-            "symbols": syms,
-            "occurrences": occs,
-        })
+            occs.append(
+                {
+                    "symbol": f"scip python test func_{k % n_symbols}()",
+                    "role": "definition",
+                    "range": [k + 1, 0, k + 1, 20],
+                }
+            )
+        documents.append(
+            {
+                "path": f"src/file{i}.py",
+                "language": "python",
+                "symbols": syms,
+                "occurrences": occs,
+            }
+        )
     return {
         "documents": documents,
         "indexer_name": "scip-python",
@@ -55,6 +62,7 @@ def _make_scip_payload(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _build(
     payload: dict | SCIPIndex | None = None,
@@ -152,11 +160,14 @@ def test_occurrence_range_normalization(raw_range: list, expected_start_line: in
     assert occ.start_line == expected_start_line
 
 
-@pytest.mark.parametrize("raw_range", [
-    [None, None],
-    [None, None, None],
-    [None, None, None, None],
-])
+@pytest.mark.parametrize(
+    "raw_range",
+    [
+        [None, None],
+        [None, None, None],
+        [None, None, None, None],
+    ],
+)
 def test_occurrence_none_cols_become_zero(raw_range: list):
     """None column values are converted to 0."""
     payload = _make_scip_payload(n_docs=1, n_symbols=1, n_occurrences=1)
@@ -174,16 +185,25 @@ def test_occurrence_none_cols_become_zero(raw_range: list):
 _EMPTY_DOC_VARIANTS = [
     ("empty_documents_list", {"documents": []}),
     ("no_documents_key", {}),
-    ("doc_no_symbols_no_occurrences", {
-        "documents": [{"path": "a.py", "language": "python", "symbols": [], "occurrences": []}],
-    }),
+    (
+        "doc_no_symbols_no_occurrences",
+        {
+            "documents": [
+                {"path": "a.py", "language": "python", "symbols": [], "occurrences": []}
+            ],
+        },
+    ),
 ]
 
 
 @pytest.mark.parametrize("label,payload_override", _EMPTY_DOC_VARIANTS)
 def test_empty_variants_no_symbols_or_occurrences(label: str, payload_override: dict):
     """Empty or missing documents produce zero symbols and occurrences."""
-    payload = {"indexer_name": "scip-python", "indexer_version": "1.0.0", **payload_override}
+    payload = {
+        "indexer_name": "scip-python",
+        "indexer_version": "1.0.0",
+        **payload_override,
+    }
     snap = _build(payload)
     assert len(snap.symbols) == 0
     assert len(snap.occurrences) == 0
@@ -193,7 +213,12 @@ def test_empty_symbols_still_creates_document():
     """A document with no symbols still appears in the snapshot."""
     payload = {
         "documents": [
-            {"path": "empty.py", "language": "python", "symbols": [], "occurrences": []},
+            {
+                "path": "empty.py",
+                "language": "python",
+                "symbols": [],
+                "occurrences": [],
+            },
         ],
     }
     snap = _build(payload)
@@ -284,7 +309,12 @@ def test_display_name_fallback(name: str | None, ext_symbol: str, expected: str)
                 "path": "a.py",
                 "language": "python",
                 "symbols": [
-                    {"symbol": ext_symbol, "name": name, "kind": "function", "range": [1, 0, 1, 5]},
+                    {
+                        "symbol": ext_symbol,
+                        "name": name,
+                        "kind": "function",
+                        "range": [1, 0, 1, 5],
+                    },
                 ],
                 "occurrences": [],
             },
@@ -299,6 +329,7 @@ def test_display_name_fallback(name: str | None, ext_symbol: str, expected: str)
 # 6. Source priority constant
 # ---------------------------------------------------------------------------
 
+
 def test_all_scip_symbols_have_priority_100():
     """Every SCIP-derived symbol has source_priority == 100."""
     payload = _make_scip_payload(n_docs=2, n_symbols=3, n_occurrences=0)
@@ -311,6 +342,7 @@ def test_all_scip_symbols_have_priority_100():
 # ---------------------------------------------------------------------------
 # 7. Metadata fields present
 # ---------------------------------------------------------------------------
+
 
 def test_symbol_metadata_fields():
     """SCIP symbols carry metadata with scip=True, source='scip', confidence='precise'."""
@@ -361,6 +393,7 @@ def test_contain_edge_metadata():
 # 8. SCIPIndex vs dict input both work
 # ---------------------------------------------------------------------------
 
+
 def test_dict_input_produces_snapshot():
     """Raw dict payload produces a valid snapshot."""
     payload = _make_scip_payload(n_docs=1, n_symbols=1, n_occurrences=1)
@@ -395,6 +428,7 @@ def test_dict_and_scip_index_produce_equivalent_symbols():
 # ---------------------------------------------------------------------------
 # Additional edge cases
 # ---------------------------------------------------------------------------
+
 
 def test_multiple_documents_each_scoped():
     """Multiple documents produce separate IRDocument entries."""

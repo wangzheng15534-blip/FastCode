@@ -12,6 +12,7 @@ from fastcode.semantic_ir import IRDocument, IREdge, IRSnapshot, IRSymbol
 
 # --- Helpers ---
 
+
 def _make_scope() -> ProjectionScope:
     """Create a snapshot-scoped ProjectionScope."""
     return ProjectionScope(
@@ -29,22 +30,33 @@ def _make_transformer() -> ProjectionTransformer:
 def _make_snapshot_with_docs(n_docs: int) -> IRSnapshot:
     """Create a snapshot with n_docs documents, each with one symbol and one edge."""
     docs = [
-        IRDocument(doc_id=f"d{i}", path=f"src/mod{i}.py", language="python", source_set={"ast"})
+        IRDocument(
+            doc_id=f"d{i}", path=f"src/mod{i}.py", language="python", source_set={"ast"}
+        )
         for i in range(n_docs)
     ]
     syms = [
         IRSymbol(
-            symbol_id=f"sym:{i}", external_symbol_id=None,
-            path=f"src/mod{i}.py", display_name=f"func_{i}",
-            kind="function", language="python",
-            start_line=1, source_priority=10, source_set={"ast"},
+            symbol_id=f"sym:{i}",
+            external_symbol_id=None,
+            path=f"src/mod{i}.py",
+            display_name=f"func_{i}",
+            kind="function",
+            language="python",
+            start_line=1,
+            source_priority=10,
+            source_set={"ast"},
         )
         for i in range(n_docs)
     ]
     edges = [
         IREdge(
-            edge_id=f"e:{i}", src_id=f"d{i}", dst_id=f"sym:{i}",
-            edge_type="contain", source="ast", confidence="resolved",
+            edge_id=f"e:{i}",
+            src_id=f"d{i}",
+            dst_id=f"sym:{i}",
+            edge_type="contain",
+            source="ast",
+            confidence="resolved",
         )
         for i in range(n_docs)
     ]
@@ -74,7 +86,6 @@ def _strip_timestamps(d: dict) -> dict:
 
 @pytest.mark.property
 class TestProjectionProperties:
-
     @given(n_docs=doc_count_st)
     @settings(max_examples=20)
     @pytest.mark.happy
@@ -88,7 +99,9 @@ class TestProjectionProperties:
         assert result1.projection_id == result2.projection_id
         assert _strip_timestamps(result1.l0) == _strip_timestamps(result2.l0)
         assert _strip_timestamps(result1.l1) == _strip_timestamps(result2.l1)
-        assert _strip_timestamps(result1.l2_index) == _strip_timestamps(result2.l2_index)
+        assert _strip_timestamps(result1.l2_index) == _strip_timestamps(
+            result2.l2_index
+        )
         assert len(result1.chunks) == len(result2.chunks)
 
     @given(n_docs=doc_count_st)
@@ -160,22 +173,36 @@ class TestProjectionProperties:
     def test_projection_snapshot_no_edges(self, n_docs: int):
         """EDGE: projection handles snapshot with symbols but no edges."""
         docs = [
-            IRDocument(doc_id=f"d{i}", path=f"src/mod{i}.py", language="python", source_set={"ast"})
+            IRDocument(
+                doc_id=f"d{i}",
+                path=f"src/mod{i}.py",
+                language="python",
+                source_set={"ast"},
+            )
             for i in range(n_docs)
         ]
         syms = [
             IRSymbol(
-                symbol_id=f"sym:{i}", external_symbol_id=None,
-                path=f"src/mod{i}.py", display_name=f"func_{i}",
-                kind="function", language="python",
-                start_line=1, source_priority=10, source_set={"ast"},
+                symbol_id=f"sym:{i}",
+                external_symbol_id=None,
+                path=f"src/mod{i}.py",
+                display_name=f"func_{i}",
+                kind="function",
+                language="python",
+                start_line=1,
+                source_priority=10,
+                source_set={"ast"},
             )
             for i in range(n_docs)
         ]
         snapshot = IRSnapshot(
-            repo_name="repo", snapshot_id="snap:repo:abc",
-            branch="main", commit_id="abc123",
-            documents=docs, symbols=syms, edges=[],
+            repo_name="repo",
+            snapshot_id="snap:repo:abc",
+            branch="main",
+            commit_id="abc123",
+            documents=docs,
+            symbols=syms,
+            edges=[],
             metadata={"source_modes": ["ast"]},
         )
         scope = _make_scope()
@@ -219,8 +246,18 @@ class TestProjectionProperties:
         transformer = _make_transformer()
         result = transformer.build(scope=scope, snapshot=snapshot)
         result_dict = result.to_dict()
-        for key in ("projection_id", "snapshot_id", "scope_kind", "scope_key",
-                     "l0", "l1", "l2_index", "chunks", "warnings", "created_at"):
+        for key in (
+            "projection_id",
+            "snapshot_id",
+            "scope_kind",
+            "scope_key",
+            "l0",
+            "l1",
+            "l2_index",
+            "chunks",
+            "warnings",
+            "created_at",
+        ):
             assert key in result_dict, f"missing key: {key}"
 
     @given(n_docs=st.integers(min_value=1, max_value=3))
@@ -229,13 +266,22 @@ class TestProjectionProperties:
     def test_projection_no_symbols(self, n_docs: int):
         """EDGE: projection handles docs with no symbols."""
         docs = [
-            IRDocument(doc_id=f"d{i}", path=f"src/mod{i}.py", language="python", source_set={"ast"})
+            IRDocument(
+                doc_id=f"d{i}",
+                path=f"src/mod{i}.py",
+                language="python",
+                source_set={"ast"},
+            )
             for i in range(n_docs)
         ]
         snapshot = IRSnapshot(
-            repo_name="repo", snapshot_id="snap:repo:abc",
-            branch="main", commit_id="abc123",
-            documents=docs, symbols=[], edges=[],
+            repo_name="repo",
+            snapshot_id="snap:repo:abc",
+            branch="main",
+            commit_id="abc123",
+            documents=docs,
+            symbols=[],
+            edges=[],
             metadata={"source_modes": ["ast"]},
         )
         scope = _make_scope()
@@ -246,16 +292,26 @@ class TestProjectionProperties:
     @pytest.mark.edge
     def test_projection_single_symbol_only(self):
         """EDGE: projection with exactly one symbol and no edges."""
-        doc = IRDocument(doc_id="d1", path="a.py", language="python", source_set={"ast"})
+        doc = IRDocument(
+            doc_id="d1", path="a.py", language="python", source_set={"ast"}
+        )
         sym = IRSymbol(
-            symbol_id="sym:1", external_symbol_id=None,
-            path="a.py", display_name="f", kind="function",
-            language="python", start_line=1, source_priority=10,
+            symbol_id="sym:1",
+            external_symbol_id=None,
+            path="a.py",
+            display_name="f",
+            kind="function",
+            language="python",
+            start_line=1,
+            source_priority=10,
             source_set={"ast"},
         )
         snapshot = IRSnapshot(
-            repo_name="repo", snapshot_id="snap:repo:abc",
-            documents=[doc], symbols=[sym], edges=[],
+            repo_name="repo",
+            snapshot_id="snap:repo:abc",
+            documents=[doc],
+            symbols=[sym],
+            edges=[],
             metadata={"source_modes": ["ast"]},
         )
         scope = _make_scope()
@@ -269,28 +325,42 @@ class TestProjectionProperties:
     def test_projection_all_same_kind(self, n_docs: int):
         """EDGE: all symbols same kind — Counter.most_common() must not flip."""
         docs = [
-            IRDocument(doc_id=f"d{i}", path=f"f{i}.py", language="python", source_set={"ast"})
+            IRDocument(
+                doc_id=f"d{i}", path=f"f{i}.py", language="python", source_set={"ast"}
+            )
             for i in range(n_docs)
         ]
         syms = [
             IRSymbol(
-                symbol_id=f"sym:{i}", external_symbol_id=None,
-                path=f"f{i}.py", display_name=f"fn_{i}",
-                kind="function", language="python",
-                start_line=1, source_priority=10, source_set={"ast"},
+                symbol_id=f"sym:{i}",
+                external_symbol_id=None,
+                path=f"f{i}.py",
+                display_name=f"fn_{i}",
+                kind="function",
+                language="python",
+                start_line=1,
+                source_priority=10,
+                source_set={"ast"},
             )
             for i in range(n_docs)
         ]
         edges = [
             IREdge(
-                edge_id=f"e:{i}", src_id=f"d{i}", dst_id=f"sym:{i}",
-                edge_type="contain", source="ast", confidence="resolved",
+                edge_id=f"e:{i}",
+                src_id=f"d{i}",
+                dst_id=f"sym:{i}",
+                edge_type="contain",
+                source="ast",
+                confidence="resolved",
             )
             for i in range(n_docs)
         ]
         snapshot = IRSnapshot(
-            repo_name="repo", snapshot_id="snap:repo:abc",
-            documents=docs, symbols=syms, edges=edges,
+            repo_name="repo",
+            snapshot_id="snap:repo:abc",
+            documents=docs,
+            symbols=syms,
+            edges=edges,
             metadata={"source_modes": ["ast"]},
         )
         scope = _make_scope()
@@ -302,20 +372,34 @@ class TestProjectionProperties:
     @pytest.mark.edge
     def test_projection_empty_repo_name(self):
         """EDGE: projection handles empty string repo_name gracefully."""
-        doc = IRDocument(doc_id="d1", path="a.py", language="python", source_set={"ast"})
+        doc = IRDocument(
+            doc_id="d1", path="a.py", language="python", source_set={"ast"}
+        )
         sym = IRSymbol(
-            symbol_id="sym:1", external_symbol_id=None,
-            path="a.py", display_name="f", kind="function",
-            language="python", start_line=1, source_priority=10,
+            symbol_id="sym:1",
+            external_symbol_id=None,
+            path="a.py",
+            display_name="f",
+            kind="function",
+            language="python",
+            start_line=1,
+            source_priority=10,
             source_set={"ast"},
         )
         edge = IREdge(
-            edge_id="e:1", src_id="d1", dst_id="sym:1",
-            edge_type="contain", source="ast", confidence="resolved",
+            edge_id="e:1",
+            src_id="d1",
+            dst_id="sym:1",
+            edge_type="contain",
+            source="ast",
+            confidence="resolved",
         )
         snapshot = IRSnapshot(
-            repo_name="", snapshot_id="snap::abc",
-            documents=[doc], symbols=[sym], edges=[edge],
+            repo_name="",
+            snapshot_id="snap::abc",
+            documents=[doc],
+            symbols=[sym],
+            edges=[edge],
             metadata={"source_modes": ["ast"]},
         )
         scope = _make_scope()
@@ -330,13 +414,22 @@ class TestProjectionProperties:
         """EDGE: projection handles documents with mixed languages."""
         langs = ["python", "javascript", "go"]
         docs = [
-            IRDocument(doc_id=f"d{i}", path=f"src/mod{i}.{langs[i % 3][:2]}", language=langs[i % 3], source_set={"ast"})
+            IRDocument(
+                doc_id=f"d{i}",
+                path=f"src/mod{i}.{langs[i % 3][:2]}",
+                language=langs[i % 3],
+                source_set={"ast"},
+            )
             for i in range(n_docs)
         ]
         snapshot = IRSnapshot(
-            repo_name="repo", snapshot_id="snap:repo:abc",
-            branch="main", commit_id="abc123",
-            documents=docs, symbols=[], edges=[],
+            repo_name="repo",
+            snapshot_id="snap:repo:abc",
+            branch="main",
+            commit_id="abc123",
+            documents=docs,
+            symbols=[],
+            edges=[],
             metadata={"source_modes": ["ast"]},
         )
         scope = _make_scope()
@@ -348,19 +441,31 @@ class TestProjectionProperties:
     @pytest.mark.edge
     def test_projection_large_symbol_set(self):
         """EDGE: projection handles many symbols without crash."""
-        docs = [IRDocument(doc_id="d0", path="big.py", language="python", source_set={"ast"})]
+        docs = [
+            IRDocument(
+                doc_id="d0", path="big.py", language="python", source_set={"ast"}
+            )
+        ]
         syms = [
             IRSymbol(
-                symbol_id=f"sym:{i}", external_symbol_id=None,
-                path="big.py", display_name=f"func_{i}",
-                kind="function", language="python",
-                start_line=i + 1, source_priority=10, source_set={"ast"},
+                symbol_id=f"sym:{i}",
+                external_symbol_id=None,
+                path="big.py",
+                display_name=f"func_{i}",
+                kind="function",
+                language="python",
+                start_line=i + 1,
+                source_priority=10,
+                source_set={"ast"},
             )
             for i in range(50)
         ]
         snapshot = IRSnapshot(
-            repo_name="repo", snapshot_id="snap:repo:abc",
-            documents=docs, symbols=syms, edges=[],
+            repo_name="repo",
+            snapshot_id="snap:repo:abc",
+            documents=docs,
+            symbols=syms,
+            edges=[],
             metadata={"source_modes": ["ast"]},
         )
         scope = _make_scope()

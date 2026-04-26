@@ -31,7 +31,9 @@ language_st = st.sampled_from(
 code_element_st = st.builds(
     CodeElement,
     id=st.builds(lambda x: f"elem_{x}", identifier),
-    type=st.sampled_from(["function", "class", "variable", "method", "file", "documentation"]),
+    type=st.sampled_from(
+        ["function", "class", "variable", "method", "file", "documentation"]
+    ),
     name=identifier,
     file_path=file_path_st,
     relative_path=file_path_st,
@@ -42,15 +44,18 @@ code_element_st = st.builds(
     signature=st.none() | st.just("def foo(x: int) -> str"),
     docstring=st.none() | st.just("A function."),
     summary=st.none() | st.just("Does stuff."),
-    metadata=st.fixed_dictionaries({}, optional={
-        "class_name": identifier,
-        "start_col": st.integers(min_value=0, max_value=80),
-        "imports": st.lists(
-            st.fixed_dictionaries({"module": identifier}),
-            max_size=2,
-        ),
-        "bases": st.lists(identifier, max_size=2),
-    }),
+    metadata=st.fixed_dictionaries(
+        {},
+        optional={
+            "class_name": identifier,
+            "start_col": st.integers(min_value=0, max_value=80),
+            "imports": st.lists(
+                st.fixed_dictionaries({"module": identifier}),
+                max_size=2,
+            ),
+            "bases": st.lists(identifier, max_size=2),
+        },
+    ),
 )
 
 
@@ -58,7 +63,9 @@ code_element_st = st.builds(
 
 _repo_root = "/tmp/test_repo"
 
-_element_types_with_symbols = st.sampled_from(["function", "class", "variable", "method"])
+_element_types_with_symbols = st.sampled_from(
+    ["function", "class", "variable", "method"]
+)
 _element_types_without_symbols = st.sampled_from(["file", "documentation"])
 
 _small_int = st.integers(min_value=1, max_value=500)
@@ -95,7 +102,6 @@ def _elem(
 
 @pytest.mark.property
 class TestDocumentDeduplication:
-
     @given(
         name1=identifier,
         name2=identifier,
@@ -124,7 +130,9 @@ class TestDocumentDeduplication:
     )
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_different_paths_produce_multiple_documents(self, name1, name2, path1, path2, language):
+    def test_different_paths_produce_multiple_documents(
+        self, name1, name2, path1, path2, language
+    ):
         """HAPPY: elements from different files produce distinct documents."""
         assume(path1 != path2)
         elements = [
@@ -156,7 +164,6 @@ class TestDocumentDeduplication:
 
 @pytest.mark.property
 class TestSymbolCreation:
-
     @given(
         name=identifier,
         path=file_path_st,
@@ -211,7 +218,6 @@ class TestSymbolCreation:
 
 @pytest.mark.property
 class TestLineClamping:
-
     @given(
         name=identifier,
         path=file_path_st,
@@ -222,10 +228,18 @@ class TestLineClamping:
     def test_occurrence_start_line_clamped_to_one(self, name, path, start_line):
         """EDGE: occurrence start_line is clamped to >= 1."""
         elem = CodeElement(
-            id=f"elem_{name}", type="function", name=name,
-            file_path=path, relative_path=path, language="python",
-            start_line=start_line, end_line=1,
-            code="pass", signature=None, docstring=None, summary=None,
+            id=f"elem_{name}",
+            type="function",
+            name=name,
+            file_path=path,
+            relative_path=path,
+            language="python",
+            start_line=start_line,
+            end_line=1,
+            code="pass",
+            signature=None,
+            docstring=None,
+            summary=None,
             metadata={},
         )
         snap = build_ir_from_ast("repo", "snap:1", [elem], _repo_root)
@@ -241,16 +255,20 @@ class TestLineClamping:
     @pytest.mark.happy
     def test_valid_start_line_preserved(self, name, path, start_line):
         """HAPPY: valid start_line >= 1 is preserved."""
-        elem = _elem("function", name, path, start_line=start_line, end_line=start_line + 5)
+        elem = _elem(
+            "function", name, path, start_line=start_line, end_line=start_line + 5
+        )
         snap = build_ir_from_ast("repo", "snap:1", [elem], _repo_root)
         assert snap.occurrences[0].start_line == start_line
 
 
 @pytest.mark.property
 class TestSourcePriorityAndSet:
-
     @given(
-        elements=st.lists(code_element_st.filter(lambda e: e.type not in {"file", "documentation"}), max_size=5),
+        elements=st.lists(
+            code_element_st.filter(lambda e: e.type not in {"file", "documentation"}),
+            max_size=5,
+        ),
     )
     @settings(max_examples=30)
     @pytest.mark.happy
@@ -274,7 +292,10 @@ class TestSourcePriorityAndSet:
             assert "fc_structure" in doc.source_set
 
     @given(
-        elements=st.lists(code_element_st.filter(lambda e: e.type not in {"file", "documentation"}), max_size=5),
+        elements=st.lists(
+            code_element_st.filter(lambda e: e.type not in {"file", "documentation"}),
+            max_size=5,
+        ),
     )
     @settings(max_examples=30)
     @pytest.mark.happy
@@ -288,7 +309,6 @@ class TestSourcePriorityAndSet:
 
 @pytest.mark.property
 class TestContainmentEdges:
-
     @given(
         name=identifier,
         path=file_path_st,
@@ -315,7 +335,10 @@ class TestContainmentEdges:
     @pytest.mark.happy
     def test_containment_count_equals_symbol_count(self, n, path, language):
         """HAPPY: number of containment edges equals number of symbols."""
-        elements = [_elem("function", f"fn_{i}", path, language, start_line=i * 10) for i in range(n)]
+        elements = [
+            _elem("function", f"fn_{i}", path, language, start_line=i * 10)
+            for i in range(n)
+        ]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         contain_edges = [e for e in snap.edges if e.edge_type == "contain"]
         assert len(contain_edges) == n
@@ -323,7 +346,6 @@ class TestContainmentEdges:
 
 @pytest.mark.property
 class TestMetadataConsistency:
-
     @given(
         elements=st.lists(code_element_st, max_size=4),
     )
@@ -350,7 +372,10 @@ class TestMetadataConsistency:
             assert "confidence" in sym.metadata
 
     @given(
-        elements=st.lists(code_element_st.filter(lambda e: e.type not in {"file", "documentation"}), max_size=5),
+        elements=st.lists(
+            code_element_st.filter(lambda e: e.type not in {"file", "documentation"}),
+            max_size=5,
+        ),
     )
     @settings(max_examples=30)
     @pytest.mark.happy
@@ -364,7 +389,6 @@ class TestMetadataConsistency:
 
 @pytest.mark.property
 class TestAttachments:
-
     @given(name=identifier, path=file_path_st, language=language_st)
     @settings(max_examples=20)
     @pytest.mark.happy
@@ -395,7 +419,9 @@ class TestAttachments:
     @given(name=identifier, path=file_path_st, language=language_st)
     @settings(max_examples=20)
     @pytest.mark.happy
-    def test_embedding_metadata_generates_embedding_attachment(self, name, path, language):
+    def test_embedding_metadata_generates_embedding_attachment(
+        self, name, path, language
+    ):
         """HAPPY: embedding metadata is promoted into an embedding attachment."""
         element = CodeElement(
             id=f"elem_{name}",
@@ -422,7 +448,6 @@ class TestAttachments:
 
 @pytest.mark.property
 class TestImportEdges:
-
     @given(
         module_name=identifier,
         path1=file_path_st,
@@ -431,18 +456,24 @@ class TestImportEdges:
     )
     @settings(max_examples=20)
     @pytest.mark.happy
-    def test_file_imports_create_dependency_edge(self, module_name, path1, path2, language):
+    def test_file_imports_create_dependency_edge(
+        self, module_name, path1, path2, language
+    ):
         """HAPPY: file element with imports metadata matching a known path creates import edge."""
         assume(path1 != path2)
-        # Create a module path that maps to path2
-        module_path = module_name.replace(".", "/")
         # Adjust path2 so it ends with the module path
         adjusted_path2 = f"src/{module_name}.py"
 
         elements = [
-            _elem("file", "mod", path1, language, metadata={
-                "imports": [{"module": module_name}],
-            }),
+            _elem(
+                "file",
+                "mod",
+                path1,
+                language,
+                metadata={
+                    "imports": [{"module": module_name}],
+                },
+            ),
             _elem("function", "fn1", adjusted_path2, language),
         ]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
@@ -459,9 +490,15 @@ class TestImportEdges:
     def test_file_import_no_match_no_edge(self, path, language):
         """EDGE: file with imports but no matching target produces no import edge."""
         elements = [
-            _elem("file", "mod", path, language, metadata={
-                "imports": [{"module": "nonexistent_module_xyz"}],
-            }),
+            _elem(
+                "file",
+                "mod",
+                path,
+                language,
+                metadata={
+                    "imports": [{"module": "nonexistent_module_xyz"}],
+                },
+            ),
         ]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         import_edges = [e for e in snap.edges if e.edge_type == "import"]
@@ -470,7 +507,6 @@ class TestImportEdges:
 
 @pytest.mark.property
 class TestInheritanceEdges:
-
     @given(
         base_name=identifier,
         derived_name=identifier,
@@ -479,14 +515,22 @@ class TestInheritanceEdges:
     )
     @settings(max_examples=20)
     @pytest.mark.happy
-    def test_class_with_bases_creates_inheritance_edge(self, base_name, derived_name, path, language):
+    def test_class_with_bases_creates_inheritance_edge(
+        self, base_name, derived_name, path, language
+    ):
         """HAPPY: class with matching base creates an inheritance edge."""
         assume(base_name != derived_name)
         elements = [
             _elem("class", base_name, path, language, metadata={}),
-            _elem("class", derived_name, path, language, metadata={
-                "bases": [base_name],
-            }),
+            _elem(
+                "class",
+                derived_name,
+                path,
+                language,
+                metadata={
+                    "bases": [base_name],
+                },
+            ),
         ]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         inherit_edges = [e for e in snap.edges if e.edge_type == "inherit"]
@@ -501,12 +545,20 @@ class TestInheritanceEdges:
     )
     @settings(max_examples=15)
     @pytest.mark.edge
-    def test_class_with_unknown_base_no_inheritance_edge(self, derived_name, path, language):
+    def test_class_with_unknown_base_no_inheritance_edge(
+        self, derived_name, path, language
+    ):
         """EDGE: class with base not in snapshot produces no inheritance edge."""
         elements = [
-            _elem("class", derived_name, path, language, metadata={
-                "bases": ["UnknownClass"],
-            }),
+            _elem(
+                "class",
+                derived_name,
+                path,
+                language,
+                metadata={
+                    "bases": ["UnknownClass"],
+                },
+            ),
         ]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         inherit_edges = [e for e in snap.edges if e.edge_type == "inherit"]
@@ -522,9 +574,15 @@ class TestInheritanceEdges:
     def test_class_with_self_base_no_edge(self, name, path, language):
         """EDGE: class inheriting from itself produces no edge."""
         elements = [
-            _elem("class", name, path, language, metadata={
-                "bases": [name],
-            }),
+            _elem(
+                "class",
+                name,
+                path,
+                language,
+                metadata={
+                    "bases": [name],
+                },
+            ),
         ]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         inherit_edges = [e for e in snap.edges if e.edge_type == "inherit"]
@@ -533,20 +591,29 @@ class TestInheritanceEdges:
 
 @pytest.mark.property
 class TestSnapshotIdentity:
-
     @given(
         repo_name=identifier,
         snapshot_id=st.builds(lambda x: f"snap:{x}", identifier),
         branch=st.none() | identifier,
-        commit_id=st.none() | st.text(alphabet="0123456789abcdef", min_size=7, max_size=40),
+        commit_id=st.none()
+        | st.text(alphabet="0123456789abcdef", min_size=7, max_size=40),
         tree_id=st.none() | identifier,
     )
     @settings(max_examples=20)
     @pytest.mark.happy
-    def test_snapshot_fields_preserved(self, repo_name, snapshot_id, branch, commit_id, tree_id):
+    def test_snapshot_fields_preserved(
+        self, repo_name, snapshot_id, branch, commit_id, tree_id
+    ):
         """HAPPY: snapshot identity fields pass through unchanged."""
-        snap = build_ir_from_ast(repo_name, snapshot_id, [], _repo_root,
-                                 branch=branch, commit_id=commit_id, tree_id=tree_id)
+        snap = build_ir_from_ast(
+            repo_name,
+            snapshot_id,
+            [],
+            _repo_root,
+            branch=branch,
+            commit_id=commit_id,
+            tree_id=tree_id,
+        )
         assert snap.repo_name == repo_name
         assert snap.snapshot_id == snapshot_id
         assert snap.branch == branch
@@ -556,7 +623,6 @@ class TestSnapshotIdentity:
 
 @pytest.mark.property
 class TestQualifiedNameResolution:
-
     @given(
         class_name=identifier,
         method_name=identifier,
@@ -565,10 +631,18 @@ class TestQualifiedNameResolution:
     )
     @settings(max_examples=20)
     @pytest.mark.happy
-    def test_method_with_class_name_gets_qualified(self, class_name, method_name, path, language):
+    def test_method_with_class_name_gets_qualified(
+        self, class_name, method_name, path, language
+    ):
         """HAPPY: method with class_name metadata gets qualified_name='Class.method'."""
         elements = [
-            _elem("method", method_name, path, language, metadata={"class_name": class_name}),
+            _elem(
+                "method",
+                method_name,
+                path,
+                language,
+                metadata={"class_name": class_name},
+            ),
         ]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         assert len(snap.symbols) == 1

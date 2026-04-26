@@ -49,45 +49,53 @@ def file_path_to_module_path(file_path: str, repo_root: str) -> str | None:
         try:
             common_path = os.path.commonpath([abs_file_path, abs_repo_root])
             if common_path != abs_repo_root.rstrip(os.path.sep):
-                logger.warning(f"File {abs_file_path} is outside repo root {abs_repo_root}")
+                logger.warning(
+                    f"File {abs_file_path} is outside repo root {abs_repo_root}"
+                )
                 return None
         except ValueError:
             # ValueError occurs when paths are on different drives (Windows) or completely unrelated
-            logger.warning(f"File {abs_file_path} and repo root {abs_repo_root} are not comparable")
+            logger.warning(
+                f"File {abs_file_path} and repo root {abs_repo_root} are not comparable"
+            )
             return None
 
         # Get the relative path from repo root
-        relative_path = os.path.relpath(abs_file_path.rstrip(os.path.sep), abs_repo_root.rstrip(os.path.sep))
+        relative_path = os.path.relpath(
+            abs_file_path.rstrip(os.path.sep), abs_repo_root.rstrip(os.path.sep)
+        )
 
         # Remove the file extension (.py)
-        if not relative_path.endswith('.py'):
+        if not relative_path.endswith(".py"):
             # logger.warning(f"File {relative_path} is not a Python file")
             return None
 
         relative_path = relative_path[:-3]  # Remove '.py'
 
         # Convert path separators to dots
-        module_path = relative_path.replace(os.path.sep, '.')
+        module_path = relative_path.replace(os.path.sep, ".")
 
         # BUG FIX: Handle both endswith and exact match for __init__.py
         # This fixes cases like '/repo/__init__.py' -> '__init__' -> '' (should return '')
-        if module_path == '__init__' or module_path.endswith('.__init__'):
-            module_path = module_path[:-9] if module_path.endswith('.__init__') else ''
+        if module_path == "__init__" or module_path.endswith(".__init__"):
+            module_path = module_path[:-9] if module_path.endswith(".__init__") else ""
 
         # Remove any leading dots that might result from relative paths
-        module_path = module_path.lstrip('.')
+        module_path = module_path.lstrip(".")
 
         # Validate the module path format
         if not module_path:
             # ROOT __init__.py CASE: When file_path is '/repo/__init__', module_path becomes empty
             # This is expected behavior - root __init__.py doesn't have a module name
             # Returning None is appropriate since there's no importable module
-            logger.debug(f"Empty module path generated for {file_path} (likely root __init__.py)")
+            logger.debug(
+                f"Empty module path generated for {file_path} (likely root __init__.py)"
+            )
             return None
 
         # RAG-friendly validation: Only check for system-level problematic characters
         # We allow hyphens, numbers at start, and keywords since RAG needs to index all logical files
-        if any(char in module_path for char in ['<', '>', ':', '"', '|', '?', '*']):
+        if any(char in module_path for char in ["<", ">", ":", '"', "|", "?", "*"]):
             logger.warning(f"Invalid characters in module path: {module_path}")
             return None
 
@@ -117,15 +125,12 @@ def is_valid_python_file(file_path: str) -> bool:
         True if it's a valid Python file, False otherwise
     """
     # Check file extension
-    if not file_path.endswith('.py'):
+    if not file_path.endswith(".py"):
         return False
 
     # Check if it's a file (not directory)
-    if not os.path.isfile(file_path):
-        return False
-
     # Additional checks can be added here (e.g., file size, readable, etc.)
-    return True
+    return os.path.isfile(file_path)
 
 
 def normalize_repo_root(repo_root: str) -> str:
@@ -156,7 +161,9 @@ class PathUtils:
 
         # Security: ensure repo_root exists and is a directory
         if not os.path.isdir(self.repo_root):
-            raise ValueError(f"Repository root does not exist or is not a directory: {self.repo_root}")
+            raise ValueError(
+                f"Repository root does not exist or is not a directory: {self.repo_root}"
+            )
 
     def resolve_path(self, path: str) -> str | None:
         """
@@ -177,7 +184,7 @@ class PathUtils:
             Resolved absolute path, or None if path does not exist
         """
         path = path.strip()
-        if not path or path == '.':
+        if not path or path == ".":
             return self.repo_root
 
         # 1. Preprocess path: normalize separators, handle ../ etc.
@@ -276,7 +283,7 @@ class PathUtils:
         if not file_path:
             return ""
 
-        path_parts = file_path.split('/')
+        path_parts = file_path.split("/")
 
         # Check each part of the path against known repo names
         for part in path_parts:
@@ -317,7 +324,7 @@ class PathUtils:
             return file_path
 
         # Split path into parts
-        path_parts = file_path.split('/')
+        path_parts = file_path.split("/")
         if not path_parts:
             return file_path
 
@@ -330,7 +337,9 @@ class PathUtils:
                 repo_index = i
                 break
 
-        self.logger.debug(f"[DEBUG] normalize_path_with_repo: file_path='{file_path}', repo_name='{repo_name}', repo_index={repo_index}")
+        self.logger.debug(
+            f"[DEBUG] normalize_path_with_repo: file_path='{file_path}', repo_name='{repo_name}', repo_index={repo_index}"
+        )
 
         # If repo_name found in path
         if repo_index >= 0:
@@ -342,17 +351,23 @@ class PathUtils:
                 # If next part is also the repo name (same or different case), skip the first occurrence
                 if next_part == repo_name or next_lower == repo_lower:
                     # Return from the second occurrence onwards
-                    result = '/'.join(path_parts[repo_index + 1:])
-                    self.logger.debug(f"[DEBUG] normalize_path_with_repo: duplicate repo name detected -> '{result}'")
+                    result = "/".join(path_parts[repo_index + 1 :])
+                    self.logger.debug(
+                        f"[DEBUG] normalize_path_with_repo: duplicate repo name detected -> '{result}'"
+                    )
                     return result
 
             # No duplicate, return from after repo_name
-            result = '/'.join(path_parts[repo_index + 1:])
-            self.logger.debug(f"[DEBUG] normalize_path_with_repo: removing repo prefix -> '{result}'")
+            result = "/".join(path_parts[repo_index + 1 :])
+            self.logger.debug(
+                f"[DEBUG] normalize_path_with_repo: removing repo prefix -> '{result}'"
+            )
             return result
 
         # repo_name not found in path, return as-is
-        self.logger.debug(f"[DEBUG] normalize_path_with_repo: no repo prefix found -> returning as-is '{file_path}'")
+        self.logger.debug(
+            f"[DEBUG] normalize_path_with_repo: no repo prefix found -> returning as-is '{file_path}'"
+        )
         return file_path
 
     def resolve_repo_target_path(self, repo_name: str, user_path: str) -> str:
@@ -374,11 +389,15 @@ class PathUtils:
         Returns:
             Resolved path with proper repo prefix
         """
-        clean_path = user_path.strip().rstrip('/')
-        self.logger.debug(f"[DEBUG] resolve_repo_target_path: repo_name='{repo_name}', user_path='{user_path}', clean_path='{clean_path}'")
+        clean_path = user_path.strip().rstrip("/")
+        self.logger.debug(
+            f"[DEBUG] resolve_repo_target_path: repo_name='{repo_name}', user_path='{user_path}', clean_path='{clean_path}'"
+        )
 
         if not clean_path or clean_path == ".":
-            self.logger.debug(f"[DEBUG] resolve_repo_target_path: empty/. path -> returning repo_name '{repo_name}'")
+            self.logger.debug(
+                f"[DEBUG] resolve_repo_target_path: empty/. path -> returning repo_name '{repo_name}'"
+            )
             return repo_name
 
         # Split path to check the first component
@@ -411,26 +430,40 @@ class PathUtils:
             stripped_exists = os.path.exists(full_path_stripped)
             unstripped_exists = os.path.exists(full_path_unstripped)
 
-            self.logger.debug(f"[DEBUG] resolve_repo_target_path: path_stripped='{path_stripped}' exists={stripped_exists}")
-            self.logger.debug(f"[DEBUG] resolve_repo_target_path: path_unstripped='{path_unstripped}' exists={unstripped_exists}")
+            self.logger.debug(
+                f"[DEBUG] resolve_repo_target_path: path_stripped='{path_stripped}' exists={stripped_exists}"
+            )
+            self.logger.debug(
+                f"[DEBUG] resolve_repo_target_path: path_unstripped='{path_unstripped}' exists={unstripped_exists}"
+            )
 
             if unstripped_exists and not stripped_exists:
                 # Unstripped path exists, stripped doesn't -> it's a subdirectory, not repo prefix
-                self.logger.debug(f"[DEBUG] resolve_repo_target_path: unstripped path exists, treating as subdirectory -> returning '{path_unstripped}'")
+                self.logger.debug(
+                    f"[DEBUG] resolve_repo_target_path: unstripped path exists, treating as subdirectory -> returning '{path_unstripped}'"
+                )
                 return path_unstripped
             if stripped_exists:
                 # Stripped path exists -> treat first part as repo prefix
-                self.logger.debug(f"[DEBUG] resolve_repo_target_path: stripped path exists, treating as repo prefix -> returning '{path_stripped}'")
+                self.logger.debug(
+                    f"[DEBUG] resolve_repo_target_path: stripped path exists, treating as repo prefix -> returning '{path_stripped}'"
+                )
                 return path_stripped
             # Neither exists - default to stripped (original behavior for new paths)
-            self.logger.debug(f"[DEBUG] resolve_repo_target_path: neither path exists, defaulting to stripped -> returning '{path_stripped}'")
+            self.logger.debug(
+                f"[DEBUG] resolve_repo_target_path: neither path exists, defaulting to stripped -> returning '{path_stripped}'"
+            )
             return path_stripped
         # The model output is relative to the sub-repo
         result = os.path.join(repo_name, clean_path)
-        self.logger.debug(f"[DEBUG] resolve_repo_target_path: prepending repo name -> returning '{result}'")
+        self.logger.debug(
+            f"[DEBUG] resolve_repo_target_path: prepending repo name -> returning '{result}'"
+        )
         return result
 
-    def validate_and_normalize_file_pattern(self, file_pattern: str, repo_name: str) -> tuple[bool, str] | None:
+    def validate_and_normalize_file_pattern(
+        self, file_pattern: str, repo_name: str
+    ) -> tuple[bool, str] | None:
         """
         Validate if a file pattern actually targets a specific repo and return normalized pattern.
 
@@ -459,8 +492,10 @@ class PathUtils:
         norm_pattern = file_pattern.replace("\\", "/")
 
         # Check if pattern starts with repo name (case-insensitive)
-        if not (norm_pattern.lower() == repo_name.lower() or
-                norm_pattern.lower().startswith(repo_name.lower() + "/")):
+        if not (
+            norm_pattern.lower() == repo_name.lower()
+            or norm_pattern.lower().startswith(repo_name.lower() + "/")
+        ):
             return None
 
         # Pattern potentially targets this repo, now validate by checking path existence
@@ -469,7 +504,7 @@ class PathUtils:
 
         # Extract the directory part (before any glob characters like *, ?, [)
         # Remove glob characters to get the base path for validation
-        glob_chars = ['*', '?', '[']
+        glob_chars = ["*", "?", "["]
         test_path = proposed_pattern
         for glob_char in glob_chars:
             if glob_char in test_path:
@@ -477,20 +512,26 @@ class PathUtils:
                 break
 
         # Remove trailing slash
-        test_path = test_path.rstrip('/')
+        test_path = test_path.rstrip("/")
 
         # If test_path is empty (pattern was just '*' or similar), accept the stripping
         if not test_path:
-            self.logger.debug(f"[DEBUG] validate_and_normalize_file_pattern: pattern is pure glob, accepting stripped pattern '{proposed_pattern}'")
+            self.logger.debug(
+                f"[DEBUG] validate_and_normalize_file_pattern: pattern is pure glob, accepting stripped pattern '{proposed_pattern}'"
+            )
             return (True, proposed_pattern)
 
         # Build full path to check: repo_root/repo_name/test_path
         full_test_path_stripped = os.path.join(self.repo_root, repo_name, test_path)
-        self.logger.debug(f"[DEBUG] validate_and_normalize_file_pattern: checking stripped path '{full_test_path_stripped}'")
+        self.logger.debug(
+            f"[DEBUG] validate_and_normalize_file_pattern: checking stripped path '{full_test_path_stripped}'"
+        )
 
         if os.path.exists(full_test_path_stripped):
             # Path exists with stripped prefix - the prefix was indeed the repo name
-            self.logger.debug(f"[DEBUG] validate_and_normalize_file_pattern: stripped path exists, returning '{proposed_pattern}'")
+            self.logger.debug(
+                f"[DEBUG] validate_and_normalize_file_pattern: stripped path exists, returning '{proposed_pattern}'"
+            )
             return (True, proposed_pattern)
 
         # Stripped path doesn't exist, check if unstripped path exists
@@ -500,17 +541,25 @@ class PathUtils:
             if glob_char in unstripped_test_path:
                 unstripped_test_path = unstripped_test_path.split(glob_char)[0]
                 break
-        unstripped_test_path = unstripped_test_path.rstrip('/')
+        unstripped_test_path = unstripped_test_path.rstrip("/")
 
-        full_test_path_unstripped = os.path.join(self.repo_root, repo_name, unstripped_test_path)
-        self.logger.debug(f"[DEBUG] validate_and_normalize_file_pattern: checking unstripped path '{full_test_path_unstripped}'")
+        full_test_path_unstripped = os.path.join(
+            self.repo_root, repo_name, unstripped_test_path
+        )
+        self.logger.debug(
+            f"[DEBUG] validate_and_normalize_file_pattern: checking unstripped path '{full_test_path_unstripped}'"
+        )
 
         if os.path.exists(full_test_path_unstripped):
             # Unstripped path exists - this means the pattern is a subdirectory, not repo prefix
-            self.logger.debug(f"[DEBUG] validate_and_normalize_file_pattern: unstripped path exists, pattern is subdirectory, returning '{norm_pattern}'")
+            self.logger.debug(
+                f"[DEBUG] validate_and_normalize_file_pattern: unstripped path exists, pattern is subdirectory, returning '{norm_pattern}'"
+            )
             return (True, norm_pattern)
 
         # Neither exists - pattern might be for a file that will be created, or it's invalid
         # In this case, we default to the stripped version (original behavior)
-        self.logger.debug(f"[DEBUG] validate_and_normalize_file_pattern: neither stripped nor unstripped path exists, defaulting to stripped '{proposed_pattern}'")
+        self.logger.debug(
+            f"[DEBUG] validate_and_normalize_file_pattern: neither stripped nor unstripped path exists, defaulting to stripped '{proposed_pattern}'"
+        )
         return (True, proposed_pattern)

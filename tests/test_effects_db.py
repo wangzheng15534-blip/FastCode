@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from fastcode.core.types import SnapshotRecord
+from fastcode.schema.core_types import SnapshotRecord
 from fastcode.effects.db import load_snapshot_record, save_snapshot_record
 
 

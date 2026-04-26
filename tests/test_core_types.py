@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from fastcode.core.types import (
+from fastcode.schema.core_types import (
     ElementFilter,
     FileAnalysis,
     FusionConfig,

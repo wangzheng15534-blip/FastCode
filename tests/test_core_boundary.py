@@ -22,7 +22,7 @@ from fastcode.core.boundary import (
     hit_to_response,
     query_request_to_core,
 )
-from fastcode.core.types import Hit
+from fastcode.schema.core_types import Hit
 
 CORE_DIR = pathlib.Path(__file__).resolve().parent.parent / "fastcode" / "core"
 

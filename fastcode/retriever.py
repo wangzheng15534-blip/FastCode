@@ -17,7 +17,7 @@ from .core import combination as _combination
 from .core import filtering as _filtering
 from .core import fusion as _fusion
 from .core import scoring as _scoring
-from .core.types import FusionConfig
+from .schema.core_types import FusionConfig
 from .embedder import CodeEmbedder
 from .graph_builder import CodeGraphBuilder
 from .indexer import CodeElement

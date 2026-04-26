@@ -10,7 +10,7 @@ from fastcode.core.fusion import (
     extract_trace_links,
     project_doc_priors,
 )
-from fastcode.core.types import FusionConfig
+from fastcode.schema.core_types import FusionConfig
 
 
 def _mk_row(elem_id: str, elem_type: str, total: float, **extra: Any) -> dict[str, Any]:

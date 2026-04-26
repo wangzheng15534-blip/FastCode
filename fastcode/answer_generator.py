@@ -3,26 +3,28 @@ Answer Generator - Generate answers using LLM with retrieved context
 """
 
 import logging
-import re
-import json
-from typing import List, Dict, Any, Optional, Tuple, Callable
 import os
-from openai import OpenAI
+import re
+from collections.abc import Callable
+from typing import Any
+
 from anthropic import Anthropic
 from dotenv import load_dotenv
+from openai import OpenAI
 
+from .core import context as _context
 from .llm_utils import openai_chat_completion
 from .utils import count_tokens, truncate_to_tokens
 
 
 class AnswerGenerator:
     """Generate natural language answers using LLM"""
-    
-    def __init__(self, config: Dict[str, Any]):
+
+    def __init__(self, config: dict[str, Any]):
         self.config = config
         self.gen_config = config.get("generation", {})
         self.logger = logging.getLogger(__name__)
-        
+
         self.provider = self.gen_config.get("provider", "openai")
         # self.model = self.gen_config.get("model", "openai/gpt-oss-120b")
         # self.base_url = self.gen_config.get("base_url", "https://openrouter.ai/api/v1")
@@ -39,10 +41,10 @@ class AnswerGenerator:
         self.include_file_paths = self.gen_config.get("include_file_paths", True)
         self.include_line_numbers = self.gen_config.get("include_line_numbers", True)
         self.include_related_code = self.gen_config.get("include_related_code", True)
-        
+
         # Load environment variables from .env file
         load_dotenv()
-        
+
         # Initialize LLM client
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -57,24 +59,30 @@ class AnswerGenerator:
             if not api_key:
                 self.logger.warning("OPENAI_API_KEY not set")
             return OpenAI(api_key=api_key, base_url=self.base_url)
-        
-        elif self.provider == "anthropic":
+
+        if self.provider == "anthropic":
             api_key = self.anthropic_api_key
             if not api_key:
                 self.logger.warning("ANTHROPIC_API_KEY not set")
             return Anthropic(api_key=api_key, base_url=self.base_url)
-        
-        else:
-            self.logger.warning(f"Unknown provider: {self.provider}")
-            return None
-    
-    def generate(self, query: str, retrieved_elements: List[Dict[str, Any]], 
-                 query_info: Optional[Dict[str, Any]] = None,
-                 dialogue_history: Optional[List[Dict[str, Any]]] = None,
-                 prompt_builder: Optional[Callable[[str, str, Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]], str]] = None) -> Dict[str, Any]:
+
+        self.logger.warning(f"Unknown provider: {self.provider}")
+        return None
+
+    def generate(
+        self,
+        query: str,
+        retrieved_elements: list[dict[str, Any]],
+        query_info: dict[str, Any] | None = None,
+        dialogue_history: list[dict[str, Any]] | None = None,
+        prompt_builder: Callable[
+            [str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str
+        ]
+        | None = None,
+    ) -> dict[str, Any]:
         """
         Generate answer for query using retrieved context
-        
+
         Args:
             query: User query
             retrieved_elements: List of retrieved code elements
@@ -82,7 +90,7 @@ class AnswerGenerator:
             dialogue_history: Previous dialogue turns for multi-turn mode
             prompt_builder: Optional callable that returns a prompt given
                 (query, prepared_context, query_info, dialogue_history)
-        
+
         Returns:
             Dictionary with answer, summary (if multi-turn), and metadata
         """
@@ -103,7 +111,9 @@ class AnswerGenerator:
 
         # Calculate available tokens for input
         # Reserve tokens for: output (max_tokens) + safety margin
-        available_input_tokens = self.max_context_tokens - self.max_tokens - self.reserve_tokens
+        available_input_tokens = (
+            self.max_context_tokens - self.max_tokens - self.reserve_tokens
+        )
 
         # Truncate if needed - keep front part, truncate from the end
         if prompt_tokens > available_input_tokens:
@@ -114,9 +124,13 @@ class AnswerGenerator:
             )
 
             # Calculate tokens for each component to determine how much context we can keep
-            system_prompt_sample = self._build_prompt(query, "", query_info, dialogue_history)
+            system_prompt_sample = self._build_prompt(
+                query, "", query_info, dialogue_history
+            )
             base_tokens = count_tokens(system_prompt_sample, self.model)
-            context_token_budget = available_input_tokens - base_tokens - 100  # Extra safety margin
+            context_token_budget = (
+                available_input_tokens - base_tokens - 100
+            )  # Extra safety margin
 
             if context_token_budget > 0:
                 # Truncate context from the end (keep beginning)
@@ -133,11 +147,15 @@ class AnswerGenerator:
             if prompt_builder:
                 prompt = prompt_builder(query, context, query_info, dialogue_history)
             else:
-                prompt = self._build_prompt(query, context, query_info, dialogue_history)
+                prompt = self._build_prompt(
+                    query, context, query_info, dialogue_history
+                )
 
             # Verify final token count
             final_prompt_tokens = count_tokens(prompt, self.model)
-            self.logger.info(f"Final prompt tokens after truncation: {final_prompt_tokens}")
+            self.logger.info(
+                f"Final prompt tokens after truncation: {final_prompt_tokens}"
+            )
             prompt_tokens = final_prompt_tokens
 
         # Generate answer
@@ -149,7 +167,7 @@ class AnswerGenerator:
             else:
                 raw_response = "Error: LLM provider not configured"
             # print("raw_response: ", raw_response)
-            
+
             # # Save raw_response to JSON file
             # test_data = {"answer": raw_response}
             # test_file_path = os.path.join(os.path.dirname(__file__), "test_specialized.json")
@@ -162,8 +180,12 @@ class AnswerGenerator:
 
                 # Fallback: Generate summary if parsing failed
                 if not summary:
-                    self.logger.info("Generating fallback summary from retrieved elements")
-                    summary = self._generate_fallback_summary(query, answer, retrieved_elements)
+                    self.logger.info(
+                        "Generating fallback summary from retrieved elements"
+                    )
+                    summary = self._generate_fallback_summary(
+                        query, answer, retrieved_elements
+                    )
             else:
                 answer = raw_response
                 summary = None
@@ -180,23 +202,31 @@ class AnswerGenerator:
                 result["summary"] = summary
 
             return result
-        
+
         except Exception as e:
             self.logger.error(f"Failed to generate answer: {e}")
             import traceback
+
             full_error = traceback.format_exc()
             self.logger.error(f"Full error traceback:\n{full_error}")
             return {
-                "answer": f"Error generating answer: {str(e)}",
+                "answer": f"Error generating answer: {e!s}",
                 "query": query,
                 "context_elements": len(retrieved_elements),
                 "error": full_error,
             }
 
-    def generate_stream(self, query: str, retrieved_elements: List[Dict[str, Any]],
-                       query_info: Optional[Dict[str, Any]] = None,
-                       dialogue_history: Optional[List[Dict[str, Any]]] = None,
-                       prompt_builder: Optional[Callable[[str, str, Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]], str]] = None):
+    def generate_stream(
+        self,
+        query: str,
+        retrieved_elements: list[dict[str, Any]],
+        query_info: dict[str, Any] | None = None,
+        dialogue_history: list[dict[str, Any]] | None = None,
+        prompt_builder: Callable[
+            [str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str
+        ]
+        | None = None,
+    ):
         """
         Generate answer with streaming support (yields chunks of text)
 
@@ -228,14 +258,18 @@ class AnswerGenerator:
         prompt_tokens = count_tokens(prompt, self.model)
         self.logger.info(f"Initial prompt tokens: {prompt_tokens}")
 
-        available_input_tokens = self.max_context_tokens - self.max_tokens - self.reserve_tokens
+        available_input_tokens = (
+            self.max_context_tokens - self.max_tokens - self.reserve_tokens
+        )
 
         if prompt_tokens > available_input_tokens:
             self.logger.warning(
                 f"Prompt exceeds limit ({prompt_tokens} > {available_input_tokens} tokens). Truncating context."
             )
 
-            system_prompt_sample = self._build_prompt(query, "", query_info, dialogue_history)
+            system_prompt_sample = self._build_prompt(
+                query, "", query_info, dialogue_history
+            )
             base_tokens = count_tokens(system_prompt_sample, self.model)
             context_token_budget = available_input_tokens - base_tokens - 100
 
@@ -243,16 +277,20 @@ class AnswerGenerator:
                 context = self._truncate_context(context, context_token_budget)
                 self.logger.info(f"Context truncated to ~{context_token_budget} tokens")
             else:
-                self.logger.error(f"Cannot fit prompt even without context!")
+                self.logger.error("Cannot fit prompt even without context!")
                 context = ""
 
             if prompt_builder:
                 prompt = prompt_builder(query, context, query_info, dialogue_history)
             else:
-                prompt = self._build_prompt(query, context, query_info, dialogue_history)
+                prompt = self._build_prompt(
+                    query, context, query_info, dialogue_history
+                )
 
             final_prompt_tokens = count_tokens(prompt, self.model)
-            self.logger.info(f"Final prompt tokens after truncation: {final_prompt_tokens}")
+            self.logger.info(
+                f"Final prompt tokens after truncation: {final_prompt_tokens}"
+            )
             prompt_tokens = final_prompt_tokens
 
         # Yield metadata first
@@ -260,7 +298,7 @@ class AnswerGenerator:
             "prompt_tokens": prompt_tokens,
             "sources": self._extract_sources(retrieved_elements),
             "context_elements": len(retrieved_elements),
-            "query": query
+            "query": query,
         }
         yield None, metadata
 
@@ -274,25 +312,26 @@ class AnswerGenerator:
 
             if filter_summary:
                 # Use buffered streaming to filter out <SUMMARY> section
-                for original_chunk, filtered_chunk in self._stream_with_summary_filter(prompt):
+                for original_chunk, filtered_chunk in self._stream_with_summary_filter(
+                    prompt
+                ):
                     if original_chunk:
                         full_response.append(original_chunk)
                     if filtered_chunk:
                         displayed_response.append(filtered_chunk)
                         yield filtered_chunk, None
+            # Normal streaming without filtering
+            elif self.provider == "openai":
+                for chunk in self._generate_openai_stream(prompt):
+                    full_response.append(chunk)
+                    yield chunk, None
+            elif self.provider == "anthropic":
+                for chunk in self._generate_anthropic_stream(prompt):
+                    full_response.append(chunk)
+                    yield chunk, None
             else:
-                # Normal streaming without filtering
-                if self.provider == "openai":
-                    for chunk in self._generate_openai_stream(prompt):
-                        full_response.append(chunk)
-                        yield chunk, None
-                elif self.provider == "anthropic":
-                    for chunk in self._generate_anthropic_stream(prompt):
-                        full_response.append(chunk)
-                        yield chunk, None
-                else:
-                    error_msg = "Error: LLM provider not configured"
-                    yield error_msg, None
+                error_msg = "Error: LLM provider not configured"
+                yield error_msg, None
 
             # Parse complete response for summary (multi-turn mode)
             raw_response = "".join(full_response)
@@ -301,8 +340,12 @@ class AnswerGenerator:
             if filter_summary:
                 answer, summary = self._parse_response_with_summary(raw_response)
                 if not summary:
-                    self.logger.info("Generating fallback summary from retrieved elements")
-                    summary = self._generate_fallback_summary(query, answer, retrieved_elements)
+                    self.logger.info(
+                        "Generating fallback summary from retrieved elements"
+                    )
+                    summary = self._generate_fallback_summary(
+                        query, answer, retrieved_elements
+                    )
 
             # Final yield with summary and completion flag
             final_metadata = {"complete": True}
@@ -313,9 +356,10 @@ class AnswerGenerator:
         except Exception as e:
             self.logger.error(f"Failed to generate streaming answer: {e}")
             import traceback
+
             full_error = traceback.format_exc()
             self.logger.error(f"Full error traceback:\n{full_error}")
-            error_msg = f"Error generating answer: {str(e)}"
+            error_msg = f"Error generating answer: {e!s}"
             yield error_msg, {"error": full_error, "complete": True}
 
     def _stream_with_summary_filter(self, prompt: str):
@@ -330,18 +374,18 @@ class AnswerGenerator:
         # Summary tag patterns - use regex for robust matching
         # Matches variations like: <SUMMARY>, <Summary>, <summary>, <SUMMARY:>, **SUMMARY**, etc.
         summary_start_regex = re.compile(
-            r'<\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*:?\s*>|'  # <SUMMARY>, <Summary:>, etc.
-            r'\*\*\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*\*\*\s*:?|'  # **SUMMARY**, **Summary**:
-            r'\*\*\s*<\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*>\s*\*\*'  # **<SUMMARY>**
+            r"<\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*:?\s*>|"  # <SUMMARY>, <Summary:>, etc.
+            r"\*\*\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*\*\*\s*:?|"  # **SUMMARY**, **Summary**:
+            r"\*\*\s*<\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*>\s*\*\*"  # **<SUMMARY>**
         )
         summary_end_regex = re.compile(
-            r'<\s*/\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*>|'  # </SUMMARY>, </Summary>, etc.
-            r'\*\*\s*<\s*/\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*>\s*\*\*'  # **</SUMMARY>**
+            r"<\s*/\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*>|"  # </SUMMARY>, </Summary>, etc.
+            r"\*\*\s*<\s*/\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*>\s*\*\*"  # **</SUMMARY>**
         )
 
         # Legacy exact patterns for quick initial check
-        summary_start_patterns = ['<SUMMARY>', '<summary>', '<Summary>']
-        summary_end_patterns = ['</SUMMARY>', '</summary>', '</Summary>']
+        summary_start_patterns = ["<SUMMARY>", "<summary>", "<Summary>"]
+        summary_end_patterns = ["</SUMMARY>", "</summary>", "</Summary>"]
 
         # Buffer for detecting summary start
         buffer = ""
@@ -354,7 +398,10 @@ class AnswerGenerator:
         elif self.provider == "anthropic":
             stream_generator = self._generate_anthropic_stream(prompt)
         else:
-            yield "Error: LLM provider not configured", "Error: LLM provider not configured"
+            yield (
+                "Error: LLM provider not configured",
+                "Error: LLM provider not configured",
+            )
             return
 
         for chunk in stream_generator:
@@ -380,7 +427,9 @@ class AnswerGenerator:
                     found_end = False
                     for end_pattern in summary_end_patterns:
                         if end_pattern in combined_for_end:
-                            end_idx = combined_for_end.find(end_pattern) + len(end_pattern)
+                            end_idx = combined_for_end.find(end_pattern) + len(
+                                end_pattern
+                            )
                             remaining = combined_for_end[end_idx:]
                             in_summary = False
                             buffer = ""
@@ -390,7 +439,11 @@ class AnswerGenerator:
 
                     if not found_end:
                         # Still in summary, don't output
-                        buffer = chunk[-max_buffer_size:] if len(chunk) > max_buffer_size else chunk
+                        buffer = (
+                            chunk[-max_buffer_size:]
+                            if len(chunk) > max_buffer_size
+                            else chunk
+                        )
                         yield original_chunk, None
             else:
                 # Not in summary - check if summary starts
@@ -423,11 +476,15 @@ class AnswerGenerator:
                     else:
                         # No summary start detected
                         # Check if chunk might contain partial tag (extended check for regex patterns)
-                        might_be_partial = any(
-                            combined.endswith(pattern[:i])
-                            for pattern in summary_start_patterns
-                            for i in range(1, len(pattern))
-                        ) or combined.rstrip().endswith('<') or combined.rstrip().endswith('*')
+                        might_be_partial = (
+                            any(
+                                combined.endswith(pattern[:i])
+                                for pattern in summary_start_patterns
+                                for i in range(1, len(pattern))
+                            )
+                            or combined.rstrip().endswith("<")
+                            or combined.rstrip().endswith("*")
+                        )
 
                         if might_be_partial:
                             # Hold back potential partial tag
@@ -444,81 +501,23 @@ class AnswerGenerator:
         if buffer and not in_summary:
             yield "", buffer
 
-    def _prepare_context(self, elements: List[Dict[str, Any]]) -> str:
+    def _prepare_context(self, elements: list[dict[str, Any]]) -> str:
         """Prepare context from retrieved elements"""
-        context_parts = []
-        
-        for i, elem_data in enumerate(elements, 1):
-            elem = elem_data.get("element", {})
-            score = elem_data.get("total_score", 0)
-            
-            # Build element context
-            # parts = [f"## Relevant Code Snippet {i} (Relevance: {score:.2f})"]
-            parts = [f"## Relevant Code Snippet {i}"]
-            # Add repository name (important for multi-repo scenarios)
-            repo_name = elem.get("repo_name")
-            if repo_name:
-                parts.append(f"**Repository**: `{repo_name}`")
-            
-            # Add file path
-            if self.include_file_paths:
-                rel_path = elem.get("relative_path", "")
-                if rel_path:
-                    parts.append(f"**File**: `{repo_name}/{rel_path}`")
-                    self.logger.info(f"Adding context from file: {repo_name}/{rel_path}")
-            
-            # Add element type and name
-            elem_type = elem.get("type", "")
-            elem_name = elem.get("name", "")
-            parts.append(f"**Type**: {elem_type}")
-            parts.append(f"**Name**: `{elem_name}`")
-            
-            # Add line numbers
-            if self.include_line_numbers:
-                start_line = elem.get("start_line", 0)
-                end_line = elem.get("end_line", 0)
-                if start_line > 0:
-                    parts.append(f"**Lines**: {start_line}-{end_line}")
-            
-            # # Add signature
-            # signature = elem.get("signature")
-            # if signature:
-            #     parts.append(f"**Signature**: `{signature}`")
-            
-            # # Add docstring
-            # docstring = elem.get("docstring")
-            # if docstring:
-            #     parts.append(f"**Documentation**:\n{docstring}")
-            
-            # Add code
-            code = elem.get("code", "")
-            if code:
-                language = elem.get("language", "")
-                # Truncate extremely long code only (increased limit)
-                if len(code) > 100000:
-                    code = code[:100000] + "\n... (truncated)"
-                parts.append(f"**Code**:\n```{language}\n{code}\n```")
-            
-            # Add metadata
-            metadata = elem.get("metadata", {})
-            if metadata:
-                meta_parts = []
-                if "complexity" in metadata:
-                    meta_parts.append(f"Complexity: {metadata['complexity']}")
-                if "num_methods" in metadata:
-                    meta_parts.append(f"Methods: {metadata['num_methods']}")
-                if meta_parts:
-                    parts.append(f"**Metadata**: {', '.join(meta_parts)}")
-            
-            context_parts.append("\n".join(parts))
-        
-        return "\n\n---\n\n".join(context_parts)
-    
-    def _build_prompt(self, query: str, context: str, 
-                     query_info: Optional[Dict[str, Any]] = None,
-                     dialogue_history: Optional[List[Dict[str, Any]]] = None) -> str:
+        return _context.prepare_context(
+            elements,
+            include_file_paths=self.include_file_paths,
+            include_line_numbers=self.include_line_numbers,
+        )
+
+    def _build_prompt(
+        self,
+        query: str,
+        context: str,
+        query_info: dict[str, Any] | None = None,
+        dialogue_history: list[dict[str, Any]] | None = None,
+    ) -> str:
         """Build complete prompt for LLM"""
-        
+
         # Base system prompt
         base_system_prompt = """You are a helpful AI assistant specialized in code understanding and explanation. 
 Your task is to answer questions about code repositories based on the relevant code snippets provided.
@@ -536,10 +535,12 @@ Guidelines:
 9. If asked to find something, list all relevant locations with their repositories
 10. When comparing code from different repositories, clearly distinguish between them
 11. **IMPORTANT: Always respond in the same language as the user's question. For example, if the question is in Chinese, respond in Chinese; If in English, respond in English. Match the user's language exactly**."""
-        
+
         # Multi-turn mode enhancement
         if self.enable_multi_turn and dialogue_history:
-            system_prompt = base_system_prompt + """
+            system_prompt = (
+                base_system_prompt
+                + """
 
 **Multi-turn Dialogue Instructions:**
 At the end of your answer, you MUST provide a structured summary for internal use (not shown to the user).
@@ -571,67 +572,76 @@ Symbol Mappings:
 </SUMMARY>
 
 **STRICT FORMAT REQUIREMENT**: You MUST output the summary exactly in the above `<SUMMARY>...</SUMMARY>` structure. Do NOT place content outside the tags. Regardless of the language you use to respond (Chinese, English, or any other language), always use `<SUMMARY>...</SUMMARY>` as the summary tags — do NOT translate or replace them."""
+            )
         else:
             system_prompt = base_system_prompt
-        
+
         # Build user prompt
         user_parts = []
-        
+
         # Add dialogue history context if available
         if dialogue_history and len(dialogue_history) > 0:
             user_parts.append("**Previous Conversation Context**:")
-            
+
             # Only include recent turns (limited by context_rounds)
-            recent_history = dialogue_history[-self.context_rounds:] if len(dialogue_history) > self.context_rounds else dialogue_history
-            
+            recent_history = (
+                dialogue_history[-self.context_rounds :]
+                if len(dialogue_history) > self.context_rounds
+                else dialogue_history
+            )
+
             for turn in recent_history:
                 turn_num = turn.get("turn_number", 0)
                 prev_query = turn.get("query", "")
                 prev_summary = turn.get("summary", "")
-                
+
                 user_parts.append(f"\n**Turn {turn_num}**")
                 user_parts.append(f"User: {prev_query}")
                 if prev_summary:
                     user_parts.append(f"Summary: {prev_summary}")
-            
+
             user_parts.append("\n---\n")
-        
+
         # Add current query
         user_parts.append(f"**Current Question**: {query}")
-        
+
         # Add query intent if available
         # if query_info and "intent" in query_info:
         #     intent = query_info["intent"]
         #     user_parts.append(f"\n*(Detected intent: {intent})*")
-        
+
         # Add context
         user_parts.append("\n**Relevant Code Context**:\n")
         user_parts.append(context)
-        
+
         # Add instruction
         if self.enable_multi_turn and dialogue_history is not None:
-            instruction = ("\n**Instructions**: Please answer the question using the code snippets above only if they are relevant. "
-                         "The code may not always be helpful, so focus on the question itself and refer to specific files or code elements only when necessary. "
-                         "Remember to include the summary at the end as specified.")
+            instruction = (
+                "\n**Instructions**: Please answer the question using the code snippets above only if they are relevant. "
+                "The code may not always be helpful, so focus on the question itself and refer to specific files or code elements only when necessary. "
+                "Remember to include the summary at the end as specified."
+            )
         else:
-            instruction = ("\n**Instructions**: Please answer the question using the code snippets above only if they are relevant. "
-                         "The code may not always be helpful, so focus on the question itself and refer to specific files or code elements only when necessary. ")
+            instruction = (
+                "\n**Instructions**: Please answer the question using the code snippets above only if they are relevant. "
+                "The code may not always be helpful, so focus on the question itself and refer to specific files or code elements only when necessary. "
+            )
 
         user_parts.append(instruction)
-        
+
         user_prompt = "\n".join(user_parts)
-        
+
         # Combine
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
         # print("full_prompt: ", full_prompt)
-        
+
         return full_prompt
-    
+
     def _truncate_context(self, context: str, max_tokens: int) -> str:
         """Truncate context to fit within token limit"""
         return truncate_to_tokens(context, max_tokens, self.model)
-    
+
     def _generate_openai(self, prompt: str) -> str:
         """Generate answer using OpenAI"""
         if self.client is None:
@@ -681,26 +691,26 @@ Symbol Mappings:
             for chunk in response:
                 if chunk.choices and len(chunk.choices) > 0:
                     delta = chunk.choices[0].delta
-                    if hasattr(delta, 'content') and delta.content:
+                    if hasattr(delta, "content") and delta.content:
                         yield delta.content
 
         except Exception as e:
             self.logger.error(f"OpenAI streaming API error: {e}")
-            yield f"\n\nError: {str(e)}"
+            yield f"\n\nError: {e!s}"
 
     def _generate_anthropic(self, prompt: str) -> str:
         """Generate answer using Anthropic Claude"""
         if self.client is None:
             return "Error: Anthropic client not initialized"
-        
+
         try:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
             )
-            
+
             # Defensive checks because some providers may return partial/None payloads
             if not response or not getattr(response, "content", None):
                 raise ValueError(f"Empty response or no content returned: {response}")
@@ -709,7 +719,7 @@ Symbol Mappings:
             if text is None:
                 raise ValueError(f"LLM response has no text: {response}")
             return text
-        
+
         except Exception as e:
             self.logger.error(f"Anthropic API error: {e}")
             raise
@@ -725,49 +735,29 @@ Symbol Mappings:
                 model=self.model,
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
             ) as stream:
                 for text in stream.text_stream:
                     yield text
 
         except Exception as e:
             self.logger.error(f"Anthropic streaming API error: {e}")
-            yield f"\n\nError: {str(e)}"
+            yield f"\n\nError: {e!s}"
 
-    def _parse_response_with_summary(self, raw_response: str) -> Tuple[str, Optional[str]]:
-        """
-        Parse LLM response to extract answer and summary
+    def _parse_response_with_summary(self, raw_response: str) -> tuple[str, str | None]:
+        """Parse LLM response to extract answer and summary.
 
         Args:
-            raw_response: Raw response from LLM
+            raw_response: Raw response from LLM.
 
         Returns:
-            Tuple of (answer, summary)
+            Tuple of (answer, summary).
         """
-        # Try multiple patterns for summary extraction (more robust)
-        # Use regex with case-insensitive flag and flexible whitespace handling
-        summary_patterns = [
-            r'<\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*:?\s*>(.*?)<\s*/\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*>',  # <SUMMARY>...</SUMMARY> with variations
-            r'\*\*\s*<\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*>\s*\*\*(.*?)\*\*\s*<\s*/\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*>\s*\*\*',  # **<SUMMARY>**...**</SUMMARY>**
-            r'\*\*\s*[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*\*\*\s*:?\s*\n(.*?)(?=\n\n(?:\*\*|##|$)|\Z)',  # **SUMMARY**: ... until next section
-            r'[Ss][Uu][Mm][Mm][Aa][Rr][Yy]\s*:?\s*\n(.*?)(?=\n\n(?:\*\*|##|$)|\Z)',  # SUMMARY: ... until next section
-        ]
+        return _context.parse_response_with_summary(raw_response)
 
-        for pattern in summary_patterns:
-            match = re.search(pattern, raw_response, re.DOTALL)
-            if match:
-                summary = match.group(1).strip()
-                # Remove summary from answer
-                answer = re.sub(pattern, '', raw_response, flags=re.DOTALL).strip()
-
-                self.logger.debug(f"Extracted summary using pattern: {pattern[:30]}...")
-                return answer, summary
-
-        # No summary found - log warning but don't fail
-        self.logger.warning("No summary found in multi-turn response, returning full response as answer")
-        return raw_response, None
-
-    def _generate_fallback_summary(self, query: str, answer: str, retrieved_elements: List[Dict[str, Any]]) -> str:
+    def _generate_fallback_summary(
+        self, query: str, answer: str, retrieved_elements: list[dict[str, Any]]
+    ) -> str:
         """
         Generate a fallback summary when LLM doesn't produce one
 
@@ -842,48 +832,53 @@ Symbol Mappings:
 
         return "\n".join(summary_parts)
 
-    def _extract_sources(self, elements: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _extract_sources(self, elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Extract source information from elements"""
         sources = []
-        
+
         for elem_data in elements:
             elem = elem_data.get("element", {})
-            
-            sources.append({
-                "repository": elem.get("repo_name", ""),
-                "file": elem.get("relative_path", ""),
-                "name": elem.get("name", ""),
-                "type": elem.get("type", ""),
-                "lines": f"{elem.get('start_line', 0)}-{elem.get('end_line', 0)}",
-                "score": elem_data.get("total_score", 0),
-            })
-        
+
+            sources.append(
+                {
+                    "repository": elem.get("repo_name", ""),
+                    "file": elem.get("relative_path", ""),
+                    "name": elem.get("name", ""),
+                    "type": elem.get("type", ""),
+                    "lines": f"{elem.get('start_line', 0)}-{elem.get('end_line', 0)}",
+                    "score": elem_data.get("total_score", 0),
+                }
+            )
+
         return sources
-    
-    def format_answer_with_sources(self, result: Dict[str, Any]) -> str:
+
+    def format_answer_with_sources(self, result: dict[str, Any]) -> str:
         """Format answer with sources for display"""
         output = []
-        
+
         # Add answer
         output.append("## Answer\n")
         output.append(result.get("answer", ""))
-        
+
         # Add sources
         sources = result.get("sources", [])
         if sources:
             output.append("\n\n## Sources\n")
             for i, source in enumerate(sources, 1):
-                repo_info = f"[{source['repository']}] " if source.get('repository') else ""
+                repo_info = (
+                    f"[{source['repository']}] " if source.get("repository") else ""
+                )
                 output.append(
                     f"{i}. {repo_info}**{source['name']}** ({source['type']}) "
                     f"in `{source['file']}` (lines {source['lines']}) "
                     f"- Relevance: {source['score']:.2f}"
                 )
-        
+
         # Add metadata
         if "prompt_tokens" in result:
-            output.append(f"\n\n*Used {result['prompt_tokens']} prompt tokens, "
-                         f"{result.get('context_elements', 0)} code snippets*")
-        
-        return "\n".join(output)
+            output.append(
+                f"\n\n*Used {result['prompt_tokens']} prompt tokens, "
+                f"{result.get('context_elements', 0)} code snippets*"
+            )
 
+        return "\n".join(output)

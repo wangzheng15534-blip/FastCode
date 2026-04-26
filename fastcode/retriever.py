@@ -13,6 +13,7 @@ import networkx as nx
 import numpy as np
 from rank_bm25 import BM25Okapi
 
+from .core import filtering as _filtering
 from .core import fusion as _fusion
 from .core import scoring as _scoring
 from .core.types import FusionConfig
@@ -1564,94 +1565,17 @@ class HybridRetriever:
         self, query: str, results: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Re-rank results based on additional factors"""
-        # Simple re-ranking based on element type preferences
-        type_weights = {
-            "function": 1.2,  # Prefer functions
-            "class": 1.1,  # Then classes
-            "file": 0.9,  # Then files
-            "documentation": 0.8,  # Then docs
-            "design_document": 0.95,
-        }
-
-        for result in results:
-            elem_type = result["element"].get("type", "")
-            weight = type_weights.get(elem_type, 1.0)
-            # Apply weight to all score components to maintain consistency
-            result["total_score"] *= weight
-            result["semantic_score"] *= weight
-            result["keyword_score"] *= weight
-            result["pseudocode_score"] *= weight
-            result["graph_score"] *= weight
-
-        # Sort by updated scores
-        results.sort(key=lambda x: x["total_score"], reverse=True)
-
-        return results
+        return _filtering.rerank(results)
 
     def _apply_filters(
         self, results: list[dict[str, Any]], filters: dict[str, Any]
     ) -> list[dict[str, Any]]:
         """Apply filters to results"""
-        filtered = []
-
-        for result in results:
-            elem = result["element"]
-
-            # Check language filter
-            if "language" in filters:
-                if elem.get("language") != filters["language"]:
-                    continue
-
-            # Check type filter
-            if "type" in filters:
-                if elem.get("type") != filters["type"]:
-                    continue
-
-            # Check file path filter
-            if "file_path" in filters:
-                if filters["file_path"] not in elem.get("relative_path", ""):
-                    continue
-
-            # Check snapshot filter
-            if "snapshot_id" in filters:
-                elem_snapshot = elem.get("snapshot_id") or (
-                    elem.get("metadata", {}) or {}
-                ).get("snapshot_id")
-                if elem_snapshot != filters["snapshot_id"]:
-                    continue
-
-            filtered.append(result)
-
-        return filtered
+        return _filtering.apply_filters(results, filters)
 
     def _diversify(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Diversify results to avoid too many similar elements"""
-        if not results or self.diversity_penalty == 0:
-            return results
-
-        diversified = []
-        seen_files = set()
-
-        for result in results:
-            file_path = result["element"].get("file_path", "")
-
-            # Penalize if we've seen this file too many times
-            if file_path in seen_files:
-                penalty_factor = 1 - self.diversity_penalty
-                result["total_score"] *= penalty_factor
-                result["semantic_score"] *= penalty_factor
-                result["keyword_score"] *= penalty_factor
-                result["pseudocode_score"] *= penalty_factor
-                result["graph_score"] *= penalty_factor
-            else:
-                seen_files.add(file_path)
-
-            diversified.append(result)
-
-        # Re-sort after diversification
-        diversified.sort(key=lambda x: x["total_score"], reverse=True)
-
-        return diversified
+        return _filtering.diversify(results, self.diversity_penalty)
 
     def _final_repo_filter(
         self, results: list[dict[str, Any]], repo_filter: list[str]
@@ -1667,32 +1591,15 @@ class HybridRetriever:
         Returns:
             Filtered results containing only elements from allowed repositories
         """
-        if not repo_filter:
-            return results
-
-        filtered_results = []
-        filtered_count = 0
-
-        for result in results:
-            elem = result["element"]
-            repo_name = elem.get("repo_name", "")
-
-            if repo_name in repo_filter:
-                filtered_results.append(result)
-            else:
-                filtered_count += 1
-                self.logger.warning(
-                    f"Filtered out element from unexpected repo: {repo_name} "
-                    f"(expected one of: {repo_filter}). Element: {elem.get('name', 'unknown')}"
-                )
-
-        if filtered_count > 0:
+        filtered, count = _filtering.final_repo_filter(
+            results, repo_filter, return_count=True
+        )
+        if count > 0:
             self.logger.warning(
-                f"Final repo filter removed {filtered_count} elements from unexpected repositories. "
+                f"Final repo filter removed {count} elements from unexpected repositories. "
                 f"This indicates a potential issue in the retrieval pipeline."
             )
-
-        return filtered_results
+        return filtered
 
     def retrieve_by_file(self, file_path: str) -> list[dict[str, Any]]:
         """Retrieve all elements from a specific file"""

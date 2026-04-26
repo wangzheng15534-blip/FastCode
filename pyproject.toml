@@ -169,6 +169,11 @@ ignore = [
     "ANN202",  # Missing return type for private functions (pre-existing)
     "PLR0911", # Too many returns (pre-existing)
 ]
+"fastcode/schema/ir.py" = [
+    "ANN204",  # Missing return type for __init__ (extracted from semantic_ir.py)
+    "PLR0913", # Too many arguments: IRSnapshot.__init__ (extracted from semantic_ir.py)
+    "PLC0415", # Lazy imports: IRSnapshot references types in semantic_ir.py to avoid circular dep
+]
 
 [tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false

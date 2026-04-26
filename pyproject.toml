@@ -156,6 +156,9 @@ ignore = [
     "PLR0911", # Too many returns: should_continue_iteration has 6 stopping checks
     "PLR0912", # Too many branches: should_continue_iteration stopping checks
 ]
+"fastcode/core/prompts.py" = [
+    "PLR0912", # Too many branches: extracted verbatim from iterative_agent.py
+]
 "fastcode/iterative_agent.py" = [
     "ANN001",  # Missing type annotation for args (pre-existing)
     "ANN201",  # Missing return type for public functions (pre-existing)

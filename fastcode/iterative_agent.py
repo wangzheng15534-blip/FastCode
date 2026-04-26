@@ -14,6 +14,7 @@ from openai import OpenAI
 
 from .agent_tools import AgentTools
 from .core import iteration as _iteration
+from .core import prompts as _prompts
 from .core.types import IterationConfig
 from .llm_utils import openai_chat_completion
 from .path_utils import PathUtils
@@ -1987,88 +1988,11 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
 
     def _format_tool_call_history(self, current_round: int) -> str:
         """Format tool call history up to the previous round."""
-        if not self.tool_call_history:
-            return "None"
-
-        lines = []
-        for entry in self.tool_call_history:
-            if entry.get("round", 0) >= current_round:
-                continue
-            tool_name = entry.get("tool", "")
-            params = entry.get("parameters", {})
-            params_text = json.dumps(params, ensure_ascii=True, sort_keys=True)
-            lines.append(f"- Round {entry['round']}: {tool_name} {params_text}")
-
-        return "\n".join(lines) if lines else "None"
+        return _prompts.format_tool_call_history(self.tool_call_history, current_round)
 
     def _format_elements_with_metadata(self, elements: list[dict[str, Any]]) -> str:
         """Format elements with metadata for round N prompt"""
-        lines = []
-
-        # Group by (repo_name, relative_path) to avoid conflicts when multiple repos have same file names
-        file_groups = {}
-        for elem_data in elements:
-            elem = elem_data.get("element", {})
-            repo_name = elem.get("repo_name", "")
-            relative_path = elem.get("relative_path", elem.get("file_path", ""))
-
-            # Use (repo_name, relative_path) as key for unique grouping
-            group_key = (repo_name, relative_path)
-
-            if group_key not in file_groups:
-                file_groups[group_key] = []
-            file_groups[group_key].append(elem_data)
-
-        for i, (group_key, elem_list) in enumerate(file_groups.items(), 1):
-            repo_name, relative_path = group_key
-
-            # Display as "repo_name/relative_path" for clarity
-            display_path = (
-                f"{repo_name}/{relative_path}" if repo_name else relative_path
-            )
-            lines.append(f"\n{i}. {display_path}")
-
-            # Aggregate metadata
-            sources = set()
-            related_to = set()
-            total_lines = 0
-
-            for elem_data in elem_list:
-                elem = elem_data.get("element", {})
-
-                # Determine source
-                if elem_data.get("agent_found"):
-                    sources.add("Tool")
-                elif elem_data.get("llm_file_selected"):
-                    sources.add("LLM Selection")
-                elif elem_data.get("related_to"):
-                    sources.add("Graph")
-                    related_to.add(elem_data.get("related_to", ""))
-                else:
-                    sources.add("Retrieval")
-
-                # Calculate lines
-                start = elem.get("start_line", 0)
-                end = elem.get("end_line", 0)
-                if end > start:
-                    total_lines += end - start + 1
-
-            if repo_name:
-                lines.append(f"   Repo: {repo_name}")
-            lines.append(f"   Type: {elem_list[0]['element'].get('type', 'unknown')}")
-            lines.append(f"   Source: {', '.join(sources)}")
-            if total_lines > 0:
-                lines.append(f"   Lines: {total_lines}")
-            if related_to:
-                lines.append(f"   Related to: {', '.join(related_to)}")
-
-            # Show signatures for class/function elements
-            for elem_data in elem_list[:5]:
-                elem = elem_data.get("element", {})
-                if elem.get("signature"):
-                    lines.append(f"   - {elem['signature']}")
-
-        return "\n".join(lines)
+        return _prompts.format_elements_with_metadata(elements)
 
     def _parse_round_n_response(self, response: str) -> dict[str, Any]:
         """Parse LLM response from round N"""

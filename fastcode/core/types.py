@@ -429,6 +429,17 @@ class FileAnalysis:
 
 
 @dataclass(frozen=True)
+class SnapshotRecord:
+    """A snapshot metadata row from the database."""
+
+    snapshot_id: str
+    repo_name: str
+    branch: str | None = None
+    commit_id: str | None = None
+    tree_id: str | None = None
+
+
+@dataclass(frozen=True)
 class RepoStructure:
     """Complete repository overview."""
 

@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from .core import context as _context
+from .core import summary as _summary
 from .llm_utils import openai_chat_completion
 from .utils import count_tokens, truncate_to_tokens
 
@@ -758,127 +759,13 @@ Symbol Mappings:
     def _generate_fallback_summary(
         self, query: str, answer: str, retrieved_elements: list[dict[str, Any]]
     ) -> str:
-        """
-        Generate a fallback summary when LLM doesn't produce one
-
-        Args:
-            query: User query
-            answer: Generated answer
-            retrieved_elements: Retrieved code elements
-
-        Returns:
-            Formatted summary string
-        """
-        summary_parts = []
-
-        # Add files read section
-        files_read = set()
-        for elem_data in retrieved_elements:
-            elem = elem_data.get("element", {})
-            repo_name = elem.get("repo_name", "")
-            rel_path = elem.get("relative_path", "")
-            if repo_name and rel_path:
-                files_read.add(f"{repo_name}/{rel_path}")
-
-        if files_read:
-            summary_parts.append("Files Read:")
-            for file_path in sorted(files_read)[:10]:  # Limit to 10 files
-                summary_parts.append(f"- {file_path}")
-        else:
-            summary_parts.append("Files Read: None")
-
-        # Add code elements with signatures and docstrings
-        summary_parts.append("\nCode Elements Referenced:")
-        elements_added = 0
-        for elem_data in retrieved_elements[:15]:  # Limit to 15 elements
-            elem = elem_data.get("element", {})
-            repo_name = elem.get("repo_name", "")
-            rel_path = elem.get("relative_path", "")
-            elem_type = elem.get("type", "")
-            elem_name = elem.get("name", "")
-
-            if repo_name and rel_path and elem_name:
-                elem_info = f"- [{repo_name}/{rel_path}] {elem_type}: {elem_name}"
-
-                # Add signature if available
-                signature = elem.get("signature", "")
-                if signature:
-                    elem_info += f" ({signature})"
-
-                summary_parts.append(elem_info)
-
-                # Add docstring if available (truncated)
-                docstring = elem.get("docstring", "")
-                if docstring:
-                    # Truncate long docstrings
-                    doc_preview = docstring[:150].replace("\n", " ").strip()
-                    if len(docstring) > 150:
-                        doc_preview += "..."
-                    summary_parts.append(f"  Doc: {doc_preview}")
-
-                elements_added += 1
-
-        if elements_added == 0:
-            summary_parts.append("- No specific code elements")
-
-        # Add query context
-        summary_parts.append(f"\nQuery: {query[:200]}")  # Truncate long queries
-
-        # Add answer preview (first 200 chars)
-        answer_preview = answer[:].replace("\n", " ").strip()
-        # if len(answer) > 200:
-        #     answer_preview += "..."
-        summary_parts.append(f"Answer Preview: {answer_preview}")
-
-        return "\n".join(summary_parts)
+        """Generate a fallback summary when LLM doesn't produce one."""
+        return _summary.generate_fallback_summary(query, answer, retrieved_elements)
 
     def _extract_sources(self, elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Extract source information from elements"""
-        sources = []
-
-        for elem_data in elements:
-            elem = elem_data.get("element", {})
-
-            sources.append(
-                {
-                    "repository": elem.get("repo_name", ""),
-                    "file": elem.get("relative_path", ""),
-                    "name": elem.get("name", ""),
-                    "type": elem.get("type", ""),
-                    "lines": f"{elem.get('start_line', 0)}-{elem.get('end_line', 0)}",
-                    "score": elem_data.get("total_score", 0),
-                }
-            )
-
-        return sources
+        """Extract source information from elements."""
+        return _summary.extract_sources(elements)
 
     def format_answer_with_sources(self, result: dict[str, Any]) -> str:
-        """Format answer with sources for display"""
-        output = []
-
-        # Add answer
-        output.append("## Answer\n")
-        output.append(result.get("answer", ""))
-
-        # Add sources
-        sources = result.get("sources", [])
-        if sources:
-            output.append("\n\n## Sources\n")
-            for i, source in enumerate(sources, 1):
-                repo_info = (
-                    f"[{source['repository']}] " if source.get("repository") else ""
-                )
-                output.append(
-                    f"{i}. {repo_info}**{source['name']}** ({source['type']}) "
-                    f"in `{source['file']}` (lines {source['lines']}) "
-                    f"- Relevance: {source['score']:.2f}"
-                )
-
-        # Add metadata
-        if "prompt_tokens" in result:
-            output.append(
-                f"\n\n*Used {result['prompt_tokens']} prompt tokens, "
-                f"{result.get('context_elements', 0)} code snippets*"
-            )
-
-        return "\n".join(output)
+        """Format answer with sources for display."""
+        return _summary.format_answer_with_sources(result)

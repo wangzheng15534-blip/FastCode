@@ -2,31 +2,31 @@
 members = ["fastcode", "nanobot"]
 
 [tool.ruff]
-line-length = 88
-target-version = "py311"
-exclude = ["_fastcode", "repos", "repo_backup", "_bmad-output"]
+line-length = 88                                          # black-compatible default
+target-version = "py311"                                  # minimum supported Python
+exclude = ["_fastcode", "repos", "repo_backup", "_bmad-output"]  # vendored/generated: not project code
 
 [tool.ruff.lint]
 select = [
-    "E", "W",   # pycodestyle
-    "F",        # pyflakes
-    "I",        # isort
-    "B",        # flake8-bugbear
-    "C4",       # comprehensions
-    "UP",       # pyupgrade
-    "ANN",      # flake8-annotations
-    "S",        # flake8-bandit
-    "PT",       # flake8-pytest-style
-    "SIM",      # flake8-simplify
-    "RET",      # flake8-return
-    "RSE",      # flake8-raise
-    "PL",       # Pylint
-    "RUF",      # Ruff-specific rules
+    "E", "W",   # pycodestyle: syntax and whitespace errors
+    "F",        # pyflakes: unused imports, variables, undefined names
+    "I",        # isort: import ordering
+    "B",        # flake8-bugbear: likely bugs and design problems
+    "C4",       # comprehensions: simplify unnecessary list/dict/set calls
+    "UP",       # pyupgrade: modernize Python syntax for 3.11+
+    "ANN",      # flake8-annotations: enforce type annotations on public API
+    "S",        # flake8-bandit: security anti-patterns
+    "PT",       # flake8-pytest-style: pytest best practices
+    "SIM",      # flake8-simplify: simplify unnecessarily complex code
+    "RET",      # flake8-return: unnecessary return statements
+    "RSE",      # flake8-raise: raise statement best practices
+    "PL",       # Pylint: code quality and complexity limits
+    "RUF",      # Ruff-specific: ambiguous unicode, unused noqa, etc.
 ]
 
 ignore = [
-    "ANN401", # Dynamically typed expressions (Any) in *args/kwargs
-    "E501",   # Line too long (handled by formatter)
+    "ANN401", # design: Any in *args/**kwargs is necessary for adapter/factory patterns
+    "E501",   # tool-conflict: ruff formatter enforces line length; linter rule is redundant
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -152,28 +152,22 @@ mark-parentheses = false
 parametrize-names-type = "tuple"
 
 [tool.pyright]
-include = ["fastcode", "tests"]
-exclude = ["**/repos", "**/repo_backup", "**/_bmad-output", "**/_fastcode"]
-typeCheckingMode = "standard"
-reportUnnecessaryComparison = true
-reportUnusedVariable = true
-reportUnknownArgumentType = "error"
-reportUnknownMemberType = "error"
-reportUnknownVariableType = "error"
-reportUntypedFunctionDecorator = "error"
-reportMissingParameterType = "warning"
-reportUnusedCallResult = "none"
+include = ["fastcode", "tests"]                                     # scope: project code only
+exclude = ["**/repos", "**/repo_backup", "**/_bmad-output", "**/_fastcode"]  # vendored/generated dirs inflate signal
+typeCheckingMode = "strict"                                         # maximum type safety — fix errors, don't suppress
+reportUnnecessaryComparison = true                                  # dead comparisons are bugs
+reportUnusedVariable = true                                         # dead variables are bugs
 
 [[tool.pyright.executionEnvironments]]
-root = "tests"
-reportOptionalSubscript = "none"
+root = "tests"                                                      # Rust cfg(test) equivalent — test code uses known-good literals
+reportOptionalSubscript = "none"                                    # crash IS the assertion
 reportOptionalMemberAccess = "none"
 reportOptionalOperand = "none"
 reportOptionalIterable = "none"
 reportOperatorIssue = "none"
 reportAttributeAccessIssue = "none"
 reportArgumentType = "none"
-reportUnknownArgumentType = "none"
+reportUnknownArgumentType = "none"                                  # fixtures and mocks are untyped by design
 reportUnknownMemberType = "none"
 reportUnknownVariableType = "none"
 reportMissingParameterType = "none"

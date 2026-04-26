@@ -58,15 +58,9 @@ class ModuleResolver:
         current_parts = current_module_path.split(".")
 
         # Determine how many levels to strip
-        if is_package:
-            # If we are in __init__.py:
-            # level=1 (from .) means "current package" -> strip 0
-            # level=2 (from ..) means "parent package" -> strip 1
-            strip_count = level - 1
-        else:
-            # If we are in a regular .py file:
-            # level=1 (from .) means "parent package" -> strip 1
-            strip_count = level
+        # __init__.py: level=1 (from .) means "current package" -> strip 0
+        # regular .py: level=1 (from .) means "parent package" -> strip 1
+        strip_count = level - 1 if is_package else level
 
         # Check bounds
         if strip_count > len(current_parts):
@@ -80,7 +74,7 @@ class ModuleResolver:
 
         # Build target module path
         if import_name:
-            target_parts = parent_parts + [import_name]
+            target_parts = [*parent_parts, import_name]
             target_module_path = ".".join(target_parts)
         else:
             target_module_path = ".".join(parent_parts) if parent_parts else None

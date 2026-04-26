@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
 import logging
+from typing import Any
 
 from fastcode.pg_retrieval import PgRetrievalStore
 
@@ -11,7 +11,7 @@ class _FakeCursor:
         self.rows = rows
         self.execute_calls = 0
 
-    def execute(self, sql: Any, params: dict = None) -> None:
+    def execute(self, sql: Any, params: dict | None = None) -> None:
         self.execute_calls += 1
         if self.execute_calls == 1:
             raise RuntimeError("force fallback path")

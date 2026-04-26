@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
 import os
 import tempfile
+from typing import Any
 
 import pytest
 from hypothesis import given, settings

@@ -77,12 +77,9 @@ def _pg_available() -> bool:
 
 
 def _ladybug_available() -> bool:
-    try:
-        from real_ladybug import Connection  # noqa: F401
+    import importlib.util
 
-        return True
-    except ImportError:
-        return False
+    return importlib.util.find_spec("real_ladybug") is not None
 
 
 _skip_ollama = pytest.mark.skipif(not _ollama_available(), reason="Ollama not running")
@@ -368,7 +365,7 @@ def _build_fastcode(config: dict) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _pg_execute(dsn: str, sql: str, params: dict = None) -> None:
+def _pg_execute(dsn: str, sql: str, params: dict | None = None) -> None:
     import psycopg
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:

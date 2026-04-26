@@ -48,7 +48,8 @@ class TestFilePathToModulePath:
                 f.write("# test")
             result = file_path_to_module_path(full, repo)
             if result is not None:
-                assert isinstance(result, str) and len(result) > 0
+                assert isinstance(result, str)
+                assert len(result) > 0
 
     @pytest.mark.happy
     def test_simple_module_path(self):

@@ -291,7 +291,7 @@ class IndexRunStore:
         if unknown:
             raise ValueError(f"Unknown run fields: {unknown}")
         assignments = ", ".join(f"{k}=?" for k in fields)
-        values = list(fields.values()) + [run_id]
+        values = [*list(fields.values()), run_id]
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,

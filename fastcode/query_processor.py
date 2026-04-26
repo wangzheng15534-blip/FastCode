@@ -505,8 +505,8 @@ class QueryProcessor:
             parts = new_parts
 
         # Filter and clean subqueries
-        for part in parts:
-            part = part.strip()
+        for raw_part in parts:
+            part = raw_part.strip()
             if len(part) > 15 and part != query:  # Must be substantial
                 subqueries.append(part)
 

@@ -224,7 +224,7 @@ def compute_adaptive_fusion_params(
     return alpha, k_code, k_doc
 
 
-def adaptive_fuse_channels(  # noqa: PLR0913
+def adaptive_fuse_channels(
     *,
     query: str,
     query_info: dict[str, Any],
@@ -363,7 +363,7 @@ def project_doc_priors(
     }
 
 
-def apply_doc_projection_to_code(  # noqa: PLR0913
+def apply_doc_projection_to_code(
     *,
     query: str,
     query_info: dict[str, Any],

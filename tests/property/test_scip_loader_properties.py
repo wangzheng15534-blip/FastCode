@@ -260,7 +260,7 @@ class TestLoadScipArtifactJson:
             path = os.path.join(tmpdir, "bad.json")
             with open(path, "w") as f:
                 f.write("{not valid json")
-            with pytest.raises(Exception):
+            with pytest.raises(Exception, match=r".*"):
                 load_scip_artifact(path)
 
     @pytest.mark.edge

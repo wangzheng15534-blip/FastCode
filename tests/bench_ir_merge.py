@@ -95,7 +95,7 @@ def test_ast_adapter_throughput(element_count: int, benchmark: pytest.BenchmarkF
     benchmark(build_ir_from_ast, "repo", "snap:bench", elements, "/repo")
 
 
-@pytest.mark.parametrize("doc_count,syms_per_doc", [(5, 20), (50, 20), (100, 10)])
+@pytest.mark.parametrize(("doc_count", "syms_per_doc"), [(5, 20), (50, 20), (100, 10)])
 def test_scip_adapter_throughput(
     doc_count: int, syms_per_doc: int, benchmark: pytest.BenchmarkFixture
 ):

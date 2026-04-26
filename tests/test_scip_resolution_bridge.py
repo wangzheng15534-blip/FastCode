@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
-from typing import Never, Any
+from typing import Any, Never
+
+import pytest
 
 from fastcode.scip_resolution_bridge import (
     SCIPResolutionBridge,
@@ -427,7 +429,3 @@ class TestEdgeCases:
         # Should not crash; semantic is disabled
         assert bridge.resolve("Foo") is not None  # lexical catches it
         assert bridge.resolve("NonExistent") is None  # no semantic fallback
-
-
-# Need pytest import for pytest.approx
-import pytest

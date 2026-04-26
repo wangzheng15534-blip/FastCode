@@ -248,7 +248,8 @@ def _select_matches(
     matching = nx.algorithms.matching.max_weight_matching(
         graph, maxcardinality=False, weight="weight"
     )
-    for left, right in matching:
+    for pair in matching:
+        left, right = pair
         if left.startswith("scip::"):
             left, right = right, left
         ast_id = left.replace("ast::", "", 1)

@@ -235,8 +235,8 @@ class RepositoryLoader:
         patterns = []
         try:
             with open(gitignore_path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
+                for raw_line in f:
+                    line = raw_line.strip()
                     # Skip empty lines and comments
                     if line and not line.startswith("#"):
                         patterns.append(line)

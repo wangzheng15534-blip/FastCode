@@ -23,7 +23,7 @@ def projection_scope_key(
         "filters": filters or {},
     }
     payload = json.dumps(base, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:24]  # noqa: S324
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:24]
 
 
 def get_language_from_extension(ext: str) -> str:

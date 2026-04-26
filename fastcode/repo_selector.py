@@ -238,9 +238,9 @@ class RepositorySelector:
         reason_matches = re.findall(reason_pattern, response, re.MULTILINE)
 
         # Match files with reasons
-        for i, (repo_name, file_path) in enumerate(file_matches):
-            repo_name = (repo_name or "").strip()
-            file_path = file_path.strip()
+        for i, (raw_repo, raw_file) in enumerate(file_matches):
+            repo_name = (raw_repo or "").strip()
+            file_path = raw_file.strip()
 
             # Clean markdown formatting from both repo_name and file_path
             # Remove backticks: `filename`
@@ -383,7 +383,7 @@ class RepositorySelector:
         loose:
 
         1. Exact match (case-insensitive)
-        2. Substring containment – candidate inside a real name or vice-versa
+        2. Substring containment - candidate inside a real name or vice-versa
         3. Simple token-overlap ratio (Jaccard on alphanumeric tokens)
 
         Returns the best matching name, or None.
@@ -456,8 +456,8 @@ class RepositorySelector:
         selected: list[str] = []
         seen: set = set()
 
-        for line in response.splitlines():
-            line = line.strip()
+        for raw_line in response.splitlines():
+            line = raw_line.strip()
             # accept lines like "REPO: name" or "- name" or just "name"
             match = re.match(
                 r"(?:\*{0,2}REPO:\*{0,2}\s*|[-•]\s*)(.*)", line, re.IGNORECASE

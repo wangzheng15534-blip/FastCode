@@ -11,6 +11,7 @@ import pytest
 
 from fastcode.adapters.scip_to_ir import build_ir_from_scip
 from fastcode.scip_models import SCIPIndex
+from fastcode.semantic_ir import IRSnapshot
 
 # ---------------------------------------------------------------------------
 # Inline factory (mirrors tests.conftest._make_scip_payload)
@@ -70,8 +71,6 @@ def _build(
     language_hint: str | None = None,
 ) -> IRSnapshot:
     """Thin wrapper around build_ir_from_scip with sensible defaults."""
-    from fastcode.semantic_ir import IRSnapshot
-
     if payload is None:
         payload = _make_scip_payload()
     snap = build_ir_from_scip(
@@ -149,7 +148,7 @@ _RANGE_CASES = [
 ]
 
 
-@pytest.mark.parametrize("raw_range,expected_start_line", _RANGE_CASES)
+@pytest.mark.parametrize(("raw_range", "expected_start_line"), _RANGE_CASES)
 def test_occurrence_range_normalization(raw_range: list, expected_start_line: int):
     """Range list is padded to 4 elements and None→0 for occurrences."""
     payload = _make_scip_payload(n_docs=1, n_symbols=1, n_occurrences=1)
@@ -196,7 +195,7 @@ _EMPTY_DOC_VARIANTS = [
 ]
 
 
-@pytest.mark.parametrize("label,payload_override", _EMPTY_DOC_VARIANTS)
+@pytest.mark.parametrize(("label", "payload_override"), _EMPTY_DOC_VARIANTS)
 def test_empty_variants_no_symbols_or_occurrences(label: str, payload_override: dict):
     """Empty or missing documents produce zero symbols and occurrences."""
     payload = {
@@ -272,7 +271,7 @@ _LANGUAGE_CASES = [
 ]
 
 
-@pytest.mark.parametrize("doc_lang,hint,expected", _LANGUAGE_CASES)
+@pytest.mark.parametrize(("doc_lang", "hint", "expected"), _LANGUAGE_CASES)
 def test_language_fallback_chain(doc_lang: str | None, hint: str | None, expected: str):
     """Language is resolved via doc.language > language_hint > 'unknown'."""
     payload = {
@@ -300,7 +299,7 @@ _DISPLAY_NAME_CASES = [
 ]
 
 
-@pytest.mark.parametrize("name,ext_symbol,expected", _DISPLAY_NAME_CASES)
+@pytest.mark.parametrize(("name", "ext_symbol", "expected"), _DISPLAY_NAME_CASES)
 def test_display_name_fallback(name: str | None, ext_symbol: str, expected: str):
     """display_name falls back to last segment of external symbol."""
     payload = {

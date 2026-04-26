@@ -384,7 +384,7 @@ class SnapshotStore:
             conn.commit()
 
     def artifact_key_for_snapshot(self, snapshot_id: str) -> str:
-        return f"snap_{hashlib.md5(snapshot_id.encode('utf-8')).hexdigest()[:20]}"  # noqa: S324
+        return f"snap_{hashlib.md5(snapshot_id.encode('utf-8')).hexdigest()[:20]}"
 
     def snapshot_dir(self, snapshot_id: str) -> str:
         safe = self.artifact_key_for_snapshot(snapshot_id)
@@ -493,7 +493,7 @@ class SnapshotStore:
         if not path or not os.path.exists(path):
             return None
         with open(path, "rb") as f:
-            return pickle.load(f)  # noqa: S301
+            return pickle.load(f)
 
     def load_snapshot(self, snapshot_id: str) -> IRSnapshot | None:
         row = self.get_snapshot_record(snapshot_id)

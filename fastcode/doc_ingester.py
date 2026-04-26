@@ -19,24 +19,26 @@ from .semantic_ir import IRSnapshot
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded Chonkie SemanticChunker; None until first use.
-_CHUNKER_CLASS = None
+# Sentinel indicating the chunker class has not been loaded yet.
+_UNSET = object()
 
 
 def _get_chunker_class() -> Any:
     """Import and cache the SemanticChunker class; return None on failure."""
-    global _CHUNKER_CLASS
-    if _CHUNKER_CLASS is not None:
-        return _CHUNKER_CLASS
-    try:
-        from chonkie import SemanticChunker
+    if _get_chunker_class._cached is _UNSET:
+        try:
+            from chonkie import SemanticChunker
 
-        _CHUNKER_CLASS = SemanticChunker
-    except Exception as exc:
-        logger.warning(
-            "chonkie import failed, falling back to word-based chunking: %s", exc
-        )
-    return _CHUNKER_CLASS
+            _get_chunker_class._cached = SemanticChunker
+        except Exception as exc:
+            logger.warning(
+                "chonkie import failed, falling back to word-based chunking: %s", exc
+            )
+            _get_chunker_class._cached = None
+    return _get_chunker_class._cached
+
+
+_get_chunker_class._cached = _UNSET  # type: ignore[attr-defined]
 
 
 @dataclass

@@ -481,7 +481,7 @@ def test_e2e_indexing_pg_real_embeddings(tmp_path: pathlib.Path):
 # ---------------------------------------------------------------------------
 
 
-def _pg_execute(dsn: str, sql: str, params: dict = None) -> list | None:
+def _pg_execute(dsn: str, sql: str, params: dict | None = None) -> list | None:
     """Execute a query against the test PG database."""
     import psycopg
 

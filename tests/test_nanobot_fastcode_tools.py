@@ -755,7 +755,9 @@ class TestCreateAllTools:
     def test_all_tools_have_required_properties(self):
         tools = create_all_tools(api_url="http://test:8001")
         for tool in tools:
-            assert isinstance(tool.name, str) and tool.name
-            assert isinstance(tool.description, str) and tool.description
+            assert isinstance(tool.name, str)
+            assert tool.name
+            assert isinstance(tool.description, str)
+            assert tool.description
             assert isinstance(tool.parameters, dict)
             assert hasattr(tool, "execute")

@@ -41,7 +41,7 @@ def get_indexer_command(
     if not entry:
         return None
     binary_name, extra_args = entry
-    return [binary_name] + extra_args + [output_path]
+    return [binary_name, *extra_args, output_path]
 
 
 def run_scip_indexer(

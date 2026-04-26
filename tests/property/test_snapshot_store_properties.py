@@ -7,9 +7,8 @@ staging, and relational fact no-op paths on SQLite backend.
 
 from __future__ import annotations
 
-from typing import Any
-
 import tempfile
+from typing import Any
 
 import pytest
 from hypothesis import assume, given, settings
@@ -863,9 +862,9 @@ class TestIRGraphsRoundtrip:
         store.save_ir_graphs(snap.snapshot_id, graph_obj)
         loaded = store.load_ir_graphs(snap.snapshot_id)
         assert type(loaded) is dict
-        for key in graph_obj:
+        for key, value in graph_obj.items():
             assert key in loaded
-            assert loaded[key] == graph_obj[key]
+            assert loaded[key] == value
 
     @given(snap=snapshot_st())
     @settings(max_examples=10)

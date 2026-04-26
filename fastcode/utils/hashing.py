@@ -14,7 +14,7 @@ def projection_params_hash(scope_dict: dict[str, Any], version: str = "v1") -> s
         sort_keys=True,
         ensure_ascii=False,
     )
-    return hashlib.sha1(payload.encode("utf-8")).hexdigest()  # noqa: S324
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
 def deterministic_event_id(snapshot_id: str, payload: str) -> str:

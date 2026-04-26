@@ -150,6 +150,32 @@ ignore = [
     "RUF013",  # Implicit Optional in _walk_call_chain default
     "RUF003",  # En-dash in docstring comment
 ]
+"fastcode/core/iteration.py" = [
+    "PLR2004", # Magic values: threshold constants from original logic
+    "PLR0913", # Too many arguments: should_continue_iteration needs all params
+    "PLR0911", # Too many returns: should_continue_iteration has 6 stopping checks
+    "PLR0912", # Too many branches: should_continue_iteration stopping checks
+]
+"fastcode/iterative_agent.py" = [
+    "ANN001",  # Missing type annotation for args (pre-existing)
+    "ANN201",  # Missing return type for public functions (pre-existing)
+    "ANN202",  # Missing return type for private functions (pre-existing)
+    "ANN204",  # Missing return type for __init__ (pre-existing)
+    "PLR0912", # Too many branches (pre-existing, needs refactor)
+    "PLR0913", # Too many arguments (pre-existing, needs refactor)
+    "PLR0915", # Too many statements (pre-existing, needs refactor)
+    "PLR2004", # Magic values (pre-existing)
+    "RET504",  # Unnecessary assignment before return (pre-existing)
+    "PLC0415", # Lazy imports (pre-existing)
+    "E722",    # Bare except (pre-existing)
+    "S112",    # try-except-continue (pre-existing)
+    "S110",    # try-except-pass (pre-existing)
+    "W293",    # Blank line contains whitespace (pre-existing)
+    "B007",    # Unused loop control variable (pre-existing)
+    "SIM108",  # Use ternary instead of if-else (pre-existing)
+    "RUF059",  # Unused unpacked variable (pre-existing)
+    "C901",    # Too complex (pre-existing)
+]
 
 [tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false

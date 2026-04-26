@@ -14,6 +14,7 @@ from openai import OpenAI
 
 from .agent_tools import AgentTools
 from .core import iteration as _iteration
+from .core import parsing as _parsing
 from .core import prompts as _prompts
 from .core.types import IterationConfig
 from .llm_utils import openai_chat_completion
@@ -2788,266 +2789,20 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         return "\n".join(tree_lines).strip()
 
     def _extract_json_from_response(self, response: str) -> str:
-        """
-        Extract JSON string from LLM response, handling markdown blocks and reasoning text.
-        More robust for small models that may generate malformed JSON.
-        """
-        response = response.strip()
-
-        # Remove any leading/trailing non-JSON text that small models sometimes add
-        # e.g., "Here's the JSON:", "The response is:", etc.
-        prefixes_to_remove = [
-            "here's the json:",
-            "here is the json:",
-            "the json is:",
-            "json:",
-            "response:",
-            "output:",
-            "result:",
-            "here's the response:",
-            "here is the response:",
-        ]
-        response_lower = response.lower()
-        for prefix in prefixes_to_remove:
-            if response_lower.startswith(prefix):
-                response = response[len(prefix) :].strip()
-                break
-
-        # 1. Try to find markdown code blocks (non-greedy for nested braces)
-        json_match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", response, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            # 2. Try to find raw JSON object
-            # Find first '{' and matching '}'
-            start = response.find("{")
-            if start == -1:
-                return response
-
-            # Find matching closing brace
-            brace_count = 0
-            end = -1
-            for i in range(start, len(response)):
-                if response[i] == "{":
-                    brace_count += 1
-                elif response[i] == "}":
-                    brace_count -= 1
-                    if brace_count == 0:
-                        end = i
-                        break
-
-            if end == -1:
-                # No matching brace found, use rfind as fallback
-                end = response.rfind("}")
-
-            if start != -1 and end != -1 and end > start:
-                json_str = response[start : end + 1]
-            else:
-                return response
-
-        # 3. Clean up common issues for small models
-        # Replace unescaped newlines in strings with escaped ones
-        json_str = self._sanitize_json_string(json_str)
-
-        return json_str
+        """Extract JSON string from LLM response (delegates to core)."""
+        return _parsing.extract_json_from_response(response)
 
     def _sanitize_json_string(self, json_str: str) -> str:
-        """
-        Sanitize JSON string to fix common issues from small models:
-        - Remove/escape control characters in strings
-        - Fix trailing commas
-        - Handle incomplete JSON
-        - Fix missing commas between elements
-        """
-        # Remove or escape control characters (except in already escaped sequences)
-        # This is a simplified approach - replace literal newlines/tabs in strings
-        cleaned = []
-        in_string = False
-        escape_next = False
-
-        for i, char in enumerate(json_str):
-            if escape_next:
-                cleaned.append(char)
-                escape_next = False
-                continue
-
-            if char == "\\" and not escape_next:
-                # Check if next character forms valid escape sequence
-                if i + 1 < len(json_str):
-                    next_char = json_str[i + 1]
-                    # Valid JSON escape sequences: \", \\, \/, \b, \f, \n, \r, \t, \uXXXX
-                    # if next_char in '"\\\/bfnrtu':
-                    if next_char in r'"\\/bfnrtu':
-                        cleaned.append(char)
-                        escape_next = True
-                    else:
-                        # Invalid escape, add the backslash as-is
-                        cleaned.append(char)
-                else:
-                    # Backslash at end of string
-                    cleaned.append(char)
-                continue
-
-            if char == '"':
-                in_string = not in_string
-                cleaned.append(char)
-                continue
-
-            # If we're inside a string and hit a control character, escape it
-            if in_string:
-                if char == "\n":
-                    cleaned.append("\\n")
-                elif char == "\r":
-                    cleaned.append("\\r")
-                elif char == "\t":
-                    cleaned.append("\\t")
-                elif ord(char) < 32:  # Other control characters
-                    # Skip or replace with space
-                    cleaned.append(" ")
-                else:
-                    cleaned.append(char)
-            else:
-                cleaned.append(char)
-
-        result = "".join(cleaned)
-
-        # Remove inline comments (# or //) outside of strings
-        result = self._remove_json_comments(result)
-
-        # Fix trailing commas before closing braces/brackets
-        result = re.sub(r",(\s*[}\]])", r"\1", result)
-
-        # Fix missing commas between } and {, ] and [, etc.
-        result = re.sub(r"\}(\s*)\{", r"},\1{", result)
-        result = re.sub(r"\](\s*)\[", r"],\1[", result)
-        result = re.sub(r"\}(\s*)\[", r"},\1[", result)
-        result = re.sub(r"\](\s*)\{", r"],\1{", result)
-
-        # Fix missing commas between JSON values
-        # Only add comma between closing quote/bracket/brace and opening quote
-        result = re.sub(r'(["}\]])(\s*)(")', r"\1,\2\3", result)
-        # Fix missing comma after boolean/null followed by quote or opening brace/bracket
-        result = re.sub(r'\b(true|false|null)(\s*)(["{[])', r"\1,\2\3", result)
-
-        return result
+        """Sanitize JSON string to fix common issues from small models (delegates to core)."""
+        return _parsing.sanitize_json_string(json_str)
 
     def _remove_json_comments(self, json_str: str) -> str:
-        """Remove inline comments from JSON string (# or // style)"""
-        lines = json_str.split("\n")
-        cleaned_lines = []
-
-        for line in lines:
-            # Track if we're inside a string
-            in_string = False
-            escape_next = False
-            cleaned_line = []
-
-            i = 0
-            while i < len(line):
-                char = line[i]
-
-                if escape_next:
-                    cleaned_line.append(char)
-                    escape_next = False
-                    i += 1
-                    continue
-
-                if char == "\\":
-                    cleaned_line.append(char)
-                    escape_next = True
-                    i += 1
-                    continue
-
-                if char == '"':
-                    in_string = not in_string
-                    cleaned_line.append(char)
-                    i += 1
-                    continue
-
-                # If not in string, check for comments
-                if not in_string:
-                    # Check for # comment
-                    if char == "#":
-                        # Remove everything after # on this line
-                        break
-                    # Check for // comment
-                    if char == "/" and i + 1 < len(line) and line[i + 1] == "/":
-                        # Remove everything after // on this line
-                        break
-
-                cleaned_line.append(char)
-                i += 1
-
-            cleaned_lines.append("".join(cleaned_line).rstrip())
-
-        return "\n".join(cleaned_lines)
+        """Remove inline comments from JSON string (delegates to core)."""
+        return _parsing.remove_json_comments(json_str)
 
     def _robust_json_parse(self, json_str: str) -> Any:
-        """
-        Robustly parse JSON with multiple fallback strategies for small model outputs
-
-        Args:
-            json_str: JSON string to parse
-
-        Returns:
-            Parsed JSON object
-
-        Raises:
-            json.JSONDecodeError: If all parsing strategies fail
-        """
-        import json
-
-        # Strategy 1: Direct parsing
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError as e1:
-            self.logger.debug(f"Direct JSON parse failed: {e1}")
-
-        # Strategy 2: Parse with sanitization
-        try:
-            sanitized = self._sanitize_json_string(json_str)
-            return json.loads(sanitized)
-        except json.JSONDecodeError as e2:
-            self.logger.debug(f"Sanitized JSON parse failed: {e2}")
-
-        # Strategy 3: Try to fix common JSON errors with regex
-        try:
-            # Fix unquoted keys
-            fixed = re.sub(
-                r"([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)", r'\1"\2"\3', json_str
-            )
-            return json.loads(fixed)
-        except (json.JSONDecodeError, Exception) as e3:
-            self.logger.debug(f"Fixed keys JSON parse failed: {e3}")
-
-        # Strategy 4: Use ast.literal_eval as safer alternative (can handle Python-style dicts)
-        try:
-            import ast
-
-            # ast.literal_eval is safer than eval - only evaluates literals
-            result = ast.literal_eval(json_str)
-            if isinstance(result, (dict, list)):
-                return result
-        except (ValueError, SyntaxError, Exception) as e4:
-            self.logger.debug(f"AST literal_eval parse failed: {e4}")
-
-        # Strategy 5: Try to extract and parse just the first complete object
-        try:
-            # Find first { and try to parse incrementally
-            start = json_str.find("{")
-            if start != -1:
-                for end in range(len(json_str), start, -1):
-                    try:
-                        subset = json_str[start:end]
-                        if subset.count("{") == subset.count("}"):
-                            return json.loads(subset)
-                    except:
-                        continue
-        except Exception as e5:
-            self.logger.debug(f"Incremental parse failed: {e5}")
-
-        # All strategies failed
-        raise json.JSONDecodeError("All parsing strategies failed", json_str, 0)
+        """Robustly parse JSON with fallback strategies (delegates to core)."""
+        return _parsing.robust_json_parse(json_str)
 
     def _execute_search_codebase(
         self, parameters: dict[str, Any], selected_repos: list[str] | None = None

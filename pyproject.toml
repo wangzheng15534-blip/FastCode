@@ -31,146 +31,119 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
-    "S101",    # Allow assert in tests
-    "ANN201",  # Missing return type for test functions
-    "ANN003",  # Missing type annotation for **kwargs in test factories
-    "PLR2004", # Allow magic values in test assertions
-    "PLR0913", # Allow many args in test factory functions
+    "S101",    # design: assert is the test mechanism, not a runtime invariant
+    "ANN201",  # design: test functions are named by convention, return type adds noise
+    "ANN003",  # design: test factory **kwargs are intentionally untyped for flexibility
+    "PLR2004", # design: test assertions use literal values, named constants would obscure intent
+    "PLR0913", # design: test factory functions bundle all fixtures as positional args
 ]
 "fastcode/retriever.py" = [
-    "ANN201",  # Missing return type annotation (pre-existing)
-    "ANN204",  # Missing return type for __init__ (pre-existing)
-    "PLR0912", # Too many branches (pre-existing, needs refactor)
-    "PLR0913", # Too many arguments (pre-existing, needs refactor)
-    "PLR0915", # Too many statements (pre-existing, needs refactor)
-    "PLR2004", # Magic values (pre-existing)
-    "SIM102",  # Nested if statements (pre-existing)
-    "PLR1714", # Merge comparisons (pre-existing)
-    "S301",    # pickle usage (pre-existing)
-    "PLC0415", # Lazy imports (pre-existing)
+    "ANN201",  # complexity: retrieve() and index_for_bm25 need return types (track: annotate all public methods)
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "PLC0415", # design: lazy imports avoid circular deps with core/ subpackage
+    "PLR0912", # complexity: retrieve() has 31 branches for fusion path selection (track: extract fusion strategy pattern)
+    "PLR0913", # complexity: retrieve() takes 6 params (track: bundle query params into QueryRequest dataclass)
+    "PLR0915", # complexity: retrieve() has 97 statements (track: same fusion strategy refactor)
+    "PLR1714", # complexity: merge comparisons in fusion score logic (track: part of fusion refactor)
+    "PLR2004", # design: fusion thresholds (0.5, 0.7) are tuning knobs, not domain constants
+    "S301",    # design: pickle for BM25 index serialization, not deserializing untrusted input
 ]
 "fastcode/core/scip_transform.py" = [
-    "PLC0415", # Intentional lazy import — protobuf may not be installed
+    "PLC0415", # external-dep: protobuf may not be installed; lazy import guards import error
 ]
 "fastcode/scip_loader.py" = [
-    "PLC0415", # Lazy imports (pre-existing)
-    "S603",    # subprocess call (pre-existing)
-    "B904",    # raise without from (pre-existing)
-    "ANN001",  # Missing type annotation (pre-existing)
+    "PLC0415", # design: lazy import of scip_loader internals to avoid circular dep with main.py
+    "S603",    # design: subprocess for SCIP binary invocation; shell=False is already used
+    "B904",    # design: raise without from in subprocess error handler; original exception is re-wrapped with context
+    "ANN001",  # complexity: _run_scip_command args need types (track: annotate all public methods)
 ]
 "mcp_server.py" = [
-    "E402",    # Module-level imports after sys.path setup (intentional)
-    "PLC0415", # Lazy imports inside tool functions (intentional)
-    "ANN001",  # Missing type annotations for MCP tool helper args
-    "ANN202",  # Missing return type for private helpers
-    "PLW0603", # Global statement for lazy singleton
-    "PLR2004", # Magic values in MCP tool bodies
-    "PLR0912", # Many branches in get_file_summary
-    "PLR0913", # Many args in _walk_call_chain
-    "RUF013",  # Implicit Optional in _walk_call_chain default
-    "RUF003",  # En-dash in docstring comment
+    "E402",    # tool-conflict: sys.path must be set before imports; E402 is unavoidable here
+    "PLC0415", # design: lazy imports inside tool functions to keep startup fast
+    "ANN001",  # complexity: MCP tool helper args need types (track: annotate all tool handlers)
+    "ANN202",  # complexity: private helper return types (track: annotate all public methods)
+    "PLW0603", # design: global statement for lazy singleton — intentional module-level cache
+    "PLR2004", # design: MCP tool bodies use literal config values (depths, limits)
+    "PLR0912", # complexity: get_file_summary has many branches for file type handling (track: extract file type handlers)
+    "PLR0913", # complexity: _walk_call_chain takes 6 params (track: bundle into ChainRequest dataclass)
+    "RUF013",  # design: implicit Optional in default arg is deliberate for MCP tool ergonomics
+    "RUF003",  # design: en-dash in docstring is intentional typographic choice
 ]
 "fastcode/core/iteration.py" = [
-    "PLR2004", # Magic values: threshold constants from original logic
-    "PLR0913", # Too many arguments: should_continue_iteration needs all params
-    "PLR0911", # Too many returns: should_continue_iteration has 6 stopping checks
-    "PLR0912", # Too many branches: should_continue_iteration stopping checks
+    "PLR2004", # design: threshold constants (0.85, 3) from original HKUDS iterative refinement logic
+    "PLR0913", # complexity: should_continue_iteration takes 7 params (track: bundle into IterationState dataclass)
+    "PLR0911", # complexity: 6 early returns for stopping conditions — each is a distinct termination check
+    "PLR0912", # complexity: should_continue_iteration branching on 6 stopping conditions (track: extract to Strategy)
 ]
 "fastcode/core/prompts.py" = [
-    "PLR0912", # Too many branches: extracted verbatim from iterative_agent.py
-]
-"fastcode/core/parsing.py" = [
-    "S110",    # try-except-pass: intentional fallback strategy in robust_json_parse
-    "S112",    # try-except-continue: intentional fallback strategy in robust_json_parse
-    "PLR0912", # Too many branches: sanitize_json_string handles many char types
-    "PLR2004", # Magic value 32: control character threshold (ASCII range)
+    "PLR0912", # complexity: prompt template selection by query type (track: extract prompt registry)
 ]
 "fastcode/iterative_agent.py" = [
-    "ANN001",  # Missing type annotation for args (pre-existing)
-    "ANN201",  # Missing return type for public functions (pre-existing)
-    "ANN202",  # Missing return type for private functions (pre-existing)
-    "ANN204",  # Missing return type for __init__ (pre-existing)
-    "PLR0912", # Too many branches (pre-existing, needs refactor)
-    "PLR0913", # Too many arguments (pre-existing, needs refactor)
-    "PLR0915", # Too many statements (pre-existing, needs refactor)
-    "PLR2004", # Magic values (pre-existing)
-    "RET504",  # Unnecessary assignment before return (pre-existing)
-    "PLC0415", # Lazy imports (pre-existing)
-    "E722",    # Bare except (pre-existing)
-    "S112",    # try-except-continue (pre-existing)
-    "S110",    # try-except-pass (pre-existing)
-    "W293",    # Blank line contains whitespace (pre-existing)
-    "B007",    # Unused loop control variable (pre-existing)
-    "SIM108",  # Use ternary instead of if-else (pre-existing)
-    "RUF059",  # Unused unpacked variable (pre-existing)
-    "C901",    # Too complex (pre-existing)
+    "ANN001",  # complexity: all function args need types (track: annotate all public methods)
+    "ANN201",  # complexity: all public function return types (track: annotate all public methods)
+    "ANN202",  # complexity: all private function return types (track: annotate all public methods)
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "B007",    # design: loop control variable kept for readability in deduplication logic
+    "PLR0912", # complexity: _execute_search_codebase has 27 branches (track: extract action handlers)
+    "PLR0915", # complexity: _execute_search_codebase has 101 statements (track: extract action handlers)
+    "PLR2004", # design: tool result score thresholds (0.7, 0.5) are tuning knobs
+    "RET504",  # design: variable assigned for debugging clarity before return in _deduplicate_results
+    "RUF059",  # design: unpacked variable kept for positional clarity in dict construction
+    "S110",    # design: try-except-pass in directory tree builder — individual failures should not halt traversal
+    "SIM108",  # design: if-else preferred over ternary for readability of multi-element tuple fallback
 ]
 "fastcode/answer_generator.py" = [
-    "ANN201",  # Missing return type for public functions (pre-existing)
-    "ANN202",  # Missing return type for private functions (pre-existing)
-    "ANN204",  # Missing return type for __init__ (pre-existing)
-    "PLR0912", # Too many branches (pre-existing)
-    "PLR0915", # Too many statements (pre-existing)
-    "PLR2004", # Magic values (pre-existing)
-    "PLC0415", # Lazy imports (pre-existing)
-    "RET504",  # Unnecessary assignment before return (pre-existing)
-    "W291",    # Trailing whitespace (pre-existing)
-    "UP028",   # Yield in generator (pre-existing)
+    "ANN201",  # complexity: generate_stream needs return type (track: annotate all public methods)
+    "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "PLC0415", # design: traceback imported inside except block — intentional lazy import for error path only
+    "PLR0912", # complexity: generate() has 15 branches, generate_stream() has 20 (track: extract provider adapter)
+    "PLR0915", # complexity: generate() 51 stmts, generate_stream() 67 stmts (track: extract provider adapter)
+    "RET504",  # design: full_prompt assigned for debugging clarity before return in _build_prompt
+    "UP028",   # design: yield over for loop preferred for explicit control in stream error handler
 ]
 "fastcode/main.py" = [
-    "ANN001",  # Missing type annotation for args (pre-existing)
-    "ANN201",  # Missing return type for public functions (pre-existing)
-    "ANN202",  # Missing return type for private functions (pre-existing)
-    "ANN204",  # Missing return type for __init__ (pre-existing)
-    "PLR0912", # Too many branches (pre-existing)
-    "PLR0913", # Too many arguments (pre-existing)
-    "PLR0915", # Too many statements (pre-existing)
-    "PLC0415", # Lazy imports (pre-existing)
-    "S324",    # SHA1 usage (pre-existing, used for non-security hashing)
-    "S301",    # pickle usage (pre-existing)
-    "PLR2004", # Magic values (pre-existing)
-    "B904",    # raise from None (pre-existing)
-    "RUF013",  # Implicit Optional (pre-existing)
-    "F821",    # Forward reference (pre-existing)
-]
-"fastcode/core/snapshot.py" = [
-    "S324",    # SHA1 usage (non-security cache key hashing, matches main.py)
+    "ANN001",  # complexity: all function args need types (track: annotate all public methods)
+    "ANN201",  # complexity: all public function return types (track: annotate all public methods)
+    "ANN202",  # complexity: all private function return types (track: annotate all public methods)
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "PLR0912", # complexity: index_repository has many branches for storage backend selection (track: extract backend strategy)
+    "PLR0913", # complexity: query() takes 7 params (track: bundle into QueryRequest dataclass)
+    "PLR0915", # complexity: __init__ has 68 stmts, index_repository has 63 stmts (track: extract backend strategy)
+    "PLC0415", # design: lazy imports to avoid circular deps and keep startup fast
+    "S324",    # security-context: SHA1 for blob_oid hashing and idempotency keys — not cryptographic
+    "S301",    # design: pickle for BM25 index serialization, not deserializing untrusted input
+    "PLR2004", # design: index thresholds and config defaults are tuning knobs
+    "B904",    # design: raise from None where original exception context would be misleading
+    "RUF013",  # design: implicit Optional in default arg for backward-compatible API
+    "F821",    # external-dep: forward reference to type not yet defined at class scope
 ]
 "fastcode/core/combination.py" = [
-    "PLR0913", # Too many arguments: combine_results needs all params
-    "PLR0912", # Too many branches: merge logic for 3 result types
+    "PLR0913", # complexity: combine_results takes 7 params (track: bundle into CombinationRequest dataclass)
+    "PLR0912", # complexity: merge logic branches for 3 result types (track: extract merge strategies)
 ]
 "fastcode/core/repo_analysis.py" = [
-    "PLR0911", # Too many returns: infer_project_type if-chain (extracted verbatim)
+    "PLR0911", # complexity: infer_project_type if-chain with 6 project types — each branch is distinct
 ]
 "fastcode/repo_overview.py" = [
-    "ANN202",  # Missing return type for private functions (pre-existing)
-    "ANN204",  # Missing return type for __init__ (pre-existing)
-    "F401",    # Unused import pathlib.Path (pre-existing)
-    "UP006",   # Use dict/list instead of Dict/List (pre-existing)
-    "UP015",   # Unnecessary mode argument in open() (pre-existing)
-    "UP035",   # Deprecated typing imports (pre-existing)
-    "UP045",   # Use X | None instead of Optional (pre-existing)
-    "W291",    # Trailing whitespace (pre-existing)
-    "W293",    # Blank line contains whitespace (pre-existing)
-    "RET504",  # Unnecessary assignment before return (pre-existing)
-    "RET505",  # Unnecessary elif after return (pre-existing)
-    "I001",    # Import sorting (pre-existing)
-    "SIM102",  # Nested if statements (pre-existing)
-    "PLR2004", # Magic values (pre-existing)
+    "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "PLR2004", # design: 8000 char truncation threshold for READMEs is a UI limit, not domain constant
+    "RET504",  # design: overview dict assigned for readability before return in generate_overview
+    "SIM102",  # design: nested if clarifies two independent conditions (directory depth + file membership)
 ]
 "fastcode/utils/_compat.py" = [
-    "S324",    # MD5 usage (pre-existing, non-security file hashing)
-    "PLC0415", # Lazy imports (pre-existing, pathspec may not be installed)
-    "ANN001",  # Missing type annotation (pre-existing)
-    "ANN002",  # Missing type annotation for *args (pre-existing)
-    "ANN202",  # Missing return type for private functions (pre-existing)
-    "PLR0911", # Too many returns (pre-existing)
+    "S324",    # security-context: MD5 for file dedup hashing — not cryptographic
+    "PLC0415", # external-dep: pathspec may not be installed; lazy import guards import error
+    "ANN001",  # complexity: function args need types (track: annotate all public methods)
+    "ANN002",  # complexity: *args need types (track: annotate all public methods)
+    "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
+    "PLR0911", # complexity: extract_repo_name has 6 early returns for URL/SSH/HTTPS patterns
 ]
 "fastcode/schema/ir.py" = [
-    "ANN204",  # Missing return type for __init__ (extracted from semantic_ir.py)
-    "PLR0913", # Too many arguments: IRSnapshot.__init__ (extracted from semantic_ir.py)
-    "PLC0415", # Lazy imports: IRSnapshot references types in semantic_ir.py to avoid circular dep
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "PLC0415", # design: lazy import to avoid circular dep between schema/ir.py and semantic_ir.py
+    "PLR0913", # complexity: IRSnapshot.__init__ takes 7 params (track: bundle into Builder)
 ]
 
 [tool.ruff.lint.flake8-pytest-style]

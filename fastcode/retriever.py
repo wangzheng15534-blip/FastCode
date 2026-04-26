@@ -17,7 +17,6 @@ from .core import combination as _combination
 from .core import filtering as _filtering
 from .core import fusion as _fusion
 from .core import scoring as _scoring
-from .schema.core_types import FusionConfig
 from .embedder import CodeEmbedder
 from .graph_builder import CodeGraphBuilder
 from .indexer import CodeElement
@@ -26,6 +25,7 @@ from .iterative_agent import IterativeAgent
 from .pg_retrieval import PgRetrievalStore
 from .query_processor import ProcessedQuery
 from .repo_selector import RepositorySelector
+from .schema.core_types import FusionConfig
 from .utils import ensure_dir
 from .vector_store import VectorStore
 

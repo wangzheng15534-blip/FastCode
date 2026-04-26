@@ -126,6 +126,18 @@ ignore = [
     "PLR2004", # Allow magic values in test assertions
     "PLR0913", # Allow many args in test factory functions
 ]
+"fastcode/retriever.py" = [
+    "ANN201",  # Missing return type annotation (pre-existing)
+    "ANN204",  # Missing return type for __init__ (pre-existing)
+    "PLR0912", # Too many branches (pre-existing, needs refactor)
+    "PLR0913", # Too many arguments (pre-existing, needs refactor)
+    "PLR0915", # Too many statements (pre-existing, needs refactor)
+    "PLR2004", # Magic values (pre-existing)
+    "SIM102",  # Nested if statements (pre-existing)
+    "PLR1714", # Merge comparisons (pre-existing)
+    "S301",    # pickle usage (pre-existing)
+    "PLC0415", # Lazy imports (pre-existing)
+]
 "mcp_server.py" = [
     "E402",    # Module-level imports after sys.path setup (intentional)
     "PLC0415", # Lazy imports inside tool functions (intentional)

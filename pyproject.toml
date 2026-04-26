@@ -138,6 +138,15 @@ ignore = [
     "S301",    # pickle usage (pre-existing)
     "PLC0415", # Lazy imports (pre-existing)
 ]
+"fastcode/core/scip_transform.py" = [
+    "PLC0415", # Intentional lazy import — protobuf may not be installed
+]
+"fastcode/scip_loader.py" = [
+    "PLC0415", # Lazy imports (pre-existing)
+    "S603",    # subprocess call (pre-existing)
+    "B904",    # raise without from (pre-existing)
+    "ANN001",  # Missing type annotation (pre-existing)
+]
 "mcp_server.py" = [
     "E402",    # Module-level imports after sys.path setup (intentional)
     "PLC0415", # Lazy imports inside tool functions (intentional)
@@ -215,6 +224,25 @@ ignore = [
 ]
 "fastcode/core/snapshot.py" = [
     "S324",    # SHA1 usage (non-security cache key hashing, matches main.py)
+]
+"fastcode/core/repo_analysis.py" = [
+    "PLR0911", # Too many returns: infer_project_type if-chain (extracted verbatim)
+]
+"fastcode/repo_overview.py" = [
+    "ANN202",  # Missing return type for private functions (pre-existing)
+    "ANN204",  # Missing return type for __init__ (pre-existing)
+    "F401",    # Unused import pathlib.Path (pre-existing)
+    "UP006",   # Use dict/list instead of Dict/List (pre-existing)
+    "UP015",   # Unnecessary mode argument in open() (pre-existing)
+    "UP035",   # Deprecated typing imports (pre-existing)
+    "UP045",   # Use X | None instead of Optional (pre-existing)
+    "W291",    # Trailing whitespace (pre-existing)
+    "W293",    # Blank line contains whitespace (pre-existing)
+    "RET504",  # Unnecessary assignment before return (pre-existing)
+    "RET505",  # Unnecessary elif after return (pre-existing)
+    "I001",    # Import sorting (pre-existing)
+    "SIM102",  # Nested if statements (pre-existing)
+    "PLR2004", # Magic values (pre-existing)
 ]
 
 [tool.ruff.lint.flake8-pytest-style]

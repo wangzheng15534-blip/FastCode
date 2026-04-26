@@ -431,7 +431,7 @@ class ProjectionTransformer:
                 weighted = g.copy()
                 for _src, _dst, data in weighted.edges(data=True):
                     data["distance"] = 1.0 / max(0.1, float(data.get("weight", 1.0)))
-                _steiner = getattr(nx.approximation, "steiner_tree")
+                _steiner = nx.approximation.steiner_tree
                 _steiner_result: Any = _steiner(weighted, terminals, weight="distance")
                 tree: nx.Graph[str] = cast(nx.Graph[str], _steiner_result)
                 if self.steiner_prune:

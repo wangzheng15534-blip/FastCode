@@ -9,14 +9,27 @@ json.dumps().
 
 from __future__ import annotations
 
+import builtins
 import contextlib
 from collections import deque
-from typing import Any
+from typing import Any, cast
 
 import networkx as nx
 
 from .ir_graph_builder import IRGraphBuilder
 from .semantic_ir import IRSnapshot
+
+# ---------------------------------------------------------------------------
+# Type aliases for networkx functions with unknown **kwargs in stubs.
+# Direct attribute access triggers reportUnknownMemberType because the
+# function overload signatures include **kwargs: Unknown.  We use
+# builtins.getattr (not the bare getattr builtin) which ruff-format
+# will not rewrite to dot-access.
+# ---------------------------------------------------------------------------
+# ruff-format: off
+_NXShortestPath: Any = builtins.getattr(nx, "shortest_path")  # noqa: B009
+_NXSteinerTree: Any = builtins.getattr(nx.approximation, "steiner_tree")  # noqa: B009
+# ruff-format: on
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -67,7 +80,7 @@ def resolve_unit_id(query: str, snapshot: IRSnapshot) -> str | None:
     return None
 
 
-def format_path_node(unit_id: str, snapshot: IRSnapshot) -> dict[str, str | int | None]:
+def format_path_node(unit_id: str, snapshot: IRSnapshot) -> dict[str, Any]:
     """Build a metadata dict for a graph node."""
     for unit in snapshot.units:
         if unit.unit_id == unit_id:
@@ -102,6 +115,7 @@ def build_combined_graph(
 
     Returns:
         A composed networkx Graph (undirected=True) or DiGraph.
+
     """
     if graph_types is None:
         graph_types = sorted(VALID_GRAPH_TYPES)
@@ -113,7 +127,8 @@ def build_combined_graph(
         attr = GRAPH_TYPE_MAP[gt]
         g: nx.DiGraph[str] = getattr(graphs, attr)
         if undirected:
-            g = g.to_undirected()
+            ug: nx.Graph[str] = g.to_undirected()
+            g = ug  # type: ignore[assignment]
         combined = g.copy() if combined is None else nx.compose(combined, g)
     return (
         combined
@@ -184,7 +199,7 @@ def compute_directed_path(
         }
 
     if from_id not in combined or to_id not in combined:
-        missing = []
+        missing: list[str] = []
         if from_id not in combined:
             missing.append(from_symbol)
         if to_id not in combined:
@@ -197,10 +212,10 @@ def compute_directed_path(
         }
 
     try:
-        path = nx.shortest_path(combined, source=from_id, target=to_id)
+        path: list[str] = list(_NXShortestPath(combined, source=from_id, target=to_id))
     except nx.NetworkXNoPath:
         try:
-            nx.shortest_path(combined, source=to_id, target=from_id)
+            list(_NXShortestPath(combined, source=to_id, target=from_id))
             return {
                 "found": False,
                 "path": [],
@@ -302,11 +317,11 @@ def compute_impact_analysis(
                 if g.has_edge(pred, node):
                     edge_types_map.setdefault(pred, set()).add(gt)
 
-    affected = []
+    affected: list[dict[str, Any]] = []
     for nid, dist in sorted(visited.items(), key=lambda kv: kv[1]):
         if nid == unit_id:
             continue
-        node_info = format_path_node(nid, snapshot)
+        node_info: dict[str, Any] = format_path_node(nid, snapshot)
         node_info["distance"] = dist
         node_info["edge_types"] = sorted(edge_types_map.get(nid, set()))
         affected.append(node_info)
@@ -315,7 +330,8 @@ def compute_impact_analysis(
 
 
 def compute_leiden_clusters(
-    snapshot: IRSnapshot, fc: object | None = None
+    snapshot: IRSnapshot,
+    fc: object | None = None,
 ) -> dict[str, Any]:
     """Get module boundaries (Leiden community detection) for a snapshot.
 
@@ -325,6 +341,7 @@ def compute_leiden_clusters(
 
     Returns:
         Dict with clusters, xrefs, total_clusters, error.
+
     """
     if fc is None:
         return {
@@ -404,7 +421,7 @@ def compute_steiner_path(
             "error": "Maximum 8 terminal symbols allowed.",
         }
 
-    terminal_ids = []
+    terminal_ids: list[str] = []
     for t in terminals:
         tid = resolve_unit_id(t, snapshot)
         if not tid:
@@ -422,7 +439,7 @@ def compute_steiner_path(
     undirected: nx.Graph[str] | None = None
     for attr_name in _ALL_GRAPH_ATTRS:
         g: nx.DiGraph[str] = getattr(graphs, attr_name)
-        ug = g.to_undirected()
+        ug: nx.Graph[str] = g.to_undirected()
         undirected = ug.copy() if undirected is None else nx.compose(undirected, ug)
     if undirected is None or undirected.number_of_nodes() == 0:
         return {
@@ -450,7 +467,7 @@ def compute_steiner_path(
         return {"found": True, "nodes": [node], "edges": [], "error": None}
 
     try:
-        steiner = nx.approximation.steiner_tree(undirected, terminal_ids)
+        steiner_g: Any = _NXSteinerTree(undirected, terminal_ids)
     except nx.NetworkXError as exc:
         return {
             "found": False,
@@ -459,20 +476,20 @@ def compute_steiner_path(
             "error": f"Steiner tree computation failed: {exc}",
         }
 
-    terminal_set = set(terminal_ids)
+    terminal_set: set[str] = set(terminal_ids)
     changed = True
     while changed:
         changed = False
-        leaves = [
+        leaves: list[str] = [
             n
-            for n in steiner.nodes()
-            if steiner.degree(n) == 1 and n not in terminal_set
+            for n in steiner_g.nodes()
+            if steiner_g.degree(n) == 1 and n not in terminal_set
         ]
         for leaf in leaves:
-            steiner.remove_node(leaf)
+            steiner_g.remove_node(leaf)
             changed = True
 
-    if steiner.number_of_nodes() == 0:
+    if steiner_g.number_of_nodes() == 0:
         return {
             "found": False,
             "nodes": [],
@@ -480,7 +497,7 @@ def compute_steiner_path(
             "error": "Steiner tree is empty after pruning.",
         }
 
-    nodes = [format_path_node(nid, snapshot) for nid in steiner.nodes()]
+    nodes = [format_path_node(str(nid), snapshot) for nid in steiner_g.nodes()]
 
     edge_type_map = {
         "call_graph": "call",
@@ -490,23 +507,24 @@ def compute_steiner_path(
         "containment_graph": "containment",
     }
     seen_edges: set[tuple[str, str]] = set()
-    edges = []
-    for u, v in steiner.edges():
-        edge_key = (min(u, v), max(u, v))
+    edges: list[dict[str, str]] = []
+    for u, v in steiner_g.edges():
+        u_str, v_str = str(u), str(v)
+        edge_key = (min(u_str, v_str), max(u_str, v_str))
         if edge_key in seen_edges:
             continue
         seen_edges.add(edge_key)
-        edge_types = []
+        edge_types: list[str] = []
         for attr_name, etype in edge_type_map.items():
             g: nx.DiGraph[str] = getattr(graphs, attr_name)
-            if g.has_edge(u, v) or g.has_edge(v, u):
+            if g.has_edge(u_str, v_str) or g.has_edge(v_str, u_str):
                 edge_types.append(etype)
         edges.append(
             {
-                "from": u,
-                "to": v,
+                "from": u_str,
+                "to": v_str,
                 "type": "+".join(edge_types) if edge_types else "unknown",
-            }
+            },
         )
 
     return {"found": True, "nodes": nodes, "edges": edges, "error": None}
@@ -549,11 +567,11 @@ def compute_find_callers(
                 visited[pred] = dist + 1
                 queue.append((pred, dist + 1))
 
-    callers = []
+    callers: list[dict[str, Any]] = []
     for nid, dist in sorted(visited.items(), key=lambda kv: kv[1]):
         if nid == unit_id:
             continue
-        node_info = format_path_node(nid, snapshot)
+        node_info: dict[str, Any] = format_path_node(nid, snapshot)
         node_info["distance"] = dist
         callers.append(node_info)
 
@@ -566,20 +584,21 @@ def compute_find_callers(
 
 
 def extract_cluster_data(
-    l1_data: dict[str, Any], snapshot: IRSnapshot
+    l1_data: dict[str, Any],
+    snapshot: IRSnapshot,
 ) -> dict[str, Any]:
     """Extract structured cluster data from L1 projection data."""
-    clusters = []
-    xrefs = []
+    clusters: list[dict[str, Any]] = []
+    xrefs: list[dict[str, Any]] = []
 
-    content_extra = l1_data.get("content_extra", {})
-    sections = content_extra.get("sections", [])
-    navigation = content_extra.get("navigation", [])
+    content_extra = cast("dict[str, Any]", l1_data.get("content_extra") or {})
+    sections = cast("list[dict[str, Any]]", content_extra.get("sections") or [])
+    navigation = cast("list[dict[str, Any]]", content_extra.get("navigation") or [])
 
-    relations = content_extra.get("relations", {})
-    xref_list = relations.get("xref", [])
+    relations = cast("dict[str, Any]", content_extra.get("relations") or {})
+    xref_list = cast("list[dict[str, Any]]", relations.get("xref") or [])
     for xref in xref_list:
-        xref_id = xref.get("id", "")
+        xref_id: str = xref.get("id", "")
         parts = xref_id.split("->")
         if len(parts) == 2:
             xrefs.append(
@@ -587,11 +606,11 @@ def extract_cluster_data(
                     "from_cluster": parts[0],
                     "to_cluster": parts[1],
                     "weight": xref.get("confidence", 0),
-                }
+                },
             )
 
     for i, section in enumerate(sections):
-        cluster_info = {
+        cluster_info: dict[str, Any] = {
             "cluster_id": str(i),
             "label": section.get("name", f"Cluster {i}"),
             "node_count": 0,

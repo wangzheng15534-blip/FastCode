@@ -2,15 +2,20 @@
 Utility functions for FastCode
 """
 
+import builtins
 import hashlib
 import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import tiktoken
 import yaml
+from pathspec import PathSpec  # type: ignore[import-untyped]
+from pathspec.patterns.gitwildmatch import (
+    GitWildMatchPattern,  # type: ignore[import-untyped]
+)
 
 
 def utc_now() -> str:
@@ -27,13 +32,13 @@ def setup_logging(config: dict[str, Any]) -> logging.Logger:
     )
 
     # Create logs directory if it doesn't exist
-    log_file = log_config.get("file", "./logs/fastcode.log")
+    log_file: str = log_config.get("file", "./logs/fastcode.log")
     log_dir = os.path.dirname(log_file)
     if log_dir and not os.path.exists(log_dir):
         os.makedirs(log_dir, exist_ok=True)
 
     # Configure logging
-    handlers = []
+    handlers: list[logging.Handler] = []
     if log_config.get("console", True):
         handlers.append(logging.StreamHandler())
     if log_file:
@@ -79,27 +84,27 @@ def resolve_config_paths(config: dict[str, Any], project_root: str) -> dict[str,
         return os.path.abspath(os.path.join(root, path_value))
 
     if "repo_root" in config:
-        config["repo_root"] = _abs(config.get("repo_root"))
+        config["repo_root"] = _abs(cast(str, config.get("repo_root")))
 
-    vector_store_cfg = config.get("vector_store", {})
+    vector_store_cfg = cast(dict[str, Any] | None, config.get("vector_store"))
     if isinstance(vector_store_cfg, dict) and "persist_directory" in vector_store_cfg:
         vector_store_cfg["persist_directory"] = _abs(
-            vector_store_cfg.get("persist_directory")
+            cast(str, vector_store_cfg.get("persist_directory"))
         )
 
-    repository_cfg = config.get("repository", {})
+    repository_cfg = cast(dict[str, Any] | None, config.get("repository"))
     if isinstance(repository_cfg, dict) and "backup_directory" in repository_cfg:
         repository_cfg["backup_directory"] = _abs(
-            repository_cfg.get("backup_directory")
+            cast(str, repository_cfg.get("backup_directory"))
         )
 
-    cache_cfg = config.get("cache", {})
+    cache_cfg = cast(dict[str, Any] | None, config.get("cache"))
     if isinstance(cache_cfg, dict) and "cache_directory" in cache_cfg:
-        cache_cfg["cache_directory"] = _abs(cache_cfg.get("cache_directory"))
+        cache_cfg["cache_directory"] = _abs(cast(str, cache_cfg.get("cache_directory")))
 
-    logging_cfg = config.get("logging", {})
+    logging_cfg = cast(dict[str, Any] | None, config.get("logging"))
     if isinstance(logging_cfg, dict) and "file" in logging_cfg:
-        logging_cfg["file"] = _abs(logging_cfg.get("file"))
+        logging_cfg["file"] = _abs(cast(str, logging_cfg.get("file")))
 
     return config
 
@@ -139,11 +144,11 @@ def is_supported_file(file_path: str, supported_extensions: list[str]) -> bool:
 
 def should_ignore_path(path: str, ignore_patterns: list[str]) -> bool:
     """Check if path should be ignored based on patterns"""
-    from pathspec import PathSpec
-    from pathspec.patterns import GitWildMatchPattern
-
-    spec = PathSpec.from_lines(GitWildMatchPattern, ignore_patterns)
-    return spec.match_file(path)
+    # ruff-format: off
+    _from_lines: Any = builtins.getattr(PathSpec, "from_lines")  # noqa: B009
+    # ruff-format: on
+    spec: Any = _from_lines(GitWildMatchPattern, ignore_patterns)
+    return bool(spec.match_file(path))
 
 
 def count_tokens(text: str, model: str = "gpt-4") -> int:
@@ -280,25 +285,26 @@ def calculate_code_complexity(code: str) -> int:
 
 def merge_dicts(*dicts: dict[str, Any]) -> dict[str, Any]:
     """Merge multiple dictionaries"""
-    result = {}
+    result: dict[str, Any] = {}
     for d in dicts:
         result.update(d)
     return result
 
 
-def safe_get(d: dict[str, Any], *keys, default=None):
+def safe_get(d: dict[str, Any], *keys: str, default: Any = None) -> Any:
     """Safely get nested dictionary value"""
+    current: Any = d
     for key in keys:
-        if isinstance(d, dict):
-            d = d.get(key)
-            if d is None:
+        if isinstance(current, dict):
+            current = cast(dict[str, Any], current).get(key)
+            if current is None:
                 return default
         else:
             return default
-    return d
+    return current
 
 
-def ensure_dir(directory: str):
+def ensure_dir(directory: str) -> None:
     """Ensure directory exists"""
     Path(directory).mkdir(parents=True, exist_ok=True)
 
@@ -319,15 +325,18 @@ def safe_jsonable(obj: Any, *, _depth: int = 0) -> Any:
     if obj is None or isinstance(obj, (bool, int, float, str)):
         return obj
     if isinstance(obj, dict):
-        safe_dict = {}
-        for k, v in obj.items():
+        safe_dict: dict[str, Any] = {}
+        obj_dict = cast(dict[Any, Any], obj)
+        for k, v in list(obj_dict.items()):
+            k_str = str(k)
             try:
-                safe_dict[str(k)] = safe_jsonable(v, _depth=_depth + 1)
+                safe_dict[k_str] = safe_jsonable(v, _depth=_depth + 1)
             except Exception:
-                safe_dict[str(k)] = repr(v)
+                safe_dict[k_str] = repr(v)
         return safe_dict
     if isinstance(obj, (list, tuple, set)):
-        return [safe_jsonable(v, _depth=_depth + 1) for v in obj]
+        items: list[Any] = list(cast(Any, obj))
+        return [safe_jsonable(v, _depth=_depth + 1) for v in items]
     if hasattr(obj, "to_dict"):
         try:
             return safe_jsonable(obj.to_dict(), _depth=_depth + 1)

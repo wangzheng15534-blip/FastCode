@@ -36,8 +36,9 @@ def diversify(
     diversity_penalty: float,
 ) -> list[dict[str, Any]]:
     """Penalize results from already-seen files to improve diversity."""
+    # When penalty is 0, preserve original order (matching original behavior).
     if not results or diversity_penalty == 0:
-        return sorted(results, key=lambda x: x["total_score"], reverse=True)
+        return results
 
     diversified: list[dict[str, Any]] = []
     seen_files: set[str] = set()
@@ -67,7 +68,7 @@ def final_repo_filter(
     results: list[dict[str, Any]],
     repo_filter: list[str],
     return_count: bool = False,
-) -> Any:
+) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], int]:
     """Filter results to only include elements from allowed repositories."""
     if not repo_filter:
         return (results, 0) if return_count else results

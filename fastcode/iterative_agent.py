@@ -14,11 +14,11 @@ from openai import OpenAI
 
 from .agent_tools import AgentTools
 from .core import iteration as _iteration
-from .core import parsing as _parsing
 from .core import prompts as _prompts
-from .schema.core_types import IterationConfig
 from .llm_utils import openai_chat_completion
 from .path_utils import PathUtils
+from .schema.core_types import IterationConfig
+from .utils import json as _json_parsing
 
 
 class IterativeAgent:
@@ -2790,19 +2790,19 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
 
     def _extract_json_from_response(self, response: str) -> str:
         """Extract JSON string from LLM response (delegates to core)."""
-        return _parsing.extract_json_from_response(response)
+        return _json_parsing.extract_json_from_response(response)
 
     def _sanitize_json_string(self, json_str: str) -> str:
         """Sanitize JSON string to fix common issues from small models (delegates to core)."""
-        return _parsing.sanitize_json_string(json_str)
+        return _json_parsing.sanitize_json_string(json_str)
 
     def _remove_json_comments(self, json_str: str) -> str:
         """Remove inline comments from JSON string (delegates to core)."""
-        return _parsing.remove_json_comments(json_str)
+        return _json_parsing.remove_json_comments(json_str)
 
     def _robust_json_parse(self, json_str: str) -> Any:
         """Robustly parse JSON with fallback strategies (delegates to core)."""
-        return _parsing.robust_json_parse(json_str)
+        return _json_parsing.robust_json_parse(json_str)
 
     def _execute_search_codebase(
         self, parameters: dict[str, Any], selected_repos: list[str] | None = None

@@ -11,7 +11,6 @@ from fastcode.utils._compat import (
     extract_code_snippet,
     format_code_block,
     get_file_extension,
-    get_language_from_extension,
     get_repo_name_from_url,
     is_supported_file,
     is_text_file,
@@ -20,14 +19,23 @@ from fastcode.utils._compat import (
     normalize_path,
     resolve_config_paths,
     safe_get,
-    safe_jsonable,
     setup_logging,
     should_ignore_path,
     truncate_to_tokens,
     utc_now,
 )
+from fastcode.utils.hashing import deterministic_event_id, projection_params_hash
+from fastcode.utils.json import (
+    extract_json_from_response,
+    remove_json_comments,
+    robust_json_parse,
+    safe_jsonable,
+    sanitize_json_string,
+)
+from fastcode.utils.paths import get_language_from_extension, projection_scope_key
 
-__all__ = [
+__all__ = [  # noqa: RUF022
+    # From _compat (legacy re-exports)
     "calculate_code_complexity",
     "clean_docstring",
     "compute_file_hash",
@@ -36,7 +44,6 @@ __all__ = [
     "extract_code_snippet",
     "format_code_block",
     "get_file_extension",
-    "get_language_from_extension",
     "get_repo_name_from_url",
     "is_supported_file",
     "is_text_file",
@@ -45,9 +52,18 @@ __all__ = [
     "normalize_path",
     "resolve_config_paths",
     "safe_get",
-    "safe_jsonable",
     "setup_logging",
     "should_ignore_path",
     "truncate_to_tokens",
     "utc_now",
+    # From utils sub-modules (new canonical locations)
+    "deterministic_event_id",
+    "extract_json_from_response",
+    "get_language_from_extension",
+    "projection_params_hash",
+    "projection_scope_key",
+    "remove_json_comments",
+    "robust_json_parse",
+    "safe_jsonable",
+    "sanitize_json_string",
 ]

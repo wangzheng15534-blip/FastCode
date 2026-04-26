@@ -6,26 +6,6 @@ import os
 from typing import Any
 
 
-def get_language_from_extension(ext: str) -> str:
-    """Get programming language from extension."""
-    language_map = {
-        ".py": "python",
-        ".js": "javascript",
-        ".ts": "typescript",
-        ".jsx": "javascript",
-        ".tsx": "typescript",
-        ".java": "java",
-        ".go": "go",
-        ".cpp": "cpp",
-        ".c": "c",
-        ".rs": "rust",
-        ".rb": "ruby",
-        ".php": "php",
-        ".cs": "csharp",
-    }
-    return language_map.get(ext.lower(), "unknown")
-
-
 def is_key_file(file_path: str) -> bool:
     """Check if file is a key/important file."""
     file_name = os.path.basename(file_path).lower()

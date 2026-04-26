@@ -175,6 +175,34 @@ class TestQueryRequestToCore:
             query_request_to_core({"repo_name": "x"})
 
 
+class TestDbEffectsReturnDataclasses:
+    """Rule 2: effects/db.py must return frozen dataclasses, never dict."""
+
+    def test_db_effects_return_dataclasses_not_dicts(self) -> None:
+        db_effects = (
+            pathlib.Path(__file__).resolve().parent.parent
+            / "fastcode" / "effects" / "db.py"
+        )
+        if not db_effects.exists():
+            pytest.skip("effects/db.py not yet created")
+
+        tree = ast.parse(db_effects.read_text(encoding="utf-8"))
+        violations: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                ret = node.returns
+                if ret is None:
+                    continue
+                ret_str = ast.dump(ret)
+                if "dict" in ret_str.lower() and "Any" in ret_str:
+                    violations.append(
+                        f"{node.name}: return type contains dict[str, Any]"
+                    )
+        assert violations == [], (
+            "Rule 2 violations in effects/db.py:\n" + "\n".join(violations)
+        )
+
+
 class TestBoundaryExplicitTranslation:
     """Verify Rule 3: no forbidden patterns in boundary.py."""
 

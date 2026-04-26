@@ -46,7 +46,6 @@ from .query_processor import QueryProcessor
 from .redo_worker import RedoWorker
 from .retriever import HybridRetriever
 from .scip_loader import load_scip_artifact, run_scip_python_index
-from .scip_models import SCIPIndex
 from .semantic_ir import IRRelation, IRSnapshot
 from .snapshot_store import SnapshotStore
 from .snapshot_symbol_index import SnapshotSymbolIndex
@@ -56,6 +55,8 @@ from .utils import (
     compute_file_hash,
     ensure_dir,
     load_config,
+    projection_params_hash,
+    projection_scope_key,
     resolve_config_paths,
     safe_jsonable,
     setup_logging,
@@ -131,7 +132,7 @@ class FastCode:
         self.ir_graph_builder = IRGraphBuilder()
 
         # Get repo_root from config if available
-        config_repo_root: str = self.config.get("repo_root")
+        config_repo_root: str = str(self.config.get("repo_root") or ".")
         config_repo_root = os.path.abspath(config_repo_root)
         ensure_dir(config_repo_root)
         self.logger.info(f"Configured repo_root: {config_repo_root}")
@@ -295,9 +296,6 @@ class FastCode:
 
             # Initialize vector store if not already done
             if self.vector_store.dimension is None:
-                if self.embedder.embedding_dim is None:
-                    raise RuntimeError("Embedding dimension must be set")
-
                 self.vector_store.initialize(self.embedder.embedding_dim)
 
             # Add embeddings to vector store
@@ -381,7 +379,7 @@ class FastCode:
                 self.graph_builder.save(repo_name)
                 self._save_file_manifest(
                     repo_name,
-                    self._build_file_manifest(elements, self.loader.repo_path),
+                    self._build_file_manifest(elements, self.loader.repo_path or "."),
                 )
             else:
                 self.logger.info(
@@ -604,13 +602,14 @@ class FastCode:
                 }
         self.index_run_store.mark_started(run_id)
         lock_name = f"index:{snapshot_id}"
-        fencing_token = self.snapshot_store.acquire_lock(
+        fencing_token: int | None = self.snapshot_store.acquire_lock(
             lock_name, owner_id=run_id, ttl_seconds=600
         )
         if fencing_token is None:
             raise RuntimeError(
                 f"snapshot is currently locked for indexing: {snapshot_id}"
             )
+        lock_token: int = fencing_token
         stage_id: str | None = None
 
         try:
@@ -623,8 +622,6 @@ class FastCode:
 
             self.index_run_store.mark_status(run_id, "materializing")
             temp_store = VectorStore(self.config)
-            if self.embedder.embedding_dim is None:
-                raise RuntimeError("Embedding dimension must be set")
             temp_store.initialize(self.embedder.embedding_dim)
             vectors: list[list[float]] = []
             metadata: list[dict[str, Any]] = []
@@ -769,15 +766,8 @@ class FastCode:
                                 digest.update(chunk)
                         scip_artifact_ref = self.snapshot_store.save_scip_artifact_ref(
                             snapshot_id=snapshot_id,
-                            indexer_name=(
-                                scip_data.indexer_name
-                                if isinstance(scip_data, SCIPIndex)
-                                else None
-                            )
-                            or "scip-python",
-                            indexer_version=scip_data.indexer_version
-                            if isinstance(scip_data, SCIPIndex)
-                            else None,
+                            indexer_name=scip_data.indexer_name or "scip-python",
+                            indexer_version=scip_data.indexer_version,
                             artifact_path=preserved_path,
                             checksum=digest.hexdigest(),
                         )
@@ -899,9 +889,8 @@ class FastCode:
 
             self.index_run_store.mark_status(run_id, "persisting")
             if (
-                fencing_token is not None
-                and not self.snapshot_store.validate_fencing_token(
-                    lock_name, fencing_token
+                not self.snapshot_store.validate_fencing_token(
+                    lock_name, lock_token
                 )
             ):
                 raise RuntimeError(f"stale_lock_detected_for_snapshot:{snapshot_id}")
@@ -912,7 +901,7 @@ class FastCode:
                     "artifact_key": artifact_key,
                     "warnings": warnings,
                     "scip_artifact_ref": scip_artifact_ref,
-                    "fencing_token": fencing_token,
+                    "fencing_token": lock_token,
                 },
             )
             self.snapshot_store.import_git_backbone(merged_snapshot, git_meta=git_meta)
@@ -1012,7 +1001,7 @@ class FastCode:
                     "artifact_key": artifact_key,
                     "warnings": warnings,
                     "scip_artifact_ref": scip_artifact_ref,
-                    "fencing_token": fencing_token,
+                    "fencing_token": lock_token,
                 },
             )
             self.index_run_store.mark_completed(
@@ -1235,7 +1224,11 @@ class FastCode:
                 """,
                 (repo_name,),
             ).fetchall()
-        return [self.snapshot_store.db_runtime.row_to_dict(r) for r in rows if r]
+        return [
+            d for r in rows if r
+            for d in [self.snapshot_store.db_runtime.row_to_dict(r)]
+            if d is not None
+        ]
 
     def find_symbol(
         self,
@@ -1347,7 +1340,7 @@ class FastCode:
         target_id: str | None,
         filters: dict[str, Any] | None,
     ) -> str:
-        return _snapshot.projection_scope_key(
+        return projection_scope_key(
             scope_kind, snapshot_id, query, target_id, filters
         )
 
@@ -1355,7 +1348,7 @@ class FastCode:
     def _projection_params_hash(
         scope: ProjectionScope, projection_algo_version: str = "v1"
     ) -> str:
-        return _snapshot.projection_params_hash(
+        return projection_params_hash(
             scope.to_dict(), projection_algo_version
         )
 
@@ -1610,7 +1603,7 @@ class FastCode:
             manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
             if not manifest:
                 raise RuntimeError(f"manifest not found for {repo_name}:{ref_name}")
-            snapshot_id = manifest["snapshot_id"]
+            snapshot_id = str(manifest["snapshot_id"])
 
         snapshot_record = self.snapshot_store.get_snapshot_record(snapshot_id)
         if not snapshot_record:
@@ -1768,7 +1761,7 @@ class FastCode:
                     retrieved,
                     query_info=processed_query.to_dict(),
                     dialogue_history=self._get_full_dialogue_history(
-                        session_id, enable_multi_turn
+                        session_id, enable_multi_turn or False
                     ),
                     prompt_builder=prompt_builder,
                 )
@@ -1946,7 +1939,7 @@ class FastCode:
                 retrieved,
                 query_info=processed_query.to_dict(),
                 dialogue_history=self._get_full_dialogue_history(
-                    session_id, enable_multi_turn
+                    session_id, enable_multi_turn or False
                 ),
                 prompt_builder=prompt_builder,
             ):
@@ -2364,9 +2357,9 @@ class FastCode:
         successfully_indexed = []
 
         for i, source_info in enumerate(sources):
-            source = source_info.get("source")
-            is_url = source_info.get("is_url")
-            is_zip = source_info.get("is_zip", False)
+            source: str = str(source_info.get("source") or "")
+            is_url: bool | None = source_info.get("is_url")
+            is_zip: bool = bool(source_info.get("is_zip", False))
 
             try:
                 self.logger.info(
@@ -2390,8 +2383,8 @@ class FastCode:
                     self.loader.load_from_path(source)
 
                 repo_info = self.loader.get_repository_info()
-                repo_name: str = repo_info.get("name")
-                repo_url = repo_info.get("url", source)
+                repo_name: str = str(repo_info.get("name") or "")
+                repo_url: str = str(repo_info.get("url") or source)
 
                 # Update config with repo_root for each repo (Critical for graph building)
                 if self.loader.repo_path:
@@ -2404,8 +2397,6 @@ class FastCode:
 
                 # Create a fresh vector store for this repository
                 temp_vector_store = VectorStore(self.config)
-                if self.embedder.embedding_dim is None:
-                    raise RuntimeError("Embedding dimension must be set")
                 temp_vector_store.initialize(self.embedder.embedding_dim)
 
                 # Create a temporary indexer with the temp vector store for this repo
@@ -2468,7 +2459,7 @@ class FastCode:
                     try:
                         self.logger.info(f"Initializing resolvers for {repo_name}...")
                         temp_global_index = GlobalIndexBuilder(self.config)
-                        temp_global_index.build_maps(elements, repo_root)
+                        temp_global_index.build_maps(elements, repo_root or ".")
                         temp_module_resolver = ModuleResolver(temp_global_index)
                         temp_symbol_resolver = SymbolResolver(
                             temp_global_index, temp_module_resolver
@@ -2515,8 +2506,6 @@ class FastCode:
                 "Merging repositories into main vector store for statistics..."
             )
             if self.vector_store.dimension is None:
-                if self.embedder.embedding_dim is None:
-                    raise RuntimeError("Embedding dimension must be set")
                 self.vector_store.initialize(self.embedder.embedding_dim)
 
             for repo_name in successfully_indexed:
@@ -2567,7 +2556,7 @@ class FastCode:
         repo_counts = self.vector_store.get_count_by_repository()
         repo_names = self.vector_store.get_repository_names()
 
-        stats = {
+        stats: dict[str, Any] = {
             "total_repositories": len(repo_names),
             "total_elements": self.vector_store.get_count(),
             "repositories": [],
@@ -2668,7 +2657,7 @@ class FastCode:
             self.logger.info("Loading BM25 and graph data...")
 
             all_bm25_elements: list[CodeElement] = []
-            all_bm25_corpus: list[str] = []
+            all_bm25_corpus: list[list[str]] = []
             graphs_loaded = False
 
             for repo_name in repos_to_load:
@@ -2898,7 +2887,7 @@ class FastCode:
         return unchanged_elements, list(unchanged_element_ids)
 
     def incremental_reindex(
-        self, repo_name: str, repo_path: str = None
+        self, repo_name: str, repo_path: str | None = None
     ) -> dict[str, Any]:
         """Perform incremental reindexing: only re-embed changed files.
 
@@ -3009,8 +2998,6 @@ class FastCode:
 
         # 8. Rebuild FAISS (temporary store — main instance untouched)
         temp_store = VectorStore(self.config)
-        if self.embedder.embedding_dim is None:
-            raise RuntimeError("Embedding dimension must be set")
         temp_store.initialize(self.embedder.embedding_dim)
 
         vectors, metadata_list = [], []

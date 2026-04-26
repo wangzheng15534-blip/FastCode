@@ -7,7 +7,7 @@ import logging
 import os
 import pickle
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Sequence, cast
 
 import networkx as nx
 import numpy as np
@@ -108,19 +108,19 @@ class HybridRetriever:
 
         # Full indexes (for repository selection - never cleared)
         self.full_bm25: BM25Okapi | None = None
-        self.full_bm25_corpus: list[str] = []
+        self.full_bm25_corpus: list[list[str]] = []
         self.full_bm25_elements: list[CodeElement] = []
 
         # Separate BM25 index for repository overviews
         self.repo_overview_bm25: BM25Okapi | None = None
-        self.repo_overview_bm25_corpus: list[str] = []
+        self.repo_overview_bm25_corpus: list[list[str]] = []
         self.repo_overview_names: list[
             str
         ] = []  # List of repo names corresponding to corpus
 
         # Filtered indexes (for actual retrieval after repo selection)
         self.filtered_bm25: BM25Okapi | None = None
-        self.filtered_bm25_corpus: list[str] = []
+        self.filtered_bm25_corpus: list[list[str]] = []
         self.filtered_bm25_elements: list[CodeElement] = []
 
         # Filtered vector store for selected repositories
@@ -1191,7 +1191,7 @@ class HybridRetriever:
         ):
             pg_results = self.pg_retrieval_store.semantic_search(
                 snapshot_id=self._active_snapshot_id,
-                query_embedding=query_embedding,
+                query_embedding=cast(Sequence[float], query_embedding),
                 repo_filter=repo_filter,
                 element_types=element_types,
                 top_k=top_k,
@@ -1227,7 +1227,7 @@ class HybridRetriever:
 
         # Additional safety check: manually filter results by repo
         if repo_filter:
-            filtered_results: list[dict[str, Any]] = []
+            filtered_results: list[tuple[dict[str, Any], float]] = []
             for metadata, score in results:
                 repo_name = metadata.get("repo_name", "")
                 if repo_name in repo_filter:
@@ -1299,7 +1299,7 @@ class HybridRetriever:
         search_limit = top_k * 3 if use_filter else top_k
         top_indices = np.argsort(scores)[::-1][: min(search_limit, len(scores))]
 
-        results: list[dict[str, Any]] = []
+        results: list[tuple[dict[str, Any], float]] = []
         filtered_count = 0
         allowed_types = set(element_types) if element_types else None
 
@@ -1447,8 +1447,6 @@ class HybridRetriever:
             self.ir_graphs.reference_graph,
             self.ir_graphs.containment_graph,
         ]:
-            if graph is None:
-                continue
             g.add_nodes_from(graph.nodes())
             g.add_edges_from(graph.edges())
 
@@ -1531,8 +1529,9 @@ class HybridRetriever:
         Returns:
             Filtered results containing only elements from allowed repositories
         """
-        filtered, count = _filtering.final_repo_filter(
-            results, repo_filter, return_count=True
+        filtered, count = cast(
+            tuple[list[dict[str, Any]], int],
+            _filtering.final_repo_filter(results, repo_filter, return_count=True),
         )
         if count > 0:
             self.logger.warning(

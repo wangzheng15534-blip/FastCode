@@ -6,7 +6,7 @@ import json
 import logging
 import platform
 import urllib.request
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -44,6 +44,7 @@ class CodeEmbedder:
             )
 
         self.model: SentenceTransformer | None = None
+        self.embedding_dim: int = 0
         if self.provider == "ollama":
             self.logger.info(
                 f"Using Ollama embeddings model: {self.model_name} ({self.ollama_url})"
@@ -53,7 +54,8 @@ class CodeEmbedder:
         else:
             self.logger.info(f"Loading embedding model: {self.model_name}")
             self.model = self._load_model()
-            self.embedding_dim = self.model.get_sentence_embedding_dimension()
+            dim = self.model.get_sentence_embedding_dimension()
+            self.embedding_dim = dim if dim is not None else 0
 
         self.logger.info(f"Embedding dimension: {self.embedding_dim}")
 
@@ -92,7 +94,7 @@ class CodeEmbedder:
             vectors = [self._embed_text_ollama(t) for t in texts]
             return np.array(vectors, dtype=np.float32)
 
-        encode_kwargs = {
+        encode_kwargs: dict[str, Any] = {
             "batch_size": self.batch_size,
             "show_progress_bar": len(texts) > 100,
             "normalize_embeddings": self.normalize,
@@ -104,7 +106,10 @@ class CodeEmbedder:
         if platform.system() == "Darwin":
             encode_kwargs["pool"] = None
 
-        return self.model.encode(texts, **encode_kwargs)
+        if self.model is None:
+            raise RuntimeError("Model not loaded (provider != ollama but model is None)")
+        raw: Any = self.model.encode(texts, **encode_kwargs)
+        return cast(np.ndarray, raw)
 
     def _embed_text_ollama(self, text: str) -> np.ndarray:
         # Truncate text to avoid Ollama context window overflow
@@ -163,7 +168,7 @@ class CodeEmbedder:
         Combines various parts of the code element into a single text
         suitable for embedding
         """
-        parts = []
+        parts: list[str] = []
 
         # Add type
         if "type" in element:

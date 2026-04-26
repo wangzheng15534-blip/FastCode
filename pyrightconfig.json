@@ -1,0 +1,36 @@
+{
+  "include": ["fastcode", "tests"],
+  "exclude": ["**/repos", "**/repo_backup", "**/_bmad-output", "**/_fastcode"],
+  "extraPaths": ["."],
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "strict",
+  "reportUnnecessaryComparison": true,
+  "reportUnusedVariable": true,
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": "warning",
+  "reportUnknownVariableType": "warning",
+  "reportUnknownMemberType": "warning",
+  "reportUnknownArgumentType": "warning",
+  "reportUnknownLambdaType": "warning",
+  "reportUnknownParameterType": "warning",
+  "reportPrivateUsage": "none",
+  "reportDeprecated": "warning",
+  "executionEnvironments": [
+    {
+      "root": "tests",
+      "reportOptionalSubscript": "none",
+      "reportOptionalMemberAccess": "none",
+      "reportOptionalOperand": "none",
+      "reportOptionalIterable": "none",
+      "reportOperatorIssue": "none",
+      "reportAttributeAccessIssue": "none",
+      "reportArgumentType": "none",
+      "reportUnknownArgumentType": "none",
+      "reportUnknownMemberType": "none",
+      "reportUnknownVariableType": "none",
+      "reportUnknownLambdaType": "none",
+      "reportMissingParameterType": "none"
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from typing import Any
 
 import pytest
 
@@ -32,7 +33,7 @@ from fastcode.schema.core_types import (
 # ---------------------------------------------------------------------------
 
 
-def _sample_retrieval_row() -> dict:
+def _sample_retrieval_row() -> dict[str, Any]:
     """Minimal retrieval row as produced by HybridRetriever."""
     return {
         "element": {

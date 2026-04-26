@@ -211,7 +211,7 @@ def _base_config(
     enable_docs: Any = True,
     enable_ladybug: Any = False,
     ladybug_db_path: Any = "",
-) -> dict:
+) -> dict[str, Any]:
     """Return a minimal config dict with all paths under tmp_path."""
     persist_dir = str(tmp_path / "persist")
     repo_root = str(tmp_path / "repos")
@@ -295,7 +295,7 @@ def _base_config(
 # ---------------------------------------------------------------------------
 
 
-def _build_fastcode(config: dict) -> Any:
+def _build_fastcode(config: dict[str, Any]) -> Any:
     """Construct a FastCode instance with real components from config."""
     fc = FastCode.__new__(FastCode)
     fc.config = config
@@ -365,7 +365,7 @@ def _build_fastcode(config: dict) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _pg_execute(dsn: str, sql: str, params: dict | None = None) -> None:
+def _pg_execute(dsn: str, sql: str, params: dict[str, Any] | None = None) -> None:
     import psycopg
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:

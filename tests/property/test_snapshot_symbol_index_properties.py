@@ -25,7 +25,7 @@ def _sym(
     display_name: str = "",
     qualified_name: str | None = None,
     path: str = "",
-    metadata: dict | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> IRSymbol:
     return IRSymbol(
         symbol_id=symbol_id,
@@ -60,11 +60,11 @@ alias_metadata_st = st.dictionaries(
 
 
 # Symbol strategy with controlled fields
-def _mk_sym(sid: str, name: str, qname: str, path: str, meta: dict) -> Any:
+def _mk_sym(sid: str, name: str, qname: str, path: str, meta: dict[str, Any]) -> Any:
     return _sym(sid, name, qname, path, meta)
 
 
-def _mk_snap(sid: str, syms: list) -> Any:
+def _mk_snap(sid: str, syms: list[IRSymbol]) -> Any:
     return _snapshot(sid, syms)
 
 

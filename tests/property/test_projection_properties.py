@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -75,7 +77,7 @@ def _make_snapshot_with_docs(n_docs: int) -> IRSnapshot:
 doc_count_st = st.integers(min_value=1, max_value=5)
 
 
-def _strip_timestamps(d: dict) -> dict:
+def _strip_timestamps(d: dict[str, Any]) -> dict[str, Any]:
     """Remove non-deterministic 'updated_at' keys from meta dicts."""
     out = dict(d)
     if "meta" in out and isinstance(out["meta"], dict):

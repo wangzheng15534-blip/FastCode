@@ -276,7 +276,7 @@ class ProjectionTransformer:
 
     def _build_weighted_graph(
         self, snapshot: IRSnapshot, ir_graphs: IRGraphs | None
-    ) -> nx.Graph:
+    ) -> nx.Graph[str]:
         g = nx.Graph()
         docs_by_id = {d.doc_id: d for d in snapshot.documents}
         symbols_by_id = {s.symbol_id: s for s in snapshot.symbols}
@@ -355,7 +355,7 @@ class ProjectionTransformer:
 
     def _build_directed_weighted_graph(
         self, snapshot: IRSnapshot, ir_graphs: IRGraphs | None
-    ) -> nx.DiGraph:
+    ) -> nx.DiGraph[str]:
         g = nx.DiGraph()
         for d in snapshot.documents:
             g.add_node(d.doc_id)
@@ -400,7 +400,7 @@ class ProjectionTransformer:
         return g
 
     def _scope_nodes(
-        self, scope: ProjectionScope, snapshot: IRSnapshot, g: nx.Graph
+        self, scope: ProjectionScope, snapshot: IRSnapshot, g: nx.Graph[str]
     ) -> tuple[set[str], set[str]]:
         all_nodes = set(g.nodes())
         if scope.scope_kind == "snapshot":
@@ -454,7 +454,9 @@ class ProjectionTransformer:
         return all_nodes, set()
 
     @staticmethod
-    def _prune_steiner_leaves(tree: nx.Graph, terminals: set[str]) -> nx.Graph:
+    def _prune_steiner_leaves(
+        tree: nx.Graph[str], terminals: set[str]
+    ) -> nx.Graph[str]:
         pruned = tree.copy()
         changed = True
         while changed:
@@ -468,7 +470,7 @@ class ProjectionTransformer:
         return pruned
 
     def _resolve_entity_node(
-        self, target_id: str | None, snapshot: IRSnapshot, g: nx.Graph
+        self, target_id: str | None, snapshot: IRSnapshot, g: nx.Graph[str]
     ) -> str | None:
         if not target_id:
             return None
@@ -485,7 +487,7 @@ class ProjectionTransformer:
         return None
 
     def _query_terminals(
-        self, query: str, snapshot: IRSnapshot, g: nx.Graph
+        self, query: str, snapshot: IRSnapshot, g: nx.Graph[str]
     ) -> set[str]:
         del snapshot
         tokens = set(_clean_words(query))
@@ -507,7 +509,7 @@ class ProjectionTransformer:
         scored.sort(reverse=True)
         return {n for _, n in scored[:12]}
 
-    def _compress_hubs(self, g: nx.Graph) -> int:
+    def _compress_hubs(self, g: nx.Graph[str]) -> int:
         if g.number_of_nodes() < 20:
             return 0
         degrees = sorted([d for _, d in g.degree()])
@@ -526,7 +528,7 @@ class ProjectionTransformer:
         return hidden
 
     def _cluster_hierarchy(
-        self, g: nx.Graph
+        self, g: nx.Graph[str]
     ) -> tuple[dict[int, dict[str, set[str]]], str]:
         if g.number_of_nodes() == 1:
             node = next(iter(g.nodes()))
@@ -572,7 +574,7 @@ class ProjectionTransformer:
         return {0: self._cluster_nodes_fallback(g)}, "greedy_modularity"
 
     @staticmethod
-    def _cluster_nodes_fallback(g: nx.Graph) -> dict[str, set[str]]:
+    def _cluster_nodes_fallback(g: nx.Graph[str]) -> dict[str, set[str]]:
         communities = list(nx.algorithms.community.greedy_modularity_communities(g))
         return (
             {f"c{i}": set(c) for i, c in enumerate(communities)}
@@ -620,7 +622,7 @@ class ProjectionTransformer:
         return parent_links
 
     def _pick_representatives(
-        self, g: nx.Graph, clusters: dict[str, set[str]]
+        self, g: nx.Graph[str], clusters: dict[str, set[str]]
     ) -> tuple[dict[str, str], dict[str, dict[str, float]]]:
         reps: dict[str, str] = {}
         centrality: dict[str, dict[str, float]] = {}
@@ -655,7 +657,7 @@ class ProjectionTransformer:
 
     def _build_backbone_arborescence(
         self,
-        g: nx.DiGraph,
+        g: nx.DiGraph[str],
         clusters: dict[str, set[str]],
         focus_nodes: set[str],
     ) -> tuple[list[tuple[str, str]], str]:
@@ -727,7 +729,7 @@ class ProjectionTransformer:
 
     def _cross_cluster_xrefs(
         self,
-        g: nx.DiGraph,
+        g: nx.DiGraph[str],
         clusters: dict[str, set[str]],
         limit: int = 32,
     ) -> list[tuple[str, str, float]]:
@@ -881,7 +883,7 @@ class ProjectionTransformer:
 
     def _projection_meta(
         self,
-        sg: nx.Graph,
+        sg: nx.Graph[str],
         xrefs: Sequence[tuple[str, str, float]],
         hidden_edge_count: int,
         projection_method: str,
@@ -932,7 +934,7 @@ class ProjectionTransformer:
         self,
         snapshot: IRSnapshot,
         members: set[str],
-        sg: nx.Graph,
+        sg: nx.Graph[str],
         representative: str,
     ) -> dict[str, Any]:
         sym_map = {s.symbol_id: s for s in snapshot.symbols}
@@ -978,7 +980,7 @@ class ProjectionTransformer:
     def _build_l2_chunks(
         self,
         snapshot: IRSnapshot,
-        sg: nx.Graph,
+        sg: nx.Graph[str],
         clusters: dict[str, set[str]],
         representatives: dict[str, str],
         labels: dict[str, str],
@@ -1107,7 +1109,7 @@ class ProjectionTransformer:
         snapshot: IRSnapshot,
         scope: ProjectionScope,
         chunks: list[dict[str, Any]],
-        sg: nx.Graph,
+        sg: nx.Graph[str],
         xrefs: Sequence[tuple[str, str, float]],
         hidden_edge_count: int,
         projection_method: str,

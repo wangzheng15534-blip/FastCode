@@ -78,7 +78,7 @@ class DBRuntime:
 
     @classmethod
     def from_storage_config(
-        cls, *, sqlite_path: str, storage_cfg: dict | None
+        cls, *, sqlite_path: str, storage_cfg: dict[str, Any] | None
     ) -> DBRuntime:
         cfg = storage_cfg or {}
         backend = (
@@ -137,7 +137,7 @@ class DBRuntime:
         return cur
 
     @staticmethod
-    def row_to_dict(row: Any) -> dict | None:
+    def row_to_dict(row: Any) -> dict[str, Any] | None:
         if not row:
             return None
         if isinstance(row, dict):

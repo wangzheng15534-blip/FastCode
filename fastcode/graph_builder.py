@@ -46,7 +46,7 @@ class CodeGraphBuilder:
         # Maps for quick lookup
         self.element_by_name: dict[str, CodeElement] = {}
         self.element_by_id: dict[str, CodeElement] = {}
-        self.imports_by_file: dict[str, list[dict]] = {}
+        self.imports_by_file: dict[str, list[dict[str, Any]]] = {}
 
         # Persistence
         self.persist_dir = config.get("vector_store", {}).get(
@@ -73,7 +73,7 @@ class CodeGraphBuilder:
         # --- OPTIMIZATION: Pre-compute Lookup Maps ---
         # 1. Scope Lookup for Call Graph (replaces O(N) scan in _get_caller_id_from_scope)
         # Key: (file_path, type, name) -> element_id
-        self.scope_lookup: dict[tuple, str] = {}
+        self.scope_lookup: dict[tuple[str, str, str], str] = {}
 
         # 2. Class Lookup for Inheritance (replaces map building in fallback)
         # Key: class_name -> List[CodeElement]

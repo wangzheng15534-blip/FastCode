@@ -454,7 +454,7 @@ class RepositorySelector:
             f"available repos: {available_names}"
         )
         selected: list[str] = []
-        seen: set = set()
+        seen: set[str] = set()
 
         for raw_line in response.splitlines():
             line = raw_line.strip()

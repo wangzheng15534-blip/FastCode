@@ -1,5 +1,7 @@
 """Tests for pure filtering functions extracted from retriever."""
 
+from typing import Any
+
 from fastcode.core.filtering import (
     apply_filters,
     diversify,
@@ -18,9 +20,9 @@ def _mk_row(
     relative_path: str = "src/main.py",
     repo_name: str = "myrepo",
     snapshot_id: str | None = None,
-    metadata: dict | None = None,
-) -> dict:
-    elem: dict = {
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    elem: dict[str, Any] = {
         "id": elem_id,
         "type": elem_type,
         "name": elem_id,

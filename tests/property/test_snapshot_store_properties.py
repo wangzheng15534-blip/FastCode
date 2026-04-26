@@ -411,7 +411,7 @@ class TestSnapshotSaveLoadProperties:
     @given(snap=snapshot_st(), metadata=metadata_st)
     @settings(max_examples=20)
     @pytest.mark.happy
-    def test_save_with_metadata(self, snap: IRSnapshot, metadata: dict):
+    def test_save_with_metadata(self, snap: IRSnapshot, metadata: dict[str, Any]):
         """HAPPY: save_snapshot stores metadata_json and get_snapshot_record returns it."""
         store = _make_store()
         store.save_snapshot(snap, metadata=metadata)
@@ -509,7 +509,7 @@ class TestSnapshotStoreQueries:
     @settings(max_examples=15)
     @pytest.mark.happy
     def test_update_snapshot_metadata(
-        self, snap: IRSnapshot, metadata1: dict, metadata2: dict
+        self, snap: IRSnapshot, metadata1: dict[str, Any], metadata2: dict[str, Any]
     ):
         """HAPPY: update_snapshot_metadata overwrites stored metadata."""
         store = _make_store()
@@ -738,7 +738,9 @@ class TestSnapshotStoreRedoProperties:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_enqueue_redo_task_returns_redo_id(self, task_type: str, payload: dict):
+    def test_enqueue_redo_task_returns_redo_id(
+        self, task_type: str, payload: dict[str, Any]
+    ):
         """HAPPY: enqueue_redo_task returns ID starting with 'redo_'."""
         store = _make_store()
         task_id = store.enqueue_redo_task(task_type, payload)
@@ -752,7 +754,7 @@ class TestSnapshotStoreRedoProperties:
     @settings(max_examples=15)
     @pytest.mark.happy
     def test_enqueue_redo_task_with_error(
-        self, task_type: str, payload: dict, error: Exception
+        self, task_type: str, payload: dict[str, Any], error: Exception
     ):
         """HAPPY: enqueue_redo_task with optional error still returns redo_ ID."""
         store = _make_store()
@@ -765,7 +767,9 @@ class TestSnapshotStoreRedoProperties:
     )
     @settings(max_examples=10)
     @pytest.mark.edge
-    def test_enqueue_redo_task_unique_ids(self, task_type: str, payload: dict):
+    def test_enqueue_redo_task_unique_ids(
+        self, task_type: str, payload: dict[str, Any]
+    ):
         """EDGE: each enqueue call returns a unique task_id."""
         store = _make_store()
         t1 = store.enqueue_redo_task(task_type, payload)
@@ -809,7 +813,9 @@ class TestIRGraphsRoundtrip:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_save_load_ir_graphs_roundtrip(self, snap: IRSnapshot, graph_data: dict):
+    def test_save_load_ir_graphs_roundtrip(
+        self, snap: IRSnapshot, graph_data: dict[str, Any]
+    ):
         """HAPPY: save_ir_graphs then load_ir_graphs roundtrip via pickle."""
         store = _make_store()
         store.save_snapshot(snap)
@@ -855,7 +861,9 @@ class TestIRGraphsRoundtrip:
     )
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_ir_graphs_pickle_preserves_types(self, snap: IRSnapshot, graph_obj: dict):
+    def test_ir_graphs_pickle_preserves_types(
+        self, snap: IRSnapshot, graph_obj: dict[str, Any]
+    ):
         """HAPPY: pickle serialization preserves exact Python types in graphs."""
         store = _make_store()
         store.save_snapshot(snap)

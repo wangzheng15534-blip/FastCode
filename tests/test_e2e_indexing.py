@@ -271,7 +271,7 @@ def _base_config(
 # ---------------------------------------------------------------------------
 
 
-def _build_fastcode(config: dict) -> Any:
+def _build_fastcode(config: dict[str, Any]) -> Any:
     """Construct a FastCode instance, wiring real components from config."""
     fc = FastCode.__new__(FastCode)
     fc.config = config
@@ -481,7 +481,9 @@ def test_e2e_indexing_pg_real_embeddings(tmp_path: pathlib.Path):
 # ---------------------------------------------------------------------------
 
 
-def _pg_execute(dsn: str, sql: str, params: dict | None = None) -> list | None:
+def _pg_execute(
+    dsn: str, sql: str, params: dict[str, Any] | None = None
+) -> list[dict[str, Any]] | None:
     """Execute a query against the test PG database."""
     import psycopg
 

@@ -60,8 +60,8 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
         self.tmpdir = tempfile.mkdtemp(prefix="ss_stateful_")
         self.store = SnapshotStore(self.tmpdir)
         self.saved_snapshots: dict[str, IRSnapshot] = {}
-        self.saved_refs: dict[str, dict] = {}
-        self.metadata_state: dict[str, dict] = {}
+        self.saved_refs: dict[str, dict[str, Any]] = {}
+        self.metadata_state: dict[str, dict[str, Any]] = {}
 
     @initialize()
     def init_store(self):

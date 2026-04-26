@@ -23,7 +23,7 @@ def _edge(edge_id: str, src: str, dst: str, edge_type: str = "call") -> IREdge:
     )
 
 
-def _snapshot(edges: list) -> None:
+def _snapshot(edges: list[IREdge]) -> None:
     return IRSnapshot(repo_name="repo", snapshot_id="snap:1", edges=edges)
 
 

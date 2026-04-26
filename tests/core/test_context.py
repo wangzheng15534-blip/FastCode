@@ -1,6 +1,8 @@
 # tests/test_core_context.py
 """Tests for pure context preparation and response parsing."""
 
+from typing import Any
+
 from fastcode.core.context import (
     parse_response_with_summary,
     prepare_context,
@@ -18,7 +20,7 @@ def _mk_element(
     end_line: int = 12,
     language: str = "python",
     total_score: float = 0.85,
-) -> dict:
+) -> dict[str, Any]:
     return {
         "element": {
             "id": elem_id,

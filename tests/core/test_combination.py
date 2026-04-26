@@ -1,9 +1,11 @@
 """Tests for pure combination function extracted from retriever."""
 
+from typing import Any
+
 from fastcode.core.combination import combine_results
 
 
-def _mk_meta(elem_id: str, **extra) -> dict:
+def _mk_meta(elem_id: str, **extra) -> dict[str, Any]:
     meta = {"id": elem_id, "type": "function", "name": elem_id}
     meta.update(extra)
     return meta

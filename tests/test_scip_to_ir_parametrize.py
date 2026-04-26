@@ -7,6 +7,8 @@ display name fallback, source priority, metadata fields, and dual input types.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from fastcode.adapters.scip_to_ir import build_ir_from_scip
@@ -22,7 +24,7 @@ def _make_scip_payload(
     n_docs: int = 1,
     n_symbols: int = 2,
     n_occurrences: int = 1,
-) -> dict:
+) -> dict[str, Any]:
     """Create a raw dict payload matching build_ir_from_scip() input schema."""
     documents = []
     for i in range(n_docs):
@@ -66,7 +68,7 @@ def _make_scip_payload(
 
 
 def _build(
-    payload: dict | SCIPIndex | None = None,
+    payload: dict[str, Any] | SCIPIndex | None = None,
     *,
     language_hint: str | None = None,
 ) -> IRSnapshot:
@@ -149,7 +151,7 @@ _RANGE_CASES = [
 
 
 @pytest.mark.parametrize(("raw_range", "expected_start_line"), _RANGE_CASES)
-def test_occurrence_range_normalization(raw_range: list, expected_start_line: int):
+def test_occurrence_range_normalization(raw_range: list[Any], expected_start_line: int):
     """Range list is padded to 4 elements and None→0 for occurrences."""
     payload = _make_scip_payload(n_docs=1, n_symbols=1, n_occurrences=1)
     payload["documents"][0]["occurrences"][0]["range"] = raw_range
@@ -167,7 +169,7 @@ def test_occurrence_range_normalization(raw_range: list, expected_start_line: in
         [None, None, None, None],
     ],
 )
-def test_occurrence_none_cols_become_zero(raw_range: list):
+def test_occurrence_none_cols_become_zero(raw_range: list[Any]):
     """None column values are converted to 0."""
     payload = _make_scip_payload(n_docs=1, n_symbols=1, n_occurrences=1)
     payload["documents"][0]["occurrences"][0]["range"] = raw_range
@@ -196,7 +198,9 @@ _EMPTY_DOC_VARIANTS = [
 
 
 @pytest.mark.parametrize(("label", "payload_override"), _EMPTY_DOC_VARIANTS)
-def test_empty_variants_no_symbols_or_occurrences(label: str, payload_override: dict):
+def test_empty_variants_no_symbols_or_occurrences(
+    label: str, payload_override: dict[str, Any]
+):
     """Empty or missing documents produce zero symbols and occurrences."""
     payload = {
         "indexer_name": "scip-python",

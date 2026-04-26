@@ -7,6 +7,8 @@ line clamping, source priority, metadata fields, and empty input.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from fastcode.adapters.ast_to_ir import build_ir_from_ast
@@ -56,7 +58,7 @@ def _elem(
     relative_path: str = "src/a.py",
     language: str = "python",
     summary: str | None = None,
-    metadata: dict | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> CodeElement:
     """Create a single CodeElement with sensible defaults."""
     return CodeElement(
@@ -141,7 +143,7 @@ _QUALIFIED_NAME_CASES = [
 
 
 @pytest.mark.parametrize(("meta", "expected_qname"), _QUALIFIED_NAME_CASES)
-def test_qualified_name_construction(meta: dict, expected_qname: str):
+def test_qualified_name_construction(meta: dict[str, Any], expected_qname: str):
     """qualified_name uses class_name.name when class_name is truthy."""
     elements = [_elem(name="my_func", metadata=meta)]
     snap = _build(elements)

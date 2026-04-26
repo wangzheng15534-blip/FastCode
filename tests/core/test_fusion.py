@@ -192,7 +192,7 @@ def test_fuse_channels_sorted_by_total_score():
 
 def test_fuse_channels_debug_populated():
     """Debug dict should be updated with fusion params."""
-    debug: dict = {}
+    debug: dict[str, Any] = {}
     code_rows = [_mk_row("code:1", "function", 0.5)]
     doc_rows = [_mk_row("doc:1", "design_document", 0.5)]
 

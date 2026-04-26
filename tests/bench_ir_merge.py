@@ -4,6 +4,8 @@ Baseline performance test: IR merge at scale.
 Run: pytest tests/bench_ir_merge.py -v --tb=short --benchmark-only
 """
 
+from typing import Any
+
 import pytest
 
 from fastcode.adapters.ast_to_ir import build_ir_from_ast
@@ -12,7 +14,7 @@ from fastcode.indexer import CodeElement
 from fastcode.ir_merge import merge_ir
 
 
-def _make_code_elements(count: int) -> list:
+def _make_code_elements(count: int) -> list[CodeElement]:
     """Generate synthetic CodeElement objects."""
     elements = []
     for i in range(count):
@@ -37,7 +39,7 @@ def _make_code_elements(count: int) -> list:
     return elements
 
 
-def _make_scip_index(doc_count: int, syms_per_doc: int) -> dict:
+def _make_scip_index(doc_count: int, syms_per_doc: int) -> dict[str, Any]:
     """Generate synthetic SCIP payload."""
     docs = []
     for d in range(doc_count):

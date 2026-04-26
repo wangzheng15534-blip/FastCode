@@ -31,7 +31,10 @@ class _FakeModuleResolver:
         return self._mappings.get(key)
 
 
-def _make_index(module_map: dict | None = None, export_map: dict | None = None) -> Any:
+def _make_index(
+    module_map: dict[str, list[str]] | None = None,
+    export_map: dict[str, list[str]] | None = None,
+) -> Any:
     """Build a GlobalIndexBuilder with pre-populated maps."""
     idx = GlobalIndexBuilder()
     idx.module_map = module_map or {}
@@ -41,9 +44,9 @@ def _make_index(module_map: dict | None = None, export_map: dict | None = None) 
 
 
 def _make_resolver(
-    module_map: dict | None = None,
-    export_map: dict | None = None,
-    import_mappings: dict | None = None,
+    module_map: dict[str, list[str]] | None = None,
+    export_map: dict[str, list[str]] | None = None,
+    import_mappings: dict[tuple[str, str, int], str] | None = None,
 ) -> Any:
     idx = _make_index(module_map, export_map)
     mr = _FakeModuleResolver(import_mappings)

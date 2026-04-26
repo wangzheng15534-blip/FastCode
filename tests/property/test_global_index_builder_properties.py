@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fastcode.global_index_builder import GlobalIndexBuilder
-
 
 # --- Helpers ---
 

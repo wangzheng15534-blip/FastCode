@@ -5,7 +5,6 @@ Build graph materializations from canonical IR relations.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
 
 import networkx as nx
 
@@ -20,7 +19,7 @@ class IRGraphs:
     reference_graph: nx.DiGraph
     containment_graph: nx.DiGraph
 
-    def stats(self) -> Dict[str, Dict[str, int]]:
+    def stats(self) -> dict[str, dict[str, int]]:
         return {
             "dependency": {
                 "nodes": self.dependency_graph.number_of_nodes(),

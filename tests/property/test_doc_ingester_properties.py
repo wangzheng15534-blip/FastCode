@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import tempfile
 
@@ -11,7 +10,6 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fastcode.doc_ingester import KeyDocIngester
-
 
 # --- Helpers ---
 

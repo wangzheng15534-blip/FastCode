@@ -6,8 +6,11 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.projection_models import ProjectionScope, ProjectionBuildResult, utc_now_iso
-
+from fastcode.projection_models import (
+    ProjectionBuildResult,
+    ProjectionScope,
+    utc_now_iso,
+)
 
 # --- Strategies ---
 

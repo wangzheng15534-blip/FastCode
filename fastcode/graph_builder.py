@@ -2,52 +2,53 @@
 Graph Builder - Build code relationship graphs
 """
 
+import logging
 import os
 import pickle
-import logging
-from typing import Dict, List, Any, Set, Optional
+from typing import Any
+
 import networkx as nx
 import tqdm
 
+from .call_extractor import CallExtractor
 from .indexer import CodeElement
 from .module_resolver import ModuleResolver
 from .path_utils import file_path_to_module_path
 from .symbol_resolver import SymbolResolver
-from .call_extractor import CallExtractor
 from .utils import ensure_dir
 
 
 class CodeGraphBuilder:
     """Build various code relationship graphs"""
-    
-    def __init__(self, config: Dict[str, Any]):
+
+    def __init__(self, config: dict[str, Any]):
         self.config = config
         self.graph_config = config.get("graph", {})
         self.logger = logging.getLogger(__name__)
         self.logger.warning(
             "CodeGraphBuilder is in compatibility mode; IRGraphBuilder is the primary backend."
         )
-        
+
         self.build_call_graph = self.graph_config.get("build_call_graph", True)
         self.build_dependency_graph = self.graph_config.get("build_dependency_graph", True)
         self.build_inheritance_graph = self.graph_config.get("build_inheritance_graph", True)
         self.max_depth = self.graph_config.get("max_depth", 5)
-        
+
         # Graphs
         self.call_graph = nx.DiGraph()
         self.dependency_graph = nx.DiGraph()
         self.inheritance_graph = nx.DiGraph()
-        
+
         # Maps for quick lookup
-        self.element_by_name: Dict[str, CodeElement] = {}
-        self.element_by_id: Dict[str, CodeElement] = {}
-        self.imports_by_file: Dict[str, List[Dict]] = {}
-        
+        self.element_by_name: dict[str, CodeElement] = {}
+        self.element_by_id: dict[str, CodeElement] = {}
+        self.imports_by_file: dict[str, list[dict]] = {}
+
         # Persistence
         self.persist_dir = config.get("vector_store", {}).get("persist_directory", "./data/vector_store")
         ensure_dir(self.persist_dir)
-    
-    def build_graphs(self, elements: List[CodeElement], module_resolver: Optional[ModuleResolver] = None, symbol_resolver: Optional[SymbolResolver] = None):
+
+    def build_graphs(self, elements: list[CodeElement], module_resolver: ModuleResolver | None = None, symbol_resolver: SymbolResolver | None = None):
         """
         Build all configured graphs
 
@@ -57,59 +58,59 @@ class CodeGraphBuilder:
             symbol_resolver: Optional SymbolResolver for precise inheritance resolution
         """
         self.logger.info("Building code relationship graphs")
-        
+
         # --- OPTIMIZATION: Pre-compute Lookup Maps ---
         # 1. Scope Lookup for Call Graph (replaces O(N) scan in _get_caller_id_from_scope)
         # Key: (file_path, type, name) -> element_id
-        self.scope_lookup: Dict[tuple, str] = {}
-        
+        self.scope_lookup: dict[tuple, str] = {}
+
         # 2. Class Lookup for Inheritance (replaces map building in fallback)
         # Key: class_name -> List[CodeElement]
-        self.classes_by_name_lookup: Dict[str, List[CodeElement]] = {}
-        
+        self.classes_by_name_lookup: dict[str, list[CodeElement]] = {}
+
         # Index elements by name
         for elem in elements:
             self.element_by_name[elem.name] = elem
             self.element_by_id[elem.id] = elem
-            
+
             # Populate Scope Lookup
             if elem.type in ["function", "class", "method"]:
                 key = (elem.file_path, elem.type, elem.name)
                 self.scope_lookup[key] = elem.id
-            
+
             # Populate Class Lookup
             if elem.type == "class":
                 if elem.name not in self.classes_by_name_lookup:
                     self.classes_by_name_lookup[elem.name] = []
                 self.classes_by_name_lookup[elem.name].append(elem)
-            
+
             # --- FIX: Selective Node Addition (Typing Check) ---
             # Only add nodes to graphs where they semantically belong.
-            # This prevents "bloat" (irrelevant nodes) while ensuring 
+            # This prevents "bloat" (irrelevant nodes) while ensuring
             # valid isolated nodes still exist to prevent NetworkX crashes.
-            
+
             # 1. Dependency Graph: Only files
             if self.build_dependency_graph:
                 if elem.type == "file":
                     self.dependency_graph.add_node(elem.id)
-            
+
             # 2. Inheritance Graph: Only classes
             if self.build_inheritance_graph:
                 if elem.type == "class":
                     self.inheritance_graph.add_node(elem.id)
-            
+
             # 3. Call Graph: Functions, Methods, Classes
             # (Files are excluded as nodes unless they are added later as explicit callers)
             if self.build_call_graph:
                 if elem.type in ["function", "method", "class"]:
                     self.call_graph.add_node(elem.id)
-            
+
             # Track imports
             if elem.type == "file":
                 imports = elem.metadata.get("imports", [])
                 if imports:
                     self.imports_by_file[elem.file_path] = imports
-                    
+
             # --- ADD LOGGING HERE ---
             ## <debug> with verify_shadowing.py
             if elem.name == "action":
@@ -121,21 +122,21 @@ class CodeGraphBuilder:
         # Build graphs
         if self.build_dependency_graph:
             self._build_dependency_graph(elements, module_resolver)
-        
+
         if self.build_inheritance_graph:
             self._build_inheritance_graph(elements, symbol_resolver)
-        
+
         if self.build_call_graph:
             self._build_call_graph(elements, symbol_resolver)
-        
+
         self.logger.info(
             f"Built graphs: "
             f"dependency ({self.dependency_graph.number_of_nodes()} nodes), "
             f"inheritance ({self.inheritance_graph.number_of_nodes()} nodes), "
             f"call ({self.call_graph.number_of_nodes()} nodes)"
         )
-    
-    def _build_dependency_graph(self, elements: List[CodeElement], module_resolver: Optional[ModuleResolver] = None):
+
+    def _build_dependency_graph(self, elements: list[CodeElement], module_resolver: ModuleResolver | None = None):
         """
         Build file dependency graph based on imports using precise module resolution.
 
@@ -156,7 +157,7 @@ class CodeGraphBuilder:
 
                 # --- NEW: Check if this is a package file ---
                 is_package = elem.file_path.endswith("__init__.py")
-                
+
                 for imp in imports:
                     module = imp.get("module", "")
                     names = imp.get("names", [])
@@ -236,8 +237,8 @@ class CodeGraphBuilder:
                                         level=level,
                                         resolution_method="fallback_string_matching"
                                     )
-    
-    def _build_inheritance_graph(self, elements: List[CodeElement], symbol_resolver: Optional[SymbolResolver] = None):
+
+    def _build_inheritance_graph(self, elements: list[CodeElement], symbol_resolver: SymbolResolver | None = None):
         """
         Build class inheritance graph using precise symbol resolution
 
@@ -296,7 +297,7 @@ class CodeGraphBuilder:
                         )
                         self._fallback_to_local_inheritance_resolution(elem, base_name, elements)
 
-    def _get_file_id_for_class_element(self, class_elem: CodeElement, elements: List[CodeElement]) -> Optional[str]:
+    def _get_file_id_for_class_element(self, class_elem: CodeElement, elements: list[CodeElement]) -> str | None:
         """
         Get file ID for a class element by finding the corresponding file element
 
@@ -323,7 +324,7 @@ class CodeGraphBuilder:
 
         return None
 
-    def _fallback_to_local_inheritance_resolution(self, elem: CodeElement, base_name: str, elements: List[CodeElement]):
+    def _fallback_to_local_inheritance_resolution(self, elem: CodeElement, base_name: str, elements: list[CodeElement]):
         """
         Fallback method for local-only inheritance resolution.
         [FIXED] Now repo-aware to prevent multi-repo collisions.
@@ -336,19 +337,19 @@ class CodeGraphBuilder:
         """
         # OPTIMIZED: Use pre-computed lookup instead of building map every time
         candidates = self.classes_by_name_lookup.get(base_name, [])
-        
+
         if not candidates:
             return
-        
+
         # Find base class using name matching, prioritizing SAME REPOSITORY
         best_match = None
-        
+
         # Try to find a match in the same repository
         for candidate in candidates:
             if candidate.repo_name == elem.repo_name:
                 best_match = candidate
                 break
-        
+
         # Only link if it's in the same repo to prevent contamination
         if best_match:
             self.inheritance_graph.add_edge(
@@ -367,8 +368,8 @@ class CodeGraphBuilder:
                 f"Ignored potential base class '{base_name}' for {elem.id} "
                 f"because it belongs to a different repository."
             )
-    
-    def _build_call_graph(self, elements: List[CodeElement], symbol_resolver: Optional[SymbolResolver] = None):
+
+    def _build_call_graph(self, elements: list[CodeElement], symbol_resolver: SymbolResolver | None = None):
         """
         Build function call graph using CallExtractor and SymbolResolver (Task 4.4)
 
@@ -390,7 +391,7 @@ class CodeGraphBuilder:
         total_calls = 0
         linked_calls = 0
 
-        pbar_elements = tqdm.tqdm(elements, desc=f"Building call graph")
+        pbar_elements = tqdm.tqdm(elements, desc="Building call graph")
         for elem in pbar_elements:
             if elem.type == "file":
                 # Extract calls from this file (Task 4.3)
@@ -454,8 +455,8 @@ class CodeGraphBuilder:
             f"Call graph built: {linked_calls}/{total_calls} calls successfully linked "
             f"({linked_calls/total_calls*100 if total_calls > 0 else 0:.1f}% success rate)"
         )
-    
-    def get_related_elements(self, element_id: str, max_hops: int = 2) -> Set[str]:
+
+    def get_related_elements(self, element_id: str, max_hops: int = 2) -> set[str]:
         """
         Get related elements within max_hops distance
         
@@ -467,7 +468,7 @@ class CodeGraphBuilder:
             Set of related element IDs
         """
         related = set()
-        
+
         # Check all graphs
         for graph in [self.dependency_graph, self.inheritance_graph, self.call_graph]:
             if element_id in graph:
@@ -476,16 +477,16 @@ class CodeGraphBuilder:
                     graph, element_id, cutoff=max_hops
                 ).keys():
                     related.add(node)
-                
+
                 # Also check reverse direction
                 for node in nx.single_source_shortest_path_length(
                     graph.reverse(), element_id, cutoff=max_hops
                 ).keys():
                     related.add(node)
-        
+
         return related
 
-    def _get_module_path_from_file_id(self, file_id: str, elements: List[CodeElement], repo_root: str) -> Optional[str]:
+    def _get_module_path_from_file_id(self, file_id: str, elements: list[CodeElement], repo_root: str) -> str | None:
         """
         Get module path from file ID by looking up the corresponding CodeElement.
 
@@ -505,44 +506,44 @@ class CodeGraphBuilder:
 
         return None
 
-    def get_dependencies(self, element_id: str) -> List[str]:
+    def get_dependencies(self, element_id: str) -> list[str]:
         """Get direct dependencies of an element"""
         if element_id in self.dependency_graph:
             return list(self.dependency_graph.successors(element_id))
         return []
-    
-    def get_dependents(self, element_id: str) -> List[str]:
+
+    def get_dependents(self, element_id: str) -> list[str]:
         """Get elements that depend on this element"""
         if element_id in self.dependency_graph:
             return list(self.dependency_graph.predecessors(element_id))
         return []
-    
-    def get_subclasses(self, element_id: str) -> List[str]:
+
+    def get_subclasses(self, element_id: str) -> list[str]:
         """Get subclasses of a class"""
         if element_id in self.inheritance_graph:
             return list(self.inheritance_graph.predecessors(element_id))
         return []
-    
-    def get_superclasses(self, element_id: str) -> List[str]:
+
+    def get_superclasses(self, element_id: str) -> list[str]:
         """Get superclasses of a class"""
         if element_id in self.inheritance_graph:
             return list(self.inheritance_graph.successors(element_id))
         return []
-    
-    def get_callers(self, element_id: str) -> List[str]:
+
+    def get_callers(self, element_id: str) -> list[str]:
         """Get functions that call this function"""
         if element_id in self.call_graph:
             return list(self.call_graph.predecessors(element_id))
         return []
-    
-    def get_callees(self, element_id: str) -> List[str]:
+
+    def get_callees(self, element_id: str) -> list[str]:
         """Get functions called by this function"""
         if element_id in self.call_graph:
             return list(self.call_graph.successors(element_id))
         return []
-    
-    def find_path(self, source_id: str, target_id: str, 
-                  graph_type: str = "dependency") -> Optional[List[str]]:
+
+    def find_path(self, source_id: str, target_id: str,
+                  graph_type: str = "dependency") -> list[str] | None:
         """
         Find path between two elements
         
@@ -559,20 +560,20 @@ class CodeGraphBuilder:
             "inheritance": self.inheritance_graph,
             "call": self.call_graph,
         }
-        
+
         graph = graph_map.get(graph_type)
         if graph is None:
             return None
-        
+
         try:
             return nx.shortest_path(graph, source_id, target_id)
         except (nx.NodeNotFound, nx.NetworkXNoPath):
             return None
-    
-    def get_graph_stats(self) -> Dict[str, Any]:
+
+    def get_graph_stats(self) -> dict[str, Any]:
         """Get statistics about the graphs"""
         stats = {}
-        
+
         for name, graph in [
             ("dependency", self.dependency_graph),
             ("inheritance", self.inheritance_graph),
@@ -583,7 +584,7 @@ class CodeGraphBuilder:
                 "edges": graph.number_of_edges(),
                 "is_dag": nx.is_directed_acyclic_graph(graph),
             }
-            
+
             if graph.number_of_nodes() > 0:
                 try:
                     stats[name]["avg_degree"] = sum(
@@ -591,9 +592,9 @@ class CodeGraphBuilder:
                     ) / graph.number_of_nodes()
                 except:
                     stats[name]["avg_degree"] = 0
-        
+
         return stats
-    
+
     def save(self, name: str = "index"):
         """
         Save graph data to disk
@@ -602,7 +603,7 @@ class CodeGraphBuilder:
             name: Name for the saved files
         """
         graph_path = os.path.join(self.persist_dir, f"{name}_graphs.pkl")
-        
+
         try:
             with open(graph_path, 'wb') as f:
                 pickle.dump({
@@ -613,14 +614,14 @@ class CodeGraphBuilder:
                     "element_by_id": {k: v.to_dict() for k, v in self.element_by_id.items()},
                     "imports_by_file": self.imports_by_file,
                 }, f)
-            
+
             self.logger.info(f"Saved graph data to {graph_path}")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Failed to save graph data: {e}")
             return False
-    
+
     def load(self, name: str = "index") -> bool:
         """
         Load graph data from disk
@@ -688,7 +689,7 @@ class CodeGraphBuilder:
         except Exception as e:
             self.logger.error(f"Failed to load graph data: {e}")
             return False
-    
+
     def merge_from_file(self, name: str) -> bool:
         """
         Load and merge graph data from another repository into current graphs
@@ -755,7 +756,7 @@ class CodeGraphBuilder:
             self.logger.error(f"Failed to merge graph data from {name}: {e}")
             return False
 
-    def _get_caller_id_from_scope(self, call: Dict[str, Any], file_elem: CodeElement, elements: List[CodeElement]) -> Optional[str]:
+    def _get_caller_id_from_scope(self, call: dict[str, Any], file_elem: CodeElement, elements: list[CodeElement]) -> str | None:
         """
         Get caller ID from call scope information (Task 4.4)
         OPTIMIZED: O(1) lookup instead of O(N) scan
@@ -791,19 +792,19 @@ class CodeGraphBuilder:
         # OPTIMIZED: O(1) lookup using pre-computed dictionary
         key = (file_elem.file_path, scope_type, scope_name)
         caller_id = self.scope_lookup.get(key)
-        
+
         if not caller_id:
             self.logger.debug(
                 f"Could not find {scope_type} element '{scope_name}' in {file_elem.file_path}"
             )
-        
+
         return caller_id
 
-    def _resolve_callee_with_symbol_resolver(self, call: Dict[str, Any], current_file_id: str,
-                                            file_imports: List[Dict[str, Any]],
+    def _resolve_callee_with_symbol_resolver(self, call: dict[str, Any], current_file_id: str,
+                                            file_imports: list[dict[str, Any]],
                                             symbol_resolver: SymbolResolver,
-                                            file_instance_types: Optional[Dict[str, Dict[str, List[str]]]] = None,
-                                            caller_elem: Optional[CodeElement] = None) -> List[str]:
+                                            file_instance_types: dict[str, dict[str, list[str]]] | None = None,
+                                            caller_elem: CodeElement | None = None) -> list[str]:
         """
         Resolve callee definition using SymbolResolver with instance variable type inference.
 
@@ -827,23 +828,17 @@ class CodeGraphBuilder:
             return [resolved_id] if resolved_id else []
 
         # Case 2: Module function call OR Instance method call
-        elif call_type == 'attribute' and base_object:
-            
+        if call_type == 'attribute' and base_object:
+
             # --- FIX: Check if base_object is a local variable first! ---
             # If it is, we should treat it as an instance method call, NOT a module call.
             # This fixes verify_fix_2.py where 'service' var shadowed 'service' module.
             call_scope = call.get('scope_id') or "global"
             is_local_var = False
-            
+
             if file_instance_types:
                 # Check current scope
-                if base_object in file_instance_types.get(call_scope, {}):
-                    is_local_var = True
-                # Check global scope (module-level vars)
-                elif base_object in file_instance_types.get("global", {}):
-                    is_local_var = True
-                # Check __init__ scope (for self.var)
-                elif base_object in file_instance_types.get("function::__init__", {}):
+                if base_object in file_instance_types.get(call_scope, {}) or base_object in file_instance_types.get("global", {}) or base_object in file_instance_types.get("function::__init__", {}):
                     is_local_var = True
 
             if not is_local_var:
@@ -873,27 +868,26 @@ class CodeGraphBuilder:
                 # or if the indexing didn't capture the class name correctly.
                 resolved_id = symbol_resolver.resolve_symbol(call_name, current_file_id, file_imports)
                 return [resolved_id] if resolved_id else []
-            else:
-                # --- ADD DEBUG LOGGING HERE ---
-                self.logger.debug(f"[ROUTING] Routing '{base_object}.{call_name}' to Instance Method Resolution")
-                self.logger.debug(f"          Context: File={current_file_id}, Scope={call_scope}")
-                # -----------------------------
+            # --- ADD DEBUG LOGGING HERE ---
+            self.logger.debug(f"[ROUTING] Routing '{base_object}.{call_name}' to Instance Method Resolution")
+            self.logger.debug(f"          Context: File={current_file_id}, Scope={call_scope}")
+            # -----------------------------
 
-                # Case 4: Instance method call
-                return self._resolve_instance_method_call(
-                    base_object, call_name, current_file_id, file_imports,
-                    symbol_resolver, file_instance_types or {}, call_scope
-                )
+            # Case 4: Instance method call
+            return self._resolve_instance_method_call(
+                base_object, call_name, current_file_id, file_imports,
+                symbol_resolver, file_instance_types or {}, call_scope
+            )
 
         # Default case: try simple resolution
         resolved_id = symbol_resolver.resolve_symbol(call_name, current_file_id, file_imports)
         return [resolved_id] if resolved_id else []
 
     def _resolve_instance_method_call(self, base_object: str, call_name: str,
-                                    current_file_id: str, file_imports: List[Dict[str, Any]],
+                                    current_file_id: str, file_imports: list[dict[str, Any]],
                                     symbol_resolver: SymbolResolver,
-                                    file_instance_types: Dict[str, Dict[str, List[str]]],
-                                    scope_id: str) -> List[str]:
+                                    file_instance_types: dict[str, dict[str, list[str]]],
+                                    scope_id: str) -> list[str]:
         """
         Resolve instance method calls using type inference (Phase 2.3).
 
@@ -927,7 +921,7 @@ class CodeGraphBuilder:
         # Instance variables (self.x) are typically defined in __init__
         if not candidate_classes:
              candidate_classes = file_instance_types.get("function::__init__", {}).get(base_object)
-             
+
              if candidate_classes:
                  self.logger.debug(f"    [+] Found type in __init__ scope: {candidate_classes}")
 
@@ -939,8 +933,8 @@ class CodeGraphBuilder:
              if candidate_classes:
                  self.logger.debug(f"    [+] Found type in GLOBAL scope: {candidate_classes}")
              else:
-                 self.logger.debug(f"    [-] Not found in GLOBAL scope")
-                 
+                 self.logger.debug("    [-] Not found in GLOBAL scope")
+
                  # Debugging aid
                  found_in_other_scopes = []
                  for s_id, vars_map in file_instance_types.items():
@@ -976,7 +970,7 @@ class CodeGraphBuilder:
             else:
                 # Fallback: Try resolving just the method name
                 method_id = symbol_resolver.resolve_symbol(call_name, current_file_id, file_imports)
-                
+
                 if method_id:
                      resolved_ids.append(method_id)
                 else:
@@ -984,7 +978,7 @@ class CodeGraphBuilder:
                     # If we resolved the class (class_id), look for the method INSIDE that class's file.
                     class_elem = self.element_by_id.get(class_id)
                     found_in_class_file = False
-                    
+
                     if class_elem:
                         # Look for function with matching name and class_name in the same file
                         for elem in self.element_by_id.values():
@@ -992,12 +986,12 @@ class CodeGraphBuilder:
                                  elem.name == call_name and
                                  elem.file_path == class_elem.file_path and
                                  elem.metadata.get('class_name') == class_elem.name):
-                                 
+
                                  resolved_ids.append(elem.id)
                                  self.logger.debug(f"    [+] Resolved method '{call_name}' in class '{class_name}' via file lookup")
                                  found_in_class_file = True
                                  break
-                    
+
                     if not found_in_class_file:
                         # Final Fallback: Link to the class itself (Recall over Precision)
                         resolved_ids.append(class_id)

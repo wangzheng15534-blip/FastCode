@@ -3,10 +3,10 @@ Tree-sitter Parser Wrapper
 Provides a simple interface for parsing code with tree-sitter
 """
 
+import logging
+
 import tree_sitter
 from tree_sitter import Language, Parser
-from typing import Optional, Dict
-import logging
 
 
 class TSParser:
@@ -28,7 +28,7 @@ class TSParser:
         self.current_language_name = language.lower()
         self.parser = None
         self.language = None
-        self.languages_cache: Dict[str, Language] = {}  # Cache loaded languages
+        self.languages_cache: dict[str, Language] = {}  # Cache loaded languages
         self._initialize_parser()
 
     def _initialize_parser(self):
@@ -115,7 +115,7 @@ class TSParser:
             self.logger.error(f"Failed to switch language to {language_name}: {e}")
             raise
 
-    def parse(self, code: str, language: Optional[str] = None) -> Optional[tree_sitter.Tree]:
+    def parse(self, code: str, language: str | None = None) -> tree_sitter.Tree | None:
         """
         Parse code string into a tree-sitter syntax tree
 
@@ -151,7 +151,7 @@ class TSParser:
             self.logger.error(f"Failed to parse code: {e}")
             return None
 
-    def get_language(self) -> Optional[Language]:
+    def get_language(self) -> Language | None:
         """Get the tree-sitter language object"""
         return self.language
 

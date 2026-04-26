@@ -8,7 +8,6 @@ from hypothesis import strategies as st
 
 from fastcode.terminus_publisher import TerminusPublisher
 
-
 # --- Helpers ---
 
 small_text = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=8)

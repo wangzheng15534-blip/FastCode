@@ -42,7 +42,7 @@ def _qualified_name(raw_symbol: dict[str, Any]) -> str | None:
 
 
 def _symbol_display_name(raw_symbol: dict[str, Any], external_symbol: str) -> str:
-    return str(raw_symbol.get("name") or external_symbol.split("/")[-1] or external_symbol)
+    return str(raw_symbol.get("name") or external_symbol.rsplit("/", maxsplit=1)[-1] or external_symbol)
 
 
 def build_ir_from_scip(

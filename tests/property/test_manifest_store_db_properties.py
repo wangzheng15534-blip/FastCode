@@ -15,7 +15,6 @@ import pytest
 
 from fastcode.manifest_store import ManifestStore
 
-
 # --- Helpers ---
 
 

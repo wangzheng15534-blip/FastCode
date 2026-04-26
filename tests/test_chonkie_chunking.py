@@ -9,7 +9,7 @@ These tests define the desired behavior BEFORE implementation:
 5. Empty/short text handled correctly
 """
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from fastcode.doc_ingester import KeyDocIngester
 

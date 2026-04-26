@@ -8,7 +8,8 @@ import contextlib
 import logging
 import os
 import sqlite3
-from typing import Any, Iterator, Optional
+from collections.abc import Iterator
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +31,8 @@ class DBRuntime:
         self,
         *,
         backend: str,
-        sqlite_path: Optional[str] = None,
-        postgres_dsn: Optional[str] = None,
+        sqlite_path: str | None = None,
+        postgres_dsn: str | None = None,
         pool_min: int = 1,
         pool_max: int = 8,
     ):
@@ -56,9 +57,8 @@ class DBRuntime:
                 )
             else:
                 logger.warning("psycopg_pool not available — PostgreSQL connections will not be pooled")
-        else:
-            if not self.sqlite_path:
-                raise RuntimeError("sqlite backend requires sqlite_path")
+        elif not self.sqlite_path:
+            raise RuntimeError("sqlite backend requires sqlite_path")
 
     def close(self) -> None:
         """Close the connection pool if it exists."""
@@ -66,14 +66,14 @@ class DBRuntime:
             self.pool.close()
             self.pool = None
 
-    def __enter__(self) -> "DBRuntime":
+    def __enter__(self) -> DBRuntime:
         return self
 
     def __exit__(self, *args: Any) -> None:
         self.close()
 
     @classmethod
-    def from_storage_config(cls, *, sqlite_path: str, storage_cfg: Optional[dict]) -> "DBRuntime":
+    def from_storage_config(cls, *, sqlite_path: str, storage_cfg: dict | None) -> DBRuntime:
         cfg = storage_cfg or {}
         backend = (cfg.get("backend") or os.getenv("FASTCODE_STORAGE_BACKEND") or "sqlite").lower()
         dsn = cfg.get("postgres_dsn") or os.getenv("FASTCODE_POSTGRES_DSN")
@@ -127,7 +127,7 @@ class DBRuntime:
         return cur
 
     @staticmethod
-    def row_to_dict(row: Any) -> Optional[dict]:
+    def row_to_dict(row: Any) -> dict | None:
         if not row:
             return None
         if isinstance(row, dict):

@@ -5,22 +5,21 @@ Snapshot-scoped canonical unit index and anchor resolver.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
 
 from .semantic_ir import IRSnapshot
 
 
 @dataclass
 class SnapshotSymbolMaps:
-    canonical_by_alias: Dict[str, str] = field(default_factory=dict)
-    aliases_by_canonical: Dict[str, Set[str]] = field(default_factory=dict)
-    symbols_by_name: Dict[str, Set[str]] = field(default_factory=dict)
-    symbols_by_path: Dict[str, Set[str]] = field(default_factory=dict)
+    canonical_by_alias: dict[str, str] = field(default_factory=dict)
+    aliases_by_canonical: dict[str, set[str]] = field(default_factory=dict)
+    symbols_by_name: dict[str, set[str]] = field(default_factory=dict)
+    symbols_by_path: dict[str, set[str]] = field(default_factory=dict)
 
 
 class SnapshotSymbolIndex:
     def __init__(self):
-        self._by_snapshot: Dict[str, SnapshotSymbolMaps] = {}
+        self._by_snapshot: dict[str, SnapshotSymbolMaps] = {}
 
     def register_snapshot(self, snapshot: IRSnapshot) -> None:
         maps = SnapshotSymbolMaps()
@@ -52,13 +51,13 @@ class SnapshotSymbolIndex:
     def has_snapshot(self, snapshot_id: str) -> bool:
         return snapshot_id in self._by_snapshot
 
-    def canonicalize_symbol(self, snapshot_id: str, symbol_id: str) -> Optional[str]:
+    def canonicalize_symbol(self, snapshot_id: str, symbol_id: str) -> str | None:
         maps = self._by_snapshot.get(snapshot_id)
         if maps is None:
             return None
         return maps.canonical_by_alias.get(symbol_id)
 
-    def get_aliases(self, snapshot_id: str, canonical_symbol_id: str) -> List[str]:
+    def get_aliases(self, snapshot_id: str, canonical_symbol_id: str) -> list[str]:
         maps = self._by_snapshot.get(snapshot_id)
         if maps is None:
             return []
@@ -68,10 +67,10 @@ class SnapshotSymbolIndex:
         self,
         snapshot_id: str,
         *,
-        symbol_id: Optional[str] = None,
-        name: Optional[str] = None,
-        path: Optional[str] = None,
-    ) -> Optional[str]:
+        symbol_id: str | None = None,
+        name: str | None = None,
+        path: str | None = None,
+    ) -> str | None:
         maps = self._by_snapshot.get(snapshot_id)
         if maps is None:
             return None

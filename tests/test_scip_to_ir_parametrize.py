@@ -10,8 +10,7 @@ from __future__ import annotations
 import pytest
 
 from fastcode.adapters.scip_to_ir import build_ir_from_scip
-from fastcode.scip_models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
-
+from fastcode.scip_models import SCIPIndex
 
 # ---------------------------------------------------------------------------
 # Inline factory (mirrors tests.conftest._make_scip_payload)
@@ -61,7 +60,7 @@ def _build(
     payload: dict | SCIPIndex | None = None,
     *,
     language_hint: str | None = None,
-) -> "IRSnapshot":
+) -> IRSnapshot:
     """Thin wrapper around build_ir_from_scip with sensible defaults."""
     from fastcode.semantic_ir import IRSnapshot
 

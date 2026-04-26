@@ -5,8 +5,15 @@ Adapter from FastCode AST/indexer output into canonical unit-grounded IR.
 from __future__ import annotations
 
 import hashlib
+
 from ..indexer import CodeElement
-from ..semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitEmbedding, IRUnitSupport
+from ..semantic_ir import (
+    IRCodeUnit,
+    IRRelation,
+    IRSnapshot,
+    IRUnitEmbedding,
+    IRUnitSupport,
+)
 from ..utils import safe_jsonable
 
 STRUCTURE_SOURCE = "fc_structure"

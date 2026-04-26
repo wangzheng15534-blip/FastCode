@@ -20,23 +20,22 @@ from unittest.mock import MagicMock
 import networkx as nx
 import pytest
 
-from fastcode.main import FastCode
-from fastcode.loader import RepositoryLoader
-from fastcode.parser import CodeParser
-from fastcode.embedder import CodeEmbedder
-from fastcode.indexer import CodeIndexer
-from fastcode.vector_store import VectorStore
-from fastcode.graph_builder import CodeGraphBuilder
-from fastcode.ir_graph_builder import IRGraphBuilder
-from fastcode.snapshot_store import SnapshotStore
-from fastcode.manifest_store import ManifestStore
-from fastcode.index_run import IndexRunStore
-from fastcode.pg_retrieval import PgRetrievalStore
 from fastcode.doc_ingester import KeyDocIngester
+from fastcode.embedder import CodeEmbedder
+from fastcode.graph_builder import CodeGraphBuilder
 from fastcode.graph_runtime import LadybugGraphRuntime
-from fastcode.terminus_publisher import TerminusPublisher
+from fastcode.index_run import IndexRunStore
+from fastcode.indexer import CodeIndexer
+from fastcode.ir_graph_builder import IRGraphBuilder
+from fastcode.loader import RepositoryLoader
+from fastcode.main import FastCode
+from fastcode.manifest_store import ManifestStore
+from fastcode.parser import CodeParser
+from fastcode.pg_retrieval import PgRetrievalStore
+from fastcode.snapshot_store import SnapshotStore
 from fastcode.snapshot_symbol_index import SnapshotSymbolIndex
-
+from fastcode.terminus_publisher import TerminusPublisher
+from fastcode.vector_store import VectorStore
 
 # ---------------------------------------------------------------------------
 # Service availability checks
@@ -255,9 +254,9 @@ def _build_fastcode(config):
 
     fc.indexer = CodeIndexer(config, fc.loader, fc.parser, fc.embedder, fc.vector_store)
 
-    from fastcode.retriever import HybridRetriever
-    from fastcode.query_processor import QueryProcessor
     from fastcode.cache import CacheManager
+    from fastcode.query_processor import QueryProcessor
+    from fastcode.retriever import HybridRetriever
 
     config_repo_root = config.get("repo_root", "./repos")
     fc.retriever = HybridRetriever(
@@ -276,8 +275,8 @@ def _build_fastcode(config):
     fc.index_run_store = IndexRunStore(fc.snapshot_store.db_runtime)
     fc.terminus_publisher = TerminusPublisher(config)
 
-    from fastcode.projection_transform import ProjectionTransformer
     from fastcode.projection_store import ProjectionStore
+    from fastcode.projection_transform import ProjectionTransformer
 
     fc.projection_transformer = ProjectionTransformer(config)
     fc.projection_store = ProjectionStore(config)
@@ -438,13 +437,12 @@ def test_e2e_indexing_pg_real_embeddings(tmp_path):
 def _pg_execute(dsn: str, sql: str, params=None) -> list | None:
     """Execute a query against the test PG database."""
     import psycopg
-    with psycopg.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params or ())  # type: ignore[arg-type]
-            if cur.description:
-                return cur.fetchall()
-            conn.commit()
-            return None
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(sql, params or ())  # type: ignore[arg-type]
+        if cur.description:
+            return cur.fetchall()
+        conn.commit()
+        return None
 
 
 def _cleanup_pg_tables(dsn: str):

@@ -3,12 +3,11 @@ Path utilities for converting file system paths to Python module paths
 and centralized path handling for code exploration agents
 """
 
-import os
-from typing import Optional, Set
 import logging
+import os
 
 
-def file_path_to_module_path(file_path: str, repo_root: str) -> Optional[str]:
+def file_path_to_module_path(file_path: str, repo_root: str) -> str | None:
     """
     Convert a file system path to a logical dotted module path for RAG indexing
 
@@ -159,7 +158,7 @@ class PathUtils:
         if not os.path.isdir(self.repo_root):
             raise ValueError(f"Repository root does not exist or is not a directory: {self.repo_root}")
 
-    def resolve_path(self, path: str) -> Optional[str]:
+    def resolve_path(self, path: str) -> str | None:
         """
         Intelligently resolve path, specifically handling the case where
         repo_root ends with the same folder that path starts with.
@@ -234,14 +233,13 @@ class PathUtils:
                 f"Using direct join: '{path_a}'"
             )
             return path_a
-        elif exists_a:
+        if exists_a:
             return path_a
-        elif exists_b:
+        if exists_b:
             # This is the expected case: A doesn't exist, B exists, return B
             return path_b
-        else:
-            # Neither exists
-            return None
+        # Neither exists
+        return None
 
     def is_safe_path(self, path: str) -> bool:
         """
@@ -264,7 +262,7 @@ class PathUtils:
             self.logger.warning(f"Path security check failed for {path}: {e}")
             return False
 
-    def detect_repo_name_from_path(self, file_path: str, known_repos: Set[str]) -> str:
+    def detect_repo_name_from_path(self, file_path: str, known_repos: set[str]) -> str:
         """
         Detect the correct repo_name from file_path by checking against known repos
 
@@ -420,21 +418,19 @@ class PathUtils:
                 # Unstripped path exists, stripped doesn't -> it's a subdirectory, not repo prefix
                 self.logger.debug(f"[DEBUG] resolve_repo_target_path: unstripped path exists, treating as subdirectory -> returning '{path_unstripped}'")
                 return path_unstripped
-            elif stripped_exists:
+            if stripped_exists:
                 # Stripped path exists -> treat first part as repo prefix
                 self.logger.debug(f"[DEBUG] resolve_repo_target_path: stripped path exists, treating as repo prefix -> returning '{path_stripped}'")
                 return path_stripped
-            else:
-                # Neither exists - default to stripped (original behavior for new paths)
-                self.logger.debug(f"[DEBUG] resolve_repo_target_path: neither path exists, defaulting to stripped -> returning '{path_stripped}'")
-                return path_stripped
-        else:
-            # The model output is relative to the sub-repo
-            result = os.path.join(repo_name, clean_path)
-            self.logger.debug(f"[DEBUG] resolve_repo_target_path: prepending repo name -> returning '{result}'")
-            return result
+            # Neither exists - default to stripped (original behavior for new paths)
+            self.logger.debug(f"[DEBUG] resolve_repo_target_path: neither path exists, defaulting to stripped -> returning '{path_stripped}'")
+            return path_stripped
+        # The model output is relative to the sub-repo
+        result = os.path.join(repo_name, clean_path)
+        self.logger.debug(f"[DEBUG] resolve_repo_target_path: prepending repo name -> returning '{result}'")
+        return result
 
-    def validate_and_normalize_file_pattern(self, file_pattern: str, repo_name: str) -> Optional[tuple[bool, str]]:
+    def validate_and_normalize_file_pattern(self, file_pattern: str, repo_name: str) -> tuple[bool, str] | None:
         """
         Validate if a file pattern actually targets a specific repo and return normalized pattern.
 

@@ -8,7 +8,13 @@ from collections import defaultdict
 
 import networkx as nx
 
-from .semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitEmbedding, IRUnitSupport
+from .semantic_ir import (
+    IRCodeUnit,
+    IRRelation,
+    IRSnapshot,
+    IRUnitEmbedding,
+    IRUnitSupport,
+)
 
 PRIMARY_MATCH_THRESHOLD = 0.65
 CANDIDATE_MATCH_THRESHOLD = 0.50

@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .projection_models import ProjectionBuildResult, ProjectionScope
 from .utils import utc_now
@@ -25,7 +25,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 class ProjectionStore:
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         self.logger = logging.getLogger(__name__)
         proj_cfg = config.get("projection", {})
         storage_cfg = config.get("storage", {})
@@ -125,11 +125,10 @@ class ProjectionStore:
                 )
             conn.commit()
 
-    def find_cached_projection_id(self, scope: ProjectionScope, params_hash: str) -> Optional[str]:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+    def find_cached_projection_id(self, scope: ProjectionScope, params_hash: str) -> str | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     SELECT projection_id
                     FROM projection_builds
                     WHERE snapshot_id=%s
@@ -140,10 +139,10 @@ class ProjectionStore:
                     ORDER BY updated_at DESC
                     LIMIT 1
                     """,
-                    (scope.snapshot_id, scope.scope_kind, scope.scope_key, params_hash),
-                )
-                row = cur.fetchone()
-                return row[0] if row else None
+                (scope.snapshot_id, scope.scope_kind, scope.scope_key, params_hash),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
 
     def save(self, result: ProjectionBuildResult, params_hash: str) -> None:
         now = utc_now()
@@ -204,38 +203,36 @@ class ProjectionStore:
                     )
             conn.commit()
 
-    def get_layer(self, projection_id: str, layer: str) -> Optional[Dict[str, Any]]:
+    def get_layer(self, projection_id: str, layer: str) -> dict[str, Any] | None:
         layer = layer.upper()
         if layer not in {"L0", "L1", "L2"}:
             return None
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     SELECT node_json
                     FROM projection_views
                     WHERE projection_id=%s AND layer=%s
                     """,
-                    (projection_id, layer),
-                )
-                row = cur.fetchone()
-                return row[0] if row else None
+                (projection_id, layer),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
 
-    def get_chunk(self, projection_id: str, chunk_id: str) -> Optional[Dict[str, Any]]:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+    def get_chunk(self, projection_id: str, chunk_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     SELECT chunk_json
                     FROM projection_chunks
                     WHERE projection_id=%s AND chunk_id=%s
                     """,
-                    (projection_id, chunk_id),
-                )
-                row = cur.fetchone()
-                return row[0] if row else None
+                (projection_id, chunk_id),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
 
-    def get_build(self, projection_id: str) -> Optional[Dict[str, Any]]:
+    def get_build(self, projection_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(

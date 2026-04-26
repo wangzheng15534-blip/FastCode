@@ -13,7 +13,6 @@ from fastcode.adapters.ast_to_ir import build_ir_from_ast
 from fastcode.indexer import CodeElement
 from fastcode.semantic_ir import IRSnapshot
 
-
 # ---------------------------------------------------------------------------
 # Inline factory (mirrors tests.conftest._make_code_elements)
 # ---------------------------------------------------------------------------

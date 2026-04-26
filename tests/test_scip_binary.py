@@ -125,9 +125,9 @@ def test_binary_scip_empty_index(tmp_path):
 @requires_protobuf
 def test_binary_scip_to_ir_round_trip(tmp_path):
     """Binary SCIP -> SCIPIndex -> IRSnapshot produces valid IR."""
-    from fastcode.scip_pb2 import Index, SymbolInformation
-    from fastcode.scip_loader import load_scip_artifact
     from fastcode.adapters.scip_to_ir import build_ir_from_scip
+    from fastcode.scip_loader import load_scip_artifact
+    from fastcode.scip_pb2 import Index, SymbolInformation
 
     idx = Index()
     idx.metadata.version = 0
@@ -171,8 +171,9 @@ def test_binary_scip_to_ir_round_trip(tmp_path):
 
 def test_run_scip_python_index_delegates_to_scip_indexers(tmp_path):
     """run_scip_python_index delegates to scip_indexers.run_scip_indexer."""
-    from fastcode.scip_loader import run_scip_python_index
     from unittest.mock import patch
+
+    from fastcode.scip_loader import run_scip_python_index
 
     with patch("fastcode.scip_indexers.run_scip_indexer", return_value="/fake/output.scip") as mock_run:
         result = run_scip_python_index(str(tmp_path), "/fake/output.scip")

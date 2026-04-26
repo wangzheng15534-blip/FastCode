@@ -18,7 +18,6 @@ from fastcode.scip_models import (
     SCIPSymbol,
 )
 
-
 # --- Strategies (mirrored from tests/conftest.py) ---
 
 identifier = st.text(

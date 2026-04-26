@@ -43,3 +43,21 @@ __all__ = [
     "SourceRef",
     "ToolCall",
 ]
+
+from fastcode.schema.ir import (
+    IRAttachment,
+    IRDocument,
+    IREdge,
+    IROccurrence,
+    IRSnapshot,
+    IRSymbol,
+)
+
+__all__ += [
+    "IRAttachment",
+    "IRDocument",
+    "IREdge",
+    "IROccurrence",
+    "IRSnapshot",
+    "IRSymbol",
+]

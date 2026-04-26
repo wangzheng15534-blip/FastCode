@@ -6,7 +6,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from ..semantic_ir import _resolution_to_confidence
+from fastcode.schema.ir import _resolution_to_confidence
 
 
 def deterministic_event_id(snapshot_id: str, payload: str) -> str:

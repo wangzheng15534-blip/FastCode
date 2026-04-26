@@ -5,7 +5,7 @@ Zero I/O, zero logging. The orchestrator wraps these with logging.
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -29,21 +29,25 @@ class AdaptiveParams(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
-def calculate_recent_confidence_gain(history: tuple | list) -> float:
+def calculate_recent_confidence_gain(
+    history: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+) -> float:
     """Return confidence delta between last two history entries."""
     if len(history) < 2:
         return 0.0
     return float(history[-1]["confidence"] - history[-2]["confidence"])
 
 
-def calculate_recent_lines_added(history: tuple | list) -> int:
+def calculate_recent_lines_added(
+    history: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+) -> int:
     """Return total-lines delta between last two history entries."""
     if len(history) < 2:
         return 0
     return history[-1]["total_lines"] - history[-2]["total_lines"]
 
 
-def calculate_total_lines(elements: list[dict]) -> int:
+def calculate_total_lines(elements: list[dict[str, Any]]) -> int:
     """Sum (end - start + 1) for every element with line-range info."""
     total = 0
     for elem_data in elements:
@@ -84,7 +88,7 @@ def get_min_roi_threshold(query_complexity: int, current_confidence: int) -> flo
     return base_roi * complexity_factor * confidence_factor
 
 
-def calculate_repo_factor(repo_stats: dict | None) -> float:
+def calculate_repo_factor(repo_stats: dict[str, Any] | None) -> float:
     """Repository complexity factor in [0.5, 2.0]. Returns 1.0 when stats are absent."""
     if not repo_stats:
         return 1.0
@@ -157,7 +161,7 @@ def should_continue_iteration(
     total_lines: int,
     line_budget: int,
     confidence_threshold: int,
-    history: tuple | list,
+    history: tuple[dict[str, Any], ...] | list[dict[str, Any]],
     min_confidence_gain: float,
     query_complexity: int = 50,
 ) -> bool:
@@ -228,7 +232,7 @@ def determine_stopping_reason(
     confidence_threshold: int,
     current_round: int,
     max_iterations: int,
-    iteration_history: tuple | list,
+    iteration_history: tuple[dict[str, Any], ...] | list[dict[str, Any]],
     line_budget: int,
     min_confidence_gain: float = 0.5,
 ) -> str:

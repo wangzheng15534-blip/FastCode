@@ -47,19 +47,19 @@ class _FakeProjectionStore:
 class _FakeCursor:
     """Fake DB cursor for query simulation."""
 
-    def __init__(self, rows: list[tuple] | None = None) -> None:
+    def __init__(self, rows: list[tuple[Any, ...]] | None = None) -> None:
         self._rows = rows or []
         self.executed_sql = ""
-        self.executed_params: tuple = ()
+        self.executed_params: tuple[Any, ...] = ()
 
-    def execute(self, sql: str, params: tuple = ()) -> None:
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.executed_sql = sql
         self.executed_params = params
 
-    def fetchone(self) -> tuple | None:
+    def fetchone(self) -> tuple[Any, ...] | None:
         return self._rows[0] if self._rows else None
 
-    def fetchall(self) -> list[tuple]:
+    def fetchall(self) -> list[tuple[Any, ...]]:
         return self._rows
 
     def close(self) -> None:

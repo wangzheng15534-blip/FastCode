@@ -399,7 +399,7 @@ class TestIRSymbolProperties:
         kind: bool,
         language: str,
         source_set: Any,
-        metadata: dict,
+        metadata: dict[str, Any],
     ):
         """HAPPY: from_dict with source_set present exercises lines 57-59 (dict copy + set conversion + cls construction)."""
         data = {
@@ -564,7 +564,7 @@ class TestIROccurrenceProperties:
         doc_id: str,
         role: str,
         source: str,
-        metadata: dict,
+        metadata: dict[str, Any],
     ):
         """HAPPY: from_dict with metadata exercises line 80 (cls(**data)) including metadata field."""
         data = {
@@ -720,7 +720,7 @@ class TestIREdgeProperties:
         source: str,
         confidence: Any,
         doc_id: str,
-        metadata: dict,
+        metadata: dict[str, Any],
     ):
         """HAPPY: from_dict with all fields exercises line 99 (cls(**data)) completely."""
         data = {

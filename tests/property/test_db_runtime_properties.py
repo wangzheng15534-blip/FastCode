@@ -463,7 +463,7 @@ class TestExecute:
     @given(values=sql_value_list)
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_execute_various_types(self, values: list) -> None:
+    def test_execute_various_types(self, values: list[Any]) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
             ncols = len(values)

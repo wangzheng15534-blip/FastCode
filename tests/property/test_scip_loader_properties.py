@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from typing import Any
 
 import pytest
 from hypothesis import given, settings
@@ -29,14 +30,14 @@ small_text = st.text(
 # --- Helpers ---
 
 
-def _write_json_file(tmpdir: str, name: str, data: dict) -> str:
+def _write_json_file(tmpdir: str, name: str, data: dict[str, Any]) -> str:
     path = os.path.join(tmpdir, name)
     with open(path, "w") as f:
         json.dump(data, f)
     return path
 
 
-def _minimal_scip_dict() -> dict:
+def _minimal_scip_dict() -> dict[str, Any]:
     return {
         "documents": [
             {

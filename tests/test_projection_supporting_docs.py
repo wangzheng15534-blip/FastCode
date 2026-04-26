@@ -90,7 +90,7 @@ def _sample_graphs() -> IRGraphs:
     )
 
 
-def _config() -> dict:
+def _config() -> dict[str, Any]:
     return {
         "projection": {"enable_leiden": True, "leiden_resolutions": [1.0]},
         "embedding": {"enabled": False},

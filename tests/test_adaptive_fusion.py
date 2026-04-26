@@ -1,7 +1,9 @@
+from typing import Any
+
 from fastcode.retriever import HybridRetriever
 
 
-def _mk_row(elem_id: str, elem_type: str, total: float) -> dict:
+def _mk_row(elem_id: str, elem_type: str, total: float) -> dict[str, Any]:
     return {
         "element": {"id": elem_id, "type": elem_type, "name": elem_id},
         "semantic_score": total,

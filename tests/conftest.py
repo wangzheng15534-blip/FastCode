@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+from typing import Any
 
 import pytest
 from hypothesis import strategies as st
@@ -473,7 +474,7 @@ def _make_scip_payload(
     n_docs: int = 1,
     n_symbols: int = 2,
     n_occurrences: int = 1,
-) -> dict:
+) -> dict[str, Any]:
     """Create a raw dict payload matching build_ir_from_scip() input schema."""
     documents = []
     for i in range(n_docs):

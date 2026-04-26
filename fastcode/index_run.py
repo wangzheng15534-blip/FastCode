@@ -130,7 +130,7 @@ class IndexRunStore:
         self._set_run_fields(run_id, status=status)
 
     def mark_completed(
-        self, run_id: str, status: str = "succeeded", warnings: list | None = None
+        self, run_id: str, status: str = "succeeded", warnings: list[str] | None = None
     ) -> None:
         self._set_run_fields(
             run_id,

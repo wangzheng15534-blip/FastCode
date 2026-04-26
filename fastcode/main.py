@@ -2012,7 +2012,9 @@ class FastCode:
                 },
             )
 
-    def _extract_sources_from_elements(self, elements: list) -> list[dict[str, Any]]:
+    def _extract_sources_from_elements(
+        self, elements: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Extract source information from retrieved elements"""
         return _snapshot.extract_sources_from_elements(elements)
 
@@ -2736,7 +2738,9 @@ class FastCode:
     # Incremental indexing
     # ------------------------------------------------------------------
 
-    def _build_file_manifest(self, elements, repo_root) -> dict:
+    def _build_file_manifest(
+        self, elements: list[dict[str, Any]], repo_root: str
+    ) -> dict[str, Any]:
         """Build a file manifest mapping files to their mtime/size and element IDs."""
         manifest = {
             "repo_name": self.repo_info.get("name", ""),
@@ -2788,7 +2792,7 @@ class FastCode:
             self.logger.warning(f"Failed to load manifest for '{repo_name}': {e}")
             return None
 
-    def _load_existing_metadata(self, repo_name: str) -> list:
+    def _load_existing_metadata(self, repo_name: str) -> list[dict[str, Any]]:
         """Load existing vector store metadata for a repo directly from disk."""
         meta_path = os.path.join(
             self.vector_store.persist_dir, f"{repo_name}_metadata.pkl"
@@ -2857,7 +2861,7 @@ class FastCode:
 
     def _collect_unchanged_elements(
         self, manifest, unchanged_files, existing_metadata
-    ) -> tuple:
+    ) -> tuple[list[dict[str, Any]], set[str]]:
         """Collect element dicts and IDs for unchanged files from existing metadata."""
         unchanged_element_ids = set()
         for rel_path in unchanged_files:
@@ -2873,7 +2877,9 @@ class FastCode:
 
         return unchanged_elements, list(unchanged_element_ids)
 
-    def incremental_reindex(self, repo_name: str, repo_path: str = None) -> dict:
+    def incremental_reindex(
+        self, repo_name: str, repo_path: str = None
+    ) -> dict[str, Any]:
         """Perform incremental reindexing: only re-embed changed files.
 
         Unchanged files reuse their existing embeddings. FAISS, BM25, and

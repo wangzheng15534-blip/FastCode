@@ -182,10 +182,10 @@ class RetrievalChannelOutput:
     """Output from a single retrieval channel (code or docs)."""
 
     collection: str
-    semantic_results: tuple
-    keyword_results: tuple
-    pseudocode_results: tuple = ()
-    ranked_results: tuple = ()
+    semantic_results: tuple[dict[str, Any], ...]
+    keyword_results: tuple[dict[str, Any], ...]
+    pseudocode_results: tuple[dict[str, Any], ...] = ()
+    ranked_results: tuple[dict[str, Any], ...] = ()
 
 
 # ---------------------------------------------------------------------------

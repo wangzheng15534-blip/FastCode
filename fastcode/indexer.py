@@ -184,7 +184,10 @@ class CodeIndexer:
         return self.elements
 
     def index_files(
-        self, file_infos: list[dict], repo_name: str, repo_url: str | None = None
+        self,
+        file_infos: list[dict[str, Any]],
+        repo_name: str,
+        repo_url: str | None = None,
     ) -> list[CodeElement]:
         """Index specific files only (for incremental reindexing).
 

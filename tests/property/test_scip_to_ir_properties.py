@@ -7,6 +7,8 @@ range coercion, and occurrence source field.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -341,7 +343,9 @@ class TestEmptyAndEdgeCases:
     @given(payload=scip_raw_payload_st, snap_id=identifier)
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_raw_dict_input_produces_valid_snapshot(self, payload: dict, snap_id: str):
+    def test_raw_dict_input_produces_valid_snapshot(
+        self, payload: dict[str, Any], snap_id: str
+    ):
         """HAPPY: raw dict input (not SCIPIndex) produces valid IRSnapshot."""
         snap = build_ir_from_scip(
             repo_name="repo", snapshot_id=snap_id, scip_index=payload

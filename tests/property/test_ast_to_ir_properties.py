@@ -80,7 +80,7 @@ def _elem(
     language: str = "python",
     start_line: int = 1,
     end_line: int = 5,
-    metadata: dict | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> CodeElement:
     return CodeElement(
         id=f"elem_{name}",
@@ -282,7 +282,7 @@ class TestSourcePriorityAndSet:
     )
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_all_symbols_have_source_priority_50(self, elements: list):
+    def test_all_symbols_have_source_priority_50(self, elements: list[CodeElement]):
         """HAPPY: all symbols created by structure adapter have source_priority=50."""
         assume(len(elements) > 0)
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
@@ -294,7 +294,9 @@ class TestSourcePriorityAndSet:
     )
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_all_docs_have_fc_structure_in_source_set(self, elements: list):
+    def test_all_docs_have_fc_structure_in_source_set(
+        self, elements: list[CodeElement]
+    ):
         """HAPPY: all documents have 'fc_structure' in source_set."""
         assume(len(elements) > 0)
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
@@ -309,7 +311,9 @@ class TestSourcePriorityAndSet:
     )
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_all_symbols_have_fc_structure_source_set(self, elements: list):
+    def test_all_symbols_have_fc_structure_source_set(
+        self, elements: list[CodeElement]
+    ):
         """HAPPY: all symbols have source_set={'fc_structure'}."""
         assume(len(elements) > 0)
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
@@ -365,7 +369,9 @@ class TestMetadataConsistency:
     )
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_snapshot_metadata_source_modes_is_fc_structure(self, elements: list):
+    def test_snapshot_metadata_source_modes_is_fc_structure(
+        self, elements: list[CodeElement]
+    ):
         """HAPPY: snapshot metadata always has source_modes=['fc_structure']."""
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         assert snap.metadata.get("source_modes") == ["fc_structure"]
@@ -395,7 +401,7 @@ class TestMetadataConsistency:
     )
     @settings(max_examples=30)
     @pytest.mark.happy
-    def test_symbol_metadata_source_is_fc_structure(self, elements: list):
+    def test_symbol_metadata_source_is_fc_structure(self, elements: list[CodeElement]):
         """HAPPY: all symbol metadata['source'] == 'fc_structure'."""
         assume(len(elements) > 0)
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)

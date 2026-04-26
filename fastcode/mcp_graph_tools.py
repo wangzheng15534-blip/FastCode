@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 from collections import deque
+from typing import Any
 
 import networkx as nx
 
@@ -90,7 +91,7 @@ def build_combined_graph(
     snapshot: IRSnapshot,
     graph_types: list[str] | None = None,
     undirected: bool = False,
-) -> nx.Graph | nx.DiGraph:
+) -> nx.Graph[str] | nx.DiGraph[str]:
     """Build graphs from snapshot and compose selected types into one.
 
     Args:
@@ -106,11 +107,11 @@ def build_combined_graph(
         graph_types = sorted(VALID_GRAPH_TYPES)
 
     graphs = IRGraphBuilder().build_graphs(snapshot)
-    combined: nx.Graph | nx.DiGraph | None = None
+    combined: nx.Graph[str] | nx.DiGraph[str] | None = None
 
     for gt in graph_types:
         attr = GRAPH_TYPE_MAP[gt]
-        g: nx.DiGraph = getattr(graphs, attr)
+        g: nx.DiGraph[str] = getattr(graphs, attr)
         if undirected:
             g = g.to_undirected()
         combined = g.copy() if combined is None else nx.compose(combined, g)
@@ -132,7 +133,7 @@ def compute_directed_path(
     snapshot: IRSnapshot,
     max_hops: int = 5,
     graph_types: list[str] | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Find the directed shortest path between two symbols."""
     if graph_types is None:
         graph_types = ["call", "dependency"]
@@ -239,7 +240,7 @@ def compute_impact_analysis(
     snapshot: IRSnapshot,
     max_hops: int = 3,
     graph_types: list[str] | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Analyze what would be affected if a symbol changes (BFS on predecessors)."""
     if graph_types is None:
         graph_types = ["call", "dependency"]
@@ -261,10 +262,10 @@ def compute_impact_analysis(
         }
 
     graphs = IRGraphBuilder().build_graphs(snapshot)
-    combined: nx.DiGraph | None = None
+    combined: nx.DiGraph[str] | None = None
     for gt in graph_types:
         attr = GRAPH_TYPE_MAP[gt]
-        g: nx.DiGraph = getattr(graphs, attr)
+        g: nx.DiGraph[str] = getattr(graphs, attr)
         combined = g.copy() if combined is None else nx.compose(combined, g)
     if combined is None or combined.number_of_nodes() == 0:
         return {
@@ -297,7 +298,7 @@ def compute_impact_analysis(
                 queue.append((pred, dist + 1))
             for gt in graph_types:
                 attr = GRAPH_TYPE_MAP[gt]
-                g: nx.DiGraph = getattr(graphs, attr)
+                g: nx.DiGraph[str] = getattr(graphs, attr)
                 if g.has_edge(pred, node):
                     edge_types_map.setdefault(pred, set()).add(gt)
 
@@ -313,7 +314,9 @@ def compute_impact_analysis(
     return {"affected": affected, "total_count": len(affected), "error": None}
 
 
-def compute_leiden_clusters(snapshot: IRSnapshot, fc: object | None = None) -> dict:
+def compute_leiden_clusters(
+    snapshot: IRSnapshot, fc: object | None = None
+) -> dict[str, Any]:
     """Get module boundaries (Leiden community detection) for a snapshot.
 
     Args:
@@ -383,7 +386,7 @@ def compute_leiden_clusters(snapshot: IRSnapshot, fc: object | None = None) -> d
 def compute_steiner_path(
     terminals: list[str],
     snapshot: IRSnapshot,
-) -> dict:
+) -> dict[str, Any]:
     """Find a small undirected explanatory subgraph connecting terminal symbols."""
     if not terminals or len(terminals) < 2:
         return {
@@ -416,9 +419,9 @@ def compute_steiner_path(
     terminal_ids = list(dict.fromkeys(terminal_ids))
 
     graphs = IRGraphBuilder().build_graphs(snapshot)
-    undirected: nx.Graph | None = None
+    undirected: nx.Graph[str] | None = None
     for attr_name in _ALL_GRAPH_ATTRS:
-        g: nx.DiGraph = getattr(graphs, attr_name)
+        g: nx.DiGraph[str] = getattr(graphs, attr_name)
         ug = g.to_undirected()
         undirected = ug.copy() if undirected is None else nx.compose(undirected, ug)
     if undirected is None or undirected.number_of_nodes() == 0:
@@ -495,7 +498,7 @@ def compute_steiner_path(
         seen_edges.add(edge_key)
         edge_types = []
         for attr_name, etype in edge_type_map.items():
-            g: nx.DiGraph = getattr(graphs, attr_name)
+            g: nx.DiGraph[str] = getattr(graphs, attr_name)
             if g.has_edge(u, v) or g.has_edge(v, u):
                 edge_types.append(etype)
         edges.append(
@@ -513,7 +516,7 @@ def compute_find_callers(
     symbol: str,
     snapshot: IRSnapshot,
     max_hops: int = 2,
-) -> dict:
+) -> dict[str, Any]:
     """Find all symbols that call the given symbol (BFS on reversed call graph)."""
     unit_id = resolve_unit_id(symbol, snapshot)
     if not unit_id:
@@ -562,7 +565,9 @@ def compute_find_callers(
 # ---------------------------------------------------------------------------
 
 
-def extract_cluster_data(l1_data: dict, snapshot: IRSnapshot) -> dict:
+def extract_cluster_data(
+    l1_data: dict[str, Any], snapshot: IRSnapshot
+) -> dict[str, Any]:
     """Extract structured cluster data from L1 projection data."""
     clusters = []
     xrefs = []

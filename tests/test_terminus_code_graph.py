@@ -1,5 +1,7 @@
 """Tests for TerminusPublisher code graph payload (symbols + relations)."""
 
+from typing import Any
+
 import pytest
 
 from fastcode.terminus_publisher import TerminusPublisher
@@ -11,9 +13,9 @@ def _make_publisher() -> TerminusPublisher:
 
 def _make_snapshot_v2(
     snapshot_id: str = "snap:repo:abc",
-    units: list[dict] | None = None,
-    relations: list[dict] | None = None,
-) -> dict:
+    units: list[dict[str, Any]] | None = None,
+    relations: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Build a minimal ir.v2 snapshot dict."""
     return {
         "schema_version": "ir.v2",

@@ -278,7 +278,7 @@ def calculate_code_complexity(code: str) -> int:
     return complexity
 
 
-def merge_dicts(*dicts: dict) -> dict:
+def merge_dicts(*dicts: dict[str, Any]) -> dict[str, Any]:
     """Merge multiple dictionaries"""
     result = {}
     for d in dicts:
@@ -286,7 +286,7 @@ def merge_dicts(*dicts: dict) -> dict:
     return result
 
 
-def safe_get(d: dict, *keys, default=None):
+def safe_get(d: dict[str, Any], *keys, default=None):
     """Safely get nested dictionary value"""
     for key in keys:
         if isinstance(d, dict):

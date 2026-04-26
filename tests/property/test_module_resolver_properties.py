@@ -24,11 +24,11 @@ module_path_st = st.lists(segment_st, min_size=1, max_size=4).map(".".join)
 class _FakeIndex:
     """Minimal fake GlobalIndexBuilder for testing."""
 
-    def __init__(self, module_map: dict | None = None) -> None:
+    def __init__(self, module_map: dict[str, list[str]] | None = None) -> None:
         self.module_map = module_map or {}
 
 
-def _make_resolver(module_map: dict | None = None) -> Any:
+def _make_resolver(module_map: dict[str, list[str]] | None = None) -> Any:
     return ModuleResolver(_FakeIndex(module_map))
 
 

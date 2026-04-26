@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastcode.indexer import CodeElement
 from fastcode.retriever import HybridRetriever
 
@@ -8,8 +10,8 @@ def _mk_row(
     total: float,
     *,
     ir_symbol_id: str | None = None,
-    trace_links: list[dict] | None = None,
-) -> dict:
+    trace_links: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     metadata = {}
     if ir_symbol_id:
         metadata["ir_symbol_id"] = ir_symbol_id

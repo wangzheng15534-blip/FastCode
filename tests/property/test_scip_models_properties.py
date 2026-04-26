@@ -324,7 +324,9 @@ class TestSCIPIndexRoundtrip:
     )
     @settings(max_examples=15)
     @pytest.mark.edge
-    def test_from_dict_filters_non_dict_entries(self, docs: list, valid_docs: list):
+    def test_from_dict_filters_non_dict_entries(
+        self, docs: list[Any], valid_docs: list[dict[str, Any]]
+    ):
         """EDGE: SCIPIndex.from_dict filters non-dict entries from documents list."""
         raw_docs = docs + [d.to_dict() for d in valid_docs]
         index = SCIPIndex.from_dict({"documents": raw_docs})
@@ -368,7 +370,7 @@ class TestSCIPIndexRoundtrip:
     @given(metadata=st.dictionaries(identifier, st.integers(), max_size=3))
     @settings(max_examples=15)
     @pytest.mark.happy
-    def test_metadata_roundtrip(self, metadata: dict):
+    def test_metadata_roundtrip(self, metadata: dict[str, int]):
         """HAPPY: SCIPIndex metadata survives roundtrip."""
         index = SCIPIndex(metadata=metadata)
         data = index.to_dict()

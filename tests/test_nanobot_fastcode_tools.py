@@ -44,8 +44,8 @@ from nanobot.agent.tools.fastcode import (
 class _MockTransport(httpx.MockTransport):
     """Routes requests to a handler registry. Tracks which handlers were called."""
 
-    def __init__(self, handlers: dict[str, Callable] | None = None) -> None:
-        self._handlers: dict[str, Callable] = handlers or {}
+    def __init__(self, handlers: dict[str, Callable[..., Any]] | None = None) -> None:
+        self._handlers: dict[str, Callable[..., Any]] = handlers or {}
         self.called_keys: set[str] = set()
         super().__init__(self._handle)
 
@@ -97,7 +97,7 @@ class TestFastCodeLoadRepoTool:
         tool = FastCodeLoadRepoTool(api_url=api_url)
         payload = {"source": "https://github.com/user/repo", "is_url": True}
 
-        request_bodies: list[dict] = []
+        request_bodies: list[dict[str, Any]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             body = json.loads(request.content)
@@ -151,7 +151,7 @@ class TestFastCodeQueryTool:
     async def test_query_posts_question(self, api_url: str):
         tool = FastCodeQueryTool(api_url=api_url)
 
-        request_bodies: list[dict] = []
+        request_bodies: list[dict[str, Any]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             body = json.loads(request.content)
@@ -331,7 +331,7 @@ class TestFastCodeSearchSymbolTool:
     async def test_search_symbol_by_name(self, api_url: str):
         tool = FastCodeSearchSymbolTool(api_url=api_url)
 
-        captured_params: list[dict] = []
+        captured_params: list[dict[str, Any]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             captured_params.append(dict(request.url.params))
@@ -437,7 +437,7 @@ class TestFastCodeCallChainTool:
     async def test_get_callees(self, api_url: str):
         tool = FastCodeCallChainTool(api_url=api_url)
 
-        captured_params: list[dict] = []
+        captured_params: list[dict[str, Any]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             captured_params.append(dict(request.url.params))
@@ -537,7 +537,7 @@ class TestFastCodeBuildProjectionTool:
     async def test_build_snapshot_projection(self, api_url: str):
         tool = FastCodeBuildProjectionTool(api_url=api_url)
 
-        request_bodies: list[dict] = []
+        request_bodies: list[dict[str, Any]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             request_bodies.append(json.loads(request.content))
@@ -621,7 +621,7 @@ class TestFastCodeIndexRunTool:
     async def test_run_index_pipeline(self, api_url: str):
         tool = FastCodeIndexRunTool(api_url=api_url)
 
-        request_bodies: list[dict] = []
+        request_bodies: list[dict[str, Any]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             request_bodies.append(json.loads(request.content))

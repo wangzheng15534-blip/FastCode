@@ -1,5 +1,7 @@
 """Tests for pure prompt formatting functions."""
 
+from typing import Any
+
 from fastcode.core.prompts import (
     format_elements_with_metadata,
     format_tool_call_history,
@@ -19,8 +21,8 @@ def _mk_elem_data(
     llm_file_selected: bool = False,
     related_to: str | None = None,
     signature: str | None = None,
-) -> dict:
-    elem: dict = {
+) -> dict[str, Any]:
+    elem: dict[str, Any] = {
         "id": elem_id,
         "type": elem_type,
         "name": elem_id,
@@ -31,7 +33,7 @@ def _mk_elem_data(
     }
     if signature:
         elem["signature"] = signature
-    result: dict = {
+    result: dict[str, Any] = {
         "element": elem,
         "total_score": total_score,
         "agent_found": agent_found,

@@ -179,7 +179,7 @@ class CacheManager:
         key = self._generate_key("query", query, repo_hash)
         return self.set(key, result)
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, Any]:
         """Get cache statistics"""
         if not self.enabled or self.cache is None:
             return {"enabled": False}

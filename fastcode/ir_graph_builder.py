@@ -13,11 +13,11 @@ from .semantic_ir import IRSnapshot
 
 @dataclass
 class IRGraphs:
-    dependency_graph: nx.DiGraph
-    call_graph: nx.DiGraph
-    inheritance_graph: nx.DiGraph
-    reference_graph: nx.DiGraph
-    containment_graph: nx.DiGraph
+    dependency_graph: nx.DiGraph[str]
+    call_graph: nx.DiGraph[str]
+    inheritance_graph: nx.DiGraph[str]
+    reference_graph: nx.DiGraph[str]
+    containment_graph: nx.DiGraph[str]
 
     def stats(self) -> dict[str, dict[str, int]]:
         return {

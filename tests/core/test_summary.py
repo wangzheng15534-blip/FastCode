@@ -1,6 +1,8 @@
 # tests/test_core_summary.py
 """Tests for pure summary and formatting functions."""
 
+from typing import Any
+
 from fastcode.core.summary import (
     extract_sources,
     format_answer_with_sources,
@@ -15,7 +17,7 @@ def _mk_elem(
     relative_path: str = "src/main.py",
     elem_type: str = "function",
     total_score: float = 0.85,
-) -> dict:
+) -> dict[str, Any]:
     return {
         "element": {
             "id": elem_id,

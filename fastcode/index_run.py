@@ -13,7 +13,7 @@ from .utils import utc_now
 
 
 class IndexRunStore:
-    def __init__(self, db_path_or_runtime: str | DBRuntime):
+    def __init__(self, db_path_or_runtime: str | DBRuntime) -> None:
         if isinstance(db_path_or_runtime, DBRuntime):
             self.db_runtime = db_path_or_runtime
         else:

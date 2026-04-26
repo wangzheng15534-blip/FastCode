@@ -17,7 +17,7 @@ class TSParser:
     for parsing code into syntax trees for various programming languages.
     """
 
-    def __init__(self, language: str = "python"):
+    def __init__(self, language: str = "python") -> None:
         """
         Initialize the tree-sitter parser for a specific language
 
@@ -31,7 +31,7 @@ class TSParser:
         self.languages_cache: dict[str, Language] = {}  # Cache loaded languages
         self._initialize_parser()
 
-    def _initialize_parser(self):
+    def _initialize_parser(self) -> None:
         """Initialize tree-sitter parser and language"""
         try:
             # Load the specified language
@@ -113,7 +113,7 @@ class TSParser:
         self.languages_cache[language_name] = lang
         return lang
 
-    def set_language(self, language_name: str):
+    def set_language(self, language_name: str) -> None:
         """
         Switch the parser to a different language
 

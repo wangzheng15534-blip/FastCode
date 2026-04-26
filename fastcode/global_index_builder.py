@@ -23,7 +23,7 @@ class GlobalIndexBuilder:
     - export_map: module_dotted_path -> {symbol_name: node_id}
     """
 
-    def __init__(self, config: dict[str, Any] | None = None):
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         """
         Initialize the GlobalIndexBuilder
 

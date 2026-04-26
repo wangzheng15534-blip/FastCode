@@ -25,7 +25,7 @@ class DefinitionExtractor:
     (class_definition) @class.def
     """
 
-    def __init__(self, parser: TSParser | None = None):
+    def __init__(self, parser: TSParser | None = None) -> None:
         self.logger = logging.getLogger(__name__)
         self.ts_parser = parser or TSParser()
 

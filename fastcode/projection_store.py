@@ -24,7 +24,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 class ProjectionStore:
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any]) -> None:
         self.logger = logging.getLogger(__name__)
         proj_cfg = config.get("projection", {})
         storage_cfg = config.get("storage", {})
@@ -53,7 +53,7 @@ class ProjectionStore:
                 )
             self._init_db()
 
-    def _connect(self):
+    def _connect(self) -> Any:
         if not self.enabled:
             raise RuntimeError(
                 "projection store is not configured (projection.postgres_dsn missing)"
@@ -249,31 +249,31 @@ class ProjectionStore:
 
     def get_build(self, projection_id: str) -> dict[str, Any] | None:
         with self._connect() as conn, conn.cursor() as cur:
-                cur.execute(
-                    """
+            cur.execute(
+                """
                     SELECT projection_id, snapshot_id, scope_kind, scope_key, params_hash, status,
                            warnings_json, created_at, updated_at
                     FROM projection_builds
                     WHERE projection_id=%s
                     """,
-                    (projection_id,),
-                )
-                row = cur.fetchone()
-                if not row:
-                    return None
-                warnings = row[6]
-                try:
-                    warnings_parsed = json.loads(warnings) if warnings else []
-                except Exception:
-                    warnings_parsed = [str(warnings)]
-                return {
-                    "projection_id": row[0],
-                    "snapshot_id": row[1],
-                    "scope_kind": row[2],
-                    "scope_key": row[3],
-                    "params_hash": row[4],
-                    "status": row[5],
-                    "warnings": warnings_parsed,
-                    "created_at": str(row[7]),
-                    "updated_at": str(row[8]),
-                }
+                (projection_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            warnings = row[6]
+            try:
+                warnings_parsed = json.loads(warnings) if warnings else []
+            except Exception:
+                warnings_parsed = [str(warnings)]
+            return {
+                "projection_id": row[0],
+                "snapshot_id": row[1],
+                "scope_kind": row[2],
+                "scope_key": row[3],
+                "params_hash": row[4],
+                "status": row[5],
+                "warnings": warnings_parsed,
+                "created_at": str(row[7]),
+                "updated_at": str(row[8]),
+            }

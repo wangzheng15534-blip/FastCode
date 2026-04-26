@@ -27,7 +27,7 @@ def _esc(val: Any) -> str:
 
 
 class LadybugGraphRuntime:
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.logger = logging.getLogger(__name__)
         graph_cfg = (config.get("graph", {}) or {}).get("ladybug", {}) or {}

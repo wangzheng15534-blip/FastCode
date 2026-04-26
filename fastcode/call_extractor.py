@@ -21,7 +21,7 @@ class CallExtractor:
     accurate call graphs.
     """
 
-    def __init__(self, parser: TSParser | None = None):
+    def __init__(self, parser: TSParser | None = None) -> None:
         """
         Initialize CallExtractor with optional TSParser dependency injection.
 
@@ -124,7 +124,7 @@ class CallExtractor:
             "zip",
         }
 
-    def _init_queries(self):
+    def _init_queries(self) -> None:
         """Initialize Tree-sitter queries for function call detection."""
         if not self.parser.is_healthy():
             self.logger.error("TSParser not healthy, cannot initialize queries")
@@ -606,7 +606,7 @@ class CallExtractor:
 
     def _process_constructor_assignment(
         self, node: tree_sitter.Node, instance_types: dict[str, list[str]]
-    ):
+    ) -> None:
         """
         Process constructor assignment pattern: self.variable = ClassName(...)
 
@@ -653,7 +653,7 @@ class CallExtractor:
 
     def _process_type_hint(
         self, node: tree_sitter.Node, instance_types: dict[str, list[str]]
-    ):
+    ) -> None:
         """
         Process type hint pattern: self.variable: ClassName
 
@@ -695,7 +695,7 @@ class CallExtractor:
 
     def _process_type_hint_assignment(
         self, node: tree_sitter.Node, instance_types: dict[str, list[str]]
-    ):
+    ) -> None:
         """
         Process type hint with assignment pattern: self.variable: ClassName = ...
 
@@ -769,7 +769,7 @@ class CallExtractor:
 
     def _process_local_constructor_assignment(
         self, node: tree_sitter.Node, instance_types: dict[str, list[str]]
-    ):
+    ) -> None:
         """
         Process local assignment pattern: variable = ClassName(...)
         """

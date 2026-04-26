@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 _CHUNKER_CLASS = None
 
 
-def _get_chunker_class():
+def _get_chunker_class() -> Any:
     """Import and cache the SemanticChunker class; return None on failure."""
     global _CHUNKER_CLASS
     if _CHUNKER_CLASS is not None:
@@ -84,7 +84,7 @@ class DocChunk:
 
 
 class KeyDocIngester:
-    def __init__(self, config: dict[str, Any], embedder: CodeEmbedder):
+    def __init__(self, config: dict[str, Any], embedder: CodeEmbedder) -> None:
         self.config = config
         self.embedder = embedder
         cfg = config.get("docs_integration", {}) or {}
@@ -294,7 +294,7 @@ class KeyDocIngester:
 
         return chunks
 
-    def _ensure_chunker(self):
+    def _ensure_chunker(self) -> Any:
         """Lazily initialize the SemanticChunker; return None on failure.
 
         Uses SentenceTransformerEmbeddings wrapping the project's configured
@@ -324,7 +324,7 @@ class KeyDocIngester:
             self._chunker = False
         return self._chunker
 
-    def _resolve_embedding_model(self):
+    def _resolve_embedding_model(self) -> Any:
         """Resolve the embedding model for Chonkie based on project config.
 
         Returns a SentenceTransformerEmbeddings instance when possible.

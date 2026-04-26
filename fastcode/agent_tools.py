@@ -14,7 +14,7 @@ from .path_utils import PathUtils
 class AgentTools:
     """Read-only tools for agent-based code exploration"""
 
-    def __init__(self, repo_root: str):
+    def __init__(self, repo_root: str) -> None:
         """
         Initialize agent tools
 
@@ -193,7 +193,7 @@ class AgentTools:
             normalized_file_pattern = file_pattern.lstrip("./").replace("\\", "/")
 
             # Define conversion function (Helper)
-            def _compile_glob(pattern):
+            def _compile_glob(pattern: str) -> re.Pattern[str]:
                 # Convert glob (**/*.py) to regex
                 parts = pattern.split("**")
                 regex_parts = []
@@ -359,40 +359,42 @@ class AgentTools:
 
                 # Auto-retry with recursive pattern if no results found
                 # and pattern looks like it should be recursive (e.g., "dir/*.py" -> "dir/**/*.py")
-            if len(results) == 0 and file_pattern != "*" and (
-                "**" not in file_pattern
-                and "/" in file_pattern
-                and "*" in file_pattern
+            if (
+                len(results) == 0
+                and file_pattern != "*"
+                and (
+                    "**" not in file_pattern
+                    and "/" in file_pattern
+                    and "*" in file_pattern
+                )
             ):
-                    # Pattern like "src/_pytest/*.py" or "dir/subdir/*.ext"
-                    # Try converting to recursive: "src/_pytest/**/*.py"
-                    parts = file_pattern.rsplit("/", 1)
-                    if len(parts) == 2:
-                        dir_part, file_part = parts
-                        recursive_pattern = f"{dir_part}/**/{file_part}"
+                # Pattern like "src/_pytest/*.py" or "dir/subdir/*.ext"
+                # Try converting to recursive: "src/_pytest/**/*.py"
+                parts = file_pattern.rsplit("/", 1)
+                if len(parts) == 2:
+                    dir_part, file_part = parts
+                    recursive_pattern = f"{dir_part}/**/{file_part}"
 
-                        self.logger.info(
-                            f"No results with pattern '{file_pattern}', "
-                            f"auto-retrying with recursive pattern '{recursive_pattern}'"
-                        )
+                    self.logger.info(
+                        f"No results with pattern '{file_pattern}', "
+                        f"auto-retrying with recursive pattern '{recursive_pattern}'"
+                    )
 
-                        # Recursively call with the new pattern (only once, to avoid infinite loop)
-                        return self.search_codebase(
-                            search_term=search_term,
-                            file_pattern=recursive_pattern,
-                            root_path=root_path,
-                            max_results=max_results,
-                            case_sensitive=case_sensitive,
-                            use_regex=use_regex,
-                        )
+                    # Recursively call with the new pattern (only once, to avoid infinite loop)
+                    return self.search_codebase(
+                        search_term=search_term,
+                        file_pattern=recursive_pattern,
+                        root_path=root_path,
+                        max_results=max_results,
+                        case_sensitive=case_sensitive,
+                        use_regex=use_regex,
+                    )
 
             # Add debug info if still no results found
             debug_info = {}
             if len(results) == 0:
                 debug_info["files_searched"] = files_searched
-                debug_info["search_root"] = os.path.relpath(
-                    search_root, self.repo_root
-                )
+                debug_info["search_root"] = os.path.relpath(search_root, self.repo_root)
                 if files_searched == 0:
                     debug_info["hint"] = (
                         "No files matched the file_pattern even after auto-retry with recursive pattern"

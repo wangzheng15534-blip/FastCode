@@ -17,7 +17,7 @@ from .llm_utils import openai_chat_completion
 class RepositorySelector:
     """Use LLM to select relevant repositories and files based on user query"""
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.gen_config = config.get("generation", {})
         self.logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class RepositorySelector:
         # Initialize LLM client
         self.llm_client = self._initialize_client()
 
-    def _initialize_client(self):
+    def _initialize_client(self) -> Any:
         """Initialize LLM client"""
         try:
             if self.provider == "openai":
@@ -415,7 +415,7 @@ class RepositorySelector:
                 return name
 
         # 3. token-overlap ratio (Jaccard)
-        def _tokens(s: str):
+        def _tokens(s: str) -> set[str]:
             return set(re.split(r"[\W_]+", s.lower())) - {""}
 
         cand_tokens = _tokens(norm_candidate)

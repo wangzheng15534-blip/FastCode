@@ -21,7 +21,7 @@ from .utils import ensure_dir
 class CodeGraphBuilder:
     """Build various code relationship graphs"""
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.graph_config = config.get("graph", {})
         self.logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ class CodeGraphBuilder:
         elements: list[CodeElement],
         module_resolver: ModuleResolver | None = None,
         symbol_resolver: SymbolResolver | None = None,
-    ):
+    ) -> None:
         """
         Build all configured graphs
 
@@ -152,7 +152,7 @@ class CodeGraphBuilder:
 
     def _build_dependency_graph(
         self, elements: list[CodeElement], module_resolver: ModuleResolver | None = None
-    ):
+    ) -> None:
         """
         Build file dependency graph based on imports using precise module resolution.
 
@@ -263,7 +263,7 @@ class CodeGraphBuilder:
 
     def _build_inheritance_graph(
         self, elements: list[CodeElement], symbol_resolver: SymbolResolver | None = None
-    ):
+    ) -> None:
         """
         Build class inheritance graph using precise symbol resolution
 
@@ -360,7 +360,7 @@ class CodeGraphBuilder:
 
     def _fallback_to_local_inheritance_resolution(
         self, elem: CodeElement, base_name: str, elements: list[CodeElement]
-    ):
+    ) -> None:
         """
         Fallback method for local-only inheritance resolution.
         [FIXED] Now repo-aware to prevent multi-repo collisions.
@@ -407,7 +407,7 @@ class CodeGraphBuilder:
 
     def _build_call_graph(
         self, elements: list[CodeElement], symbol_resolver: SymbolResolver | None = None
-    ):
+    ) -> None:
         """
         Build function call graph using CallExtractor and SymbolResolver (Task 4.4)
 
@@ -648,7 +648,7 @@ class CodeGraphBuilder:
 
         return stats
 
-    def save(self, name: str = "index"):
+    def save(self, name: str = "index") -> bool:
         """
         Save graph data to disk
 

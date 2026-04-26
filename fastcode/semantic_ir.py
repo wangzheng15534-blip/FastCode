@@ -227,7 +227,9 @@ class IRCodeUnit:
         payload = dict(data)
         payload["source_set"] = _normalize_set(payload.get("source_set"))
         payload["metadata"] = safe_jsonable(payload.get("metadata", {}))
-        payload["anchor_symbol_ids"] = [str(v) for v in payload.get("anchor_symbol_ids", []) if v]
+        payload["anchor_symbol_ids"] = [
+            str(v) for v in payload.get("anchor_symbol_ids", []) if v
+        ]
         payload["candidate_anchor_symbol_ids"] = [
             str(v) for v in payload.get("candidate_anchor_symbol_ids", []) if v
         ]
@@ -365,7 +367,7 @@ class IRSnapshot:
         occurrences: list[IROccurrence] | None = None,
         edges: list[IREdge] | None = None,
         attachments: list[IRAttachment] | None = None,
-    ):
+    ) -> None:
         self.repo_name = repo_name
         self.snapshot_id = snapshot_id
         self.branch = branch
@@ -445,7 +447,9 @@ class IRSnapshot:
                 end_line=sym.end_line,
                 end_col=sym.end_col,
                 primary_anchor_symbol_id=sym.external_symbol_id,
-                anchor_symbol_ids=[sym.external_symbol_id] if sym.external_symbol_id else [],
+                anchor_symbol_ids=[sym.external_symbol_id]
+                if sym.external_symbol_id
+                else [],
                 anchor_coverage=1.0 if sym.external_symbol_id else 0.0,
                 source_set=set(sym.source_set),
                 metadata=safe_jsonable(sym.metadata),
@@ -463,7 +467,11 @@ class IRSnapshot:
                         relation_type="contain",
                         resolution_state="structural",
                         support_sources=set(sym.source_set),
-                        metadata={"source": sorted(sym.source_set)[0] if sym.source_set else ""},
+                        metadata={
+                            "source": sorted(sym.source_set)[0]
+                            if sym.source_set
+                            else ""
+                        },
                     )
                 )
 
@@ -479,7 +487,9 @@ class IRSnapshot:
                     start_col=occ.start_col,
                     end_line=occ.end_line,
                     end_col=occ.end_col,
-                    metadata=safe_jsonable({"doc_id": occ.doc_id, **(occ.metadata or {})}),
+                    metadata=safe_jsonable(
+                        {"doc_id": occ.doc_id, **(occ.metadata or {})}
+                    ),
                 )
             )
 
@@ -492,29 +502,44 @@ class IRSnapshot:
                     relation_type=edge.edge_type,
                     resolution_state=_confidence_to_resolution(edge.confidence),
                     support_sources={edge.source} if edge.source else set(),
-                    metadata=safe_jsonable({"doc_id": edge.doc_id, **(edge.metadata or {}), "source": edge.source}),
+                    metadata=safe_jsonable(
+                        {
+                            "doc_id": edge.doc_id,
+                            **(edge.metadata or {}),
+                            "source": edge.source,
+                        }
+                    ),
                 )
             )
 
         snapshot_annotations = []
         for attachment in attachments:
-            if attachment.target_type == "symbol" and attachment.target_id in unit_by_id:
+            if (
+                attachment.target_type == "symbol"
+                and attachment.target_id in unit_by_id
+            ):
                 unit = unit_by_id[attachment.target_id]
                 if attachment.attachment_type == "summary":
-                    unit.summary = str((attachment.payload or {}).get("text") or unit.summary or "")
+                    unit.summary = str(
+                        (attachment.payload or {}).get("text") or unit.summary or ""
+                    )
                 elif attachment.attachment_type == "embedding":
                     embeddings.append(
                         IRUnitEmbedding(
                             embedding_id=attachment.attachment_id,
                             unit_id=attachment.target_id,
                             source=attachment.source,
-                            vector=safe_jsonable((attachment.payload or {}).get("vector")),
+                            vector=safe_jsonable(
+                                (attachment.payload or {}).get("vector")
+                            ),
                             embedding_text=(attachment.payload or {}).get("text"),
                             metadata=safe_jsonable(attachment.metadata),
                         )
                     )
                 else:
-                    unit.metadata.setdefault("annotations", []).append(attachment.to_dict())
+                    unit.metadata.setdefault("annotations", []).append(
+                        attachment.to_dict()
+                    )
             elif attachment.target_type == "snapshot":
                 snapshot_annotations.append(attachment.to_dict())
         if snapshot_annotations:
@@ -553,7 +578,11 @@ class IRSnapshot:
             if unit.kind in {"file", "doc"}:
                 continue
             metadata = safe_jsonable(unit.metadata)
-            alias_ids = list(dict.fromkeys((metadata.get("aliases") or []) + unit.candidate_anchor_symbol_ids))
+            alias_ids = list(
+                dict.fromkeys(
+                    (metadata.get("aliases") or []) + unit.candidate_anchor_symbol_ids
+                )
+            )
             if alias_ids:
                 metadata["aliases"] = alias_ids
             symbols.append(
@@ -579,7 +608,9 @@ class IRSnapshot:
 
     @property
     def occurrences(self) -> list[IROccurrence]:
-        file_units = {unit.path: unit.unit_id for unit in self.units if unit.kind == "file"}
+        file_units = {
+            unit.path: unit.unit_id for unit in self.units if unit.kind == "file"
+        }
         logical: dict[tuple[str, str, str, int, int, int, int], IROccurrence] = {}
         occurrences: list[IROccurrence] = []
         for support in self.supports:
@@ -588,7 +619,9 @@ class IRSnapshot:
             meta = support.metadata or {}
             doc_id = str(meta.get("doc_id") or file_units.get(support.path or "", ""))
             if not doc_id:
-                unit = next((u for u in self.units if u.unit_id == support.unit_id), None)
+                unit = next(
+                    (u for u in self.units if u.unit_id == support.unit_id), None
+                )
                 if unit:
                     doc_id = file_units.get(unit.path, "")
             if not doc_id:
@@ -615,7 +648,9 @@ class IRSnapshot:
                 occurrence.end_col,
             )
             existing = logical.get(key)
-            if existing is None or (existing.source != "scip" and occurrence.source == "scip"):
+            if existing is None or (
+                existing.source != "scip" and occurrence.source == "scip"
+            ):
                 logical[key] = occurrence
         occurrences.extend(logical.values())
         return occurrences
@@ -649,7 +684,9 @@ class IRSnapshot:
                         target_id=unit.unit_id,
                         target_type="symbol",
                         attachment_type="summary",
-                        source="fc_structure" if "fc_structure" in unit.source_set else "derived",
+                        source="fc_structure"
+                        if "fc_structure" in unit.source_set
+                        else "derived",
                         confidence="derived",
                         payload={"text": unit.summary},
                         metadata={"unit_kind": unit.kind},
@@ -702,7 +739,9 @@ class IRSnapshot:
                 units=[IRCodeUnit.from_dict(v) for v in data.get("units", [])],
                 supports=[IRUnitSupport.from_dict(v) for v in data.get("supports", [])],
                 relations=[IRRelation.from_dict(v) for v in data.get("relations", [])],
-                embeddings=[IRUnitEmbedding.from_dict(v) for v in data.get("embeddings", [])],
+                embeddings=[
+                    IRUnitEmbedding.from_dict(v) for v in data.get("embeddings", [])
+                ],
                 metadata=safe_jsonable(data.get("metadata", {})),
             )
         return cls(
@@ -713,8 +752,12 @@ class IRSnapshot:
             tree_id=data.get("tree_id"),
             documents=[IRDocument.from_dict(v) for v in data.get("documents", [])],
             symbols=[IRSymbol.from_dict(v) for v in data.get("symbols", [])],
-            occurrences=[IROccurrence.from_dict(v) for v in data.get("occurrences", [])],
+            occurrences=[
+                IROccurrence.from_dict(v) for v in data.get("occurrences", [])
+            ],
             edges=[IREdge.from_dict(v) for v in data.get("edges", [])],
-            attachments=[IRAttachment.from_dict(v) for v in data.get("attachments", [])],
+            attachments=[
+                IRAttachment.from_dict(v) for v in data.get("attachments", [])
+            ],
             metadata=safe_jsonable(data.get("metadata", {})),
         )

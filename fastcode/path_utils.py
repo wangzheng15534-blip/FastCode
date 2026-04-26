@@ -149,7 +149,7 @@ def normalize_repo_root(repo_root: str) -> str:
 class PathUtils:
     """Centralized path handling utilities for agent-based code exploration"""
 
-    def __init__(self, repo_root: str):
+    def __init__(self, repo_root: str) -> None:
         """
         Initialize path utilities
 

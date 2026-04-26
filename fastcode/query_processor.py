@@ -48,7 +48,7 @@ class ProcessedQuery:
 class QueryProcessor:
     """Process user queries to improve retrieval with LLM-based enhancement"""
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.query_config = config.get("query", {})
         self.gen_config = config.get("generation", {})
@@ -137,7 +137,7 @@ class QueryProcessor:
             "testing",
         }
 
-    def _initialize_llm_client(self):
+    def _initialize_llm_client(self) -> Any:
         """Initialize LLM client for query enhancement"""
         try:
             if self.provider == "openai":

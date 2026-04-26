@@ -35,7 +35,7 @@ class DBRuntime:
         postgres_dsn: str | None = None,
         pool_min: int = 1,
         pool_max: int = 8,
-    ):
+    ) -> None:
         self.backend = (backend or "sqlite").lower()
         self.sqlite_path = sqlite_path
         self.postgres_dsn = postgres_dsn
@@ -131,7 +131,7 @@ class DBRuntime:
         finally:
             conn.close()
 
-    def execute(self, conn: Any, sql: str, params: tuple = ()):
+    def execute(self, conn: Any, sql: str, params: tuple[Any, ...] = ()) -> Any:
         cur = conn.cursor()
         cur.execute(self.adapt_sql(sql), params)
         return cur

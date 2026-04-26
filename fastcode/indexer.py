@@ -51,7 +51,7 @@ class CodeIndexer:
         parser: CodeParser,
         embedder: CodeEmbedder,
         vector_store: VectorStore | None = None,
-    ):
+    ) -> None:
         self.config = config
         self.indexing_config = config.get("indexing", {})
         self.logger = logging.getLogger(__name__)
@@ -170,7 +170,9 @@ class CodeIndexer:
         elements_with_embeddings = self.embedder.embed_code_elements(element_dicts)
 
         # Update elements with embeddings
-        for elem, elem_dict in zip(self.elements, elements_with_embeddings, strict=True):
+        for elem, elem_dict in zip(
+            self.elements, elements_with_embeddings, strict=True
+        ):
             elem.metadata["embedding"] = elem_dict.get("embedding")
             elem.metadata["embedding_text"] = elem_dict.get("embedding_text")
 
@@ -223,7 +225,9 @@ class CodeIndexer:
             element_dicts = [elem.to_dict() for elem in self.elements]
             elements_with_embeddings = self.embedder.embed_code_elements(element_dicts)
 
-            for elem, elem_dict in zip(self.elements, elements_with_embeddings, strict=True):
+            for elem, elem_dict in zip(
+                self.elements, elements_with_embeddings, strict=True
+            ):
                 elem.metadata["embedding"] = elem_dict.get("embedding")
                 elem.metadata["embedding_text"] = elem_dict.get("embedding_text")
 
@@ -231,7 +235,7 @@ class CodeIndexer:
 
     def _index_file(
         self, file_info: dict[str, Any], content: str, parse_result: FileParseResult
-    ):
+    ) -> None:
         """Index a single file at multiple levels"""
         file_path = file_info["path"]
         relative_path = file_info["relative_path"]
@@ -283,11 +287,11 @@ class CodeIndexer:
 
         # Documentation level
         if "documentation" in self.levels and parse_result.module_docstring:
-                self._add_documentation_element(file_path, relative_path, parse_result)
+            self._add_documentation_element(file_path, relative_path, parse_result)
 
     def _add_file_level_element(
         self, file_info: dict[str, Any], content: str, parse_result: FileParseResult
-    ):
+    ) -> None:
         """Add file-level index element"""
         file_path = file_info["path"]
         relative_path = file_info["relative_path"]
@@ -335,7 +339,7 @@ class CodeIndexer:
         content: str,
         parse_result: FileParseResult,
         class_info: Any,
-    ):
+    ) -> None:
         """Add class-level index element"""
         # Extract class code
         class_code = self._extract_lines(
@@ -385,7 +389,7 @@ class CodeIndexer:
         content: str,
         parse_result: FileParseResult,
         func_info: Any,
-    ):
+    ) -> None:
         """Add function-level index element"""
         # Extract function code
         func_code = self._extract_lines(
@@ -440,7 +444,7 @@ class CodeIndexer:
 
     def _add_documentation_element(
         self, file_path: str, relative_path: str, parse_result: FileParseResult
-    ):
+    ) -> None:
         """Add documentation-level index element"""
         element = CodeElement(
             id=self._generate_id("doc", relative_path),
@@ -464,7 +468,7 @@ class CodeIndexer:
 
         self.elements.append(element)
 
-    def _save_repository_overview(self, repo_overview: dict[str, Any]):
+    def _save_repository_overview(self, repo_overview: dict[str, Any]) -> None:
         """Save repository overview to separate storage (not in regular elements)"""
         repo_name = repo_overview.get("repo_name", "Unknown")
         summary = repo_overview.get("summary", "")

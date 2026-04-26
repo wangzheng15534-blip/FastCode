@@ -18,7 +18,7 @@ class SnapshotSymbolMaps:
 
 
 class SnapshotSymbolIndex:
-    def __init__(self):
+    def __init__(self) -> None:
         self._by_snapshot: dict[str, SnapshotSymbolMaps] = {}
 
     def register_snapshot(self, snapshot: IRSnapshot) -> None:

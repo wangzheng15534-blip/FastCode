@@ -16,7 +16,7 @@ from diskcache import Cache as DiskCache
 class CacheManager:
     """Manage caching for FastCode"""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.cache_config = config.get("cache", {})
         self.logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ class CacheManager:
         if self.enabled:
             self._initialize_cache()
 
-    def _initialize_cache(self):
+    def _initialize_cache(self) -> None:
         """Initialize cache backend"""
         if self.backend == "disk":
             Path(self.cache_directory).mkdir(parents=True, exist_ok=True)

@@ -16,7 +16,7 @@ from .utils import ensure_dir
 class VectorStore:
     """Vector database for code embeddings using FAISS"""
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.vector_config = config.get("vector_store", {})
         self.logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ class VectorStore:
                 "VectorStore running in in-memory mode; persistence disabled."
             )
 
-    def initialize(self, dimension: int):
+    def initialize(self, dimension: int) -> None:
         """
         Initialize the vector store
 
@@ -96,7 +96,7 @@ class VectorStore:
             f"Initialized {self.index_type} index with {self.distance_metric} distance"
         )
 
-    def add_vectors(self, vectors: np.ndarray, metadata: list[dict[str, Any]]):
+    def add_vectors(self, vectors: np.ndarray, metadata: list[dict[str, Any]]) -> None:
         """
         Add vectors to the store
 
@@ -205,7 +205,7 @@ class VectorStore:
         overview_content: str,
         embedding: np.ndarray,
         metadata: dict[str, Any],
-    ):
+    ) -> None:
         """
         Save a single repository overview to a separate file
 
@@ -469,7 +469,7 @@ class VectorStore:
                 indices.append(i)
         return indices
 
-    def save(self, name: str = "index"):
+    def save(self, name: str = "index") -> None:
         """
         Save index and metadata to disk
 
@@ -554,7 +554,7 @@ class VectorStore:
             self.logger.error(f"Failed to load vector store: {e}")
             return False
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all vectors and metadata"""
         if self.dimension:
             self.initialize(self.dimension)
@@ -638,7 +638,7 @@ class VectorStore:
             self.logger.error(f"Failed to merge from {index_name}: {e}")
             return False
 
-    def delete_by_filter(self, filter_func) -> int:
+    def delete_by_filter(self, filter_func: Any) -> int:
         """
         Delete vectors matching a filter function
 
@@ -794,7 +794,7 @@ class VectorStore:
 
         return results
 
-    def invalidate_scan_cache(self):
+    def invalidate_scan_cache(self) -> None:
         """Invalidate the scan cache (call this when indexes change)"""
         self._index_scan_cache = None
         self.logger.debug("Invalidated index scan cache")

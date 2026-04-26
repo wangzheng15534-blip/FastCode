@@ -41,7 +41,7 @@ def _clean_words(text: str) -> list[str]:
 class ProjectionTransformer:
     ALGO_VERSION = "algo_v2_hierarchical"
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any]) -> None:
         proj_cfg = config.get("projection", {})
         self.max_entity_hops = int(proj_cfg.get("max_entity_hops", 2))
         self.max_query_hops = int(proj_cfg.get("max_query_hops", 2))

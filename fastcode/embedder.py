@@ -16,7 +16,7 @@ from sentence_transformers import SentenceTransformer
 class CodeEmbedder:
     """Generate embeddings for code using sentence transformers"""
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.embedding_config = config.get("embedding", {})
         self.logger = logging.getLogger(__name__)

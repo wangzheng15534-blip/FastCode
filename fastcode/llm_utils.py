@@ -1,7 +1,9 @@
+from typing import Any
+
 from openai import BadRequestError
 
 
-def openai_chat_completion(client, *, max_tokens, **kwargs):
+def openai_chat_completion(client: Any, *, max_tokens: int, **kwargs: Any) -> Any:
     """Call OpenAI-compatible chat completions with max_tokens fallback.
 
     Tries max_tokens first (broadest compatibility), falls back to

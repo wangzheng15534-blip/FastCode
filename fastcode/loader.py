@@ -24,7 +24,7 @@ from .utils import (
 class RepositoryLoader:
     """Load repositories from URLs or local paths"""
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.repo_config = config.get("repository", {})
         self.logger = logging.getLogger(__name__)
@@ -385,13 +385,13 @@ class RepositoryLoader:
 
         return info
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up temporary directories"""
         if self.temp_dir and os.path.exists(self.temp_dir):
             self.logger.info(f"Cleaning up temporary directory: {self.temp_dir}")
             shutil.rmtree(self.temp_dir)
             self.temp_dir = None
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Cleanup on deletion"""
         self.cleanup()

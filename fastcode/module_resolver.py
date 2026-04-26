@@ -10,7 +10,7 @@ class ModuleResolver:
     Returns None for third-party libraries (external to current repository).
     """
 
-    def __init__(self, index: GlobalIndexBuilder):
+    def __init__(self, index: GlobalIndexBuilder) -> None:
         """
         Initialize resolver with dependency injection.
 

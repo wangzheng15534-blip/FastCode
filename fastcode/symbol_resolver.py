@@ -23,7 +23,7 @@ class SymbolResolver:
 
     def __init__(
         self, global_index: GlobalIndexBuilder, module_resolver: ModuleResolver
-    ):
+    ) -> None:
         """
         Initialize SymbolResolver with dependency injection
 

@@ -16,7 +16,7 @@ from .db_runtime import DBRuntime
 
 
 class PgRetrievalStore:
-    def __init__(self, db_runtime: DBRuntime, config: dict[str, Any]):
+    def __init__(self, db_runtime: DBRuntime, config: dict[str, Any]) -> None:
         self.db_runtime = db_runtime
         self.config = config
         self.logger = logging.getLogger(__name__)
@@ -144,7 +144,7 @@ class PgRetrievalStore:
                 # Strip numpy arrays and other non-serializable values from metadata
                 # before JSON encoding. Embeddings are stored separately in the
                 # embedding/embedding_arr columns.
-                def _make_json_safe(val):
+                def _make_json_safe(val: Any) -> Any:
                     if isinstance(val, np.ndarray):
                         return val.tolist()
                     if isinstance(val, (np.integer,)):

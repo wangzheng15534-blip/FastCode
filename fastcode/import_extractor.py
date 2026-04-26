@@ -28,7 +28,7 @@ class ImportExtractor:
         (wildcard_import) @from.item)
     """
 
-    def __init__(self, parser: TSParser | None = None):
+    def __init__(self, parser: TSParser | None = None) -> None:
         self.logger = logging.getLogger(__name__)
         self.ts_parser = parser or TSParser()
 
@@ -99,7 +99,7 @@ class ImportExtractor:
     def _parse_aliased_import(self, node: Node, code: str) -> tuple[str, str | None]:
         """Parse name or aliased_import"""
 
-        def get_text(n):
+        def get_text(n: Node) -> str:
             return code[n.start_byte : n.end_byte]
 
         if node.type == "aliased_import":

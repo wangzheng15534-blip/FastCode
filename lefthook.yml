@@ -1,4 +1,9 @@
-# Lefthook for FastCode - Parallel High-Rigor Checks
+# Lefthook for FastCode
+#
+# Setup (run once):
+#   git config --unset-all --local core.hooksPath
+#   lefthook install
+
 pre-commit:
   parallel: true
   commands:
@@ -10,13 +15,17 @@ pre-commit:
       run: uv run ruff format {staged_files}
     typos:
       run: typos
+    typecheck:
+      glob: "*.py"
+      run: uv run pyright fastcode/src/ fastcode/tests/ tests/
+    unit-test:
+      glob: "*.py"
+      run: uv run pytest fastcode/tests/ tests/ -q -n auto --timeout=30 -m "not slow and not property and not snapshot and not integration"
 
 pre-push:
   parallel: true
   commands:
-    pyright:
-      run: uv run pyright fastcode/src/ fastcode/tests/ tests/
-    tests:
-      run: uv run pytest fastcode/tests/ tests/ -n auto
-    security:
-      run: uv run pip-audit
+    gitleaks:
+      run: gitleaks protect --staged
+    extended-tests:
+      run: uv run pytest fastcode/tests/property/ fastcode/tests/snapshots/ fastcode/tests/test_*parametrize* -q -n auto --timeout=60

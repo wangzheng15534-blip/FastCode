@@ -83,6 +83,7 @@ dev = [
     "lefthook",
     "pytest-timeout",
     "pytest-subprocess",
+    "mutmut",
 ]
 scip = [
     "protobuf>=6.0",

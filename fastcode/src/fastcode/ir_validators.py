@@ -35,7 +35,9 @@ def validate_snapshot(snapshot: IRSnapshot) -> list[str]:
         if not unit.source_set:
             errors.append(f"unit provenance missing: {unit.unit_id}")
         if unit.parent_unit_id and unit.parent_unit_id not in known_units:
-            errors.append(f"unit parent not found: {unit.unit_id} -> {unit.parent_unit_id}")
+            errors.append(
+                f"unit parent not found: {unit.unit_id} -> {unit.parent_unit_id}"
+            )
         if unit.primary_anchor_symbol_id:
             existing = anchor_owners.get(unit.primary_anchor_symbol_id)
             if existing and existing != unit.unit_id:
@@ -46,29 +48,38 @@ def validate_snapshot(snapshot: IRSnapshot) -> list[str]:
 
     for support in snapshot.supports:
         if support.unit_id not in known_units:
-            errors.append(f"support references missing unit_id: {support.support_id} -> {support.unit_id}")
+            errors.append(
+                f"support references missing unit_id: {support.support_id} -> {support.unit_id}"
+            )
         if not support.source:
             errors.append(f"support source missing: {support.support_id}")
 
     known_supports = set(support_ids)
     for relation in snapshot.relations:
         if relation.src_unit_id not in known_units:
-            errors.append(f"relation src not found: {relation.relation_id} -> {relation.src_unit_id}")
+            errors.append(
+                f"relation src not found: {relation.relation_id} -> {relation.src_unit_id}"
+            )
         if relation.dst_unit_id not in known_units:
-            errors.append(f"relation dst not found: {relation.relation_id} -> {relation.dst_unit_id}")
+            errors.append(
+                f"relation dst not found: {relation.relation_id} -> {relation.dst_unit_id}"
+            )
         if not relation.relation_type:
             errors.append(f"relation type missing: {relation.relation_id}")
         if not relation.support_sources and not (relation.metadata or {}).get("source"):
             errors.append(f"relation source missing: {relation.relation_id}")
         for support_id in relation.support_ids:
             if support_id not in known_supports:
-                errors.append(f"relation support not found: {relation.relation_id} -> {support_id}")
+                errors.append(
+                    f"relation support not found: {relation.relation_id} -> {support_id}"
+                )
 
     for embedding in snapshot.embeddings:
         if embedding.unit_id not in known_units:
-            errors.append(f"embedding references missing unit_id: {embedding.embedding_id} -> {embedding.unit_id}")
+            errors.append(
+                f"embedding references missing unit_id: {embedding.embedding_id} -> {embedding.unit_id}"
+            )
         if not embedding.source:
             errors.append(f"embedding source missing: {embedding.embedding_id}")
 
     return errors
-

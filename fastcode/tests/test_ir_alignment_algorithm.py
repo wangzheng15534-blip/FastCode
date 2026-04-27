@@ -28,7 +28,14 @@ def _class(unit_id: str, name: str, source: str = "fc_structure") -> IRCodeUnit:
     )
 
 
-def _method(unit_id: str, name: str, parent_id: str, start_line: int, end_line: int, source: str = "fc_structure") -> IRCodeUnit:
+def _method(
+    unit_id: str,
+    name: str,
+    parent_id: str,
+    start_line: int,
+    end_line: int,
+    source: str = "fc_structure",
+) -> IRCodeUnit:
     return IRCodeUnit(
         unit_id=unit_id,
         kind="method",
@@ -43,7 +50,9 @@ def _method(unit_id: str, name: str, parent_id: str, start_line: int, end_line: 
     )
 
 
-def _scip_method(unit_id: str, anchor: str, name: str, start_line: int, end_line: int, enclosing: str) -> tuple[IRCodeUnit, IRUnitSupport]:
+def _scip_method(
+    unit_id: str, anchor: str, name: str, start_line: int, end_line: int, enclosing: str
+) -> tuple[IRCodeUnit, IRUnitSupport]:
     unit = IRCodeUnit(
         unit_id=unit_id,
         kind="method",
@@ -128,9 +137,15 @@ def test_scip_occurrence_retargets_ref_to_enclosing_unit():
     ast = IRSnapshot(
         repo_name="r",
         snapshot_id="snap:1",
-        units=[_file(), _method("ast:method:caller", "caller", "doc:snap:1:a.py", 1, 20), _method("ast:method:callee", "callee", "doc:snap:1:a.py", 30, 40)],
+        units=[
+            _file(),
+            _method("ast:method:caller", "caller", "doc:snap:1:a.py", 1, 20),
+            _method("ast:method:callee", "callee", "doc:snap:1:a.py", 30, 40),
+        ],
     )
-    scip_callee, scip_support = _scip_method("scip:callee", "pkg/callee", "callee", 30, 40, "")
+    scip_callee, scip_support = _scip_method(
+        "scip:callee", "pkg/callee", "callee", 30, 40, ""
+    )
     scip_occ = IRUnitSupport(
         support_id="support:occ:1",
         unit_id="scip:callee",
@@ -151,10 +166,12 @@ def test_scip_occurrence_retargets_ref_to_enclosing_unit():
     )
 
     merged = merge_ir(ast, scip)
-    ref_relations = [relation for relation in merged.relations if relation.relation_type == "ref"]
+    ref_relations = [
+        relation for relation in merged.relations if relation.relation_type == "ref"
+    ]
 
     assert any(
-        relation.src_unit_id == "ast:method:caller" and relation.dst_unit_id == "ast:method:callee"
+        relation.src_unit_id == "ast:method:caller"
+        and relation.dst_unit_id == "ast:method:callee"
         for relation in ref_relations
     )
-

@@ -51,6 +51,48 @@ ignore = [
     "PLR2004", # design: magic-value-comparison -- domain thresholds are tuning knobs, not constants
 ]
 
+# ---------------------------------------------------------------------------
+# Pyright: workspace-level type checking
+# ---------------------------------------------------------------------------
+
+[tool.pyright]
+include = ["fastcode/src", "fastcode/tests", "tests"]
+exclude = ["**/repos", "**/repo_backup", "**/_bmad-output", "**/_fastcode"]
+extraPaths = [".", "./fastcode/src"]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "strict"
+reportUnnecessaryComparison = true
+reportUnusedVariable = true
+reportMissingImports = "warning"
+reportMissingTypeStubs = "warning"
+reportUnknownVariableType = "warning"
+reportUnknownMemberType = "warning"
+reportUnknownArgumentType = "warning"
+reportUnknownLambdaType = "warning"
+reportUnknownParameterType = "warning"
+reportPrivateUsage = "none"
+reportDeprecated = "warning"
+
+# Tests: known-good literals, untyped fixtures/mocks — Rust cfg(test) equivalent
+[[tool.pyright.executionEnvironments]]
+root = "fastcode/tests"
+reportOptionalSubscript = "none"
+reportOptionalMemberAccess = "none"
+reportOptionalOperand = "none"
+reportOptionalIterable = "none"
+reportOperatorIssue = "none"
+reportAttributeAccessIssue = "none"
+reportArgumentType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownLambdaType = "none"
+reportUnknownParameterType = "none"
+reportMissingParameterType = "none"   # fixtures, factories, hypothesis @given — untyped by design
+reportUnusedFunction = "none"
+reportUnusedClass = "none"
+
 [tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false
 mark-parentheses = false
@@ -58,6 +100,11 @@ parametrize-names-type = "tuple"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
+    "S101",    # design: assert is the test mechanism, not a runtime invariant
+    "ANN201",  # design: test functions are named by convention, return type adds noise
+    "ANN003",  # design: test factory **kwargs are intentionally untyped for flexibility
+]
+"fastcode/tests/**/*.py" = [
     "S101",    # design: assert is the test mechanism, not a runtime invariant
     "ANN201",  # design: test functions are named by convention, return type adds noise
     "ANN003",  # design: test factory **kwargs are intentionally untyped for flexibility

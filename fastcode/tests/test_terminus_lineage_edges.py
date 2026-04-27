@@ -40,7 +40,9 @@ def test_terminus_payload_includes_symbol_version_from_edges():
         },
         manifest={"manifest_id": "m2"},
         git_meta={},
-        previous_snapshot_symbols={"ext:sym:1": "symbol:snap:repo:c1:scip:snap:repo:c1:ext:sym:1"},
+        previous_snapshot_symbols={
+            "ext:sym:1": "symbol:snap:repo:c1:scip:snap:repo:c1:ext:sym:1"
+        },
     )
     version_edges = [e for e in payload["edges"] if e["type"] == "symbol_version_from"]
     assert len(version_edges) == 1

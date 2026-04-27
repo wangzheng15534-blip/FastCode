@@ -76,7 +76,9 @@ class SCIPDocument:
             path=str(data.get("path") or ""),
             language=data.get("language"),
             symbols=[SCIPSymbol.from_dict(s) for s in (data.get("symbols") or [])],
-            occurrences=[SCIPOccurrence.from_dict(o) for o in (data.get("occurrences") or [])],
+            occurrences=[
+                SCIPOccurrence.from_dict(o) for o in (data.get("occurrences") or [])
+            ],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -100,9 +102,7 @@ class SCIPIndex:
         reserved = {"documents", "indexer_name", "indexer_version"}
         metadata = {k: v for k, v in data.items() if k not in reserved}
         raw_docs = data.get("documents") or []
-        documents = [
-            SCIPDocument.from_dict(d) for d in raw_docs if isinstance(d, dict)
-        ]
+        documents = [SCIPDocument.from_dict(d) for d in raw_docs if isinstance(d, dict)]
         return cls(
             documents=documents,
             indexer_name=data.get("indexer_name"),

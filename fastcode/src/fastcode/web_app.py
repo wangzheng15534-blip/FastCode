@@ -356,7 +356,8 @@ async def upload_repository_zip(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="FastCode not initialized")
 
     # Validate file type
-    if not file.filename.endswith(".zip"):
+    filename = file.filename
+    if not filename or not filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only ZIP files are supported")
 
     # Check file size (100MB limit)
@@ -373,7 +374,7 @@ async def upload_repository_zip(file: UploadFile = File(...)):
 
     try:
         # Extract repository name from ZIP filename (remove .zip extension)
-        repo_name = file.filename.rsplit(".", 1)[0]
+        repo_name = filename.rsplit(".", 1)[0]
         # Clean repository name (remove common suffixes like -main, -master)
         for suffix in ["-main", "-master", "_main", "_master"]:
             if repo_name.endswith(suffix):
@@ -394,9 +395,9 @@ async def upload_repository_zip(file: UploadFile = File(...)):
 
         # Create temporary directory for ZIP extraction
         temp_dir = tempfile.mkdtemp(prefix="fastcode_upload_")
-        zip_path = Path(temp_dir) / file.filename
+        zip_path = Path(temp_dir) / filename
 
-        logger.info(f"Saving uploaded ZIP file: {file.filename} ({file_size} bytes)")
+        logger.info(f"Saving uploaded ZIP file: {filename} ({file_size} bytes)")
 
         # Save uploaded file to temp directory
         with open(zip_path, "wb") as buffer:
@@ -539,7 +540,9 @@ async def query_repository_stream(request: QueryRequest):
     if fastcode_instance is None:
         raise HTTPException(status_code=500, detail="FastCode not initialized")
 
-    if not fastcode_instance.repo_indexed:
+    fc = fastcode_instance  # narrowed for closure capture
+
+    if not fc.repo_indexed:
         raise HTTPException(status_code=400, detail="Repository not indexed")
 
     # Derive session handling
@@ -554,7 +557,7 @@ async def query_repository_stream(request: QueryRequest):
     async def event_generator():
         """Generate SSE events from query_stream"""
         try:
-            for chunk, metadata in fastcode_instance.query_stream(
+            for chunk, metadata in fc.query_stream(
                 request.question,
                 request.filters,
                 repo_filter=request.repo_filter,

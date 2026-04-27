@@ -75,7 +75,7 @@ class FastCode:
             config_path: Path to configuration file (default: config/config.yaml)
         """
         # Resolve FastCode project root from package location.
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
         # Load configuration
         if config_path is None:
@@ -83,7 +83,7 @@ class FastCode:
             possible_paths = [
                 "config/config.yaml",
                 "../config/config.yaml",
-                os.path.join(os.path.dirname(__file__), "../config/config.yaml"),
+                os.path.join(os.path.dirname(__file__), "../../config/config.yaml"),
             ]
             for path in possible_paths:
                 if os.path.exists(path):
@@ -888,11 +888,7 @@ class FastCode:
             temp_store.save(artifact_key)
 
             self.index_run_store.mark_status(run_id, "persisting")
-            if (
-                not self.snapshot_store.validate_fencing_token(
-                    lock_name, lock_token
-                )
-            ):
+            if not self.snapshot_store.validate_fencing_token(lock_name, lock_token):
                 raise RuntimeError(f"stale_lock_detected_for_snapshot:{snapshot_id}")
             self.snapshot_store.save_snapshot(
                 merged_snapshot,
@@ -1225,7 +1221,9 @@ class FastCode:
                 (repo_name,),
             ).fetchall()
         return [
-            d for r in rows if r
+            d
+            for r in rows
+            if r
             for d in [self.snapshot_store.db_runtime.row_to_dict(r)]
             if d is not None
         ]
@@ -1340,17 +1338,13 @@ class FastCode:
         target_id: str | None,
         filters: dict[str, Any] | None,
     ) -> str:
-        return projection_scope_key(
-            scope_kind, snapshot_id, query, target_id, filters
-        )
+        return projection_scope_key(scope_kind, snapshot_id, query, target_id, filters)
 
     @staticmethod
     def _projection_params_hash(
         scope: ProjectionScope, projection_algo_version: str = "v1"
     ) -> str:
-        return projection_params_hash(
-            scope.to_dict(), projection_algo_version
-        )
+        return projection_params_hash(scope.to_dict(), projection_algo_version)
 
     def _resolve_snapshot_id(
         self,

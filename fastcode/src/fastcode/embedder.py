@@ -107,7 +107,9 @@ class CodeEmbedder:
             encode_kwargs["pool"] = None
 
         if self.model is None:
-            raise RuntimeError("Model not loaded (provider != ollama but model is None)")
+            raise RuntimeError(
+                "Model not loaded (provider != ollama but model is None)"
+            )
         raw: Any = self.model.encode(texts, **encode_kwargs)
         return cast(np.ndarray, raw)
 

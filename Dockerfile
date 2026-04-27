@@ -24,7 +24,7 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 RUN mkdir -p /app/repos /app/data /app/logs
 
 # Copy application code (changes here won't re-download the model)
-COPY fastcode/ fastcode/
+COPY fastcode/src/fastcode/ fastcode/
 COPY api.py ./
 COPY config/ config/
 

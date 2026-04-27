@@ -24,7 +24,7 @@ from fastcode.core.boundary import (
 )
 from fastcode.schema.core_types import Hit
 
-CORE_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "fastcode" / "core"
+CORE_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "src" / "fastcode" / "core"
 
 IO_MODULES = frozenset(
     {
@@ -181,6 +181,7 @@ class TestDbEffectsReturnDataclasses:
     def test_db_effects_return_dataclasses_not_dicts(self) -> None:
         db_effects = (
             pathlib.Path(__file__).resolve().parent.parent.parent
+            / "src"
             / "fastcode"
             / "effects"
             / "db.py"

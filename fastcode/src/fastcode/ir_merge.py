@@ -245,9 +245,7 @@ def _select_matches(
     if graph.number_of_edges() == 0:
         return primary_matches, candidate_matches
 
-    matching = nx.max_weight_matching(
-        graph, maxcardinality=False, weight="weight"
-    )
+    matching = nx.max_weight_matching(graph, maxcardinality=False, weight="weight")
     for pair in matching:
         left, right = pair
         if left.startswith("scip::"):

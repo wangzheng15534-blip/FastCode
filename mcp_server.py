@@ -33,8 +33,6 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from mcp.server.fastmcp import FastMCP
-
 from fastcode.mcp_graph_tools import (
     compute_directed_path,
     compute_find_callers,
@@ -42,6 +40,7 @@ from fastcode.mcp_graph_tools import (
     compute_leiden_clusters,
     compute_steiner_path,
 )
+from mcp.server.fastmcp import FastMCP
 
 # ---------------------------------------------------------------------------
 # Logging (file only – stdout is reserved for MCP JSON-RPC in stdio mode)

@@ -6,8 +6,9 @@ Enhanced with LLM-processed query support
 import logging
 import os
 import pickle
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence, cast
+from typing import Any, cast
 
 import networkx as nx
 import numpy as np

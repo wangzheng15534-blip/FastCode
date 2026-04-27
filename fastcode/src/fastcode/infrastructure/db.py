@@ -1,4 +1,4 @@
-# fastcode/effects/db.py
+# fastcode/infrastructure/db.py
 """Thin wrappers for database I/O — each function does one query.
 
 Rule 2: Database Trusts Dataclasses.
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastcode.schema.core_types import SnapshotRecord
+from fastcode.schemas.core_types import SnapshotRecord
 
 
 def load_snapshot_record(

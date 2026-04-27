@@ -11,7 +11,7 @@ from fastcode.core.iteration import (
     rate_efficiency,
     should_continue_iteration,
 )
-from fastcode.schema.core_types import IterationConfig
+from fastcode.schemas.core_types import IterationConfig
 
 
 class TestCalculateRecentConfidenceGain:

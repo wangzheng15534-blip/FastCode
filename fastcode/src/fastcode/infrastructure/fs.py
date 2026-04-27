@@ -1,4 +1,4 @@
-# fastcode/effects/fs.py
+# fastcode/infrastructure/fs.py
 """Thin wrappers for file system I/O."""
 
 from __future__ import annotations

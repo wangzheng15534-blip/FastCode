@@ -26,7 +26,7 @@ from .iterative_agent import IterativeAgent
 from .pg_retrieval import PgRetrievalStore
 from .query_processor import ProcessedQuery
 from .repo_selector import RepositorySelector
-from .schema.core_types import FusionConfig
+from .schemas.core_types import FusionConfig
 from .utils import ensure_dir
 from .vector_store import VectorStore
 

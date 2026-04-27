@@ -20,7 +20,7 @@ from .core import iteration as _iteration
 from .core import prompts as _prompts
 from .llm_utils import openai_chat_completion
 from .path_utils import PathUtils
-from .schema.core_types import IterationConfig
+from .schemas.core_types import IterationConfig
 from .utils import json as _json_parsing
 
 # Type alias for iteration history entries

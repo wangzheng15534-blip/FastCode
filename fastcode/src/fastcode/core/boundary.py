@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from fastcode.schema.core_types import Hit
+from fastcode.schemas.core_types import Hit
 
 
 @dataclass(frozen=True)

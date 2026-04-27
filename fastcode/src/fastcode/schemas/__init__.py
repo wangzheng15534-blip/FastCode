@@ -1,6 +1,6 @@
-"""fastcode.schema — all frozen dataclasses and IR types."""
+"""fastcode.schemas — all frozen dataclasses and IR types."""
 
-from fastcode.schema.core_types import (
+from fastcode.schemas.core_types import (
     ElementFilter,
     FileAnalysis,
     FusionConfig,
@@ -44,7 +44,7 @@ __all__ = [
     "ToolCall",
 ]
 
-from fastcode.schema.ir import (
+from fastcode.schemas.ir import (
     IRAttachment,
     IRDocument,
     IREdge,

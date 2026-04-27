@@ -114,7 +114,7 @@ def _build_snapshot(
 
 @pytest.mark.property
 class TestFullLifecycle:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_load_update_load_cycle(self):
         """HAPPY: save -> load -> update_metadata -> load verifies metadata update."""
         store = _make_store()
@@ -138,7 +138,7 @@ class TestFullLifecycle:
         assert stored2 == updated_meta
         assert stored2["version"] == 2
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_load_snapshot_ir_preserved(self):
         """HAPPY: IRSnapshot data is fully preserved across save/load."""
         store = _make_store()
@@ -155,7 +155,7 @@ class TestFullLifecycle:
         assert len(loaded.occurrences) == 6
         assert len(loaded.edges) == 6
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_load_nonexistent_returns_none(self):
         """HAPPY: loading a nonexistent snapshot returns None."""
         store = _make_store()
@@ -172,7 +172,7 @@ class TestFullLifecycle:
 
 @pytest.mark.property
 class TestSnapshotIsolation:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_two_snapshots_different_repos_no_interference(self):
         """HAPPY: two snapshots for different repos are fully isolated."""
         store = _make_store()
@@ -209,7 +209,7 @@ class TestSnapshotIsolation:
 
 @pytest.mark.property
 class TestConcurrentSaveSameSnapshotId:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_second_save_wins_upsert(self):
         """HAPPY: saving same snapshot_id twice uses upsert; load returns second."""
         store = _make_store()
@@ -252,7 +252,7 @@ class TestConcurrentSaveSameSnapshotId:
 
 @pytest.mark.property
 class TestArtifactRefLifecycle:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_get_artifact_ref(self):
         """HAPPY: save and retrieve a SCIP artifact ref."""
         store = _make_store()
@@ -273,7 +273,7 @@ class TestArtifactRefLifecycle:
         assert ref["artifact_path"] == "/data/repo.scip"
         assert ref["checksum"] == "abc123"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_upsert_artifact_ref_updates_indexer(self):
         """HAPPY: upserting artifact ref with different indexer_name updates it."""
         store = _make_store()
@@ -304,7 +304,7 @@ class TestArtifactRefLifecycle:
 
 @pytest.mark.property
 class TestIRGraphsLifecycle:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_load_graphs(self):
         """HAPPY: save and load IR graphs via pickle."""
         store = _make_store()
@@ -318,7 +318,7 @@ class TestIRGraphsLifecycle:
         loaded = store.load_ir_graphs(snap.snapshot_id)
         assert loaded == graphs
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_overwrite_graphs(self):
         """HAPPY: saving graphs twice overwrites the previous version."""
         store = _make_store()
@@ -349,7 +349,7 @@ class TestIRGraphsLifecycle:
 
 @pytest.mark.property
 class TestFullWorkflow:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_snapshot_scip_ref_graphs_query_all(self):
         """HAPPY: full workflow saves snapshot, scip ref, and graphs; all queryable."""
         store = _make_store()
@@ -410,7 +410,7 @@ class TestMultipleSnapshotsSameRepoDifferentCommits:
         branch=_branch_st,
     )
     @settings(max_examples=10, deadline=None)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_all_snapshots_findable_individually(
         self, repo: str, commits: list[str], branch: str
     ):
@@ -434,7 +434,7 @@ class TestMultipleSnapshotsSameRepoDifferentCommits:
         branch=_branch_st,
     )
     @settings(max_examples=10)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_find_by_repo_commit_distinguishes(
         self, repo: str, commit1: Any, commit2: Any, branch: str
     ):
@@ -469,7 +469,7 @@ class TestMultipleSnapshotsSameRepoDifferentCommits:
 
 @pytest.mark.property
 class TestMetadataVariants:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_empty_dict_metadata_roundtrip(self):
         """HAPPY: empty dict metadata roundtrips correctly."""
         store = _make_store()
@@ -480,7 +480,7 @@ class TestMetadataVariants:
         stored = json.loads(record["metadata_json"])
         assert stored == {}
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_nested_dict_metadata_roundtrip(self):
         """HAPPY: nested dict metadata roundtrips correctly."""
         store = _make_store()
@@ -500,7 +500,7 @@ class TestMetadataVariants:
         stored = json.loads(record["metadata_json"])
         assert stored == nested
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_large_dict_metadata_roundtrip(self):
         """HAPPY: large metadata dict (~10KB) roundtrips correctly."""
         store = _make_store()

@@ -13,6 +13,37 @@ from fastcode.indexer import CodeElement
 from fastcode.scip_models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
 from fastcode.semantic_ir import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
 
+# ---------------------------------------------------------------------------
+# Auto-apply technique markers
+# ---------------------------------------------------------------------------
+
+_TECHNIQUE_MARKERS = frozenset(
+    {
+        "basic",
+        "edge",
+        "negative",
+        "xfail",
+        "test_double",
+        "snapshot",
+        "property",
+        "perf",
+        "fuzz",
+        "mutation",
+        "schemathesis",
+        "bdd",
+        "integration",
+        "e2e",
+    }
+)
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Auto-apply ``basic`` marker to tests that have no technique marker."""
+    for item in items:
+        if not _TECHNIQUE_MARKERS.intersection({m.name for m in item.iter_markers()}):
+            item.add_marker(pytest.mark.basic)
+
+
 # --- Primitive strategies ---
 
 identifier = st.text(

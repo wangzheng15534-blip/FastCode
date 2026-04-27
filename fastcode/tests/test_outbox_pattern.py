@@ -15,6 +15,8 @@ from fastcode.redo_worker import RedoWorker
 from fastcode.snapshot_store import SnapshotStore
 from fastcode.terminus_publisher import TerminusPublisher
 
+pytestmark = [pytest.mark.test_double]
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

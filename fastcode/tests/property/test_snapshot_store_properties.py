@@ -289,7 +289,7 @@ metadata_st = st.dictionaries(
 class TestSnapshotSaveLoadProperties:
     @given(snap=snapshot_st())
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_load_roundtrip(self, snap: IRSnapshot):
         """HAPPY: save_snapshot then load_snapshot preserves IRSnapshot fields."""
         store = _make_store()
@@ -310,7 +310,7 @@ class TestSnapshotSaveLoadProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_returns_artifact_key(self, snap: IRSnapshot):
         """HAPPY: save_snapshot returns dict with artifact_key and snapshot_id."""
         store = _make_store()
@@ -322,7 +322,7 @@ class TestSnapshotSaveLoadProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_idempotent_upsert(self, snap: IRSnapshot):
         """HAPPY: saving same snapshot twice does not raise (ON CONFLICT DO UPDATE)."""
         store = _make_store()
@@ -333,7 +333,7 @@ class TestSnapshotSaveLoadProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_get_snapshot_record_after_save(self, snap: IRSnapshot):
         """HAPPY: get_snapshot_record returns dict with all DB columns."""
         store = _make_store()
@@ -348,7 +348,7 @@ class TestSnapshotSaveLoadProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_load_snapshot_roundtrip_children(self, snap: IRSnapshot):
         """HAPPY: load_snapshot preserves nested document/symbol/edge fields."""
         store = _make_store()
@@ -386,7 +386,7 @@ class TestSnapshotSaveLoadProperties:
 
     @given(snap=connected_snapshot_st())
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_resolve_snapshot_for_ref(self, snap: IRSnapshot):
         """HAPPY: resolve_snapshot_for_ref finds snapshot by repo+branch after save."""
         assume(snap.branch is not None)
@@ -410,7 +410,7 @@ class TestSnapshotSaveLoadProperties:
 
     @given(snap=snapshot_st(), metadata=metadata_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_with_metadata(self, snap: IRSnapshot, metadata: dict[str, Any]):
         """HAPPY: save_snapshot stores metadata_json and get_snapshot_record returns it."""
         store = _make_store()
@@ -427,7 +427,7 @@ class TestSnapshotSaveLoadProperties:
 class TestSnapshotStoreQueries:
     @given(snap=snapshot_st())
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_find_by_repo_commit(self, snap: IRSnapshot):
         """HAPPY: find_by_repo_commit returns record after save (requires commit_id)."""
         assume(snap.commit_id is not None)
@@ -448,7 +448,7 @@ class TestSnapshotStoreQueries:
 
     @given(snap=snapshot_st())
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_find_by_artifact_key(self, snap: IRSnapshot):
         """HAPPY: find_by_artifact_key returns record after save."""
         store = _make_store()
@@ -507,7 +507,7 @@ class TestSnapshotStoreQueries:
         metadata2=metadata_st,
     )
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_update_snapshot_metadata(
         self, snap: IRSnapshot, metadata1: dict[str, Any], metadata2: dict[str, Any]
     ):
@@ -520,7 +520,7 @@ class TestSnapshotStoreQueries:
 
     @given(snap=snapshot_st())
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_artifact_key_deterministic(self, snap: IRSnapshot):
         """HAPPY: artifact_key_for_snapshot is deterministic for same snapshot_id."""
         store = _make_store()
@@ -553,7 +553,7 @@ class TestScipArtifactRefProperties:
         checksum=st.just("abc123"),
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_and_get_scip_artifact_ref(
         self,
         snapshot_id: str,
@@ -592,7 +592,7 @@ class TestScipArtifactRefProperties:
 
     @given(snapshot_id=identifier)
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_scip_artifact_ref_defaults(self, snapshot_id: str):
         """HAPPY: save_scip_artifact_ref with defaults uses 'unknown' indexer_name."""
         store = _make_store()
@@ -604,7 +604,7 @@ class TestScipArtifactRefProperties:
 
     @given(snapshot_id=identifier)
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_scip_artifact_ref_upsert(self, snapshot_id: str):
         """HAPPY: saving SCIP artifact ref twice updates the record."""
         store = _make_store()
@@ -645,7 +645,7 @@ class TestSnapshotStoreRelationalFacts:
 class TestSnapshotStoreStaging:
     @given(snap=snapshot_st())
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_stage_snapshot_returns_stage_id(self, snap: IRSnapshot):
         """HAPPY: stage_snapshot returns a stage_id starting with 'stage_'."""
         store = _make_store()
@@ -681,7 +681,7 @@ class TestSnapshotStoreStaging:
 class TestSnapshotStoreLockProperties:
     @given(lock_name=identifier, owner_id=identifier)
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_acquire_lock_returns_one(self, lock_name: str, owner_id: str):
         """HAPPY: acquire_lock returns 1 on SQLite backend."""
         store = _make_store()
@@ -690,7 +690,7 @@ class TestSnapshotStoreLockProperties:
 
     @given(lock_name=identifier, owner_id=identifier)
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_acquire_lock_with_custom_ttl(self, lock_name: str, owner_id: str):
         """HAPPY: acquire_lock with custom TTL still returns 1 on SQLite."""
         store = _make_store()
@@ -699,7 +699,7 @@ class TestSnapshotStoreLockProperties:
 
     @given(lock_name=identifier, token=st.integers(min_value=0, max_value=1000))
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_validate_fencing_token_returns_true(self, lock_name: str, token: int):
         """HAPPY: validate_fencing_token returns True on SQLite backend."""
         store = _make_store()
@@ -707,7 +707,7 @@ class TestSnapshotStoreLockProperties:
 
     @given(lock_name=identifier, owner_id=identifier)
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_release_lock_noop(self, lock_name: str, owner_id: str):
         """HAPPY: release_lock is no-op on SQLite (returns None, no error)."""
         store = _make_store()
@@ -737,7 +737,7 @@ class TestSnapshotStoreRedoProperties:
         payload=st.dictionaries(identifier, st.integers(), max_size=3),
     )
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_enqueue_redo_task_returns_redo_id(
         self, task_type: str, payload: dict[str, Any]
     ):
@@ -752,7 +752,7 @@ class TestSnapshotStoreRedoProperties:
         error=st.none() | st.just("test error"),
     )
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_enqueue_redo_task_with_error(
         self, task_type: str, payload: dict[str, Any], error: Exception
     ):
@@ -812,7 +812,7 @@ class TestIRGraphsRoundtrip:
         ),
     )
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_load_ir_graphs_roundtrip(
         self, snap: IRSnapshot, graph_data: dict[str, Any]
     ):
@@ -843,7 +843,7 @@ class TestIRGraphsRoundtrip:
 
     @given(snap=snapshot_st())
     @settings(max_examples=10)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_ir_graphs_returns_pkl_path(self, snap: IRSnapshot):
         """HAPPY: save_ir_graphs returns path ending with ir_graphs.pkl."""
         store = _make_store()
@@ -860,7 +860,7 @@ class TestIRGraphsRoundtrip:
         ),
     )
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_ir_graphs_pickle_preserves_types(
         self, snap: IRSnapshot, graph_obj: dict[str, Any]
     ):
@@ -876,7 +876,7 @@ class TestIRGraphsRoundtrip:
 
     @given(snap=snapshot_st())
     @settings(max_examples=10)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_save_ir_graphs_overwrite(self, snap: IRSnapshot):
         """HAPPY: saving IR graphs twice overwrites previous data."""
         store = _make_store()

@@ -32,7 +32,7 @@ unsafe_text_st = st.text(
 class TestEscFunction:
     @given(val=text_st)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_esc_returns_string(self, val: Any):
         """HAPPY: _esc always returns a string."""
         result = _esc(val)
@@ -40,24 +40,24 @@ class TestEscFunction:
 
     @given(val=text_st)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_esc_wraps_in_quotes(self, val: Any):
         """HAPPY: _esc wraps result in double quotes."""
         result = _esc(val)
         assert result.startswith('"')
         assert result.endswith('"')
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_esc_none(self):
         """HAPPY: _esc(None) returns 'NULL'."""
         assert _esc(None) == "NULL"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_esc_string(self):
         """HAPPY: _esc('hello') returns quoted string."""
         assert _esc("hello") == '"hello"'
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_esc_empty_string(self):
         """HAPPY: _esc('') returns quoted empty."""
         assert _esc("") == '""'
@@ -126,69 +126,69 @@ class TestEscFunction:
 
 @pytest.mark.property
 class TestSanitizeAttachDsn:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_valid_postgres_dsn(self):
         """HAPPY: valid postgres DSN passes sanitization."""
         dsn = "postgresql://user:pass@host:5432/db"
         result = LadybugGraphRuntime._sanitize_attach_dsn(dsn)
         assert result == dsn
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_valid_postgres_scheme(self):
         """HAPPY: 'postgres' scheme also accepted."""
         dsn = "postgres://user:pass@host:5432/db"
         result = LadybugGraphRuntime._sanitize_attach_dsn(dsn)
         assert result == dsn
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_empty_dsn_raises(self):
         """EDGE: empty DSN raises ValueError."""
         with pytest.raises(ValueError, match="empty"):
             LadybugGraphRuntime._sanitize_attach_dsn("")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_whitespace_only_dsn_raises(self):
         """EDGE: whitespace-only DSN raises ValueError."""
         with pytest.raises(ValueError, match="empty"):
             LadybugGraphRuntime._sanitize_attach_dsn("   ")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_semicolon_rejected(self):
         """EDGE: semicolons rejected (SQL injection)."""
         with pytest.raises(ValueError, match="unsafe"):
             LadybugGraphRuntime._sanitize_attach_dsn("postgres://host/db; DROP TABLE")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_sql_comment_rejected(self):
         """EDGE: SQL comments rejected."""
         with pytest.raises(ValueError, match="unsafe"):
             LadybugGraphRuntime._sanitize_attach_dsn("host-- comment")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_block_comment_rejected(self):
         """EDGE: block comments rejected."""
         with pytest.raises(ValueError, match="unsafe"):
             LadybugGraphRuntime._sanitize_attach_dsn("host/* comment */")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_null_byte_rejected(self):
         """EDGE: null bytes rejected."""
         with pytest.raises(ValueError, match="unsafe"):
             LadybugGraphRuntime._sanitize_attach_dsn("host\x00db")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_newline_rejected(self):
         """EDGE: newlines rejected."""
         with pytest.raises(ValueError, match="unsafe"):
             LadybugGraphRuntime._sanitize_attach_dsn("host\ndb")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_unsupported_scheme_rejected(self):
         """EDGE: non-postgres scheme rejected."""
         with pytest.raises(ValueError, match="unsupported"):
             LadybugGraphRuntime._sanitize_attach_dsn("mysql://host/db")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_http_scheme_rejected(self):
         """EDGE: http scheme rejected."""
         with pytest.raises(ValueError, match="unsupported"):
@@ -208,13 +208,13 @@ class TestSanitizeAttachDsn:
         result = LadybugGraphRuntime._sanitize_attach_dsn(dsn)
         assert "''" in result
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_disabled_by_default(self):
         """HAPPY: LadybugGraphRuntime disabled when not configured."""
         rt = LadybugGraphRuntime({"graph": {}})
         assert rt.enabled is False
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_disabled_no_config(self):
         """HAPPY: LadybugGraphRuntime disabled with empty config."""
         rt = LadybugGraphRuntime({})

@@ -9,6 +9,8 @@ import pytest
 
 from fastcode.redo_worker import RedoWorker
 
+pytestmark = [pytest.mark.test_double]
+
 
 class _FakeFastCode:
     def __init__(self) -> None:

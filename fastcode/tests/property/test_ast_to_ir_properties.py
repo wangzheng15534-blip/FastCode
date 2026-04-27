@@ -111,7 +111,7 @@ class TestDocumentDeduplication:
         language=language_st,
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_same_path_produces_one_document(
         self, name1: str, name2: str, path: str, language: str
     ):
@@ -133,7 +133,7 @@ class TestDocumentDeduplication:
         language=language_st,
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_different_paths_produce_multiple_documents(
         self, name1: str, name2: str, path1: str, path2: str, language: str
     ):
@@ -155,7 +155,7 @@ class TestDocumentDeduplication:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_many_elements_one_file_still_one_document(
         self, n: int, path: str, language: str
     ):
@@ -176,7 +176,7 @@ class TestSymbolCreation:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_file_type_skips_symbol(self, name: str, path: str, language: str):
         """HAPPY: file-type elements produce no symbols."""
         elements = [_elem("file", name, path, language)]
@@ -190,7 +190,7 @@ class TestSymbolCreation:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_documentation_type_skips_symbol(self, name: str, path: str, language: str):
         """HAPPY: documentation-type elements produce no symbols."""
         elements = [_elem("documentation", name, path, language)]
@@ -204,7 +204,7 @@ class TestSymbolCreation:
         type_=_element_types_with_symbols,
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_non_file_types_create_symbols(
         self, name: str, path: str, language: str, type_: str
     ):
@@ -214,7 +214,7 @@ class TestSymbolCreation:
         assert len(snap.symbols) == 1
         assert snap.symbols[0].display_name == name
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_empty_elements_produces_empty_snapshot(self):
         """HAPPY: empty element list produces snapshot with zero symbols/occurrences."""
         snap = build_ir_from_ast("repo", "snap:1", [], _repo_root)
@@ -262,7 +262,7 @@ class TestLineClamping:
         start_line=_small_int,
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_valid_start_line_preserved(self, name: str, path: str, start_line: int):
         """HAPPY: valid start_line >= 1 is preserved."""
         elem = _elem(
@@ -281,7 +281,7 @@ class TestSourcePriorityAndSet:
         ),
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_all_symbols_have_source_priority_50(self, elements: list[CodeElement]):
         """HAPPY: all symbols created by structure adapter have source_priority=50."""
         assume(len(elements) > 0)
@@ -293,7 +293,7 @@ class TestSourcePriorityAndSet:
         elements=st.lists(code_element_st, max_size=5),
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_all_docs_have_fc_structure_in_source_set(
         self, elements: list[CodeElement]
     ):
@@ -310,7 +310,7 @@ class TestSourcePriorityAndSet:
         ),
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_all_symbols_have_fc_structure_source_set(
         self, elements: list[CodeElement]
     ):
@@ -330,7 +330,7 @@ class TestContainmentEdges:
         type_=_element_types_with_symbols,
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_non_file_symbols_have_containment_edge(
         self, name: str, path: str, language: str, type_: str
     ):
@@ -348,7 +348,7 @@ class TestContainmentEdges:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_containment_count_equals_symbol_count(
         self, n: int, path: str, language: str
     ):
@@ -368,7 +368,7 @@ class TestMetadataConsistency:
         elements=st.lists(code_element_st, max_size=4),
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_metadata_source_modes_is_fc_structure(
         self, elements: list[CodeElement]
     ):
@@ -382,7 +382,7 @@ class TestMetadataConsistency:
         language=language_st,
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_symbol_metadata_has_source_and_confidence(
         self, name: str, path: str, language: str
     ):
@@ -400,7 +400,7 @@ class TestMetadataConsistency:
         ),
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_symbol_metadata_source_is_fc_structure(self, elements: list[CodeElement]):
         """HAPPY: all symbol metadata['source'] == 'fc_structure'."""
         assume(len(elements) > 0)
@@ -413,7 +413,7 @@ class TestMetadataConsistency:
 class TestAttachments:
     @given(name=identifier, path=file_path_st, language=language_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_summary_generates_summary_attachment(
         self, name: str, path: str, language: str
     ):
@@ -442,7 +442,7 @@ class TestAttachments:
 
     @given(name=identifier, path=file_path_st, language=language_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_embedding_metadata_generates_embedding_attachment(
         self, name: str, path: str, language: str
     ):
@@ -479,7 +479,7 @@ class TestImportEdges:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_file_imports_create_dependency_edge(
         self, module_name: str, path1: str, path2: str, language: str
     ):
@@ -538,7 +538,7 @@ class TestInheritanceEdges:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_class_with_bases_creates_inheritance_edge(
         self, base_name: Any, derived_name: Any, path: str, language: str
     ):
@@ -624,7 +624,7 @@ class TestSnapshotIdentity:
         tree_id=st.none() | identifier,
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_fields_preserved(
         self,
         repo_name: str,
@@ -659,7 +659,7 @@ class TestQualifiedNameResolution:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_method_with_class_name_gets_qualified(
         self, class_name: str, method_name: Any, path: str, language: str
     ):
@@ -683,7 +683,7 @@ class TestQualifiedNameResolution:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_function_without_class_name_uses_plain_name(
         self, name: str, path: str, language: str
     ):

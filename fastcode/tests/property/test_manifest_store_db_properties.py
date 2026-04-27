@@ -29,7 +29,7 @@ def _make_store() -> ManifestStore:
 
 @pytest.mark.property
 class TestSchemaMigration:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_init_idempotent_reinstantiation(self):
         """HAPPY: re-instantiating ManifestStore on same DB path does not raise."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -58,7 +58,7 @@ class TestSchemaMigration:
             assert "manifest_heads" in tables
             assert "schema_migrations" in tables
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_schema_migration_row_written(self):
         """HAPPY: schema_migrations table records the component version."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -76,7 +76,7 @@ class TestSchemaMigration:
 
 @pytest.mark.property
 class TestManifestChain:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_chain_links_two_publishes(self):
         """HAPPY: two publishes for same repo/ref create linked chain."""
         store = _make_store()
@@ -85,7 +85,7 @@ class TestManifestChain:
         assert first["previous_manifest_id"] is None
         assert second["previous_manifest_id"] == first["manifest_id"]
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_chain_links_three_publishes(self):
         """HAPPY: three publishes create a three-element chain."""
         store = _make_store()
@@ -109,7 +109,7 @@ class TestManifestChain:
 
 @pytest.mark.property
 class TestHeadsTablePointsToLatest:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_heads_points_to_last_published(self):
         """HAPPY: get_branch_manifest returns the most recently published manifest."""
         store = _make_store()
@@ -120,7 +120,7 @@ class TestHeadsTablePointsToLatest:
         assert result is not None
         assert result["snapshot_id"] == "snap_v3"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_heads_updates_per_publish(self):
         """HAPPY: each publish moves the head forward."""
         store = _make_store()
@@ -135,14 +135,14 @@ class TestHeadsTablePointsToLatest:
 
 @pytest.mark.property
 class TestPublishReturnStructure:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_manifest_id_starts_with_prefix(self):
         """HAPPY: manifest_id starts with 'manifest_'."""
         store = _make_store()
         result = store.publish("repo", "main", "snap1", "run1")
         assert result["manifest_id"].startswith("manifest_")
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_publish_returns_all_required_fields(self):
         """HAPPY: publish result contains all expected keys."""
         store = _make_store()
@@ -159,7 +159,7 @@ class TestPublishReturnStructure:
         }
         assert expected_keys.issubset(set(result.keys()))
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_publish_fields_match_input(self):
         """HAPPY: publish result fields reflect the input arguments."""
         store = _make_store()
@@ -215,7 +215,7 @@ class TestMissingLookups:
 
 @pytest.mark.property
 class TestDifferentRefsIndependent:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_same_repo_different_refs_independent_chains(self):
         """HAPPY: different refs for same repo maintain independent chains."""
         store = _make_store()
@@ -224,7 +224,7 @@ class TestDifferentRefsIndependent:
         assert m_main["previous_manifest_id"] is None
         assert m_dev["previous_manifest_id"] is None
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_different_refs_evolve_independently(self):
         """HAPPY: publishing to one ref does not affect another ref's head."""
         store = _make_store()
@@ -253,7 +253,7 @@ class TestDifferentRefsIndependent:
 
 @pytest.mark.property
 class TestMultipleRepos:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_different_repos_tracked_independently(self):
         """HAPPY: different repos each track their own manifest chains."""
         store = _make_store()
@@ -264,7 +264,7 @@ class TestMultipleRepos:
         assert a["snapshot_id"] == "snap_a1"
         assert b["snapshot_id"] == "snap_b1"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_cross_repo_publish_does_not_interfere(self):
         """HAPPY: publishing to repo_b does not affect repo_a's chain."""
         store = _make_store()

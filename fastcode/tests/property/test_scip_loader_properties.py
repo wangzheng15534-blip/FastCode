@@ -65,7 +65,7 @@ def _minimal_scip_dict() -> dict[str, Any]:
 class TestSymbolRoleToStr:
     @given(role_bitmask=st.integers(min_value=0, max_value=255))
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_always_returns_valid_role(self, role_bitmask: int):
         """HAPPY: _symbol_role_to_str always returns a known role string."""
         result = _symbol_role_to_str(role_bitmask)
@@ -77,27 +77,27 @@ class TestSymbolRoleToStr:
             "reference",
         )
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_definition_role(self):
         assert _symbol_role_to_str(1) == "definition"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_import_role(self):
         assert _symbol_role_to_str(2) == "import"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_write_access_role(self):
         assert _symbol_role_to_str(4) == "write_access"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_forward_definition_role(self):
         assert _symbol_role_to_str(64) == "forward_definition"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_reference_fallback(self):
         assert _symbol_role_to_str(0) == "reference"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_reference_fallback_other_bits(self):
         assert _symbol_role_to_str(8) == "reference"
 
@@ -122,14 +122,14 @@ class TestSymbolRoleToStr:
 class TestScipKindToStr:
     @given(kind_value=st.integers(min_value=0, max_value=30))
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_always_returns_string(self, kind_value: int):
         """HAPPY: _scip_kind_to_str always returns a string."""
         result = _scip_kind_to_str(kind_value)
         assert isinstance(result, str)
         assert len(result) > 0
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_unknown_kind_returns_symbol(self):
         """HAPPY: unknown kind value returns 'symbol'."""
         assert _scip_kind_to_str(999) == "symbol"
@@ -165,7 +165,7 @@ class TestScipKindToStr:
 
 @pytest.mark.property
 class TestLoadScipArtifactJson:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_load_valid_json(self):
         """HAPPY: loading a valid .json SCIP artifact."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -175,7 +175,7 @@ class TestLoadScipArtifactJson:
             assert len(result.documents) == 1
             assert result.documents[0].path == "a.py"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_load_scip_json_extension(self):
         """HAPPY: loading a .scip.json file."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -183,7 +183,7 @@ class TestLoadScipArtifactJson:
             result = load_scip_artifact(path)
             assert isinstance(result, SCIPIndex)
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_load_empty_documents(self):
         """HAPPY: loading JSON with empty documents list."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -191,7 +191,7 @@ class TestLoadScipArtifactJson:
             result = load_scip_artifact(path)
             assert len(result.documents) == 0
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_load_preserves_symbol_data(self):
         """HAPPY: symbol fields survive JSON roundtrip."""
         data = {
@@ -213,7 +213,7 @@ class TestLoadScipArtifactJson:
             assert result.documents[0].symbols[0].name == "foo"
             assert result.documents[0].symbols[0].kind == "function"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_load_preserves_occurrence_data(self):
         """HAPPY: occurrence fields survive JSON roundtrip."""
         data = {
@@ -238,13 +238,13 @@ class TestLoadScipArtifactJson:
             assert result.documents[0].occurrences[0].symbol == "pkg bar."
             assert result.documents[0].occurrences[0].role == "reference"
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_load_missing_file_raises(self):
         """EDGE: loading non-existent file raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
             load_scip_artifact("/nonexistent/path/index.json")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_load_unsupported_extension_raises(self):
         """EDGE: loading file with unsupported extension raises ValueError."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -254,7 +254,7 @@ class TestLoadScipArtifactJson:
             with pytest.raises(ValueError, match="Unsupported"):
                 load_scip_artifact(path)
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_load_invalid_json_raises(self):
         """EDGE: loading file with invalid JSON raises error."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -264,7 +264,7 @@ class TestLoadScipArtifactJson:
             with pytest.raises(Exception, match=r".*"):
                 load_scip_artifact(path)
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_load_scip_extension_without_protobuf_raises(self):
         """EDGE: .scip file without protobuf support or CLI raises error."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -280,7 +280,7 @@ class TestLoadScipArtifactJson:
         n_syms=st.integers(min_value=0, max_value=3),
     )
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_load_variable_document_count(self, n_docs: int, n_syms: int):
         """HAPPY: loading JSON with varying document/symbol counts."""
         data = {

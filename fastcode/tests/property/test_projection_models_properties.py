@@ -22,7 +22,7 @@ small_text = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size
 
 @pytest.mark.property
 class TestUtcNowIso:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_returns_iso_string(self):
         """HAPPY: utc_now_iso returns valid ISO format string."""
         result = utc_now_iso()
@@ -35,7 +35,7 @@ class TestUtcNowIso:
 class TestProjectionScope:
     @given(kind=small_text, snap_id=small_text, key=small_text)
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_to_dict_roundtrip(self, kind: bool, snap_id: str, key: str):
         """HAPPY: ProjectionScope to_dict preserves all fields."""
         scope = ProjectionScope(scope_kind=kind, snapshot_id=snap_id, scope_key=key)
@@ -54,7 +54,7 @@ class TestProjectionScope:
         query=st.none() | small_text,
     )
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_scope_with_query(self, kind: bool, snap_id: str, key: str, query: str):
         """HAPPY: ProjectionScope with optional query."""
         scope = ProjectionScope(
@@ -75,7 +75,7 @@ class TestProjectionScope:
 
 @pytest.mark.property
 class TestProjectionBuildResult:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_to_dict_has_all_keys(self):
         """HAPPY: ProjectionBuildResult.to_dict has all required keys."""
         result = ProjectionBuildResult(
@@ -103,7 +103,7 @@ class TestProjectionBuildResult:
         ):
             assert key in d
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_default_warnings_empty(self):
         """HAPPY: default warnings is empty list."""
         result = ProjectionBuildResult(
@@ -118,7 +118,7 @@ class TestProjectionBuildResult:
         )
         assert result.warnings == []
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_created_at_auto_set(self):
         """HAPPY: created_at is auto-set to current time."""
         result = ProjectionBuildResult(

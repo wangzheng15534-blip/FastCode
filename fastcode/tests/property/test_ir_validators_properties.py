@@ -183,7 +183,7 @@ class TestValidateSnapshotProperties:
 
     @given(doc_id=small_id, path=st.builds(lambda x: f"{x}.py", small_id))
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_valid_minimal_snapshot_passes(self, doc_id: str, path: str):
         """HAPPY: a snapshot with one doc and one symbol produces no errors."""
         doc = _doc(doc_id, path)
@@ -199,7 +199,7 @@ class TestValidateSnapshotProperties:
 
     @given(snapshot=valid_snapshot_st())
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_valid_snapshot_no_errors(self, snapshot: IRSnapshot):
         """HAPPY: well-formed snapshots have empty error lists."""
         errors = validate_snapshot(snapshot)
@@ -211,7 +211,7 @@ class TestValidateSnapshotProperties:
         sym_id=st.builds(lambda x: f"sym:{x}", small_id),
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_valid_occurrences_no_errors(self, doc_id: str, path: str, sym_id: str):
         """HAPPY: occurrences referencing existing doc and symbol produce no errors."""
         doc = _doc(doc_id, path)
@@ -233,7 +233,7 @@ class TestValidateSnapshotProperties:
         sym_id=st.builds(lambda x: f"sym:{x}", small_id),
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_valid_edges_no_errors(self, doc_id: str, path: str, sym_id: str):
         """HAPPY: edges referencing valid nodes produce no errors."""
         doc = _doc(doc_id, path)
@@ -556,7 +556,7 @@ class TestValidateSnapshotProperties:
         sym_id=st.builds(lambda x: f"sym:{x}", small_id),
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_edge_src_can_be_doc_or_sym(self, doc_id: str, path: str, sym_id: str):
         """HAPPY: edge src_id may be a doc_id or symbol_id."""
         doc = _doc(doc_id, path)
@@ -580,7 +580,7 @@ class TestValidateSnapshotProperties:
         edge_type=edge_type_st,
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_all_edge_types_valid(
         self, doc_id: str, path: str, sym_id: str, edge_type: str
     ):

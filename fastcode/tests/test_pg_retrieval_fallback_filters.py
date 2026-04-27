@@ -3,7 +3,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import pytest
+
 from fastcode.pg_retrieval import PgRetrievalStore
+
+pytestmark = [pytest.mark.test_double]
 
 
 class _FakeCursor:

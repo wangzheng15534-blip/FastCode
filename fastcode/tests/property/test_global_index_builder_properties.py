@@ -48,7 +48,7 @@ def _make_builder() -> Any:
 
 @pytest.mark.property
 class TestGetFileIdByPath:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_existing_path(self):
         """HAPPY: known path returns file ID."""
         builder = _make_builder()
@@ -70,7 +70,7 @@ class TestGetFileIdByPath:
 
 @pytest.mark.property
 class TestGetFileIdByModule:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_existing_module(self):
         """HAPPY: known module returns file ID."""
         builder = _make_builder()
@@ -94,7 +94,7 @@ class TestGetFileIdByModule:
 
 @pytest.mark.property
 class TestContainsFile:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_known_file(self):
         """HAPPY: known file returns True."""
         builder = _make_builder()
@@ -109,7 +109,7 @@ class TestContainsFile:
 
 @pytest.mark.property
 class TestContainsModule:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_known_module(self):
         """HAPPY: known module returns True."""
         builder = _make_builder()
@@ -124,7 +124,7 @@ class TestContainsModule:
 
 @pytest.mark.property
 class TestGetAllFileIds:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_returns_all_ids(self):
         """HAPPY: returns all file IDs."""
         builder = _make_builder()
@@ -141,7 +141,7 @@ class TestGetAllFileIds:
 
 @pytest.mark.property
 class TestGetAllModules:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_returns_all_modules(self):
         """HAPPY: returns all module paths."""
         builder = _make_builder()
@@ -158,7 +158,7 @@ class TestGetAllModules:
 
 @pytest.mark.property
 class TestGetStats:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_stats_keys(self):
         """HAPPY: stats contains expected keys."""
         builder = _make_builder()
@@ -181,7 +181,7 @@ class TestGetStats:
 
 @pytest.mark.property
 class TestValidateMaps:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_valid_maps_no_errors(self):
         """HAPPY: consistent maps produce no errors."""
         builder = _make_builder()
@@ -197,7 +197,7 @@ class TestValidateMaps:
 
 @pytest.mark.property
 class TestGetExportedSymbolId:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_known_symbol(self):
         """HAPPY: known symbol returns node ID."""
         builder = _make_builder()
@@ -218,7 +218,7 @@ class TestGetExportedSymbolId:
 
 @pytest.mark.property
 class TestGetModuleExports:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_known_module(self):
         """HAPPY: returns copy of export dict."""
         builder = _make_builder()
@@ -243,7 +243,7 @@ class TestGetModuleExports:
 
 @pytest.mark.property
 class TestClear:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_clear_resets_maps(self):
         """HAPPY: clear empties all maps."""
         builder = _make_builder()

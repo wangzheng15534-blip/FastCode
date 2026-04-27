@@ -13,6 +13,8 @@ from fastcode.adapters.scip_to_ir import build_ir_from_scip
 from fastcode.indexer import CodeElement
 from fastcode.ir_merge import merge_ir
 
+pytestmark = [pytest.mark.perf]
+
 
 def _make_code_elements(count: int) -> list[CodeElement]:
     """Generate synthetic CodeElement objects."""

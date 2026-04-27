@@ -18,14 +18,16 @@ pre-commit:
     typecheck:
       glob: "*.py"
       run: uv run pyright fastcode/src/ fastcode/tests/ tests/
-    unit-test:
+    smoke-test:
       glob: "*.py"
-      run: uv run pytest fastcode/tests/ tests/ -q -n auto --timeout=30 -m "not slow and not property and not snapshot and not integration"
+      run: uv run pytest fastcode/tests/ -q -n auto --timeout=10 -x -m "(basic or edge or negative or xfail or test_double) and not slow" --ignore=fastcode/tests/bench_ --ignore=fastcode/tests/property/
 
 pre-push:
   parallel: true
   commands:
     gitleaks:
       run: gitleaks protect --staged
+    unit-test:
+      run: uv run pytest fastcode/tests/ tests/ -q -n auto --timeout=30 -m "not slow and not property and not snapshot and not integration and not e2e"
     extended-tests:
-      run: uv run pytest fastcode/tests/property/ fastcode/tests/snapshots/ fastcode/tests/test_*parametrize* -q -n auto --timeout=60
+      run: uv run pytest fastcode/tests/property/ fastcode/tests/snapshots/ -q -n auto --timeout=60

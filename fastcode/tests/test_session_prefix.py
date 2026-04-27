@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = [pytest.mark.test_double]
 
 # ---------------------------------------------------------------------------
 # Fake ProjectionStore for isolated testing

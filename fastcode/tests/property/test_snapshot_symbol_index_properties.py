@@ -108,7 +108,7 @@ snapshot_st = st.builds(
 # --- Happy-path tests ---
 
 
-@pytest.mark.happy
+@pytest.mark.basic
 def test_register_snapshot_basic():
     """Registering a snapshot stores it so has_snapshot returns True."""
     idx = SnapshotSymbolIndex()
@@ -122,7 +122,7 @@ def test_register_snapshot_basic():
     assert idx.has_snapshot("snap:basic")
 
 
-@pytest.mark.happy
+@pytest.mark.basic
 def test_register_snapshot_canonical_by_alias_self():
     """Each symbol's own ID is registered as a self-alias."""
     idx = SnapshotSymbolIndex()
@@ -136,7 +136,7 @@ def test_register_snapshot_canonical_by_alias_self():
     assert idx.canonicalize_symbol("snap:self", "sym:alpha") == "sym:alpha"
 
 
-@pytest.mark.happy
+@pytest.mark.basic
 def test_register_snapshot_display_name_indexed():
     """display_name is indexed in symbols_by_name."""
     idx = SnapshotSymbolIndex()
@@ -150,7 +150,7 @@ def test_register_snapshot_display_name_indexed():
     assert idx.resolve_symbol("snap:dn", name="myfunc") == "sym:myfunc"
 
 
-@pytest.mark.happy
+@pytest.mark.basic
 def test_register_snapshot_qualified_name_indexed():
     """qualified_name is indexed in symbols_by_name."""
     idx = SnapshotSymbolIndex()
@@ -164,7 +164,7 @@ def test_register_snapshot_qualified_name_indexed():
     assert idx.resolve_symbol("snap:qn", name="pkg.myfunc") == "sym:myfunc"
 
 
-@pytest.mark.happy
+@pytest.mark.basic
 def test_register_snapshot_path_indexed():
     """symbol path is indexed in symbols_by_path."""
     idx = SnapshotSymbolIndex()
@@ -178,7 +178,7 @@ def test_register_snapshot_path_indexed():
     assert idx.resolve_symbol("snap:path", path="src/main.py") == "sym:cls"
 
 
-@pytest.mark.happy
+@pytest.mark.basic
 def test_register_snapshot_aliases_from_metadata():
     """Aliases in symbol metadata are registered."""
     idx = SnapshotSymbolIndex()
@@ -202,7 +202,7 @@ def test_register_snapshot_aliases_from_metadata():
     ]
 
 
-@pytest.mark.happy
+@pytest.mark.basic
 def test_get_aliases_returns_sorted():
     """get_aliases returns a sorted list."""
     idx = SnapshotSymbolIndex()
@@ -221,7 +221,7 @@ def test_get_aliases_returns_sorted():
     assert aliases == sorted(aliases)
 
 
-@pytest.mark.happy
+@pytest.mark.basic
 def test_resolve_symbol_by_symbol_id():
     """resolve_symbol with symbol_id canonicalizes via alias map."""
     idx = SnapshotSymbolIndex()
@@ -235,7 +235,7 @@ def test_resolve_symbol_by_symbol_id():
     assert idx.resolve_symbol("snap:resolve_id", symbol_id="aka") == "sym:orig"
 
 
-@pytest.mark.happy
+@pytest.mark.basic
 def test_resolve_symbol_by_name():
     """resolve_symbol with name finds via symbols_by_name."""
     idx = SnapshotSymbolIndex()
@@ -249,7 +249,7 @@ def test_resolve_symbol_by_name():
     assert idx.resolve_symbol("snap:resolve_name", name="foo") == "sym:foo"
 
 
-@pytest.mark.happy
+@pytest.mark.basic
 def test_resolve_symbol_by_path():
     """resolve_symbol with path finds via symbols_by_path."""
     idx = SnapshotSymbolIndex()
@@ -263,7 +263,7 @@ def test_resolve_symbol_by_path():
     assert idx.resolve_symbol("snap:resolve_path", path="x/y.py") == "sym:bar"
 
 
-@pytest.mark.happy
+@pytest.mark.basic
 def test_resolve_symbol_priority_symbol_id_over_name():
     """symbol_id is checked before name."""
     idx = SnapshotSymbolIndex()
@@ -284,7 +284,7 @@ def test_resolve_symbol_priority_symbol_id_over_name():
     assert result == "sym:first"
 
 
-@pytest.mark.happy
+@pytest.mark.basic
 def test_multiple_symbols_same_path():
     """Multiple symbols on the same path are all indexed."""
     idx = SnapshotSymbolIndex()
@@ -300,7 +300,7 @@ def test_multiple_symbols_same_path():
     assert result in ("sym:a", "sym:b")
 
 
-@pytest.mark.happy
+@pytest.mark.basic
 def test_register_multiple_snapshots():
     """Multiple snapshots coexist independently."""
     idx = SnapshotSymbolIndex()
@@ -491,7 +491,7 @@ def test_snapshot_symbol_maps_defaults():
 
 @given(snap=snapshot_st)
 @settings(max_examples=30)
-@pytest.mark.happy
+@pytest.mark.basic
 def test_has_snapshot_after_register(snap: IRSnapshot):
     """After registering, has_snapshot returns True."""
     idx = SnapshotSymbolIndex()
@@ -501,7 +501,7 @@ def test_has_snapshot_after_register(snap: IRSnapshot):
 
 @given(snap=snapshot_st)
 @settings(max_examples=30)
-@pytest.mark.happy
+@pytest.mark.basic
 def test_canonicalize_self_alias(snap: IRSnapshot):
     """Every symbol's own ID canonicalizes to itself after registration."""
     idx = SnapshotSymbolIndex()
@@ -513,7 +513,7 @@ def test_canonicalize_self_alias(snap: IRSnapshot):
 
 @given(snap=snapshot_st)
 @settings(max_examples=30)
-@pytest.mark.happy
+@pytest.mark.basic
 def test_get_aliases_contains_self(snap: IRSnapshot):
     """Every symbol's alias set includes its own ID."""
     idx = SnapshotSymbolIndex()
@@ -525,7 +525,7 @@ def test_get_aliases_contains_self(snap: IRSnapshot):
 
 @given(snap=snapshot_st)
 @settings(max_examples=30)
-@pytest.mark.happy
+@pytest.mark.basic
 def test_get_aliases_sorted(snap: IRSnapshot):
     """get_aliases always returns a sorted list."""
     idx = SnapshotSymbolIndex()
@@ -537,7 +537,7 @@ def test_get_aliases_sorted(snap: IRSnapshot):
 
 @given(snap=snapshot_st)
 @settings(max_examples=30)
-@pytest.mark.happy
+@pytest.mark.basic
 def test_resolve_symbol_by_id_matches_canonicalize(snap: IRSnapshot):
     """resolve_symbol(symbol_id=x) matches canonicalize_symbol(x) when canonical exists."""
     idx = SnapshotSymbolIndex()

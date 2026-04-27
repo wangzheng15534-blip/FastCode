@@ -11,6 +11,8 @@ from fastcode.projection_models import ProjectionScope
 from fastcode.projection_transform import ProjectionTransformer
 from fastcode.semantic_ir import IRDocument, IREdge, IRSnapshot, IRSymbol
 
+pytestmark = [pytest.mark.perf]
+
 
 def _make_snapshot(num_symbols: int, edges_per_symbol: int = 2) -> IRSnapshot:
     """Generate a synthetic IRSnapshot with controlled size."""

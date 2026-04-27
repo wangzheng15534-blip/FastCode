@@ -204,7 +204,7 @@ def _base_config(
     backend: Any = "sqlite",
     pg_dsn: Any = "",
     enable_docs: Any = False,
-) -> None:
+) -> dict[str, Any]:
     """Return a minimal config dict with all paths under tmp_path."""
     persist_dir = str(tmp_path / "persist")
     repo_root = str(tmp_path / "repos")
@@ -490,7 +490,8 @@ def _pg_execute(
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(sql, params or ())  # type: ignore[arg-type]
         if cur.description:
-            return cur.fetchall()
+            rows = cur.fetchall()
+            return [dict(r) for r in rows]
         conn.commit()
         return None
 

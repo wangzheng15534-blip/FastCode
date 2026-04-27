@@ -356,7 +356,7 @@ class RepositoryLoader:
         if not self.repo_path:
             raise RuntimeError("No repository loaded")
 
-        info = {
+        info: dict[str, Any] = {
             "name": self.repo_name,
             "path": self.repo_path,
         }

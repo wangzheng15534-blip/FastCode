@@ -710,12 +710,14 @@ class TestRollbackBehavior:
     @pytest.mark.edge
     def test_connection_closed_after_exception(self) -> None:
         rt = _make_sqlite_runtime()
+        conn: Any = None
         try:
             with rt.connect() as conn:
                 conn.execute("CREATE TABLE t (x INTEGER)")
                 raise RuntimeError("boom")
         except RuntimeError:
             pass
+        assert conn is not None
         with pytest.raises(Exception, match=r"closed|Cannot operate|closed database"):
             conn.execute("SELECT 1")
 

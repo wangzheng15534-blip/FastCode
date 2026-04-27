@@ -27,12 +27,12 @@ class _FakeConn:
     def cursor(self) -> Any:
         return self._cursor
 
-    def __enter__(self) -> None:
+    def __enter__(self) -> _FakeConn:
         return self
 
     def __exit__(
         self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: Any
-    ) -> None:
+    ) -> bool:
         return False
 
 

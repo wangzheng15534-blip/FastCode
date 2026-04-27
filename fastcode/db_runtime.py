@@ -111,8 +111,12 @@ class DBRuntime:
                 with self.pool.connection() as conn:
                     yield conn
                 return
+            if psycopg is None or dict_row is None:
+                raise RuntimeError("postgres backend requires psycopg")
             conn = psycopg.connect(
-                self.postgres_dsn, autocommit=False, row_factory=dict_row
+                self.postgres_dsn,  # type: ignore[arg-type]
+                autocommit=False,
+                row_factory=dict_row,  # type: ignore[arg-type]
             )
             try:
                 yield conn
@@ -120,6 +124,8 @@ class DBRuntime:
                 conn.close()
             return
 
+        if self.sqlite_path is None:
+            raise RuntimeError("sqlite backend requires sqlite_path")
         conn = sqlite3.connect(self.sqlite_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")

@@ -60,6 +60,8 @@ class ProjectionStore:
             )
         if self.pool is not None:
             return self.pool.connection()
+        if psycopg is None:
+            raise RuntimeError("projection store requires psycopg")
         return psycopg.connect(self.dsn, autocommit=False)
 
     def _init_db(self) -> None:

@@ -35,7 +35,10 @@ class ImportExtractor:
         if not self.ts_parser.is_healthy():
             raise RuntimeError("TSParser could not be initialized.")
 
-        self.query = Query(self.ts_parser.language, self.IMPORT_QUERY_SCM)
+        lang = self.ts_parser.language
+        if lang is None:
+            raise RuntimeError("TSParser.language must be set after healthy check")
+        self.query = Query(lang, self.IMPORT_QUERY_SCM)
 
     def extract_imports(self, code: str) -> list[dict[str, Any]]:
         tree = self.ts_parser.parse(code)

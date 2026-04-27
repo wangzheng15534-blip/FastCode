@@ -9,12 +9,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 try:
-    _HAS_PROTOBUF = importlib.util.find_spec("google.protobuf") is not None
+    _has_protobuf = importlib.util.find_spec("google.protobuf") is not None
 except ModuleNotFoundError:
-    _HAS_PROTOBUF = False
+    _has_protobuf = False
 
 requires_protobuf = pytest.mark.skipif(
-    not _HAS_PROTOBUF, reason="protobuf not installed"
+    not _has_protobuf, reason="protobuf not installed"
 )
 
 

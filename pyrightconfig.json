@@ -30,7 +30,9 @@
       "reportUnknownMemberType": "none",
       "reportUnknownVariableType": "none",
       "reportUnknownLambdaType": "none",
-      "reportMissingParameterType": "none"
+      "reportMissingParameterType": "none",
+      "reportUnusedFunction": "none",
+      "reportUnusedClass": "none"
     }
   ]
 }

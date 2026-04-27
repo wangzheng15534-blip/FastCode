@@ -176,7 +176,7 @@ def snapshot_st(
 
 @st.composite
 def connected_snapshot_st(
-    draw: st.DataObject,
+    draw: Any,
     n_docs: int | None = None,
     n_symbols_per_doc: int | None = None,
 ):

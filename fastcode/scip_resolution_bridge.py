@@ -112,6 +112,8 @@ class SCIPResolutionBridge:
             return
 
         try:
+            if self.embedder is None:
+                return
             batch = self.embedder.embed_batch(self._embedding_texts)
             # Normalise to list-of-lists so we stay serialisable
             self._embedding_vectors = [[float(v) for v in vec] for vec in batch]

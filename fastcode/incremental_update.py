@@ -83,10 +83,10 @@ def _merge_units(
     change_set: FileChangeSet,
     old_units_by_path: dict[str, list[IRCodeUnit]],
     new_units_by_path: dict[str, list[IRCodeUnit]],
-) -> tuple[list[IRCodeUnit], set[str], set[str]]:
+) -> tuple[list[IRCodeUnit], set[str]]:
     """Merge units: keep unchanged old, add fresh from changed/added paths.
 
-    Returns (merged_units, merged_unit_ids, tombstoned_unit_ids).
+    Returns (merged_units, merged_unit_ids).
     """
     merged: list[IRCodeUnit] = []
     merged_ids: set[str] = set()

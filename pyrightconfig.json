@@ -1,7 +1,7 @@
 {
-  "include": ["fastcode", "tests"],
+  "include": ["fastcode/src", "fastcode/tests", "tests"],
   "exclude": ["**/repos", "**/repo_backup", "**/_bmad-output", "**/_fastcode"],
-  "extraPaths": ["."],
+  "extraPaths": [".", "./fastcode/src"],
   "venvPath": ".",
   "venv": ".venv",
   "typeCheckingMode": "strict",
@@ -18,7 +18,7 @@
   "reportDeprecated": "warning",
   "executionEnvironments": [
     {
-      "root": "tests",
+      "root": "fastcode/tests",
       "reportOptionalSubscript": "none",
       "reportOptionalMemberAccess": "none",
       "reportOptionalOperand": "none",

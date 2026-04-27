@@ -15,8 +15,8 @@ pre-push:
   parallel: true
   commands:
     pyright:
-      run: uv run pyright fastcode/ tests/
+      run: uv run pyright fastcode/src/ fastcode/tests/ tests/
     tests:
-      run: uv run pytest tests/ -n auto
+      run: uv run pytest fastcode/tests/ tests/ -n auto
     security:
       run: uv run pip-audit

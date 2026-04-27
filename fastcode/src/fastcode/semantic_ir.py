@@ -9,7 +9,6 @@ from typing import Any
 
 from .utils import safe_jsonable
 
-
 _T = dict[str, Any]
 
 

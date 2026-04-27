@@ -4,12 +4,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# api.py is a root-level module, not in the fastcode package
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from fastapi.testclient import TestClient
+# api.py is a workspace-root module, not in the fastcode package
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import api
+from fastapi.testclient import TestClient
 
 
 class _FakeFastCode:

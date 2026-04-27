@@ -91,9 +91,182 @@ managed = true
 [dependency-groups]
 dev = ["fastcode[dev]"]
 
-[tool.hatch.build.targets.wheel]
-only-include = ["."]
-packages = ["."]
+# ---------------------------------------------------------------------------
+# Ruff: inherit global rules from workspace root
+# ---------------------------------------------------------------------------
 
-[tool.hatch.build.targets.wheel.shared-data]
-"." = "fastcode"
+[tool.ruff]
+extend = "../pyproject.toml"                                             # inherit select/ignore from root
+
+# ---------------------------------------------------------------------------
+# Hatchling: src layout — package at src/fastcode/, .pth adds src/ to sys.path
+# ---------------------------------------------------------------------------
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fastcode"]                                               # package lives at src/fastcode/
+
+# ---------------------------------------------------------------------------
+# Ruff: per-file ignores (fastcode-specific, not global)
+# ---------------------------------------------------------------------------
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",    # design: assert is the test mechanism, not a runtime invariant
+    "ANN201",  # design: test functions are named by convention, return type adds noise
+    "ANN003",  # design: test factory **kwargs are intentionally untyped for flexibility
+]
+"src/fastcode/retriever.py" = [
+    "ANN201",  # complexity: retrieve() and index_for_bm25 need return types (track: annotate all public methods)
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "PLC0415", # design: lazy imports avoid circular deps with core/ subpackage
+    "PLR0912", # complexity: retrieve() has 31 branches for fusion path selection (track: extract fusion strategy pattern)
+    "PLR0913", # complexity: retrieve() takes 6 params (track: bundle query params into QueryRequest dataclass)
+    "PLR0915", # complexity: retrieve() has 97 statements (track: same fusion strategy refactor)
+    "PLR1714", # complexity: merge comparisons in fusion score logic (track: part of fusion refactor)
+    "PLR2004", # design: fusion thresholds (0.5, 0.7) are tuning knobs, not domain constants
+    "S301",    # design: pickle for BM25 index serialization, not deserializing untrusted input
+]
+"src/fastcode/core/scip_transform.py" = [
+    "PLC0415", # external-dep: protobuf may not be installed; lazy import guards import error
+]
+"src/fastcode/scip_loader.py" = [
+    "PLC0415", # design: lazy import of scip_loader internals to avoid circular dep with main.py
+    "S603",    # design: subprocess for SCIP binary invocation; shell=False is already used
+    "B904",    # design: raise without from in subprocess error handler; original exception is re-wrapped with context
+    "ANN001",  # complexity: _run_scip_command args need types (track: annotate all public methods)
+]
+"src/fastcode/core/iteration.py" = [
+    "PLR2004", # design: threshold constants (0.85, 3) from original HKUDS iterative refinement logic
+    "PLR0913", # complexity: should_continue_iteration takes 7 params (track: bundle into IterationState dataclass)
+    "PLR0911", # complexity: 6 early returns for stopping conditions — each is a distinct termination check
+    "PLR0912", # complexity: should_continue_iteration branching on 6 stopping conditions (track: extract to Strategy)
+]
+"src/fastcode/core/prompts.py" = [
+    "PLR0912", # complexity: prompt template selection by query type (track: extract prompt registry)
+]
+"src/fastcode/iterative_agent.py" = [
+    "ANN001",  # complexity: all function args need types (track: annotate all public methods)
+    "ANN201",  # complexity: all public function return types (track: annotate all public methods)
+    "ANN202",  # complexity: all private function return types (track: annotate all public methods)
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "B007",    # design: loop control variable kept for readability in deduplication logic
+    "PLR0912", # complexity: _execute_search_codebase has 27 branches (track: extract action handlers)
+    "PLR0915", # complexity: _execute_search_codebase has 101 statements (track: extract action handlers)
+    "PLR2004", # design: tool result score thresholds (0.7, 0.5) are tuning knobs
+    "RET504",  # design: variable assigned for debugging clarity before return in _deduplicate_results
+    "RUF059",  # design: unpacked variable kept for positional clarity in dict construction
+    "S110",    # design: try-except-pass in directory tree builder — individual failures should not halt traversal
+    "SIM108",  # design: if-else preferred over ternary for readability of multi-element tuple fallback
+]
+"src/fastcode/answer_generator.py" = [
+    "ANN201",  # complexity: generate_stream needs return type (track: annotate all public methods)
+    "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "PLC0415", # design: traceback imported inside except block — intentional lazy import for error path only
+    "PLR0912", # complexity: generate() has 15 branches, generate_stream() has 20 (track: extract provider adapter)
+    "PLR0915", # complexity: generate() 51 stmts, generate_stream() 67 stmts (track: extract provider adapter)
+    "RET504",  # design: full_prompt assigned for debugging clarity before return in _build_prompt
+    "UP028",   # design: yield over for loop preferred for explicit control in stream error handler
+]
+"src/fastcode/main.py" = [
+    "ANN001",  # complexity: all function args need types (track: annotate all public methods)
+    "ANN201",  # complexity: all public function return types (track: annotate all public methods)
+    "ANN202",  # complexity: all private function return types (track: annotate all public methods)
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "PLR0912", # complexity: index_repository has many branches for storage backend selection (track: extract backend strategy)
+    "PLR0913", # complexity: query() takes 7 params (track: bundle into QueryRequest dataclass)
+    "PLR0915", # complexity: __init__ has 68 stmts, index_repository has 63 stmts (track: extract backend strategy)
+    "PLC0415", # design: lazy imports to avoid circular deps and keep startup fast
+    "S324",    # security-context: SHA1 for blob_oid hashing and idempotency keys — not cryptographic
+    "S301",    # design: pickle for BM25 index serialization, not deserializing untrusted input
+    "PLR2004", # design: index thresholds and config defaults are tuning knobs
+    "B904",    # design: raise from None where original exception context would be misleading
+    "RUF013",  # design: implicit Optional in default arg for backward-compatible API
+    "F821",    # external-dep: forward reference to type not yet defined at class scope
+]
+"src/fastcode/core/combination.py" = [
+    "PLR0913", # complexity: combine_results takes 7 params (track: bundle into CombinationRequest dataclass)
+    "PLR0912", # complexity: merge logic branches for 3 result types (track: extract merge strategies)
+]
+"src/fastcode/core/repo_analysis.py" = [
+    "PLR0911", # complexity: infer_project_type if-chain with 6 project types — each branch is distinct
+]
+"src/fastcode/repo_overview.py" = [
+    "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "PLR2004", # design: 8000 char truncation threshold for READMEs is a UI limit, not domain constant
+    "RET504",  # design: overview dict assigned for readability before return in generate_overview
+    "SIM102",  # design: nested if clarifies two independent conditions (directory depth + file membership)
+]
+"src/fastcode/utils/_compat.py" = [
+    "S324",    # security-context: MD5 for file dedup hashing — not cryptographic
+    "PLC0415", # external-dep: pathspec may not be installed; lazy import guards import error
+    "ANN001",  # complexity: function args need types (track: annotate all public methods)
+    "ANN002",  # complexity: *args need types (track: annotate all public methods)
+    "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
+    "PLR0911", # complexity: extract_repo_name has 6 early returns for URL/SSH/HTTPS patterns
+]
+"src/fastcode/schema/ir.py" = [
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "PLC0415", # design: lazy import to avoid circular dep between schema/ir.py and semantic_ir.py
+    "PLR0913", # complexity: IRSnapshot.__init__ takes 7 params (track: bundle into Builder)
+]
+"mcp_server.py" = [
+    "E402",    # tool-conflict: sys.path must be set before imports; E402 is unavoidable here
+    "PLC0415", # design: lazy imports inside tool functions to keep startup fast
+    "ANN001",  # complexity: MCP tool helper args need types (track: annotate all tool handlers)
+    "ANN202",  # complexity: private helper return types (track: annotate all public methods)
+    "PLW0603", # design: global statement for lazy singleton — intentional module-level cache
+    "PLR2004", # design: MCP tool bodies use literal config values (depths, limits)
+    "PLR0912", # complexity: get_file_summary has many branches for file type handling (track: extract file type handlers)
+    "PLR0913", # complexity: _walk_call_chain takes 6 params (track: bundle into ChainRequest dataclass)
+    "RUF013",  # design: implicit Optional in default arg is deliberate for MCP tool ergonomics
+    "RUF003",  # design: en-dash in docstring is intentional typographic choice
+]
+
+# ---------------------------------------------------------------------------
+# Pyright: per-project settings
+# ---------------------------------------------------------------------------
+
+[tool.pyright]
+include = ["src", "tests"]                                               # scope: package source + tests
+exclude = ["**/repos", "**/repo_backup", "**/_bmad-output", "**/_fastcode"]
+extraPaths = ["."]                                                       # workspace root: resolves fastcode.* imports
+typeCheckingMode = "strict"                                              # maximum type safety — fix errors, don't suppress
+reportUnnecessaryComparison = true                                      # dead comparisons are bugs
+reportUnusedVariable = true                                              # dead variables are bugs
+
+[[tool.pyright.executionEnvironments]]
+root = "tests"                                                          # Rust cfg(test) equivalent — test code uses known-good literals
+reportOptionalSubscript = "none"                                        # crash IS the assertion
+reportOptionalMemberAccess = "none"
+reportOptionalOperand = "none"
+reportOptionalIterable = "none"
+reportOperatorIssue = "none"
+reportAttributeAccessIssue = "none"
+reportArgumentType = "none"
+reportUnknownArgumentType = "none"                                      # fixtures and mocks are untyped by design
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportMissingParameterType = "none"
+
+# ---------------------------------------------------------------------------
+# Pytest: test discovery and configuration
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "strict"
+addopts = "-n auto"
+timeout = 30
+timeout_method = "thread"
+pythonpath = [".."]                                                      # workspace root: resolves api.py, mcp_server.py imports
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "property: hypothesis property-based tests",
+    "snapshot: syrupy snapshot contract tests",
+    "happy: normal-path test (valid inputs, expected behavior)",
+    "edge: edge-case test (boundary, empty, invalid, extreme inputs)",
+    "mutation: tests designed to kill mutants",
+    "integration: tests requiring real database or external service",
+]

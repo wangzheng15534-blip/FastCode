@@ -179,7 +179,7 @@ scip_raw_payload_st = st.builds(
 class TestBuildIrFromScipValidSnapshot:
     @given(index=scip_index_st, repo=identifier, snap_id=identifier)
     @settings(max_examples=40)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_produces_valid_ir_snapshot(
         self, index: SCIPIndex, repo: str, snap_id: str
     ):
@@ -191,7 +191,7 @@ class TestBuildIrFromScipValidSnapshot:
 
     @given(index=scip_index_st, snap_id=identifier)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_source_priority_is_100(self, index: SCIPIndex, snap_id: str):
         """HAPPY: all SCIP-derived symbols have source_priority=100."""
         snap = build_ir_from_scip(
@@ -202,7 +202,7 @@ class TestBuildIrFromScipValidSnapshot:
 
     @given(index=scip_index_st, snap_id=identifier)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_source_set_is_scip(self, index: SCIPIndex, snap_id: str):
         """HAPPY: all SCIP-derived documents and symbols have source_set={"scip"}."""
         snap = build_ir_from_scip(
@@ -215,7 +215,7 @@ class TestBuildIrFromScipValidSnapshot:
 
     @given(index=scip_index_st, snap_id=identifier)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_symbol_ids_prefixed(self, index: SCIPIndex, snap_id: str):
         """HAPPY: every symbol ID starts with 'scip:{snapshot_id}:'."""
         snap = build_ir_from_scip(
@@ -227,7 +227,7 @@ class TestBuildIrFromScipValidSnapshot:
 
     @given(index=scip_index_st, snap_id=identifier)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_metadata_source_modes_scip(self, index: SCIPIndex, snap_id: str):
         """HAPPY: snapshot metadata contains source_modes=["scip"]."""
         snap = build_ir_from_scip(
@@ -237,7 +237,7 @@ class TestBuildIrFromScipValidSnapshot:
 
     @given(index=scip_index_st, snap_id=identifier)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_documents_count_includes_all_scip_docs(
         self, index: SCIPIndex, snap_id: str
     ):
@@ -255,7 +255,7 @@ class TestBuildIrFromScipValidSnapshot:
         tree_id=identifier,
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_branch_commit_tree_passed_through(
         self, index: SCIPIndex, snap_id: str, branch: str, commit_id: str, tree_id: str
     ):
@@ -280,7 +280,7 @@ class TestBuildIrFromScipValidSnapshot:
 class TestContainmentEdges:
     @given(index=scip_index_st, snap_id=identifier)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_every_symbol_gets_containment_edge(self, index: SCIPIndex, snap_id: str):
         """HAPPY: every symbol unit has a containment edge from its document.
 
@@ -297,7 +297,7 @@ class TestContainmentEdges:
 
     @given(index=scip_index_st, snap_id=identifier)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_containment_edge_source_is_scip(self, index: SCIPIndex, snap_id: str):
         """HAPPY: containment edges have source='scip'."""
         snap = build_ir_from_scip(
@@ -309,7 +309,7 @@ class TestContainmentEdges:
 
     @given(index=scip_index_st, snap_id=identifier)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_containment_edge_confidence_precise(self, index: SCIPIndex, snap_id: str):
         """HAPPY: containment edges have confidence='precise'."""
         snap = build_ir_from_scip(
@@ -342,7 +342,7 @@ class TestEmptyAndEdgeCases:
 
     @given(payload=scip_raw_payload_st, snap_id=identifier)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_raw_dict_input_produces_valid_snapshot(
         self, payload: dict[str, Any], snap_id: str
     ):
@@ -459,7 +459,7 @@ class TestEmptyAndEdgeCases:
 class TestOccurrenceProperties:
     @given(index=scip_index_st, snap_id=identifier)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_all_occurrences_source_is_scip(self, index: SCIPIndex, snap_id: str):
         """HAPPY: all IR occurrences have source='scip'."""
         snap = build_ir_from_scip(
@@ -470,7 +470,7 @@ class TestOccurrenceProperties:
 
     @given(index=scip_index_st, snap_id=identifier)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_occurrence_range_none_coerced_to_zero(
         self, index: SCIPIndex, snap_id: str
     ):
@@ -488,7 +488,7 @@ class TestOccurrenceProperties:
 
     @given(index=scip_index_st, snap_id=identifier)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_occurrence_symbol_ids_prefixed(self, index: SCIPIndex, snap_id: str):
         """HAPPY: every occurrence symbol_id starts with 'scip:{snapshot_id}:'."""
         snap = build_ir_from_scip(
@@ -500,7 +500,7 @@ class TestOccurrenceProperties:
 
     @given(index=scip_index_st, snap_id=identifier)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_occurrence_metadata_has_scip_source(self, index: SCIPIndex, snap_id: str):
         """HAPPY: every occurrence metadata contains source='scip'."""
         snap = build_ir_from_scip(

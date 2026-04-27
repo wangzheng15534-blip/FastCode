@@ -107,7 +107,7 @@ scip_index_st = st.builds(
 class TestSCIPOccurrenceRoundtrip:
     @given(occ=scip_occurrence_st)
     @settings(max_examples=50)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_occurrence_roundtrip(self, occ: SCIPOccurrence):
         """HAPPY: SCIPOccurrence.to_dict() -> from_dict() roundtrip is stable."""
         data = occ.to_dict()
@@ -144,7 +144,7 @@ class TestSCIPOccurrenceRoundtrip:
         role=st.sampled_from(["definition", "reference", "implementation"]),
     )
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_range_defaults_to_none_tuple(self, symbol: str, role: str):
         """HAPPY: SCIPOccurrence with no range gets [None, None, None, None]."""
         occ = SCIPOccurrence(symbol=symbol, role=role)
@@ -152,7 +152,7 @@ class TestSCIPOccurrenceRoundtrip:
 
     @given(occ=scip_occurrence_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_to_dict_keys_stable(self, occ: SCIPOccurrence):
         """HAPPY: to_dict always produces the same set of keys."""
         data = occ.to_dict()
@@ -166,7 +166,7 @@ class TestSCIPOccurrenceRoundtrip:
 class TestSCIPSymbolRoundtrip:
     @given(sym=scip_symbol_st)
     @settings(max_examples=50)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_symbol_roundtrip(self, sym: SCIPSymbol):
         """HAPPY: SCIPSymbol.to_dict() -> from_dict() roundtrip is stable."""
         data = sym.to_dict()
@@ -200,7 +200,7 @@ class TestSCIPSymbolRoundtrip:
 
     @given(sym=scip_symbol_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_to_dict_keys_stable(self, sym: SCIPSymbol):
         """HAPPY: to_dict always produces the same set of keys."""
         data = sym.to_dict()
@@ -215,7 +215,7 @@ class TestSCIPSymbolRoundtrip:
 
     @given(symbol=identifier)
     @settings(max_examples=10)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_defaults_with_symbol_only(self, symbol: str):
         """HAPPY: SCIPSymbol with only required field gets None defaults."""
         sym = SCIPSymbol(symbol=symbol)
@@ -233,7 +233,7 @@ class TestSCIPSymbolRoundtrip:
 class TestSCIPDocumentRoundtrip:
     @given(doc=scip_document_st)
     @settings(max_examples=50)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_document_roundtrip(self, doc: SCIPDocument):
         """HAPPY: SCIPDocument.to_dict() -> from_dict() roundtrip preserves all fields."""
         data = doc.to_dict()
@@ -254,7 +254,7 @@ class TestSCIPDocumentRoundtrip:
 
     @given(doc=scip_document_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_nested_symbols_roundtrip(self, doc: SCIPDocument):
         """HAPPY: nested symbols survive document roundtrip."""
         data = doc.to_dict()
@@ -266,7 +266,7 @@ class TestSCIPDocumentRoundtrip:
 
     @given(doc=scip_document_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_nested_occurrences_roundtrip(self, doc: SCIPDocument):
         """HAPPY: nested occurrences survive document roundtrip."""
         data = doc.to_dict()
@@ -277,7 +277,7 @@ class TestSCIPDocumentRoundtrip:
 
     @given(doc=scip_document_st)
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_to_dict_keys_stable(self, doc: SCIPDocument):
         """HAPPY: to_dict always produces the same set of keys."""
         data = doc.to_dict()
@@ -299,7 +299,7 @@ class TestSCIPDocumentRoundtrip:
 class TestSCIPIndexRoundtrip:
     @given(index=scip_index_st)
     @settings(max_examples=50)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_index_roundtrip(self, index: SCIPIndex):
         """HAPPY: SCIPIndex.to_dict() -> from_dict() roundtrip preserves structure."""
         data = index.to_dict()
@@ -339,7 +339,7 @@ class TestSCIPIndexRoundtrip:
         extra_val=st.integers(min_value=0, max_value=100),
     )
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_from_dict_sends_extra_keys_to_metadata(
         self, extra_key: str, extra_val: int
     ):
@@ -350,7 +350,7 @@ class TestSCIPIndexRoundtrip:
 
     @given(index=scip_index_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_to_dict_includes_metadata(self, index: SCIPIndex):
         """HAPPY: to_dict merges metadata keys into output dict."""
         data = index.to_dict()
@@ -360,7 +360,7 @@ class TestSCIPIndexRoundtrip:
 
     @given(index=scip_index_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_roundtrip_preserves_document_count(self, index: SCIPIndex):
         """HAPPY: document count is preserved through roundtrip."""
         data = index.to_dict()
@@ -369,7 +369,7 @@ class TestSCIPIndexRoundtrip:
 
     @given(metadata=st.dictionaries(identifier, st.integers(), max_size=3))
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_metadata_roundtrip(self, metadata: dict[str, int]):
         """HAPPY: SCIPIndex metadata survives roundtrip."""
         index = SCIPIndex(metadata=metadata)
@@ -392,7 +392,7 @@ class TestSCIPArtifactRefRoundtrip:
         created_at=identifier,
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_artifact_ref_roundtrip(
         self,
         snapshot_id: str,
@@ -457,7 +457,7 @@ class TestSCIPArtifactRefRoundtrip:
         created_at=identifier,
     )
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_to_dict_keys_stable(
         self,
         snapshot_id: str,

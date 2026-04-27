@@ -42,7 +42,7 @@ def _make_ingester(**overrides) -> Any:
 
 @pytest.mark.property
 class TestReadFileContent:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_read_utf8_file(self):
         """HAPPY: reads UTF-8 file content."""
         ingester = _make_ingester()
@@ -97,7 +97,7 @@ class TestReadFileContent:
 
     @given(text=small_text)
     @settings(max_examples=10)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_read_roundtrip(self, text: str):
         """HAPPY: written content is readable."""
         ingester = _make_ingester()
@@ -111,7 +111,7 @@ class TestReadFileContent:
 
 @pytest.mark.property
 class TestChunkSectionFallback:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_short_text_single_piece(self):
         """HAPPY: short text produces single piece."""
         ingester = _make_ingester()
@@ -125,7 +125,7 @@ class TestChunkSectionFallback:
         pieces = ingester._chunk_section_fallback("")
         assert pieces == []
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_long_text_multiple_pieces(self):
         """HAPPY: long text produces multiple overlapping pieces."""
         ingester = _make_ingester()
@@ -135,7 +135,7 @@ class TestChunkSectionFallback:
 
     @given(n_words=st.integers(min_value=1, max_value=50))
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_fallback_produces_pieces(self, n_words: Any):
         """HAPPY: fallback produces at least one piece for any non-empty text."""
         ingester = _make_ingester()
@@ -149,41 +149,41 @@ class TestChunkSectionFallback:
 
 @pytest.mark.property
 class TestDetectDocType:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_design_path(self):
         assert KeyDocIngester._detect_doc_type("docs/design/arch.md") == "design"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_research_path(self):
         assert KeyDocIngester._detect_doc_type("docs/research/paper.md") == "research"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_adr_path(self):
         assert KeyDocIngester._detect_doc_type("docs/adr/001-choice.md") == "adr"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_decisions_path(self):
         assert KeyDocIngester._detect_doc_type("docs/decisions/001.md") == "adr"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_rfc_path(self):
         assert KeyDocIngester._detect_doc_type("docs/rfc/prop.md") == "rfc"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_readme(self):
         assert KeyDocIngester._detect_doc_type("README.md") == "readme"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_readme_lowercase(self):
         assert KeyDocIngester._detect_doc_type("readme.txt") == "readme"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_default_doc(self):
         assert KeyDocIngester._detect_doc_type("notes/misc.txt") == "doc"
 
     @given(path=small_text)
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_always_returns_known_type(self, path: str):
         """HAPPY: _detect_doc_type always returns a known type."""
         result = KeyDocIngester._detect_doc_type(path)
@@ -192,20 +192,20 @@ class TestDetectDocType:
 
 @pytest.mark.property
 class TestChunkId:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_chunk_id_deterministic(self):
         """HAPPY: same inputs produce same chunk ID."""
         id1 = KeyDocIngester._chunk_id("snap:repo:abc", "a.py", 0)
         id2 = KeyDocIngester._chunk_id("snap:repo:abc", "a.py", 0)
         assert id1 == id2
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_chunk_id_starts_with_prefix(self):
         """HAPPY: chunk ID starts with docchunk:."""
         cid = KeyDocIngester._chunk_id("snap:repo:abc", "a.py", 0)
         assert cid.startswith("docchunk:")
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_chunk_id_length(self):
         """HAPPY: chunk ID has consistent format."""
         cid = KeyDocIngester._chunk_id("snap:repo:abc", "a.py", 0)
@@ -216,7 +216,7 @@ class TestChunkId:
         snap_id=small_text, path=small_text, idx=st.integers(min_value=0, max_value=100)
     )
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_chunk_id_unique_per_inputs(self, snap_id: str, path: str, idx: int):
         """HAPPY: different inputs produce different IDs."""
         id1 = KeyDocIngester._chunk_id(snap_id, path, idx)
@@ -226,7 +226,7 @@ class TestChunkId:
 
 @pytest.mark.property
 class TestEmbed:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_embed_returns_vector(self):
         """HAPPY: _embed returns float list from embedder."""
         ingester = _make_ingester()

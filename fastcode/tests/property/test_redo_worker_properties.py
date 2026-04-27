@@ -66,7 +66,7 @@ task_st = st.dictionaries(
 
 @pytest.mark.property
 class TestRedoWorkerInit:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_poll_interval_minimum(self):
         """HAPPY: poll interval clamped to minimum 1."""
         w = _make_worker(poll=0)
@@ -80,7 +80,7 @@ class TestRedoWorkerInit:
 
     @given(poll=st.integers(min_value=1, max_value=300))
     @settings(max_examples=10)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_poll_interval_preserved(self, poll: int):
         """HAPPY: valid poll interval preserved."""
         w = _make_worker(poll=poll)
@@ -89,13 +89,13 @@ class TestRedoWorkerInit:
 
 @pytest.mark.property
 class TestProcessOnce:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_no_task_returns_false(self):
         """HAPPY: no pending task returns False."""
         w = _make_worker()
         assert w.process_once() is False
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_successful_task_returns_true(self):
         """HAPPY: successful task returns True."""
         store = _FakeSnapshotStore(
@@ -188,13 +188,13 @@ class TestProcessOnce:
 
 @pytest.mark.property
 class TestProcessOnceStatus:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_none_status(self):
         """HAPPY: no task returns 'none'."""
         w = _make_worker()
         assert w.process_once_status() == "none"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_succeeded_status(self):
         """HAPPY: successful task returns 'succeeded'."""
         store = _FakeSnapshotStore(

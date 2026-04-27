@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from fastcode import api
+
+pytestmark = [pytest.mark.test_double]
 
 
 class _FakeFastCode:

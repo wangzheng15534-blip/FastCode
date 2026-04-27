@@ -123,29 +123,29 @@ def _make_postgres_runtime_fake() -> DBRuntime:
 
 @pytest.mark.property
 class TestInit:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_sqlite_memory_creation(self) -> None:
         rt = _make_sqlite_runtime()
         assert rt.backend == "sqlite"
         assert rt.sqlite_path == ":memory:"
         assert rt.pool is None
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_backend_lowercased(self) -> None:
         rt = DBRuntime(backend="SQLite", sqlite_path=":memory:")
         assert rt.backend == "sqlite"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_none_backend_defaults_to_sqlite(self) -> None:
         rt = DBRuntime(backend=None, sqlite_path=":memory:")
         assert rt.backend == "sqlite"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_empty_backend_defaults_to_sqlite(self) -> None:
         rt = DBRuntime(backend="", sqlite_path=":memory:")
         assert rt.backend == "sqlite"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_pool_min_max_cast_to_int(self) -> None:
         rt = DBRuntime(
             backend="sqlite", sqlite_path=":memory:", pool_min="2", pool_max="10"
@@ -155,25 +155,25 @@ class TestInit:
         assert isinstance(rt.pool_min, int)
         assert isinstance(rt.pool_max, int)
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_sqlite_without_path_raises(self) -> None:
         """Line 61: sqlite backend requires sqlite_path."""
         with pytest.raises(RuntimeError, match="sqlite backend requires sqlite_path"):
             DBRuntime(backend="sqlite")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_sqlite_none_path_raises(self) -> None:
         """Line 61: None sqlite_path raises."""
         with pytest.raises(RuntimeError, match="sqlite backend requires sqlite_path"):
             DBRuntime(backend="sqlite", sqlite_path=None)
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_sqlite_empty_path_raises(self) -> None:
         """Line 61: empty string sqlite_path raises."""
         with pytest.raises(RuntimeError, match="sqlite backend requires sqlite_path"):
             DBRuntime(backend="sqlite", sqlite_path="")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_postgres_without_dsn_raises(self) -> None:
         """Lines 46-47: postgres backend requires DSN."""
         with pytest.raises(
@@ -181,7 +181,7 @@ class TestInit:
         ):
             DBRuntime(backend="postgres", postgres_dsn=None)
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_postgres_empty_dsn_raises(self) -> None:
         """Lines 46-47: empty DSN raises."""
         with pytest.raises(
@@ -189,7 +189,7 @@ class TestInit:
         ):
             DBRuntime(backend="postgres", postgres_dsn="")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_postgres_without_psycopg_raises(self) -> None:
         """Lines 48-49: missing psycopg raises RuntimeError."""
         import fastcode.db_runtime as mod
@@ -232,12 +232,12 @@ class TestInit:
 
 @pytest.mark.property
 class TestFromStorageConfig:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_defaults_to_sqlite(self) -> None:
         rt = DBRuntime.from_storage_config(sqlite_path=":memory:", storage_cfg=None)
         assert rt.backend == "sqlite"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_config_backend_overrides(self) -> None:
         rt = DBRuntime.from_storage_config(
             sqlite_path=":memory:",
@@ -245,7 +245,7 @@ class TestFromStorageConfig:
         )
         assert rt.backend == "sqlite"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_pool_settings_from_config(self) -> None:
         rt = DBRuntime.from_storage_config(
             sqlite_path=":memory:",
@@ -254,7 +254,7 @@ class TestFromStorageConfig:
         assert rt.pool_min == 4
         assert rt.pool_max == 16
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_env_backend_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("FASTCODE_STORAGE_BACKEND", "sqlite")
         rt = DBRuntime.from_storage_config(
@@ -269,7 +269,7 @@ class TestFromStorageConfig:
 
 @pytest.mark.property
 class TestAdaptSql:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_sqlite_passthrough(self) -> None:
         rt = _make_sqlite_runtime()
         sql = "SELECT * FROM t WHERE id = ?"
@@ -280,13 +280,13 @@ class TestAdaptSql:
         suffix=st.text(min_size=0, max_size=20),
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_sqlite_never_transforms(self, prefix: str, suffix: str) -> None:
         rt = _make_sqlite_runtime()
         sql = f"{prefix}?{suffix}"
         assert rt.adapt_sql(sql) == sql
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_postgres_replaces_placeholders(self) -> None:
         """Line 81: postgres replaces ? with %s."""
         rt = DBRuntime.__new__(DBRuntime)
@@ -296,7 +296,7 @@ class TestAdaptSql:
 
     @given(n=st.integers(min_value=0, max_value=10))
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_postgres_adapt_n_placeholders(self, n: int) -> None:
         """Line 81: all ? placeholders replaced with %s."""
         rt = DBRuntime.__new__(DBRuntime)
@@ -306,7 +306,7 @@ class TestAdaptSql:
         assert adapted.count("%s") == n
         assert "?" not in adapted
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_postgres_no_placeholders_unchanged(self) -> None:
         """Line 81: no placeholders means no change."""
         rt = DBRuntime.__new__(DBRuntime)
@@ -319,13 +319,13 @@ class TestAdaptSql:
 
 @pytest.mark.property
 class TestConnect:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_connect_yields_sqlite_connection(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
             assert isinstance(conn, sqlite3.Connection)
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_connect_sets_wal_mode(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -333,28 +333,28 @@ class TestConnect:
             mode = cur.fetchone()[0]
             assert mode.lower() in ("wal", "memory")
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_connect_sets_synchronous_normal(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
             cur = conn.execute("PRAGMA synchronous")
             assert cur.fetchone()[0] == 1  # NORMAL = 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_connect_sets_foreign_keys(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
             cur = conn.execute("PRAGMA foreign_keys")
             assert cur.fetchone()[0] == 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_connect_sets_busy_timeout(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
             cur = conn.execute("PRAGMA busy_timeout")
             assert cur.fetchone()[0] == 5000
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_connect_closes_after_context(self) -> None:
         """Lines 105-106: connection closed on normal exit."""
         rt = _make_sqlite_runtime()
@@ -363,7 +363,7 @@ class TestConnect:
         with pytest.raises(Exception, match=r"closed|Cannot operate|closed database"):
             conn.execute("SELECT 1")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_connect_cleanup_on_exception(self) -> None:
         """Lines 105-106: connection closed on exception exit."""
         rt = _make_sqlite_runtime()
@@ -395,7 +395,7 @@ class TestConnect:
             mod.psycopg = orig_psycopg
             mod.ConnectionPool = orig_pool
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_separate_memory_connections_are_isolated(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn1:
@@ -410,14 +410,14 @@ class TestConnect:
 
 @pytest.mark.property
 class TestExecute:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_execute_basic_query(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
             cur = rt.execute(conn, "SELECT 1 AS val")
             assert cur.fetchone()["val"] == 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_execute_create_and_insert(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -428,7 +428,7 @@ class TestExecute:
             assert len(rows) == 1
             assert rows[0]["name"] == "alice"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_execute_returns_cursor(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -436,7 +436,7 @@ class TestExecute:
             cur = rt.execute(conn, "INSERT INTO t VALUES (?)", (1,))
             assert isinstance(cur, sqlite3.Cursor)
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_execute_empty_params_default(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -448,7 +448,7 @@ class TestExecute:
         value=st.integers(min_value=0, max_value=10000),
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_execute_roundtrip(self, name: str, value: int) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -462,7 +462,7 @@ class TestExecute:
 
     @given(values=sql_value_list)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_execute_various_types(self, values: list[Any]) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -486,13 +486,13 @@ class TestExecute:
                 else:
                     assert fetched == v
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_execute_bad_sql_raises(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn, pytest.raises(sqlite3.OperationalError):
             rt.execute(conn, "SELECT * FROM nonexistent_table")
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_execute_duplicate_primary_key_raises(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -518,14 +518,14 @@ class TestRowToDict:
         """Line 116: all falsy inputs return None."""
         assert DBRuntime.row_to_dict(falsy_val) is None
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_nonempty_dict_passthrough(self) -> None:
         """Line 118: non-empty dict returned as-is (same reference)."""
         d = {"a": 1, "b": "two"}
         result = DBRuntime.row_to_dict(d)
         assert result is d
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_sqlite_row_to_dict(self) -> None:
         """Line 119: sqlite3.Row converted to dict."""
         rt = _make_sqlite_runtime()
@@ -544,7 +544,7 @@ class TestRowToDict:
         name=st.text(min_size=0, max_size=100),
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_sqlite_row_preserves_data(self, id_val: int, name: str) -> None:
         """Line 119: row_to_dict preserves all column values."""
         rt = _make_sqlite_runtime()
@@ -557,7 +557,7 @@ class TestRowToDict:
             assert result["id"] == id_val
             assert result["name"] == name
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_tuple_converted(self) -> None:
         """Line 119: dict(row) works on sqlite3.Row (which supports dict())."""
         rt = _make_sqlite_runtime()
@@ -575,7 +575,7 @@ class TestRowToDict:
 
 @pytest.mark.property
 class TestBeginWrite:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_begin_write_sqlite(self) -> None:
         """Line 123: BEGIN IMMEDIATE for sqlite."""
         rt = _make_sqlite_runtime()
@@ -623,7 +623,7 @@ class TestBeginWrite:
 class TestConnectionPooling:
     @given(n=st.integers(min_value=1, max_value=5))
     @settings(max_examples=10)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_sequential_connections(self, n: int) -> None:
         rt = _make_sqlite_runtime()
         for i in range(n):
@@ -631,7 +631,7 @@ class TestConnectionPooling:
                 rt.execute(conn, "CREATE TABLE IF NOT EXISTS t (id INTEGER)")
                 rt.execute(conn, "INSERT INTO t VALUES (?)", (i,))
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_nested_connections(self) -> None:
         """HAPPY: nested connect calls produce independent :memory: DBs."""
         rt = _make_sqlite_runtime()
@@ -647,7 +647,7 @@ class TestConnectionPooling:
 
 @pytest.mark.property
 class TestRollbackBehavior:
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_constraint_violation_no_corruption(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -658,7 +658,7 @@ class TestRollbackBehavior:
             cur = rt.execute(conn, "SELECT COUNT(*) FROM t")
             assert cur.fetchone()[0] == 1
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_invalid_sql_no_crash(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -669,7 +669,7 @@ class TestRollbackBehavior:
             cur = rt.execute(conn, "SELECT COUNT(*) FROM ok")
             assert cur.fetchone()[0] == 1
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_nonexistent_table_no_corruption(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -680,7 +680,7 @@ class TestRollbackBehavior:
             cur = rt.execute(conn, "SELECT v FROM real")
             assert cur.fetchone()["v"] == "hello"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_rollback_restores_state(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -696,7 +696,7 @@ class TestRollbackBehavior:
             cur = rt.execute(conn, "SELECT COUNT(*) FROM t")
             assert cur.fetchone()[0] == 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_commit_persists(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -707,7 +707,7 @@ class TestRollbackBehavior:
             cur = rt.execute(conn, "SELECT x FROM t")
             assert cur.fetchone()["x"] == 42
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_connection_closed_after_exception(self) -> None:
         rt = _make_sqlite_runtime()
         conn: Any = None
@@ -727,7 +727,7 @@ class TestRollbackBehavior:
 
 @pytest.mark.property
 class TestSchema:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_join_query(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -751,7 +751,7 @@ class TestSchema:
         value=st.integers(min_value=-(2**31), max_value=2**31 - 1),
     )
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_dynamic_table_creation(
         self, table_name: str, col_name: str, value: int
     ) -> None:
@@ -775,7 +775,7 @@ class TestSchema:
         ),
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_insert_count_property(self, rows: list[tuple[int, str]]) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -787,7 +787,7 @@ class TestSchema:
             cur = rt.execute(conn, "SELECT COUNT(*) FROM t")
             assert cur.fetchone()[0] == len(rows)
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_row_factory_dict_like(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
@@ -801,7 +801,7 @@ class TestSchema:
 
 @pytest.mark.property
 class TestDbRuntimeEdgeExtras:
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_execute_invalid_sql(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn, pytest.raises(Exception, match=r".*"):

@@ -110,6 +110,7 @@ _NO_REF_ROLES = [
 ]
 
 
+@pytest.mark.basic
 @pytest.mark.parametrize("role", _REF_ROLES)
 def test_role_produces_ref_edge(role: str):
     """Roles in the whitelist produce a 'ref' edge."""
@@ -121,6 +122,7 @@ def test_role_produces_ref_edge(role: str):
     assert ref_edges[0].metadata["role"] == role
 
 
+@pytest.mark.edge
 @pytest.mark.parametrize("role", _NO_REF_ROLES)
 def test_role_does_not_produce_ref_edge(role: str):
     """Roles outside the whitelist do not produce a 'ref' edge."""
@@ -150,6 +152,7 @@ _RANGE_CASES = [
 ]
 
 
+@pytest.mark.edge
 @pytest.mark.parametrize(("raw_range", "expected_start_line"), _RANGE_CASES)
 def test_occurrence_range_normalization(raw_range: list[Any], expected_start_line: int):
     """Range list is padded to 4 elements and None→0 for occurrences."""
@@ -161,6 +164,7 @@ def test_occurrence_range_normalization(raw_range: list[Any], expected_start_lin
     assert occ.start_line == expected_start_line
 
 
+@pytest.mark.edge
 @pytest.mark.parametrize(
     "raw_range",
     [
@@ -197,6 +201,7 @@ _EMPTY_DOC_VARIANTS = [
 ]
 
 
+@pytest.mark.edge
 @pytest.mark.parametrize(("label", "payload_override"), _EMPTY_DOC_VARIANTS)
 def test_empty_variants_no_symbols_or_occurrences(
     label: str, payload_override: dict[str, Any]
@@ -212,6 +217,7 @@ def test_empty_variants_no_symbols_or_occurrences(
     assert len(snap.occurrences) == 0
 
 
+@pytest.mark.edge
 def test_empty_symbols_still_creates_document():
     """A document with no symbols still appears in the snapshot."""
     payload = {
@@ -229,6 +235,7 @@ def test_empty_symbols_still_creates_document():
     assert snap.documents[0].path == "empty.py"
 
 
+@pytest.mark.edge
 def test_symbol_without_symbol_field_skipped():
     """A symbol dict with no 'symbol' key is silently skipped."""
     payload = {
@@ -245,6 +252,7 @@ def test_symbol_without_symbol_field_skipped():
     assert len(snap.symbols) == 0
 
 
+@pytest.mark.edge
 def test_occurrence_without_symbol_field_skipped():
     """An occurrence dict with no 'symbol' key is silently skipped."""
     payload = {
@@ -275,6 +283,7 @@ _LANGUAGE_CASES = [
 ]
 
 
+@pytest.mark.edge
 @pytest.mark.parametrize(("doc_lang", "hint", "expected"), _LANGUAGE_CASES)
 def test_language_fallback_chain(doc_lang: str | None, hint: str | None, expected: str):
     """Language is resolved via doc.language > language_hint > 'unknown'."""
@@ -303,6 +312,7 @@ _DISPLAY_NAME_CASES = [
 ]
 
 
+@pytest.mark.edge
 @pytest.mark.parametrize(("name", "ext_symbol", "expected"), _DISPLAY_NAME_CASES)
 def test_display_name_fallback(name: str | None, ext_symbol: str, expected: str):
     """display_name falls back to last segment of external symbol."""

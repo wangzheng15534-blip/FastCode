@@ -90,7 +90,7 @@ def _strip_timestamps(d: dict[str, Any]) -> dict[str, Any]:
 class TestProjectionProperties:
     @given(n_docs=doc_count_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_projection_deterministic(self, n_docs: int):
         """HAPPY: same input always produces same output (excluding timestamps)."""
         snapshot = _make_snapshot_with_docs(n_docs)
@@ -108,7 +108,7 @@ class TestProjectionProperties:
 
     @given(n_docs=doc_count_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_l0_summary_nonempty(self, n_docs: int):
         """HAPPY: L0 content is always non-empty for non-empty snapshot."""
         snapshot = _make_snapshot_with_docs(n_docs)
@@ -122,7 +122,7 @@ class TestProjectionProperties:
 
     @given(n_docs=doc_count_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_l1_sections_populated(self, n_docs: int):
         """HAPPY: L1 sections are populated for non-empty snapshot."""
         snapshot = _make_snapshot_with_docs(n_docs)
@@ -135,7 +135,7 @@ class TestProjectionProperties:
 
     @given(n_docs=doc_count_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_chunks_count_gte_one(self, n_docs: int):
         """HAPPY: at least one L2 chunk is produced for non-empty snapshot."""
         snapshot = _make_snapshot_with_docs(n_docs)
@@ -146,7 +146,7 @@ class TestProjectionProperties:
 
     @given(n_docs=doc_count_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_projection_id_stable(self, n_docs: int):
         """HAPPY: projection_id is a stable hash derived from scope + algo version."""
         snapshot = _make_snapshot_with_docs(n_docs)
@@ -215,7 +215,7 @@ class TestProjectionProperties:
 
     @given(n_docs=doc_count_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_l2_index_has_chunks_list(self, n_docs: int):
         """HAPPY: L2 index content contains a non-empty chunks list."""
         snapshot = _make_snapshot_with_docs(n_docs)
@@ -227,7 +227,7 @@ class TestProjectionProperties:
 
     @given(n_docs=doc_count_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_scope_kind_propagated(self, n_docs: int):
         """HAPPY: scope_kind and scope_key are propagated into the result."""
         snapshot = _make_snapshot_with_docs(n_docs)
@@ -240,7 +240,7 @@ class TestProjectionProperties:
 
     @given(n_docs=doc_count_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_result_structure_has_required_keys(self, n_docs: int):
         """HAPPY: result dict has all required keys per ProjectionBuildResult schema."""
         snapshot = _make_snapshot_with_docs(n_docs)

@@ -38,7 +38,7 @@ node_id_st = st.text(alphabet="abc", min_size=1, max_size=3)
 
 @pytest.mark.property
 class TestIRGraphBuilder:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_empty_snapshot_empty_graphs(self):
         """HAPPY: empty snapshot produces empty graphs."""
         builder = IRGraphBuilder()
@@ -46,7 +46,7 @@ class TestIRGraphBuilder:
         assert graphs.dependency_graph.number_of_nodes() == 0
         assert graphs.call_graph.number_of_nodes() == 0
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_single_call_edge(self):
         """HAPPY: single call edge creates node pair in call graph."""
         builder = IRGraphBuilder()
@@ -55,7 +55,7 @@ class TestIRGraphBuilder:
         assert graphs.call_graph.number_of_nodes() == 2
         assert graphs.call_graph.number_of_edges() == 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_import_edge_goes_to_dependency(self):
         """HAPPY: import edges populate dependency graph."""
         builder = IRGraphBuilder()
@@ -63,7 +63,7 @@ class TestIRGraphBuilder:
         graphs = builder.build_graphs(snap)
         assert graphs.dependency_graph.number_of_edges() == 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_inherit_edge_goes_to_inheritance(self):
         """HAPPY: inherit edges populate inheritance graph."""
         builder = IRGraphBuilder()
@@ -71,7 +71,7 @@ class TestIRGraphBuilder:
         graphs = builder.build_graphs(snap)
         assert graphs.inheritance_graph.number_of_edges() == 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_ref_edge_goes_to_reference(self):
         """HAPPY: ref edges populate reference graph."""
         builder = IRGraphBuilder()
@@ -79,7 +79,7 @@ class TestIRGraphBuilder:
         graphs = builder.build_graphs(snap)
         assert graphs.reference_graph.number_of_edges() == 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_contain_edge_goes_to_containment(self):
         """HAPPY: contain edges populate containment graph."""
         builder = IRGraphBuilder()
@@ -188,7 +188,7 @@ class TestIRGraphBuilder:
         n_edges=st.integers(min_value=1, max_value=10),
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_edge_count_matches(self, edge_type: str, n_edges: int):
         """HAPPY: number of edges matches snapshot edges."""
         builder = IRGraphBuilder()
@@ -211,7 +211,7 @@ class TestIRGraphBuilder:
 
 @pytest.mark.property
 class TestIRGraphsStats:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_stats_keys(self):
         """HAPPY: stats returns dict with all graph types."""
         graphs = IRGraphs(
@@ -227,7 +227,7 @@ class TestIRGraphsStats:
             assert "nodes" in stats[key]
             assert "edges" in stats[key]
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_stats_empty_graphs(self):
         """HAPPY: stats on empty graphs returns zeros."""
         graphs = IRGraphBuilder().build_graphs(

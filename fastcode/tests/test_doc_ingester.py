@@ -4,8 +4,12 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from fastcode.doc_ingester import KeyDocIngester
 from fastcode.semantic_ir import IRSnapshot, IRSymbol
+
+pytestmark = [pytest.mark.slow]
 
 
 class _DummyEmbedder:

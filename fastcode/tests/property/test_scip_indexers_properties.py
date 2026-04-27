@@ -30,7 +30,7 @@ unsupported_st = st.sampled_from(
 class TestGetIndexerCommand:
     @given(language=language_st)
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_supported_language_returns_command(self, language: str):
         """HAPPY: supported language returns a command list."""
         cmd = get_indexer_command(language, "/tmp/out.scip")
@@ -46,13 +46,13 @@ class TestGetIndexerCommand:
         cmd = get_indexer_command(language, "/tmp/out.scip")
         assert cmd is None
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_python_uses_scip_python(self):
         """HAPPY: python language uses scip-python binary."""
         cmd = get_indexer_command("python", "/tmp/out.scip")
         assert cmd[0] == "scip-python"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_output_path_included(self):
         """HAPPY: output path is last argument."""
         path = "/custom/output.scip"
@@ -62,7 +62,7 @@ class TestGetIndexerCommand:
 
 @pytest.mark.property
 class TestDetectScipLanguages:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_python_files_detected(self):
         """HAPPY: .py files detected as python."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -71,7 +71,7 @@ class TestDetectScipLanguages:
             langs = detect_scip_languages(tmpdir)
             assert "python" in langs
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_mixed_languages(self):
         """HAPPY: multiple file types detected."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -112,7 +112,7 @@ class TestDetectScipLanguages:
             langs = detect_scip_languages(tmpdir)
             assert langs == []
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_results_sorted(self):
         """HAPPY: detected languages are sorted."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -122,7 +122,7 @@ class TestDetectScipLanguages:
             langs = detect_scip_languages(tmpdir)
             assert langs == sorted(langs)
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_typescript_tsx_detected(self):
         """HAPPY: .tsx files detected as typescript."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -169,7 +169,7 @@ class TestDetectScipLanguages:
             langs = detect_scip_languages(tmpdir)
             assert "typescript" not in langs
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_nested_dirs_scanned(self):
         """HAPPY: nested directories are scanned."""
         with tempfile.TemporaryDirectory() as tmpdir:

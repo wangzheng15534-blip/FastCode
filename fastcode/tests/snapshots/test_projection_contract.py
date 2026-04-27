@@ -134,7 +134,7 @@ def _build_result(snapshot: IRSnapshot) -> ProjectionBuildResult:
 
 
 @pytest.mark.snapshot
-@pytest.mark.happy
+@pytest.mark.basic
 class TestProjectionContract:
     def test_l0_summary_format(self, snapshot: IRSnapshot):
         result = _build_result(_projection_snapshot())

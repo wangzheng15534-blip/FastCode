@@ -55,7 +55,7 @@ def _minimal_git_meta() -> dict[str, str]:
 
 @pytest.mark.property
 class TestTerminusPublisherProperties:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_is_configured_true_with_endpoint(self):
         """HAPPY: is_configured returns True when endpoint set."""
         pub = _make_publisher()
@@ -73,7 +73,7 @@ class TestTerminusPublisherProperties:
         pub = TerminusPublisher({"terminus": {"endpoint": None}})
         assert pub.is_configured() is False
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_build_lineage_payload_has_required_keys(self):
         """HAPPY: payload has version, snapshot_id, nodes, edges."""
         pub = _make_publisher()
@@ -89,7 +89,7 @@ class TestTerminusPublisherProperties:
         assert "edges" in payload
         assert "git_meta" in payload
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_build_lineage_payload_includes_repo_node(self):
         """HAPPY: payload includes Repository node."""
         pub = _make_publisher()
@@ -102,7 +102,7 @@ class TestTerminusPublisherProperties:
         assert len(repo_nodes) == 1
         assert repo_nodes[0]["props"]["repo_name"] == "repo"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_build_lineage_payload_includes_snapshot_node(self):
         """HAPPY: payload includes Snapshot node."""
         pub = _make_publisher()
@@ -114,7 +114,7 @@ class TestTerminusPublisherProperties:
         snap_nodes = [n for n in payload["nodes"] if n["type"] == "Snapshot"]
         assert len(snap_nodes) == 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_build_lineage_payload_includes_branch_node(self):
         """HAPPY: payload includes Branch node when branch present."""
         pub = _make_publisher()
@@ -126,7 +126,7 @@ class TestTerminusPublisherProperties:
         branch_nodes = [n for n in payload["nodes"] if n["type"] == "Branch"]
         assert len(branch_nodes) == 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_build_lineage_payload_includes_manifest_node(self):
         """HAPPY: payload includes Manifest node when manifest_id present."""
         pub = _make_publisher()
@@ -138,7 +138,7 @@ class TestTerminusPublisherProperties:
         manifest_nodes = [n for n in payload["nodes"] if n["type"] == "Manifest"]
         assert len(manifest_nodes) == 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_build_lineage_payload_includes_index_run_node(self):
         """HAPPY: payload includes IndexRun node when run_id present."""
         pub = _make_publisher()
@@ -150,7 +150,7 @@ class TestTerminusPublisherProperties:
         run_nodes = [n for n in payload["nodes"] if n["type"] == "IndexRun"]
         assert len(run_nodes) == 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_build_lineage_payload_with_documents(self):
         """HAPPY: payload includes DocumentVersion nodes."""
         snap = _minimal_snapshot()
@@ -167,7 +167,7 @@ class TestTerminusPublisherProperties:
         assert len(doc_nodes) == 1
         assert doc_nodes[0]["props"]["path"] == "a.py"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_build_lineage_payload_with_symbols(self):
         """HAPPY: payload includes SymbolVersion nodes."""
         snap = _minimal_snapshot()
@@ -204,7 +204,7 @@ class TestTerminusPublisherProperties:
         branch_nodes = [n for n in payload["nodes"] if n["type"] == "Branch"]
         assert len(branch_nodes) == 0
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_build_lineage_payload_missing_snapshot_id_raises(self):
         """EDGE: missing snapshot_id raises ValueError."""
         pub = _make_publisher()
@@ -217,7 +217,7 @@ class TestTerminusPublisherProperties:
                 git_meta=_minimal_git_meta(),
             )
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_build_lineage_payload_missing_repo_name_raises(self):
         """EDGE: missing repo_name in both snapshot and git_meta raises ValueError."""
         pub = _make_publisher()
@@ -232,7 +232,7 @@ class TestTerminusPublisherProperties:
                 git_meta=git_meta,
             )
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_publish_without_endpoint_raises(self):
         """EDGE: publish_snapshot_lineage raises when endpoint not configured."""
         pub = TerminusPublisher({"terminus": {}})
@@ -243,7 +243,7 @@ class TestTerminusPublisherProperties:
                 git_meta=_minimal_git_meta(),
             )
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_build_lineage_payload_parent_commits(self):
         """HAPPY: parent_commit_ids produce commit_parent edges."""
         pub = _make_publisher()
@@ -257,7 +257,7 @@ class TestTerminusPublisherProperties:
         parent_edges = [e for e in payload["edges"] if e["type"] == "commit_parent"]
         assert len(parent_edges) == 2
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_build_lineage_payload_previous_manifest_supersedes(self):
         """HAPPY: previous_manifest_id produces manifest_supersedes edge."""
         pub = _make_publisher()
@@ -271,7 +271,7 @@ class TestTerminusPublisherProperties:
         supersedes = [e for e in payload["edges"] if e["type"] == "manifest_supersedes"]
         assert len(supersedes) == 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_build_lineage_payload_symbol_version_from(self):
         """HAPPY: external_symbol_id with previous_snapshot_symbols creates version edge."""
         pub = _make_publisher()
@@ -298,7 +298,7 @@ class TestTerminusPublisherProperties:
 
     @given(repo_name=small_text)
     @settings(max_examples=10)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_payload_repo_name_varies(self, repo_name: str):
         """HAPPY: payload repo_name reflects snapshot input."""
         pub = _make_publisher()
@@ -339,7 +339,7 @@ class TestTerminusPublisherProperties:
         sym_nodes = [n for n in payload["nodes"] if n["type"] == "SymbolVersion"]
         assert len(sym_nodes) == 0
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_publish_connection_error_raises_runtime(self):
         """EDGE: network error raises RuntimeError."""
         pub = _make_publisher(endpoint="http://localhost:1/invalid")
@@ -420,7 +420,7 @@ class TestTerminusPublisherProperties:
         doc_nodes = [n for n in payload["nodes"] if n["type"] == "DocumentVersion"]
         assert len(doc_nodes) == 0
 
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_publish_with_idempotency_key(self):
         """EDGE: idempotency key passed to request headers."""
         pub = _make_publisher()

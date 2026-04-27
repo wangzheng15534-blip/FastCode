@@ -101,7 +101,7 @@ def test_scip_artifact_ref_to_dict():
         "type_definition",
     ],
 )
-@pytest.mark.happy
+@pytest.mark.basic
 def test_scip_occurrence_role_roundtrip(role: str):
     """HAPPY: SCIPOccurrence roundtrip preserves role for all valid roles."""
     from fastcode.scip_models import SCIPOccurrence
@@ -126,7 +126,7 @@ def test_scip_occurrence_role_roundtrip(role: str):
         "macro",
     ],
 )
-@pytest.mark.happy
+@pytest.mark.basic
 def test_scip_symbol_kind_roundtrip(kind: bool):
     """HAPPY: SCIPSymbol roundtrip preserves kind for all valid kinds."""
     from fastcode.scip_models import SCIPSymbol

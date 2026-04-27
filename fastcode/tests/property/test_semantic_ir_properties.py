@@ -174,7 +174,7 @@ def snapshot_st(
 class TestIRDocumentProperties:
     @given(doc=ir_document_st)
     @settings(max_examples=50)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_document_roundtrip(self, doc: IRDocument):
         """HAPPY: IRDocument.to_dict() -> from_dict() roundtrip preserves all fields."""
         data = doc.to_dict()
@@ -188,7 +188,7 @@ class TestIRDocumentProperties:
 
     @given(doc=ir_document_st)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_document_source_set_serialized_as_sorted_list(self, doc: IRDocument):
         """HAPPY: to_dict serializes source_set as a sorted list."""
         data = doc.to_dict()
@@ -197,7 +197,7 @@ class TestIRDocumentProperties:
 
     @given(doc_id=identifier, path=st.just("a/b.py"), language=language_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_document_defaults(self, doc_id: str, path: str, language: str):
         """HAPPY: IRDocument with only required fields gets proper defaults."""
         doc = IRDocument(doc_id=doc_id, path=path, language=language)
@@ -223,7 +223,7 @@ class TestIRDocumentProperties:
         source_set=st.sets(source_st, max_size=2),
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_document_from_dict_with_source_set_present(
         self, doc_id: str, path: str, language: str, source_set: Any
     ):
@@ -258,7 +258,7 @@ class TestIRDocumentProperties:
         extra_val=st.integers(min_value=0, max_value=100),
     )
     @settings(max_examples=20)
-    @pytest.mark.edge
+    @pytest.mark.negative
     def test_document_from_dict_extra_keys_raise_typeerror(
         self, doc_id: str, path: str, language: str, extra_key: Any, extra_val: Any
     ):
@@ -274,7 +274,7 @@ class TestIRDocumentProperties:
 
     @given(doc=ir_document_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_document_from_dict_does_not_mutate_input(self, doc: IRDocument):
         """HAPPY: from_dict copies data (line 27: payload = dict(data)) so original dict is not mutated."""
         data = doc.to_dict()
@@ -293,7 +293,7 @@ class TestIRDocumentProperties:
 class TestIRSymbolProperties:
     @given(sym=ir_symbol_st)
     @settings(max_examples=50)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_symbol_roundtrip(self, sym: IRSymbol):
         """HAPPY: IRSymbol.to_dict() -> from_dict() roundtrip preserves all fields."""
         data = sym.to_dict()
@@ -316,7 +316,7 @@ class TestIRSymbolProperties:
 
     @given(sym=ir_symbol_st)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_symbol_source_set_serialized_as_sorted_list(self, sym: IRSymbol):
         """HAPPY: to_dict serializes source_set as a sorted list."""
         data = sym.to_dict()
@@ -331,7 +331,7 @@ class TestIRSymbolProperties:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_symbol_defaults(
         self, symbol_id: str, path: str, display_name: str, kind: str, language: str
     ):
@@ -389,7 +389,7 @@ class TestIRSymbolProperties:
         metadata=st.dictionaries(st.text(min_size=1, max_size=10), st.integers()),
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_symbol_from_dict_with_source_set_present(
         self,
         symbol_id: str,
@@ -419,7 +419,7 @@ class TestIRSymbolProperties:
 
     @given(sym=ir_symbol_st)
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_symbol_from_dict_does_not_mutate_input(self, sym: IRSymbol):
         """HAPPY: from_dict copies data (line 57: payload = dict(data)) so original dict is not mutated."""
         data = sym.to_dict()
@@ -468,7 +468,7 @@ class TestIRSymbolProperties:
 class TestIROccurrenceProperties:
     @given(occ=ir_occurrence_st)
     @settings(max_examples=50)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_occurrence_roundtrip(self, occ: IROccurrence):
         """HAPPY: IROccurrence.to_dict() -> from_dict() roundtrip preserves all fields."""
         data = occ.to_dict()
@@ -492,7 +492,7 @@ class TestIROccurrenceProperties:
         source=source_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_occurrence_defaults(
         self, occurrence_id: str, symbol_id: str, doc_id: str, role: str, source: str
     ):
@@ -512,7 +512,7 @@ class TestIROccurrenceProperties:
 
     @given(occ=ir_occurrence_st)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_occurrence_to_dict_is_asdict(self, occ: IROccurrence):
         """HAPPY: to_dict output matches dataclasses.asdict for IROccurrence (line 76)."""
         from dataclasses import asdict
@@ -556,7 +556,7 @@ class TestIROccurrenceProperties:
         metadata=st.dictionaries(st.text(min_size=1, max_size=10), st.integers()),
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_occurrence_from_dict_with_metadata(
         self,
         occurrence_id: str,
@@ -618,7 +618,7 @@ class TestIROccurrenceProperties:
 class TestIREdgeProperties:
     @given(edge=ir_edge_st)
     @settings(max_examples=50)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_edge_roundtrip(self, edge: IREdge):
         """HAPPY: IREdge.to_dict() -> from_dict() roundtrip preserves all fields."""
         data = edge.to_dict()
@@ -641,7 +641,7 @@ class TestIREdgeProperties:
         confidence=st.just("precise"),
     )
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_edge_defaults(
         self,
         edge_id: str,
@@ -665,7 +665,7 @@ class TestIREdgeProperties:
 
     @given(edge=ir_edge_st)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_edge_to_dict_is_asdict(self, edge: IREdge):
         """HAPPY: to_dict output matches dataclasses.asdict for IREdge (line 95)."""
         from dataclasses import asdict
@@ -710,7 +710,7 @@ class TestIREdgeProperties:
         metadata=st.dictionaries(st.text(min_size=1, max_size=10), st.integers()),
     )
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_edge_from_dict_with_all_fields(
         self,
         edge_id: str,
@@ -776,7 +776,7 @@ class TestIREdgeProperties:
 class TestIRAttachmentProperties:
     @given(attachment=ir_attachment_st)
     @settings(max_examples=40)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_attachment_roundtrip(self, attachment: IRAttachment):
         """HAPPY: IRAttachment.to_dict() -> from_dict() preserves all fields."""
         data = attachment.to_dict()
@@ -792,7 +792,7 @@ class TestIRAttachmentProperties:
 
     @given(attachment=ir_attachment_st)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_attachment_payload_is_jsonable_after_to_dict(
         self, attachment: IRAttachment
     ):
@@ -806,7 +806,7 @@ class TestIRAttachmentProperties:
 class TestIRSnapshotProperties:
     @given(snap=snapshot_st())
     @settings(max_examples=40)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_roundtrip(self, snap: IRSnapshot):
         """HAPPY: IRSnapshot.to_dict() -> from_dict() roundtrip preserves all fields."""
         data = snap.to_dict()
@@ -825,7 +825,7 @@ class TestIRSnapshotProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_roundtrip_documents_preserve_fields(self, snap: IRSnapshot):
         """HAPPY: nested IRDocument roundtrips preserve all fields."""
         data = snap.to_dict()
@@ -838,7 +838,7 @@ class TestIRSnapshotProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_roundtrip_symbols_preserve_fields(self, snap: IRSnapshot):
         """HAPPY: nested IRSymbol roundtrips preserve all fields."""
         data = snap.to_dict()
@@ -851,7 +851,7 @@ class TestIRSnapshotProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_roundtrip_edges_preserve_fields(self, snap: IRSnapshot):
         """HAPPY: nested IREdge roundtrips preserve all fields."""
         data = snap.to_dict()
@@ -863,7 +863,7 @@ class TestIRSnapshotProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_roundtrip_attachments_preserve_fields(self, snap: IRSnapshot):
         """HAPPY: nested IRAttachment roundtrips preserve all fields."""
         data = snap.to_dict()
@@ -876,7 +876,7 @@ class TestIRSnapshotProperties:
 
     @given(repo=identifier, snap_id=st.builds(lambda x: f"snap:{x}", identifier))
     @settings(max_examples=20)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_defaults(self, repo: str, snap_id: str):
         """HAPPY: IRSnapshot with only required fields gets proper defaults."""
         snap = IRSnapshot(repo_name=repo, snapshot_id=snap_id)
@@ -933,7 +933,7 @@ class TestIRSnapshotProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_to_dict_lists_not_mutated(self, snap: IRSnapshot):
         """HAPPY: calling to_dict does not mutate the snapshot's internal lists."""
         original_doc_count = len(snap.documents)
@@ -946,7 +946,7 @@ class TestIRSnapshotProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_to_dict_keys_are_stable(self, snap: IRSnapshot):
         """HAPPY: to_dict always produces the same set of top-level keys."""
         data = snap.to_dict()
@@ -967,7 +967,7 @@ class TestIRSnapshotProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_roundtrip_occurrences_preserve_fields(self, snap: IRSnapshot):
         """HAPPY: nested IROccurrence roundtrips preserve all fields."""
         data = snap.to_dict()
@@ -979,7 +979,7 @@ class TestIRSnapshotProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_to_dict_documents_are_dicts(self, snap: IRSnapshot):
         """HAPPY: to_dict serializes each unit as a plain dict, not a dataclass."""
         data = snap.to_dict()
@@ -990,7 +990,7 @@ class TestIRSnapshotProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_to_dict_symbols_are_dicts(self, snap: IRSnapshot):
         """HAPPY: to_dict serializes each unit (including symbols) as a plain dict with source_set as list."""
         data = snap.to_dict()
@@ -1004,7 +1004,7 @@ class TestIRSnapshotProperties:
 
     @given(snap=snapshot_st())
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_metadata_roundtrip(self, snap: IRSnapshot):
         """HAPPY: snapshot-level metadata survives roundtrip."""
         data = snap.to_dict()

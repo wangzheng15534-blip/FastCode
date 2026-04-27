@@ -38,7 +38,7 @@ python_path_st = st.lists(segment_st, min_size=1, max_size=5).map(
 class TestFilePathToModulePath:
     @given(rel_path=python_path_st)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_returns_dotted_path(self, rel_path: str):
         """HAPPY: valid .py file returns dotted module path."""
         with tempfile.TemporaryDirectory() as repo:
@@ -51,7 +51,7 @@ class TestFilePathToModulePath:
                 assert isinstance(result, str)
                 assert len(result) > 0
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_simple_module_path(self):
         """HAPPY: simple file produces correct module path."""
         with tempfile.TemporaryDirectory() as repo:
@@ -62,7 +62,7 @@ class TestFilePathToModulePath:
             result = file_path_to_module_path(path, repo)
             assert result == "app.services.auth"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_init_py_returns_parent(self):
         """HAPPY: __init__.py returns parent package path."""
         with tempfile.TemporaryDirectory() as repo:
@@ -126,7 +126,7 @@ class TestFilePathToModulePath:
             result = file_path_to_module_path(repo, repo)
             assert result is None
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_hyphenated_filename(self):
         """HAPPY: hyphenated filename preserved (RAG-friendly)."""
         with tempfile.TemporaryDirectory() as repo:
@@ -136,7 +136,7 @@ class TestFilePathToModulePath:
             result = file_path_to_module_path(path, repo)
             assert result == "run-server"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_numeric_start_filename(self):
         """HAPPY: filename starting with number preserved (RAG-friendly)."""
         with tempfile.TemporaryDirectory() as repo:
@@ -149,7 +149,7 @@ class TestFilePathToModulePath:
 
 @pytest.mark.property
 class TestIsValidPythonFile:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_valid_py_file(self):
         """HAPPY: existing .py file returns True."""
         with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as f:
@@ -186,7 +186,7 @@ class TestIsValidPythonFile:
 
 @pytest.mark.property
 class TestNormalizeRepoRoot:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_returns_absolute_path(self):
         """HAPPY: returns absolute path."""
         result = normalize_repo_root(".")
@@ -202,7 +202,7 @@ class TestNormalizeRepoRoot:
         path=st.text(alphabet="abcdefghijklmnopqrstuvwxyz/", min_size=1, max_size=20)
     )
     @settings(max_examples=10)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_always_returns_absolute(self, path: str):
         """HAPPY: any input produces absolute path."""
         result = normalize_repo_root(path)
@@ -211,7 +211,7 @@ class TestNormalizeRepoRoot:
 
 @pytest.mark.property
 class TestPathUtilsDetectRepoName:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_exact_match(self):
         """HAPPY: exact repo name found in path."""
         with tempfile.TemporaryDirectory() as repo:
@@ -255,7 +255,7 @@ class TestPathUtilsDetectRepoName:
 
 @pytest.mark.property
 class TestPathUtilsNormalizePathWithRepo:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_removes_repo_prefix(self):
         """HAPPY: repo prefix removed from path."""
         with tempfile.TemporaryDirectory() as repo:
@@ -263,7 +263,7 @@ class TestPathUtilsNormalizePathWithRepo:
             result = pu.normalize_path_with_repo("myrepo/src/main.py", "myrepo")
             assert result == "src/main.py"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_duplicate_repo_name_deduped(self):
         """HAPPY: duplicate repo name removed."""
         with tempfile.TemporaryDirectory() as repo:
@@ -299,7 +299,7 @@ class TestPathUtilsNormalizePathWithRepo:
 
 @pytest.mark.property
 class TestPathUtilsIsSafePath:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_relative_path_safe(self):
         """HAPPY: relative path within repo is safe."""
         with tempfile.TemporaryDirectory() as repo:

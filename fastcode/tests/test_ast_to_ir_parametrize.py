@@ -102,6 +102,7 @@ _SYMBOL_TYPES = ["function", "class", "variable", "method", "interface", "enum"]
 _SKIP_TYPES = ["file", "documentation"]
 
 
+@pytest.mark.basic
 @pytest.mark.parametrize("etype", _SYMBOL_TYPES)
 def test_type_produces_symbol(etype: str):
     """Non-file/documentation types produce an IRSymbol."""
@@ -111,6 +112,7 @@ def test_type_produces_symbol(etype: str):
     assert snap.symbols[0].kind == etype
 
 
+@pytest.mark.basic
 @pytest.mark.parametrize("etype", _SKIP_TYPES)
 def test_type_skips_symbol(etype: str):
     """'file' and 'documentation' types produce no symbol."""
@@ -119,6 +121,7 @@ def test_type_skips_symbol(etype: str):
     assert len(snap.symbols) == 0
 
 
+@pytest.mark.basic
 @pytest.mark.parametrize("etype", _SKIP_TYPES)
 def test_type_skips_symbol_but_still_creates_document(etype: str):
     """Skipped types still create a document for the file path."""
@@ -142,6 +145,7 @@ _QUALIFIED_NAME_CASES = [
 ]
 
 
+@pytest.mark.edge
 @pytest.mark.parametrize(("meta", "expected_qname"), _QUALIFIED_NAME_CASES)
 def test_qualified_name_construction(meta: dict[str, Any], expected_qname: str):
     """qualified_name uses class_name.name when class_name is truthy."""
@@ -201,6 +205,7 @@ _LINE_CLAMP_CASES = [
 ]
 
 
+@pytest.mark.edge
 @pytest.mark.parametrize(("start_line", "expected"), _LINE_CLAMP_CASES)
 def test_start_line_clamping(start_line: int, expected: int):
     """Occurrence start_line is clamped to >= 1 via max(... or 1, 1)."""
@@ -210,6 +215,7 @@ def test_start_line_clamping(start_line: int, expected: int):
     assert snap.occurrences[0].start_line == expected
 
 
+@pytest.mark.edge
 def test_start_line_none_clamps_to_one():
     """start_line=None clamps to 1."""
     elem = _elem(name="f", start_line=10, end_line=20)
@@ -218,6 +224,7 @@ def test_start_line_none_clamps_to_one():
     assert snap.occurrences[0].start_line == 1
 
 
+@pytest.mark.edge
 def test_start_line_negative_clamps_to_one():
     """Negative start_line would clamp to 1 (max(-1 or 1, 1) = max(-1, 1) = 1)."""
     elem = _elem(name="f", start_line=10, end_line=20)
@@ -335,6 +342,7 @@ def test_contain_edge_metadata():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.edge
 def test_empty_elements_no_symbols_or_docs():
     """An empty elements list produces an empty snapshot."""
     snap = _build([])
@@ -435,6 +443,7 @@ def test_file_element_with_imports_creates_import_edge():
     assert import_edges[0].metadata["module"] == "src.a"
 
 
+@pytest.mark.edge
 def test_no_self_import_edge():
     """A file importing itself does not produce an import edge."""
     elements = [
@@ -450,6 +459,7 @@ def test_no_self_import_edge():
     assert len(import_edges) == 0
 
 
+@pytest.mark.edge
 def test_language_fallback_to_unknown():
     """An element with empty language falls back to 'unknown'."""
     elem = _elem(name="f", language="")

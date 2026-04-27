@@ -270,7 +270,7 @@ class TestSnapshotStoreUpsert:
         branch=_branch_st,
     )
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_double_save_upsert_semantics(self, repo: str, commit: str, branch: str):
         """HAPPY: saving the same snapshot twice uses upsert (last wins)."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -371,7 +371,7 @@ class TestSnapshotStoreUpsert:
         value=_metadata_val_st,
     )
     @settings(max_examples=10)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_metadata_update_persists(
         self, repo: str, commit: str, branch: str, key: str, value: Any
     ):

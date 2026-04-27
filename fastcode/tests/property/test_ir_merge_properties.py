@@ -160,7 +160,7 @@ class TestMergeIrProperties:
 
     @given(snapshot=small_snapshot)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_merge_idempotent(self, snapshot: IRSnapshot):
         """HAPPY: merge(merge(ast, scip), scip) == merge(ast, scip)."""
         scip = IRSnapshot(
@@ -185,7 +185,7 @@ class TestMergeIrProperties:
         start_line=st.integers(min_value=1, max_value=100),
     )
     @settings(max_examples=50)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_scip_wins_on_overlap(
         self, display_name: str, path: str, kind: str, start_line: int
     ):
@@ -253,7 +253,7 @@ class TestMergeIrProperties:
         ),
     )
     @settings(max_examples=50)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_edge_coexistence(self, ast_edges: list[IREdge], scip_edges: list[IREdge]):
         """HAPPY: merged edge set is union (deduped by src_id, dst_id, edge_type)."""
         ast = IRSnapshot(
@@ -274,7 +274,7 @@ class TestMergeIrProperties:
 
     @given(snapshot_id=small_id)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_snapshot_identity_preserved(self, snapshot_id: str):
         """HAPPY: output snapshot_id equals AST snapshot_id."""
         ast = IRSnapshot(

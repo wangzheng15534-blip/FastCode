@@ -41,6 +41,8 @@ from fastcode.snapshot_symbol_index import SnapshotSymbolIndex
 from fastcode.terminus_publisher import TerminusPublisher
 from fastcode.vector_store import VectorStore
 
+pytestmark = [pytest.mark.e2e]
+
 # ---------------------------------------------------------------------------
 # Service availability checks
 # ---------------------------------------------------------------------------

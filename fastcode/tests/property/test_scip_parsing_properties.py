@@ -102,7 +102,7 @@ scip_index_st = st.builds(
 class TestScipParsingProperties:
     @given(index=scip_index_st)
     @settings(max_examples=50)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_scip_index_roundtrip(self, index: SCIPIndex):
         """HAPPY: SCIPIndex.from_dict(data).to_dict() preserves key fields."""
         data = index.to_dict()
@@ -116,7 +116,7 @@ class TestScipParsingProperties:
 
     @given(index=scip_index_st, snap_id=small_text)
     @settings(max_examples=40)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_build_ir_from_scip_produces_valid_snapshot(
         self, index: SCIPIndex, snap_id: str
     ):
@@ -148,7 +148,7 @@ class TestScipParsingProperties:
 
     @given(index=scip_index_st, snap_id=small_text)
     @settings(max_examples=40)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_scip_symbol_ids_follow_pattern(self, index: SCIPIndex, snap_id: str):
         """HAPPY: SCIP-derived IRSymbol IDs follow scip:{snapshot_id}:... pattern."""
         snap = build_ir_from_scip(
@@ -163,7 +163,7 @@ class TestScipParsingProperties:
 
     @given(doc=scip_document_st)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_scip_document_roundtrip(self, doc: SCIPDocument):
         """HAPPY: SCIPDocument roundtrip through dict preserves path and counts."""
         data = doc.to_dict()
@@ -174,7 +174,7 @@ class TestScipParsingProperties:
 
     @given(sym=scip_symbol_st)
     @settings(max_examples=30)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_scip_symbol_roundtrip(self, sym: SCIPSymbol):
         """HAPPY: SCIPSymbol roundtrip preserves all fields."""
         data = sym.to_dict()

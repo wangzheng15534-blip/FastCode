@@ -46,7 +46,7 @@ extension_st = st.sampled_from(
 
 @pytest.mark.property
 class TestUtcNow:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_returns_iso_string(self):
         result = utc_now()
         assert isinstance(result, str)
@@ -55,7 +55,7 @@ class TestUtcNow:
 
 @pytest.mark.property
 class TestComputeFileHash:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_hash_deterministic(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write("hello world")
@@ -72,7 +72,7 @@ class TestComputeFileHash:
 
     @given(content=st.text(min_size=0, max_size=100))
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_hash_varies_with_content(self, content: str):
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write(content)
@@ -85,7 +85,7 @@ class TestComputeFileHash:
 
 @pytest.mark.property
 class TestIsTextFile:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_text_file_true(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("hello")
@@ -106,18 +106,18 @@ class TestIsTextFile:
 class TestGetFileExtension:
     @given(ext=extension_st)
     @settings(max_examples=10)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_returns_extension(self, ext: Any):
         assert get_file_extension(f"file{ext}") == ext
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_no_extension(self):
         assert get_file_extension("Makefile") == ""
 
 
 @pytest.mark.property
 class TestIsSupportedFile:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_supported(self):
         assert is_supported_file("main.py", [".py", ".js"]) is True
 
@@ -128,11 +128,11 @@ class TestIsSupportedFile:
 
 @pytest.mark.property
 class TestNormalizePath:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_forward_slash(self):
         assert normalize_path("a/b/c") == "a/b/c"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_dots_collapsed(self):
         result = normalize_path("a/../b")
         assert ".." not in result  # normpath collapses
@@ -141,7 +141,7 @@ class TestNormalizePath:
         path=st.text(alphabet="abcdefghijklmnopqrstuvwxyz/", min_size=1, max_size=20)
     )
     @settings(max_examples=10)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_no_backslashes(self, path: str):
         result = normalize_path(path)
         assert "\\" not in result
@@ -149,15 +149,15 @@ class TestNormalizePath:
 
 @pytest.mark.property
 class TestGetLanguageFromExtension:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_python(self):
         assert get_language_from_extension(".py") == "python"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_javascript(self):
         assert get_language_from_extension(".js") == "javascript"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_case_insensitive(self):
         assert get_language_from_extension(".PY") == "python"
 
@@ -168,7 +168,7 @@ class TestGetLanguageFromExtension:
 
 @pytest.mark.property
 class TestExtractCodeSnippet:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_basic_extraction(self):
         content = "line0\nline1\nline2\nline3\nline4"
         result = extract_code_snippet(content, 1, 3)
@@ -184,13 +184,13 @@ class TestExtractCodeSnippet:
 
 @pytest.mark.property
 class TestFormatCodeBlock:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_basic_format(self):
         result = format_code_block("x = 1", "python")
         assert result.startswith("```python")
         assert result.endswith("```")
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_with_file_path(self):
         result = format_code_block("x = 1", "python", "a.py")
         assert "a.py" in result
@@ -203,27 +203,27 @@ class TestFormatCodeBlock:
 
 @pytest.mark.property
 class TestCalculateCodeComplexity:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_simple_code(self):
         assert calculate_code_complexity("x = 1") == 1
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_if_increases(self):
         c = calculate_code_complexity("if x:\n  pass")
         assert c >= 2
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_empty_code(self):
         assert calculate_code_complexity("") == 1
 
 
 @pytest.mark.property
 class TestMergeDicts:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_merge_two(self):
         assert merge_dicts({"a": 1}, {"b": 2}) == {"a": 1, "b": 2}
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_latter_wins(self):
         assert merge_dicts({"a": 1}, {"a": 2}) == {"a": 2}
 
@@ -234,7 +234,7 @@ class TestMergeDicts:
 
 @pytest.mark.property
 class TestSafeGet:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_simple_get(self):
         assert safe_get({"a": {"b": 1}}, "a", "b") == 1
 
@@ -253,7 +253,7 @@ class TestSafeGet:
 
 @pytest.mark.property
 class TestEnsureDir:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_creates_directory(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "a", "b", "c")
@@ -263,19 +263,19 @@ class TestEnsureDir:
 
 @pytest.mark.property
 class TestSafeJsonable:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_primitives_passthrough(self):
         assert safe_jsonable(None) is None
         assert safe_jsonable(42) == 42
         assert safe_jsonable("hello") == "hello"
         assert safe_jsonable(True) is True
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_dict(self):
         result = safe_jsonable({"a": 1, "b": "x"})
         assert result == {"a": 1, "b": "x"}
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_list(self):
         assert safe_jsonable([1, 2, 3]) == [1, 2, 3]
 
@@ -314,7 +314,7 @@ class TestSafeJsonable:
 
     @given(obj=st.one_of(st.integers(), st.text(min_size=0, max_size=10), st.none()))
     @settings(max_examples=15)
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_primitives_always_jsonable(self, obj: Any):
         result = safe_jsonable(obj)
         assert result == obj
@@ -322,11 +322,11 @@ class TestSafeJsonable:
 
 @pytest.mark.property
 class TestGetRepoNameFromUrl:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_github_https(self):
         assert get_repo_name_from_url("https://github.com/org/myrepo") == "myrepo"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_git_suffix_stripped(self):
         assert get_repo_name_from_url("https://github.com/org/myrepo.git") == "myrepo"
 
@@ -343,12 +343,12 @@ class TestGetRepoNameFromUrl:
 
 @pytest.mark.property
 class TestCleanDocstring:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_basic_clean(self):
         result = clean_docstring("  hello  ")
         assert result == "hello"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_multiline_dedent(self):
         ds = "    line1\n    line2"
         result = clean_docstring(ds)
@@ -369,21 +369,21 @@ class TestCleanDocstring:
 
 @pytest.mark.property
 class TestResolveConfigPaths:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_empty_config(self):
         assert resolve_config_paths({}, "/root") == {}
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_none_config(self):
         assert resolve_config_paths(None, "/root") is None
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_repo_root_resolved(self):
         cfg = {"repo_root": "relative/path"}
         result = resolve_config_paths(cfg, "/project")
         assert os.path.isabs(result["repo_root"])
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_absolute_path_unchanged(self):
         cfg = {"repo_root": "/absolute/path"}
         result = resolve_config_paths(cfg, "/project")
@@ -392,7 +392,7 @@ class TestResolveConfigPaths:
 
 @pytest.mark.property
 class TestTruncateToTokens:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_short_text_unchanged(self):
         text = "hello world"
         assert truncate_to_tokens(text, 100) == text

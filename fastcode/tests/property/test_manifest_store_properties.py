@@ -29,7 +29,7 @@ small_id = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=8
 
 @pytest.mark.property
 class TestManifestStoreProperties:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_publish_returns_valid_manifest(self):
         """HAPPY: publish returns dict with all required keys."""
         store = _make_store()
@@ -42,7 +42,7 @@ class TestManifestStoreProperties:
         assert result["status"] == "published"
         assert result["published_at"] is not None
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_get_branch_manifest_after_publish(self):
         """HAPPY: get_branch_manifest returns published manifest."""
         store = _make_store()
@@ -66,7 +66,7 @@ class TestManifestStoreProperties:
         result = store.get_snapshot_manifest("nope")
         assert result is None
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_get_snapshot_manifest_after_publish(self):
         """HAPPY: get_snapshot_manifest returns manifest by snapshot_id."""
         store = _make_store()
@@ -75,7 +75,7 @@ class TestManifestStoreProperties:
         assert result is not None
         assert result["snapshot_id"] == "snap1"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_publish_overwrites_branch_head(self):
         """HAPPY: second publish to same repo/ref updates branch head."""
         store = _make_store()
@@ -85,7 +85,7 @@ class TestManifestStoreProperties:
         assert result is not None
         assert result["snapshot_id"] == "snap_v2"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_publish_chains_previous_manifest(self):
         """HAPPY: second publish links to previous manifest."""
         store = _make_store()
@@ -94,7 +94,7 @@ class TestManifestStoreProperties:
         assert second["previous_manifest_id"] == first["manifest_id"]
         assert first["previous_manifest_id"] is None
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_publish_custom_status(self):
         """HAPPY: publish with custom status."""
         store = _make_store()

@@ -61,7 +61,7 @@ name_st = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=8)
 
 @pytest.mark.property
 class TestResolveSymbol:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_local_resolution(self):
         """HAPPY: symbol defined in current file resolved locally."""
         resolver = _make_resolver(
@@ -71,7 +71,7 @@ class TestResolveSymbol:
         result = resolver.resolve_symbol("login", "file:auth", [])
         assert result == "sym:login"
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_imported_resolution(self):
         """HAPPY: symbol resolved through import."""
         resolver = _make_resolver(
@@ -124,7 +124,7 @@ class TestResolveSymbol:
 
 @pytest.mark.property
 class TestMatchesImport:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_direct_name_match(self):
         """HAPPY: symbol directly in import names."""
         resolver = _make_resolver()
@@ -140,7 +140,7 @@ class TestMatchesImport:
             is True
         )
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_alias_match(self):
         """HAPPY: symbol matches import alias."""
         resolver = _make_resolver()
@@ -156,7 +156,7 @@ class TestMatchesImport:
             is True
         )
 
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_module_prefix_match(self):
         """HAPPY: symbol starts with module prefix."""
         resolver = _make_resolver()
@@ -213,7 +213,7 @@ class TestMatchesImport:
 
 @pytest.mark.property
 class TestGetModulePathByFileId:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_known_file_id(self):
         """HAPPY: known file_id returns module path."""
         resolver = _make_resolver(module_map={"app.auth": "file:auth"})
@@ -234,7 +234,7 @@ class TestGetModulePathByFileId:
 
 @pytest.mark.property
 class TestGetCurrentModulePathForImports:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_known_file(self):
         """HAPPY: returns module path for known file_id."""
         resolver = _make_resolver(module_map={"app.main": "file:main"})
@@ -255,7 +255,7 @@ class TestGetCurrentModulePathForImports:
 
 @pytest.mark.property
 class TestGetResolutionStats:
-    @pytest.mark.happy
+    @pytest.mark.basic
     def test_stats_keys(self):
         """HAPPY: stats contains expected keys."""
         resolver = _make_resolver(

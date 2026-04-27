@@ -212,9 +212,9 @@ packages = ["src/fastcode"]                                               # pack
     "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
     "PLR0911", # complexity: extract_repo_name has 6 early returns for URL/SSH/HTTPS patterns
 ]
-"src/fastcode/schema/ir.py" = [
+"src/fastcode/schemas/ir.py" = [
     "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
-    "PLC0415", # design: lazy import to avoid circular dep between schema/ir.py and semantic_ir.py
+    "PLC0415", # design: lazy import to avoid circular dep between schemas/ir.py and semantic_ir.py
     "PLR0913", # complexity: IRSnapshot.__init__ takes 7 params (track: bundle into Builder)
 ]
 "src/fastcode/mcp_server.py" = [

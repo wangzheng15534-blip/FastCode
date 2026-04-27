@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from fastcode.schema.ir import resolution_to_confidence
+from fastcode.schemas.ir import resolution_to_confidence
 
 
 def build_code_graph_payload(snapshot: dict[str, Any]) -> dict[str, Any]:

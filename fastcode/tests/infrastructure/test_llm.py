@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from fastcode.effects.llm import chat_completion
+from fastcode.infrastructure.llm import chat_completion
 
 
 class TestChatCompletion:

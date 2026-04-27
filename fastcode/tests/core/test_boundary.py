@@ -22,9 +22,11 @@ from fastcode.core.boundary import (
     hit_to_response,
     query_request_to_core,
 )
-from fastcode.schema.core_types import Hit
+from fastcode.schemas.core_types import Hit
 
-CORE_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "src" / "fastcode" / "core"
+CORE_DIR = (
+    pathlib.Path(__file__).resolve().parent.parent.parent / "src" / "fastcode" / "core"
+)
 
 IO_MODULES = frozenset(
     {

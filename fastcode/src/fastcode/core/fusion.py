@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from typing import Any, cast
 
-from fastcode.schema.core_types import FusionConfig
+from fastcode.schemas.core_types import FusionConfig
 
 from .scoring import (
     clone_result_row,

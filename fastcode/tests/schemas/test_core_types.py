@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.schema.core_types import (
+from fastcode.schemas.core_types import (
     ElementFilter,
     FileAnalysis,
     FusionConfig,

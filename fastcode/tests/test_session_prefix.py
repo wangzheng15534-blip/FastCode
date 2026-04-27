@@ -3,17 +3,10 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-# Ensure project root is on sys.path so api.py and mcp_server.py are importable
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +247,7 @@ def test_api_prefix_endpoint_success():
         l1_data={"layer": "L1", "summary": "API nav"},
     )
 
-    import api as api_mod
+    from fastcode import api as api_mod
 
     with patch.object(api_mod, "_ensure_fastcode_initialized", return_value=fc):
         client = TestClient(api_mod.app)
@@ -277,7 +270,7 @@ def test_api_prefix_endpoint_not_found():
         projection_id=None,
     )
 
-    import api as api_mod
+    from fastcode import api as api_mod
 
     with patch.object(api_mod, "_ensure_fastcode_initialized", return_value=fc):
         client = TestClient(api_mod.app)
@@ -315,7 +308,7 @@ def test_api_prefix_endpoint_existing_layer_route_unaffected():
 
     fc.get_projection_layer = fake_get_projection_layer
 
-    import api as api_mod
+    from fastcode import api as api_mod
 
     with patch.object(api_mod, "_ensure_fastcode_initialized", return_value=fc):
         client = TestClient(api_mod.app)
@@ -333,7 +326,7 @@ def test_api_prefix_endpoint_existing_layer_route_unaffected():
 
 def test_mcp_get_session_prefix_success():
     """MCP get_session_prefix tool returns found=True with L0+L1."""
-    import mcp_server as mcp_mod
+    from fastcode import mcp_server as mcp_mod
 
     fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:mcp_test",
@@ -354,7 +347,7 @@ def test_mcp_get_session_prefix_success():
 
 def test_mcp_get_session_prefix_not_found():
     """MCP get_session_prefix tool returns found=False when no projection."""
-    import mcp_server as mcp_mod
+    from fastcode import mcp_server as mcp_mod
 
     fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:mcp_missing",
@@ -371,7 +364,7 @@ def test_mcp_get_session_prefix_not_found():
 
 def test_mcp_get_session_prefix_exception():
     """MCP get_session_prefix tool returns found=False on exception."""
-    import mcp_server as mcp_mod
+    from fastcode import mcp_server as mcp_mod
 
     # The error comes from get_session_prefix raising, not from _get_fastcode.
     # Mock _get_fastcode to return a fake fc, then make get_session_prefix raise.

@@ -12,20 +12,27 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Copy requirements first for better Docker layer caching
-COPY requirements.txt ./
-RUN pip install --no-cache-dir --retries 5 --timeout 60 -r requirements.txt
+# Install uv for package management
+RUN pip install --no-cache-dir uv
+
+# Copy workspace definition and lockfile first for better Docker layer caching
+COPY pyproject.toml uv.lock ./
+
+# Copy workspace members
+COPY fastcode/ fastcode/
+COPY nanobot/ nanobot/
+
+# Install dependencies (no dev, frozen lockfile)
+RUN uv sync --frozen --no-dev
 
 # Pre-download the embedding model BEFORE copying app code
-# so that code changes don't invalidate this ~470MB cached layer
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
+# so that code changes won't invalidate this ~470MB cached layer
+RUN uv run python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
 
 # Create necessary directories
 RUN mkdir -p /app/repos /app/data /app/logs
 
-# Copy application code (changes here won't re-download the model)
-COPY fastcode/src/fastcode/ fastcode/
-COPY api.py ./
+# Copy configuration
 COPY config/ config/
 
 # Default port for FastCode API
@@ -35,4 +42,4 @@ EXPOSE 8001
 ENV PYTHONUNBUFFERED=1
 ENV TOKENIZERS_PARALLELISM=false
 
-CMD ["python", "api.py", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uv", "run", "fastcode-api", "--host", "0.0.0.0", "--port", "8001"]

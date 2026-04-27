@@ -25,13 +25,9 @@ MCP config example (for Claude Code / Cursor):
 import inspect
 import logging
 import os
-import sys
 import uuid
 
-# Ensure project root is on sys.path
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+from mcp.server.fastmcp import FastMCP
 
 from fastcode.mcp_graph_tools import (
     compute_directed_path,
@@ -40,12 +36,11 @@ from fastcode.mcp_graph_tools import (
     compute_leiden_clusters,
     compute_steiner_path,
 )
-from mcp.server.fastmcp import FastMCP
 
 # ---------------------------------------------------------------------------
 # Logging (file only – stdout is reserved for MCP JSON-RPC in stdio mode)
 # ---------------------------------------------------------------------------
-log_dir = os.path.join(PROJECT_ROOT, "logs")
+log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "logs")
 os.makedirs(log_dir, exist_ok=True)
 
 logging.basicConfig(
@@ -995,7 +990,7 @@ def reindex_repo(repo_source: str) -> str:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-if __name__ == "__main__":
+def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="FastCode MCP Server")
@@ -1017,3 +1012,7 @@ if __name__ == "__main__":
         mcp.run(transport="sse", sse_params={"port": args.port})
     else:
         mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()

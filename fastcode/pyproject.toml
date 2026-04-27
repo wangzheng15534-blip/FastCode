@@ -64,6 +64,12 @@ dependencies = [
 [tool.uv.sources]
 nanobot-ai = { workspace = true }
 
+[project.scripts]
+fastcode = "fastcode.cli:cli"
+fastcode-api = "fastcode.api:main"
+fastcode-mcp = "fastcode.mcp_server:main"
+fastcode-web = "fastcode.web_app:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0",
@@ -211,10 +217,10 @@ packages = ["src/fastcode"]                                               # pack
     "PLC0415", # design: lazy import to avoid circular dep between schema/ir.py and semantic_ir.py
     "PLR0913", # complexity: IRSnapshot.__init__ takes 7 params (track: bundle into Builder)
 ]
-"mcp_server.py" = [
-    "E402",    # tool-conflict: sys.path must be set before imports; E402 is unavoidable here
+"src/fastcode/mcp_server.py" = [
     "PLC0415", # design: lazy imports inside tool functions to keep startup fast
     "ANN001",  # complexity: MCP tool helper args need types (track: annotate all tool handlers)
+    "ANN201",  # complexity: entry point function needs return type (track: annotate all public methods)
     "ANN202",  # complexity: private helper return types (track: annotate all public methods)
     "PLW0603", # design: global statement for lazy singleton — intentional module-level cache
     "PLR2004", # design: MCP tool bodies use literal config values (depths, limits)
@@ -222,6 +228,57 @@ packages = ["src/fastcode"]                                               # pack
     "PLR0913", # complexity: _walk_call_chain takes 6 params (track: bundle into ChainRequest dataclass)
     "RUF013",  # design: implicit Optional in default arg is deliberate for MCP tool ergonomics
     "RUF003",  # design: en-dash in docstring is intentional typographic choice
+]
+"src/fastcode/api.py" = [
+    "ANN001",  # complexity: API endpoint args need types (track: annotate all public methods)
+    "ANN201",  # complexity: API endpoints need return types (track: annotate all public methods)
+    "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "B008",    # design: function calls in FastAPI default arguments (Depends, Body, etc.)
+    "B904",    # design: raise without from in HTTP error handlers; context in HTTP detail
+    "PLW0602", # design: global for fastcode_instance in lifespan — no assignment in that scope
+    "PLW0603", # design: global statement for lazy singleton — intentional module-level cache
+    "PLR0912", # complexity: many branches for API endpoint handlers (track: extract handlers)
+    "PLR0915", # complexity: many statements in API handler functions (track: extract handlers)
+    "PLR2004", # design: HTTP status codes are domain literals, not magic numbers
+    "RET504",  # design: variable assigned for debugging clarity before return
+    "S101",    # design: assert for development-time checks in API validation
+    "S104",    # design: binding to 0.0.0.0 is intentional for API server
+    "S311",    # design: random module for non-crypto session ID generation
+    "S324",    # design: MD5 for non-crypto blob hash keys
+    "S603",    # design: subprocess for git operations; shell=False is already used
+    "S607",    # design: partial path for system binaries (git, python)
+    "RUF013",  # design: implicit Optional in Pydantic model fields
+]
+"src/fastcode/web_app.py" = [
+    "ANN001",  # complexity: API endpoint args need types (track: annotate all public methods)
+    "ANN201",  # complexity: API endpoints need return types (track: annotate all public methods)
+    "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "B008",    # design: function calls in FastAPI default arguments (Depends, Body, etc.)
+    "PLW0602", # design: global for fastcode_instance in startup — no assignment in that scope
+    "PLW0603", # design: global statement for lazy singleton — intentional module-level cache
+    "PLR0912", # complexity: many branches for API endpoint handlers (track: extract handlers)
+    "PLR0915", # complexity: many statements in API handler functions (track: extract handlers)
+    "PLR2004", # design: HTTP status codes are domain literals, not magic numbers
+    "S101",    # design: assert for development-time checks in API validation
+    "S311",    # design: random module for non-crypto session ID generation
+    "RUF013",  # design: implicit Optional in Pydantic model fields
+]
+"src/fastcode/cli.py" = [
+    "ANN001",  # complexity: Click callback args need types (track: annotate all public methods)
+    "ANN201",  # complexity: Click commands need return types (track: annotate all public methods)
+    "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
+    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
+    "B904",    # design: raise without from in CLI error handling; context in error message
+    "PLR0912", # complexity: many branches in CLI commands (track: extract handlers)
+    "PLR0915", # complexity: many statements in CLI command functions (track: extract handlers)
+    "PLR2004", # design: CLI thresholds and defaults are tuning knobs, not constants
+    "PLW0603", # design: global statement for CLI state
+    "S101",    # design: assert for development-time checks in CLI validation
+    "S603",    # design: subprocess for git operations; shell=False is already used
+    "S607",    # design: partial path for system binaries (git, python)
+    "SIM102",  # design: nested if clarifies two independent conditions
 ]
 
 # ---------------------------------------------------------------------------

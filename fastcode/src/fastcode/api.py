@@ -1096,10 +1096,10 @@ def start_api(host: str = "0.0.0.0", port: int = 8000, reload: bool = False):
     """Start the API server"""
     logger.info(f"Starting FastCode API at http://{host}:{port}")
     logger.info(f"API documentation available at http://{host}:{port}/docs")
-    uvicorn.run("api:app", host=host, port=port, reload=reload)
+    uvicorn.run("fastcode.api:app", host=host, port=port, reload=reload)
 
 
-if __name__ == "__main__":
+def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="FastCode API Server")
@@ -1113,3 +1113,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     start_api(host=args.host, port=args.port, reload=args.reload)
+
+
+if __name__ == "__main__":
+    main()

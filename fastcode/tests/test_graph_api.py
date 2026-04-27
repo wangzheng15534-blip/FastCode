@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Any
 
-# api.py is a workspace-root module, not in the fastcode package
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-import api
 from fastapi.testclient import TestClient
+
+from fastcode import api
 
 
 class _FakeFastCode:

@@ -47,8 +47,16 @@ def cli():
     help="Specific repositories to search in multi-repo mode",
 )
 def query(
-    repo_url, repo_path, repo_zip, query, config, output, verbose, load_cache, repos
-):
+    repo_url: str | None,
+    repo_path: str | None,
+    repo_zip: str | None,
+    query: str,
+    config: str | None,
+    output: str | None,
+    verbose: bool,
+    load_cache: bool,
+    repos: tuple[str, ...],
+) -> None:
     """Query a repository with a question (supports both single and multi-repo modes)"""
 
     # Initialize FastCode
@@ -121,7 +129,7 @@ def query(
             elif repo_url:
                 click.echo(f"Loading repository from URL: {repo_url}")
                 fastcode.load_repository(repo_url, is_url=True)
-            else:
+            elif repo_path:
                 click.echo(f"Loading repository from path: {repo_path}")
                 fastcode.load_repository(repo_path, is_url=False)
 
@@ -165,7 +173,12 @@ def query(
 @click.option("--repo-path", "-p", help="Local repository path")
 @click.option("--repo-zip", "-z", help="ZIP file containing repository")
 @click.option("--config", "-c", help="Path to configuration file")
-def index(repo_url, repo_path, repo_zip, config):
+def index(
+    repo_url: str | None,
+    repo_path: str | None,
+    repo_zip: str | None,
+    config: str | None,
+) -> None:
     """Index a repository (without querying)"""
 
     if not repo_url and not repo_path and not repo_zip:
@@ -194,7 +207,7 @@ def index(repo_url, repo_path, repo_zip, config):
         elif repo_url:
             click.echo(f"Loading repository from URL: {repo_url}")
             fastcode.load_repository(repo_url, is_url=True)
-        else:
+        elif repo_path:
             click.echo(f"Loading repository from path: {repo_path}")
             fastcode.load_repository(repo_path, is_url=False)
 
@@ -240,16 +253,16 @@ def index(repo_url, repo_path, repo_zip, config):
     help="Enable/disable agency mode (default: auto based on query intent)",
 )
 def interactive(
-    repo_url,
-    repo_path,
-    repo_zip,
-    config,
-    load_cache,
-    repos,
-    multi_turn,
-    session_id,
-    agency,
-):
+    repo_url: str | None,
+    repo_path: str | None,
+    repo_zip: str | None,
+    config: str | None,
+    load_cache: bool,
+    repos: tuple[str, ...],
+    multi_turn: bool,
+    session_id: str | None,
+    agency: bool | None,
+) -> None:
     """Start interactive query session (supports single and multi-repo modes)"""
 
     fastcode = FastCode(config_path=config)
@@ -310,7 +323,7 @@ def interactive(
             elif repo_url:
                 click.echo(f"Loading repository from URL: {repo_url}")
                 fastcode.load_repository(repo_url, is_url=True)
-            else:
+            elif repo_path:
                 click.echo(f"Loading repository from path: {repo_path}")
                 fastcode.load_repository(repo_path, is_url=False)
 
@@ -396,22 +409,14 @@ def interactive(
                     click.echo("\n=== Agency Mode Status ===")
                     click.echo(f"Mode: {status}")
                     click.echo(f"Detail: {detail}")
-
-                    # Check if agents are initialized
-                    if (
-                        hasattr(fastcode.retriever, "accurate_agent")
-                        and fastcode.retriever.accurate_agent
-                    ):
-                        click.echo("Agents: ✓ Initialized")
-                    else:
-                        click.echo(
-                            "Agents: ✗ Not initialized (will initialize on first agency query)"
-                        )
                     continue
 
                 # Multi-turn specific commands
                 if multi_turn:
                     if query.lower() == "history":
+                        assert (
+                            session_id is not None
+                        )  # guaranteed by multi_turn init above
                         history = fastcode.get_session_history(session_id)
                         if not history:
                             click.echo("No conversation history yet.")
@@ -476,6 +481,7 @@ def interactive(
 
                 # Show turn number in multi-turn mode
                 if multi_turn:
+                    assert session_id is not None  # guaranteed by multi_turn init above
                     turn_num = fastcode._get_next_turn_number(session_id) - 1
                     click.echo(f"\n[Turn {turn_num} saved]")
 
@@ -527,7 +533,9 @@ def cache_stats():
 @click.option("--config", "-c", help="Path to configuration file")
 @click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
 @click.option("--keep-source", is_flag=True, help="Keep cloned source code in repos/")
-def remove_repo(repo_name, config, confirm, keep_source):
+def remove_repo(
+    repo_name: str, config: str | None, confirm: bool, keep_source: bool
+) -> None:
     """Remove a repository and all its data (index, BM25, graphs, overview, source)"""
 
     fastcode = FastCode(config_path=config)
@@ -592,7 +600,7 @@ def remove_repo(repo_name, config, confirm, keep_source):
 
 @cli.command()
 @click.option("--config", "-c", help="Path to configuration file")
-def clean_indices(config):
+def clean_indices(config: str | None) -> None:
     """Clean up orphaned index files"""
 
     fastcode = FastCode(config_path=config)
@@ -680,7 +688,13 @@ def clean_indices(config):
     "--urls-file", "-f", help="File containing repository URLs (one per line)"
 )
 @click.option("--config", "-c", help="Path to configuration file")
-def index_multiple(repo_urls, repo_paths, repo_zips, urls_file, config):
+def index_multiple(
+    repo_urls: tuple[str, ...],
+    repo_paths: tuple[str, ...],
+    repo_zips: tuple[str, ...],
+    urls_file: str | None,
+    config: str | None,
+) -> None:
     """Index multiple repositories at once"""
 
     sources = []
@@ -751,7 +765,13 @@ def index_multiple(repo_urls, repo_paths, repo_zips, urls_file, config):
 @click.option("--config", "-c", help="Path to configuration file")
 @click.option("--output", "-o", help="Output file (default: stdout)")
 @click.option("--load-cache", is_flag=True, help="Load from multi-repo cache")
-def query_multiple(query, repos, config, output, load_cache):
+def query_multiple(
+    query: str,
+    repos: tuple[str, ...],
+    config: str | None,
+    output: str | None,
+    load_cache: bool,
+) -> None:
     """Query across multiple indexed repositories"""
 
     fastcode = FastCode(config_path=config)
@@ -817,7 +837,7 @@ def query_multiple(query, repos, config, output, load_cache):
 @click.option(
     "--load-cache", is_flag=True, help="Load from multi-repo cache (for full metadata)"
 )
-def list_repos(config, load_cache):
+def list_repos(config: str | None, load_cache: bool) -> None:
     """List all indexed repositories"""
 
     fastcode = FastCode(config_path=config)
@@ -880,7 +900,7 @@ def list_repos(config, load_cache):
 
 @cli.command()
 @click.option("--config", "-c", help="Path to configuration file")
-def repo_stats(config):
+def repo_stats(config: str | None) -> None:
     """Show statistics for all indexed repositories"""
 
     fastcode = FastCode(config_path=config)
@@ -926,7 +946,7 @@ def repo_stats(config):
 
 @cli.command()
 @click.option("--config", "-c", help="Path to configuration file")
-def list_sessions(config):
+def list_sessions(config: str | None) -> None:
     """List all dialogue sessions"""
 
     fastcode = FastCode(config_path=config)
@@ -973,7 +993,7 @@ def list_sessions(config):
 @cli.command()
 @click.argument("session_id")
 @click.option("--config", "-c", help="Path to configuration file")
-def show_session(session_id, config):
+def show_session(session_id: str, config: str | None) -> None:
     """Show dialogue history for a session"""
 
     fastcode = FastCode(config_path=config)
@@ -1021,7 +1041,7 @@ def show_session(session_id, config):
 @click.argument("session_id")
 @click.option("--config", "-c", help="Path to configuration file")
 @click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
-def delete_session(session_id, config, confirm):
+def delete_session(session_id: str, config: str | None, confirm: bool) -> None:
     """Delete a dialogue session"""
 
     fastcode = FastCode(config_path=config)

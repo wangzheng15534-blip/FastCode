@@ -75,7 +75,9 @@ class FastCode:
             config_path: Path to configuration file (default: config/config.yaml)
         """
         # Resolve FastCode project root from package location.
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        project_root = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..")
+        )
 
         # Load configuration
         if config_path is None:

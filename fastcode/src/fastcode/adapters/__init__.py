@@ -1,2 +1,1 @@
 """IR adapter modules."""
-

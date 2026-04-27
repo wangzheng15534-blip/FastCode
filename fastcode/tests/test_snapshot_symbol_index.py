@@ -16,11 +16,17 @@ def test_snapshot_symbol_index_canonical_and_alias_resolution():
                 language="python",
                 source_priority=100,
                 source_set={"scip"},
-                metadata={"aliases": ["ast:snap:1:python:a.py:function:foo:1:2"], "source": "scip"},
+                metadata={
+                    "aliases": ["ast:snap:1:python:a.py:function:foo:1:2"],
+                    "source": "scip",
+                },
             )
         ],
     )
     idx = SnapshotSymbolIndex()
     idx.register_snapshot(snap)
-    assert idx.canonicalize_symbol("snap:1", "ast:snap:1:python:a.py:function:foo:1:2") == "scip:snap:1:foo"
+    assert (
+        idx.canonicalize_symbol("snap:1", "ast:snap:1:python:a.py:function:foo:1:2")
+        == "scip:snap:1:foo"
+    )
     assert idx.resolve_symbol("snap:1", name="foo") == "scip:snap:1:foo"

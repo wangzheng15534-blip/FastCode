@@ -29,6 +29,8 @@ import uuid
 
 from mcp.server.fastmcp import FastMCP
 
+from fastcode import FastCode
+from fastcode.graph_builder import CodeGraphBuilder
 from fastcode.mcp_graph_tools import (
     compute_directed_path,
     compute_find_callers,
@@ -87,7 +89,7 @@ def _is_repo_indexed(repo_name: str) -> bool:
     return os.path.exists(faiss_path) and os.path.exists(meta_path)
 
 
-def _apply_forced_env_excludes(fc) -> None:
+def _apply_forced_env_excludes(fc: FastCode) -> None:
     """
     Force-ignore environment-related paths before indexing.
 
@@ -132,7 +134,7 @@ def _apply_forced_env_excludes(fc) -> None:
 
 
 def _ensure_repos_ready(
-    repos: list[str], allow_incremental: bool = True, ctx=None
+    repos: list[str], allow_incremental: bool = True, ctx: object | None = None
 ) -> list[str]:
     """
     For each repo source string:
@@ -192,7 +194,7 @@ def _ensure_repos_ready(
     return ready_names
 
 
-def _ensure_loaded(fc, ready_names: list[str]) -> bool:
+def _ensure_loaded(fc: FastCode, ready_names: list[str]) -> bool:
     """Ensure repos are loaded into memory (vectors + BM25 + graphs)."""
     if not fc.repo_indexed or set(ready_names) != set(fc.loaded_repositories.keys()):
         logger.info(f"Loading repos into memory: {ready_names}")
@@ -621,14 +623,14 @@ def get_file_summary(file_path: str, repos: list[str]) -> str:
 
 
 def _walk_call_chain(
-    gb,
+    gb: CodeGraphBuilder,
     element_id: str,
     direction: str,
     hops_left: int,
-    parts: list,
+    parts: list[str],
     indent: int = 2,
-    visited: set = None,
-):
+    visited: set[str] | None = None,
+) -> None:
     """Recursively walk the call chain and format output."""
     if visited is None:
         visited = {element_id}
@@ -711,7 +713,7 @@ def get_call_chain(
                 target_elem, target_id = elem, eid
                 break
 
-    if not target_id:
+    if not target_id or not target_elem:
         return f"Symbol '{symbol_name}' not found in call graph."
 
     parts = [
@@ -1009,7 +1011,8 @@ def main():
     args = parser.parse_args()
 
     if args.transport == "sse":
-        mcp.run(transport="sse", sse_params={"port": args.port})
+        mcp.settings.port = args.port
+        mcp.run(transport="sse")
     else:
         mcp.run(transport="stdio")
 

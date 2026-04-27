@@ -58,8 +58,12 @@ def test_index_run_idempotency_key_reuses_run():
         snapshot_store = SnapshotStore(tmp)
         run_store = IndexRunStore(snapshot_store.db_path)
 
-        run_1 = run_store.create_run("repo", "snap:repo:1", "main", "c1", idempotency_key="k1")
-        run_2 = run_store.create_run("repo", "snap:repo:1", "main", "c1", idempotency_key="k1")
+        run_1 = run_store.create_run(
+            "repo", "snap:repo:1", "main", "c1", idempotency_key="k1"
+        )
+        run_2 = run_store.create_run(
+            "repo", "snap:repo:1", "main", "c1", idempotency_key="k1"
+        )
 
         assert run_1 == run_2
 
@@ -139,9 +143,13 @@ def test_sqlite_fencing_token_always_one():
     """SQLite lock implementation returns token=1 for all acquire calls (no PG-style increment)."""
     with tempfile.TemporaryDirectory(prefix="fc_fence_") as tmp:
         store = SnapshotStore(tmp)
-        token1 = store.acquire_lock("index:snap:repo:1", owner_id="run1", ttl_seconds=60)
+        token1 = store.acquire_lock(
+            "index:snap:repo:1", owner_id="run1", ttl_seconds=60
+        )
         assert token1 == 1
-        token2 = store.acquire_lock("index:snap:repo:1", owner_id="run2", ttl_seconds=60)
+        token2 = store.acquire_lock(
+            "index:snap:repo:1", owner_id="run2", ttl_seconds=60
+        )
         assert token2 == 1  # SQLite always returns 1, no PG-style increment
 
 

@@ -8,7 +8,9 @@ from fastcode.semantic_ir import IRDocument, IREdge, IRSnapshot, IRSymbol
 
 
 def _sample_snapshot() -> IRSnapshot:
-    doc = IRDocument(doc_id="doc:1", path="app/service.py", language="python", source_set={"ast"})
+    doc = IRDocument(
+        doc_id="doc:1", path="app/service.py", language="python", source_set={"ast"}
+    )
     sym_a = IRSymbol(
         symbol_id="ast:snap:repo:abc:python:app/service.py:function:login:10:20",
         external_symbol_id=None,
@@ -97,8 +99,12 @@ def _sample_graphs() -> IRGraphs:
 def test_projection_transform_emits_required_layers_and_meta():
     snapshot = _sample_snapshot()
     transformer = ProjectionTransformer(config={"projection": {"enable_leiden": False}})
-    scope = ProjectionScope(scope_kind="snapshot", snapshot_id=snapshot.snapshot_id, scope_key="k1")
-    result = transformer.build(scope=scope, snapshot=snapshot, ir_graphs=_sample_graphs())
+    scope = ProjectionScope(
+        scope_kind="snapshot", snapshot_id=snapshot.snapshot_id, scope_key="k1"
+    )
+    result = transformer.build(
+        scope=scope, snapshot=snapshot, ir_graphs=_sample_graphs()
+    )
 
     assert result.l0["layer"] == "L0"
     assert result.l1["layer"] == "L1"
@@ -118,7 +124,13 @@ def test_scip_adapter_uses_snapshot_prefixed_symbol_ids_and_ref_edges():
             {
                 "path": "app/service.py",
                 "language": "python",
-                "symbols": [{"symbol": "pkg app/service.py login().", "name": "login", "kind": "function"}],
+                "symbols": [
+                    {
+                        "symbol": "pkg app/service.py login().",
+                        "name": "login",
+                        "kind": "function",
+                    }
+                ],
                 "occurrences": [
                     {
                         "symbol": "pkg app/service.py login().",
@@ -134,7 +146,9 @@ def test_scip_adapter_uses_snapshot_prefixed_symbol_ids_and_ref_edges():
             }
         ],
     }
-    snap = build_ir_from_scip(repo_name="repo", snapshot_id="snap:repo:abc", scip_index=scip)
+    snap = build_ir_from_scip(
+        repo_name="repo", snapshot_id="snap:repo:abc", scip_index=scip
+    )
     assert snap.symbols
     assert snap.symbols[0].symbol_id.startswith("scip:snap:repo:abc:")
     assert any(e.edge_type == "contain" and e.source == "scip" for e in snap.edges)
@@ -143,7 +157,9 @@ def test_scip_adapter_uses_snapshot_prefixed_symbol_ids_and_ref_edges():
 
 
 def test_steiner_prune_removes_non_terminal_leaves():
-    transformer = ProjectionTransformer(config={"projection": {"enable_leiden": False, "steiner_prune": True}})
+    transformer = ProjectionTransformer(
+        config={"projection": {"enable_leiden": False, "steiner_prune": True}}
+    )
     tree = nx.Graph()
     tree.add_edge("t1", "mid")
     tree.add_edge("mid", "t2")

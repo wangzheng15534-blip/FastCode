@@ -9,7 +9,14 @@ def test_terminus_payload_contains_expected_node_and_edge_types():
         "branch": "main",
         "commit_id": "abc",
         "documents": [{"doc_id": "d1", "path": "a.py", "language": "python"}],
-        "symbols": [{"symbol_id": "sym:1", "display_name": "foo", "path": "a.py", "kind": "function"}],
+        "symbols": [
+            {
+                "symbol_id": "sym:1",
+                "display_name": "foo",
+                "path": "a.py",
+                "kind": "function",
+            }
+        ],
     }
     manifest = {
         "manifest_id": "m1",
@@ -19,7 +26,9 @@ def test_terminus_payload_contains_expected_node_and_edge_types():
         "published_at": "2026-01-01T00:00:00Z",
         "previous_manifest_id": "m0",
     }
-    payload = publisher.build_lineage_payload(snapshot=snapshot, manifest=manifest, git_meta={})
+    payload = publisher.build_lineage_payload(
+        snapshot=snapshot, manifest=manifest, git_meta={}
+    )
     node_types = {n["type"] for n in payload["nodes"]}
     edge_types = {e["type"] for e in payload["edges"]}
     assert "Repository" in node_types

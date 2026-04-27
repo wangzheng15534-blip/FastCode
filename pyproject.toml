@@ -62,15 +62,3 @@ parametrize-names-type = "tuple"
     "ANN201",  # design: test functions are named by convention, return type adds noise
     "ANN003",  # design: test factory **kwargs are intentionally untyped for flexibility
 ]
-"mcp_server.py" = [
-    "E402",    # tool-conflict: sys.path must be set before imports; E402 is unavoidable here
-    "PLC0415", # design: lazy imports inside tool functions to keep startup fast
-    "ANN001",  # complexity: MCP tool helper args need types (track: annotate all tool handlers)
-    "ANN202",  # complexity: private helper return types (track: annotate all public methods)
-    "PLW0603", # design: global statement for lazy singleton — intentional module-level cache
-    "PLR2004", # design: MCP tool bodies use literal config values (depths, limits)
-    "PLR0912", # complexity: get_file_summary has many branches for file type handling (track: extract file type handlers)
-    "PLR0913", # complexity: _walk_call_chain takes 6 params (track: bundle into ChainRequest dataclass)
-    "RUF013",  # design: implicit Optional in default arg is deliberate for MCP tool ergonomics
-    "RUF003",  # design: en-dash in docstring is intentional typographic choice
-]

@@ -21,7 +21,7 @@ def _make_publisher(**overrides) -> Any:
     return TerminusPublisher(cfg)
 
 
-def _minimal_snapshot() -> None:
+def _minimal_snapshot() -> dict[str, str | list[Any]]:
     return {
         "repo_name": "repo",
         "snapshot_id": "snap:repo:abc",
@@ -32,7 +32,7 @@ def _minimal_snapshot() -> None:
     }
 
 
-def _minimal_manifest() -> None:
+def _minimal_manifest() -> dict[str, str]:
     return {
         "manifest_id": "manifest_001",
         "ref_name": "main",
@@ -42,7 +42,7 @@ def _minimal_manifest() -> None:
     }
 
 
-def _minimal_git_meta() -> None:
+def _minimal_git_meta() -> dict[str, str]:
     return {
         "repo_name": "repo",
         "branch": "main",

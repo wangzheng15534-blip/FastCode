@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -152,7 +154,7 @@ small_id = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=8
 
 # Strategy for a well-formed snapshot (valid by construction)
 @st.composite
-def valid_snapshot_st(draw: st.DataObject):
+def valid_snapshot_st(draw: Any):
     """Build a valid snapshot with unique doc IDs, paths, and symbol IDs."""
     n_docs = draw(st.integers(min_value=1, max_value=3))
     n_syms = draw(st.integers(min_value=1, max_value=5))

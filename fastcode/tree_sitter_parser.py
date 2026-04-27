@@ -123,7 +123,9 @@ class TSParser:
         try:
             self.current_language_name = language_name.lower()
             self.language = self._load_language(self.current_language_name)
-            self.parser.set_language(self.language)
+            if self.parser is None:
+                raise RuntimeError("Parser not initialized")
+            self.parser.set_language(self.language)  # type: ignore[attr-defined]
             self.logger.debug(f"Switched parser to {self.current_language_name}")
         except Exception as e:
             self.logger.error(f"Failed to switch language to {language_name}: {e}")
@@ -148,15 +150,13 @@ class TSParser:
             self.logger.error("Parser not properly initialized")
             return None
 
-        if code is None or not isinstance(code, str):
-            self.logger.warning("Invalid code input: code must be a string")
-            return None
-
         try:
             # Convert code to bytes for tree-sitter
             code_bytes = code.encode("utf-8")
 
             # Parse the code
+            if self.parser is None:
+                raise RuntimeError("Parser not initialized")
             return self.parser.parse(code_bytes)
 
         except Exception as e:

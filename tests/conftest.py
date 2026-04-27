@@ -301,10 +301,10 @@ code_element_st = st.builds(
 
 @st.composite
 def connected_snapshot_st(
-    draw: st.DataObject,
+    draw: Any,
     n_docs: int | None = None,
     n_symbols_per_doc: int | None = None,
-):
+) -> Any:
     """Generate IRSnapshot where all references are valid (occurrences/edges point to real entities)."""
     nd = n_docs or draw(st.integers(min_value=1, max_value=4))
     ns = n_symbols_per_doc or draw(st.integers(min_value=1, max_value=4))
@@ -333,6 +333,7 @@ def connected_snapshot_st(
             symbols.append(
                 IRSymbol(
                     symbol_id=sym_id,
+                    external_symbol_id=None,
                     path=path,
                     display_name=f"func_{j}",
                     kind=draw(kind_st),
@@ -425,6 +426,7 @@ def _make_snapshot(
             symbols.append(
                 IRSymbol(
                     symbol_id=sym_id,
+                    external_symbol_id=None,
                     path=f"src/file{i}.py",
                     display_name=f"func_{j}",
                     kind="function",

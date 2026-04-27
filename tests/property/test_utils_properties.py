@@ -288,7 +288,7 @@ class TestSafeJsonable:
     @pytest.mark.edge
     def test_object_with_to_dict(self):
         class Obj:
-            def to_dict(self) -> None:
+            def to_dict(self) -> dict[str, int]:
                 return {"x": 1}
 
         assert safe_jsonable(Obj()) == {"x": 1}

@@ -13,7 +13,7 @@ import api
 
 
 class _FakeFastCode:
-    def list_repo_refs(self, repo_name: str) -> None:
+    def list_repo_refs(self, repo_name: str) -> list[dict[str, str]]:
         return [{"branch": "main", "snapshot_id": "snap:repo:1"}]
 
     def find_symbol(

@@ -365,7 +365,7 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _pg_execute(dsn: str, sql: str, params: dict[str, Any] | None = None) -> None:
+def _pg_execute(dsn: str, sql: str, params: dict[str, Any] | None = None) -> Any:
     import psycopg
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:

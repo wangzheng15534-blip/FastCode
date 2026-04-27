@@ -47,7 +47,7 @@ kind_st = st.sampled_from(
 
 
 @st.composite
-def _valid_range(draw: st.DataObject) -> Any:
+def _valid_range(draw: Any) -> Any:
     start_line = draw(st.one_of(st.integers(min_value=0, max_value=1000), st.none()))
     if start_line is None:
         end_line = draw(st.one_of(st.integers(min_value=0, max_value=1000), st.none()))

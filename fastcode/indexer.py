@@ -473,7 +473,7 @@ class CodeIndexer:
 
     def _save_repository_overview(self, repo_overview: dict[str, Any]) -> None:
         """Save repository overview to separate storage (not in regular elements)"""
-        repo_name = repo_overview.get("repo_name", "Unknown")
+        repo_name: str = repo_overview.get("repo_name", "Unknown")
         summary = repo_overview.get("summary", "")
         structure_text = repo_overview.get("structure_text", "")
         readme_content = repo_overview.get("readme_content", "")
@@ -506,7 +506,7 @@ class CodeIndexer:
         # Save to separate storage via vector_store
         if self.vector_store:
             self.vector_store.save_repo_overview(
-                repo_name=repo_name or self.current_repo_name,
+                repo_name=repo_name or self.current_repo_name or "Unknown",
                 overview_content=overview_text,
                 embedding=embedding,
                 metadata=metadata,

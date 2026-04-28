@@ -36,14 +36,12 @@ def _make_resolver(module_map: dict[str, list[str]] | None = None) -> Any:
 
 
 class TestResolveAbsoluteImport:
-    @pytest.mark.basic
     def test_known_module_found_property(self):
         """HAPPY: absolute import of known module returns file ID."""
         resolver = _make_resolver({"utils": "file:utils.py"})
         result = resolver.resolve_import("app.main", "utils", level=0)
         assert result == "file:utils.py"
 
-    @pytest.mark.basic
     def test_nested_module_found_property(self):
         """HAPPY: nested absolute import resolves."""
         resolver = _make_resolver({"app.services": "file:services.py"})
@@ -73,21 +71,18 @@ class TestResolveAbsoluteImport:
 
 
 class TestResolveRelativeImport:
-    @pytest.mark.basic
     def test_level_one_import_property(self):
         """HAPPY: single-dot import resolves to sibling module."""
         resolver = _make_resolver({"app.utils": "file:utils.py"})
         result = resolver.resolve_import("app.main", "utils", level=1)
         assert result == "file:utils.py"
 
-    @pytest.mark.basic
     def test_level_two_import_property(self):
         """HAPPY: double-dot import resolves to parent package."""
         resolver = _make_resolver({"app.utils": "file:utils.py"})
         result = resolver.resolve_import("app.services.auth", "utils", level=2)
         assert result == "file:utils.py"
 
-    @pytest.mark.basic
     def test_package_init_level_one_property(self):
         """HAPPY: __init__.py level=1 stays in current package."""
         resolver = _make_resolver({"app.utils": "file:utils.py"})
@@ -127,7 +122,6 @@ class TestResolveRelativeImport:
         target=segment_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.basic
     def test_relative_always_checks_map_property(self, current: bool, target: Any):
         """HAPPY: relative import always looks up in module map."""
         resolver = _make_resolver()

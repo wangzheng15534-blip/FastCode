@@ -218,7 +218,7 @@ def test_empty_variants_no_symbols_or_occurrences(
 
 
 @pytest.mark.edge
-def test_empty_symbols_still_creates_document():
+def test_empty_symbols_still_creates_document_edge():
     """A document with no symbols still appears in the snapshot."""
     payload = {
         "documents": [
@@ -236,7 +236,7 @@ def test_empty_symbols_still_creates_document():
 
 
 @pytest.mark.edge
-def test_symbol_without_symbol_field_skipped():
+def test_symbol_without_symbol_field_skipped_edge():
     """A symbol dict with no 'symbol' key is silently skipped."""
     payload = {
         "documents": [
@@ -253,7 +253,7 @@ def test_symbol_without_symbol_field_skipped():
 
 
 @pytest.mark.edge
-def test_occurrence_without_symbol_field_skipped():
+def test_occurrence_without_symbol_field_skipped_edge():
     """An occurrence dict with no 'symbol' key is silently skipped."""
     payload = {
         "documents": [

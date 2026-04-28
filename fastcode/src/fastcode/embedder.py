@@ -54,7 +54,7 @@ class CodeEmbedder:
         else:
             self.logger.info(f"Loading embedding model: {self.model_name}")
             self.model = self._load_model()
-            dim = self.model.get_sentence_embedding_dimension()
+            dim = self.model.get_embedding_dimension()
             self.embedding_dim = dim if dim is not None else 0
 
         self.logger.info(f"Embedding dimension: {self.embedding_dim}")

@@ -49,7 +49,7 @@ class _FakeFastCode:
         return {"processed": limit, "succeeded": limit, "failed": 0}
 
 
-def test_graph_and_symbol_endpoints():
+def test_graph_and_symbol_endpoints_double():
     original = api.fastcode_instance
     api.fastcode_instance = _FakeFastCode()
     try:
@@ -115,7 +115,7 @@ def test_graph_and_symbol_endpoints():
         api.fastcode_instance = original
 
 
-def test_redo_process_endpoint():
+def test_redo_process_endpoint_double():
     original = api.fastcode_instance
     api.fastcode_instance = _FakeFastCode()
     try:
@@ -137,7 +137,7 @@ def test_redo_process_endpoint():
         api.fastcode_instance = original
 
 
-def test_symbol_find_returns_404_for_missing():
+def test_symbol_find_returns_404_for_missing_double():
     original = api.fastcode_instance
     api.fastcode_instance = _FakeFastCode()
     try:

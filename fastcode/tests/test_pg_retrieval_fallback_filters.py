@@ -48,7 +48,7 @@ class _FakeDBRuntime:
         return self._conn
 
 
-def test_semantic_fallback_rechecks_repo_and_element_type_filters():
+def test_semantic_fallback_rechecks_repo_and_element_type_filters_double():
     rows = [
         ({"id": "ok", "type": "design_document", "repo_name": "repoA"}, [1.0, 0.0]),
         ({"id": "wrong_type", "type": "function", "repo_name": "repoA"}, [1.0, 0.0]),

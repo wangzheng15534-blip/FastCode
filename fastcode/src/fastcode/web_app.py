@@ -274,7 +274,7 @@ async def index_multiple(request: IndexMultipleRequest):
     try:
         logger.info(f"Indexing {len(request.sources)} repositories")
         fastcode_instance.load_multiple_repositories(
-            [s.dict() for s in request.sources]
+            [s.model_dump() for s in request.sources]
         )
 
         # Invalidate scan cache since we just added/updated indexes

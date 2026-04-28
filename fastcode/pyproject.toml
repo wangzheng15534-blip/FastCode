@@ -84,6 +84,7 @@ dev = [
     "pytest-timeout",
     "pytest-subprocess",
     "mutmut",
+    "schemathesis",
 ]
 scip = [
     "protobuf>=6.0",
@@ -295,26 +296,18 @@ timeout = 30
 timeout_method = "thread"
 pythonpath = [".."]                                                      # workspace root: resolves api.py, mcp_server.py imports
 markers = [
-    # --- Pre-commit tier (fast, deterministic) ---
+    # --- Technique markers (pre-commit tier) ---
     "basic: straightforward assertion on known input/output",
     "edge: boundary values, empty inputs, off-by-one",
     "negative: invalid input, expected failures (pytest.raises)",
-    "xfail: known bugs tracked with @pytest.mark.xfail",
     "test_double: mocks, fakes, stubs, patches",
-    # --- CI tier (slower, probabilistic, or I/O-dependent) ---
-    "snapshot: syrupy snapshot contract tests",
-    "property: hypothesis property-based tests",
-    "perf: benchmark and performance regression tests",
-    "fuzz: fuzz testing",
-    "mutation: tests designed to kill mutants",
-    "schemathesis: API schema fuzz",
-    "bdd: behavior-driven scenarios",
+    # --- Execution tier markers ---
     "integration: tests requiring real database or external service",
     "e2e: end-to-end user flow",
-    # --- Cross-cutting ---
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    # --- Deprecated (remove in follow-up PR) ---
-    "happy: [deprecated] use 'basic' instead",
+    # --- Framework markers (auto-registered by plugins) ---
+    "hypothesis: hypothesis property-based tests (auto-applied by @given)",
+    "snapshot: syrupy snapshot tests",
+    "benchmark: pytest-benchmark tests",
 ]
 
 # ---------------------------------------------------------------------------

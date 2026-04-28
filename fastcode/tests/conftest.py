@@ -22,17 +22,10 @@ _TECHNIQUE_MARKERS = frozenset(
         "basic",
         "edge",
         "negative",
-        "xfail",
         "test_double",
-        "snapshot",
-        "property",
-        "perf",
-        "fuzz",
-        "mutation",
-        "schemathesis",
-        "bdd",
         "integration",
         "e2e",
+        "hypothesis",
     }
 )
 

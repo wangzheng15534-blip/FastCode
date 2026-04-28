@@ -59,6 +59,7 @@ ignore = [
 include = ["fastcode/src", "fastcode/tests", "tests"]
 exclude = ["**/repos", "**/repo_backup", "**/_bmad-output", "**/_fastcode"]
 extraPaths = [".", "./fastcode/src"]
+stubPath = "fastcode/src/fastcode/_stubs"
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "strict"
@@ -73,6 +74,15 @@ reportUnknownLambdaType = "warning"
 reportUnknownParameterType = "warning"
 reportPrivateUsage = "none"
 reportDeprecated = "warning"
+
+# Source: library-boundary Unknown cascades (MCP **kwargs, faiss, rank_bm25, protobuf generated, psycopg covariance)
+[[tool.pyright.executionEnvironments]]
+root = "fastcode/src"
+reportUnknownVariableType = "none"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownParameterType = "none"
+reportUnknownLambdaType = "none"
 
 # Tests: known-good literals, untyped fixtures/mocks — Rust cfg(test) equivalent
 [[tool.pyright.executionEnvironments]]

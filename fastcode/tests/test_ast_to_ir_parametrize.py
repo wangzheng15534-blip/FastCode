@@ -216,7 +216,7 @@ def test_start_line_clamping(start_line: int, expected: int):
 
 
 @pytest.mark.edge
-def test_start_line_none_clamps_to_one():
+def test_start_line_none_clamps_to_one_edge():
     """start_line=None clamps to 1."""
     elem = _elem(name="f", start_line=10, end_line=20)
     elem.start_line = None  # type: ignore[assignment]
@@ -225,7 +225,7 @@ def test_start_line_none_clamps_to_one():
 
 
 @pytest.mark.edge
-def test_start_line_negative_clamps_to_one():
+def test_start_line_negative_clamps_to_one_edge():
     """Negative start_line would clamp to 1 (max(-1 or 1, 1) = max(-1, 1) = 1)."""
     elem = _elem(name="f", start_line=10, end_line=20)
     elem.start_line = -1  # type: ignore[assignment]
@@ -343,7 +343,7 @@ def test_contain_edge_metadata():
 
 
 @pytest.mark.edge
-def test_empty_elements_no_symbols_or_docs():
+def test_empty_elements_no_symbols_or_docs_edge():
     """An empty elements list produces an empty snapshot."""
     snap = _build([])
     assert len(snap.documents) == 0
@@ -460,7 +460,7 @@ def test_no_self_import_edge():
 
 
 @pytest.mark.edge
-def test_language_fallback_to_unknown():
+def test_language_fallback_to_unknown_edge():
     """An element with empty language falls back to 'unknown'."""
     elem = _elem(name="f", language="")
     snap = _build([elem])

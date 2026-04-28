@@ -8,6 +8,7 @@ Usage:
 
 MCP config example (for Claude Code / Cursor):
     {
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
       "mcpServers": {
         "fastcode": {
           "command": "python",
@@ -22,6 +23,7 @@ MCP config example (for Claude Code / Cursor):
     }
 """
 
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 import inspect
 import logging
 import os

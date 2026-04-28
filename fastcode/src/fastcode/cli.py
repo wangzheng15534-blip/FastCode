@@ -3,6 +3,8 @@
 FastCode 2.0 - Command Line Interface
 """
 
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+
 import os
 import platform
 

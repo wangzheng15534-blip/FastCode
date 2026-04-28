@@ -2,6 +2,8 @@
 Typed SCIP payload models.
 """
 
+# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

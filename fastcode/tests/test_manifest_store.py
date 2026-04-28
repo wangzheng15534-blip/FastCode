@@ -166,7 +166,6 @@ class TestManifestStoreProperties:
     @pytest.mark.edge
     def test_publish_published_at_is_iso_format_property(self):
         """EDGE: published_at is a valid timestamp string."""
-        import re
 
         store = _make_store()
         result = store.publish("repo", "main", "snap1", "run1")

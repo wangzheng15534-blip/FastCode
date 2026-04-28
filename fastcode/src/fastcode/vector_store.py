@@ -2,6 +2,8 @@
 Vector Store - Store and retrieve code embeddings
 """
 
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 import logging

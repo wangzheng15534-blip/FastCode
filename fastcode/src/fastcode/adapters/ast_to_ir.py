@@ -2,6 +2,8 @@
 Adapter from FastCode AST/indexer output into canonical unit-grounded IR.
 """
 
+# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 import hashlib

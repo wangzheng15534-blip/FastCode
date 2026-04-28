@@ -4,6 +4,8 @@ FastCode 2.0 - Web Interface
 Simple web interface for FastCode system
 """
 
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
+
 import os
 import platform
 

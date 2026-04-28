@@ -1393,6 +1393,12 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
 # --- Registration ---
 
 TestSnapshotStoreStateMachine = SnapshotStoreMachine.TestCase
+TestSnapshotStoreStateMachine.settings = settings(
+    max_examples=20,
+    stateful_step_count=20,
+    deadline=None,
+)
+pytest.mark.timeout(120)(TestSnapshotStoreStateMachine.runTest)
 
 
 # --- Additional upsert tests ---

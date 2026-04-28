@@ -6,6 +6,8 @@ Three Golden Rules:
 3. Explicit Translation -- explicit field mapping, no **kwargs unpacking
 """
 
+# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

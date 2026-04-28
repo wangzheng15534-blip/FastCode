@@ -57,7 +57,7 @@ ignore = [
 
 [tool.pyright]
 include = ["fastcode/src", "fastcode/tests", "tests"]
-exclude = ["**/repos", "**/repo_backup", "**/_bmad-output", "**/_fastcode"]
+exclude = ["**/repos", "**/repo_backup", "**/_bmad-output", "**/_fastcode", "**/scip_pb2.py"]
 extraPaths = [".", "./fastcode/src"]
 stubPath = "fastcode/src/fastcode/_stubs"
 venvPath = "."

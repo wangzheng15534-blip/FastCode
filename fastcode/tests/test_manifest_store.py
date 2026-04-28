@@ -1,6 +1,10 @@
-"""Property-based tests for manifest_store module."""
+"""Tests for manifest_store module."""
 
 from __future__ import annotations
+
+import os
+import re
+import tempfile
 
 import pytest
 from hypothesis import strategies as st
@@ -12,11 +16,7 @@ from fastcode.manifest_store import ManifestStore
 
 
 def _make_store() -> ManifestStore:
-    import os
-    import tempfile
-    import uuid
-
-    tmpdir = tempfile.mkdtemp(prefix=f"mfst_{uuid.uuid4().hex[:12]}_")
+    tmpdir = tempfile.mkdtemp(prefix="mfst_prop_")
     path = os.path.join(tmpdir, "test.db")
     return ManifestStore(path)
 
@@ -184,3 +184,127 @@ class TestManifestStoreProperties:
         assert m2["previous_manifest_id"] == m1["manifest_id"]
         assert m3["previous_manifest_id"] == m2["manifest_id"]
         assert m1["previous_manifest_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# Database-level invariants
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaMigration:
+    def test_init_idempotent_reinstantiation_property(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.db")
+            ManifestStore(path)
+            store2 = ManifestStore(path)
+            result = store2.publish("repo", "main", "snap1", "run1")
+            assert result["manifest_id"] is not None
+
+    @pytest.mark.edge
+    def test_init_db_creates_required_tables_property(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.db")
+            store = ManifestStore(path)
+            with store.db_runtime.connect() as conn:
+                tables = [
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                ]
+            assert "manifests" in tables
+            assert "manifest_heads" in tables
+            assert "schema_migrations" in tables
+
+    def test_schema_migration_row_written_property(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.db")
+            store = ManifestStore(path)
+            with store.db_runtime.connect() as conn:
+                row = conn.execute(
+                    "SELECT component, version FROM schema_migrations WHERE component=?",
+                    ("manifest_store",),
+                ).fetchone()
+            assert row is not None
+            assert row[0] == "manifest_store"
+            assert row[1] == "v1"
+
+
+class TestHeadsTablePointsToLatest:
+    def test_heads_points_to_last_published_property(self):
+        store = _make_store()
+        store.publish("repo", "main", "snap_v1", "run1")
+        store.publish("repo", "main", "snap_v2", "run2")
+        store.publish("repo", "main", "snap_v3", "run3")
+        result = store.get_branch_manifest("repo", "main")
+        assert result is not None
+        assert result["snapshot_id"] == "snap_v3"
+
+    def test_heads_updates_per_publish_property(self):
+        store = _make_store()
+        m1 = store.publish("repo", "main", "snap1", "r1")
+        head = store.get_branch_manifest("repo", "main")
+        assert head["manifest_id"] == m1["manifest_id"]
+
+        m2 = store.publish("repo", "main", "snap2", "r2")
+        head = store.get_branch_manifest("repo", "main")
+        assert head["manifest_id"] == m2["manifest_id"]
+
+
+class TestPublishReturnStructure:
+    def test_publish_returns_all_required_fields_property(self):
+        store = _make_store()
+        result = store.publish("repo", "main", "snap1", "run1")
+        expected_keys = {
+            "manifest_id",
+            "repo_name",
+            "ref_name",
+            "snapshot_id",
+            "index_run_id",
+            "published_at",
+            "previous_manifest_id",
+            "status",
+        }
+        assert expected_keys.issubset(set(result.keys()))
+
+    def test_publish_fields_match_input_property(self):
+        store = _make_store()
+        result = store.publish(
+            "my_repo", "develop", "snap_42", "run_99", status="draft"
+        )
+        assert result["repo_name"] == "my_repo"
+        assert result["ref_name"] == "develop"
+        assert result["snapshot_id"] == "snap_42"
+        assert result["index_run_id"] == "run_99"
+        assert result["status"] == "draft"
+
+    @pytest.mark.edge
+    def test_manifest_ids_are_unique_property(self):
+        store = _make_store()
+        ids = set()
+        for i in range(5):
+            result = store.publish("repo", "main", f"snap{i}", f"run{i}")
+            ids.add(result["manifest_id"])
+        assert len(ids) == 5
+
+
+class TestCrossRepoSnapshotLookup:
+    @pytest.mark.edge
+    def test_snapshot_manifest_across_repos_property(self):
+        store = _make_store()
+        store.publish("repo_a", "main", "snap_unique_a", "r1")
+        store.publish("repo_b", "main", "snap_unique_b", "r2")
+        result = store.get_snapshot_manifest("snap_unique_b")
+        assert result is not None
+        assert result["repo_name"] == "repo_b"
+        assert result["snapshot_id"] == "snap_unique_b"
+
+    def test_cross_repo_publish_does_not_interfere_property(self):
+        store = _make_store()
+        a1 = store.publish("repo_a", "main", "snap_a1", "r1")
+        store.publish("repo_b", "main", "snap_b1", "r2")
+        store.publish("repo_b", "main", "snap_b2", "r3")
+        a2 = store.publish("repo_a", "main", "snap_a2", "r4")
+        assert a2["previous_manifest_id"] == a1["manifest_id"]
+        a_head = store.get_branch_manifest("repo_a", "main")
+        assert a_head["snapshot_id"] == "snap_a2"

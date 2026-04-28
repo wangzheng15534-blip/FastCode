@@ -20,7 +20,7 @@ pre-commit:
       run: uv run pyright fastcode/src/ fastcode/tests/ tests/
     smoke-test:
       glob: "*.py"
-      run: uv run pytest fastcode/tests/ -q -n auto --timeout=10 -x -m "basic or edge or negative or test_double" --ignore=fastcode/tests/bench_
+      run: uv run pytest fastcode/tests/ -q -n auto --timeout=10 -x -k "not (_property or _snapshot or _perf or _integration or _e2e)" --ignore=fastcode/tests/bench_
 
 pre-push:
   parallel: true

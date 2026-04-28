@@ -2,11 +2,16 @@
 Code Embedder - Generate embeddings for code snippets
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import platform
 import urllib.request
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from .indexer import CodeElementMeta
 
 import numpy as np
 import torch
@@ -132,8 +137,8 @@ class CodeEmbedder:
         return np.array(vector, dtype=np.float32)
 
     def embed_code_elements(
-        self, elements: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+        self, elements: list[CodeElementMeta]
+    ) -> list[CodeElementMeta]:
         """
         Generate embeddings for code elements (functions, classes, etc.)
 
@@ -163,7 +168,7 @@ class CodeEmbedder:
 
         return elements
 
-    def _prepare_code_text(self, element: dict[str, Any]) -> str:
+    def _prepare_code_text(self, element: CodeElementMeta) -> str:
         """
         Prepare code element for embedding
 
@@ -189,8 +194,8 @@ class CodeEmbedder:
             parts.append(f"Documentation: {element['docstring']}")
 
         # Add summary
-        if element.get("summary"):
-            parts.append(element["summary"])
+        if summary := element.get("summary"):
+            parts.append(summary)
 
         # Add code snippet (truncated)
         if "code" in element:

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..indexer import CodeElementMeta
+
 
 def combine_results(
-    semantic_results: list[tuple[dict[str, Any], float]],
-    keyword_results: list[tuple[dict[str, Any], float]],
-    pseudocode_results: list[tuple[dict[str, Any], float]] | None = None,
+    semantic_results: list[tuple[CodeElementMeta, float]],
+    keyword_results: list[tuple[CodeElementMeta, float]],
+    pseudocode_results: list[tuple[CodeElementMeta, float]] | None = None,
     *,
     semantic_weight: float = 1.0,
     keyword_weight: float = 1.0,

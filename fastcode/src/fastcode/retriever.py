@@ -20,7 +20,7 @@ from .core import fusion as _fusion
 from .core import scoring as _scoring
 from .embedder import CodeEmbedder
 from .graph_builder import CodeGraphBuilder
-from .indexer import CodeElement
+from .indexer import CodeElement, CodeElementMeta
 from .ir_graph_builder import IRGraphs
 from .iterative_agent import IterativeAgent
 from .pg_retrieval import PgRetrievalStore
@@ -34,9 +34,9 @@ from .vector_store import VectorStore
 @dataclass
 class RetrievalChannelOutput:
     collection: str
-    semantic_results: list[tuple[dict[str, Any], float]]
-    keyword_results: list[tuple[dict[str, Any], float]]
-    pseudocode_results: list[tuple[dict[str, Any], float]]
+    semantic_results: list[tuple[CodeElementMeta, float]]
+    keyword_results: list[tuple[CodeElementMeta, float]]
+    pseudocode_results: list[tuple[CodeElementMeta, float]]
     ranked_results: list[dict[str, Any]]
 
 
@@ -299,7 +299,7 @@ class HybridRetriever:
             repo_filter=repo_filter,
             element_types=allowed_types,
         )
-        pseudocode_results: list[tuple[dict[str, Any], float]] = []
+        pseudocode_results: list[tuple[CodeElementMeta, float]] = []
         if pseudocode:
             pseudocode_results = self._semantic_search(
                 pseudocode,
@@ -423,7 +423,7 @@ class HybridRetriever:
         self,
         unit_id: str,
         repo_filter: list[str] | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> CodeElementMeta | None:
         for elem in self._active_bm25_elements():
             if elem.type == "design_document":
                 continue
@@ -1176,7 +1176,7 @@ class HybridRetriever:
         top_k: int = 20,
         repo_filter: list[str] | None = None,
         element_types: list[str] | None = None,
-    ) -> list[tuple[dict[str, Any], float]]:
+    ) -> list[tuple[CodeElementMeta, float]]:
         """
         Semantic search using embeddings
         Uses filtered_vector_store if available, otherwise uses full vector_store
@@ -1198,7 +1198,7 @@ class HybridRetriever:
                 top_k=top_k,
             )
             if pg_results:
-                return pg_results
+                return cast(list[tuple[CodeElementMeta, float]], pg_results)
 
         # Choose which vector store to use
         if (
@@ -1228,7 +1228,7 @@ class HybridRetriever:
 
         # Additional safety check: manually filter results by repo
         if repo_filter:
-            filtered_results: list[tuple[dict[str, Any], float]] = []
+            filtered_results: list[tuple[CodeElementMeta, float]] = []
             for metadata, score in results:
                 repo_name = metadata.get("repo_name", "")
                 if repo_name in repo_filter:
@@ -1252,7 +1252,7 @@ class HybridRetriever:
         top_k: int = 10,
         repo_filter: list[str] | None = None,
         element_types: list[str] | None = None,
-    ) -> list[tuple[dict[str, Any], float]]:
+    ) -> list[tuple[CodeElementMeta, float]]:
         """
         Keyword search using BM25
         Uses filtered_bm25 if available, otherwise uses full_bm25
@@ -1271,7 +1271,7 @@ class HybridRetriever:
                 top_k=top_k,
             )
             if pg_results:
-                return pg_results
+                return cast(list[tuple[CodeElementMeta, float]], pg_results)
 
         # Choose which BM25 index to use
         if self.filtered_bm25 is not None and len(self.filtered_bm25_elements) > 0:
@@ -1300,7 +1300,7 @@ class HybridRetriever:
         search_limit = top_k * 3 if use_filter else top_k
         top_indices = np.argsort(scores)[::-1][: min(search_limit, len(scores))]
 
-        results: list[tuple[dict[str, Any], float]] = []
+        results: list[tuple[CodeElementMeta, float]] = []
         filtered_count = 0
         allowed_types = set(element_types) if element_types else None
 
@@ -1338,9 +1338,9 @@ class HybridRetriever:
 
     def _combine_results(
         self,
-        semantic_results: list[tuple[dict[str, Any], float]],
-        keyword_results: list[tuple[dict[str, Any], float]],
-        pseudocode_results: list[tuple[dict[str, Any], float]] | None = None,
+        semantic_results: list[tuple[CodeElementMeta, float]],
+        keyword_results: list[tuple[CodeElementMeta, float]],
+        pseudocode_results: list[tuple[CodeElementMeta, float]] | None = None,
     ) -> list[dict[str, Any]]:
         """Combine semantic, keyword, and pseudocode search results"""
         return _combination.combine_results(

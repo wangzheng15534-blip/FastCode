@@ -69,7 +69,9 @@ def _make_snapshot(num_symbols: int, edges_per_symbol: int = 2) -> IRSnapshot:
 
 
 @pytest.mark.parametrize("num_symbols", [10, 100, 500, 1000])
-def test_graph_builder_throughput_perf(num_symbols: int, benchmark: pytest.BenchmarkFixture):
+def test_graph_builder_throughput_perf(
+    num_symbols: int, benchmark: pytest.BenchmarkFixture
+):
     """Benchmark IR graph materialization."""
     snap = _make_snapshot(num_symbols)
     builder = IRGraphBuilder()

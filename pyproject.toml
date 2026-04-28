@@ -75,15 +75,6 @@ reportUnknownParameterType = "warning"
 reportPrivateUsage = "none"
 reportDeprecated = "warning"
 
-# Source: library-boundary Unknown cascades (MCP **kwargs, faiss, rank_bm25, protobuf generated, psycopg covariance)
-[[tool.pyright.executionEnvironments]]
-root = "fastcode/src"
-reportUnknownVariableType = "none"
-reportUnknownMemberType = "none"
-reportUnknownArgumentType = "none"
-reportUnknownParameterType = "none"
-reportUnknownLambdaType = "none"
-
 # Tests: known-good literals, untyped fixtures/mocks — Rust cfg(test) equivalent
 [[tool.pyright.executionEnvironments]]
 root = "fastcode/tests"

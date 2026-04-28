@@ -19,16 +19,16 @@ try:
 except ModuleNotFoundError:
     _has_protobuf = False
 
-requires_protobuf = pytest.mark.skipif(
-    not _has_protobuf, reason="protobuf not installed"
-)
-
 from fastcode.scip_loader import (
     _scip_kind_to_str,
     _symbol_role_to_str,
     load_scip_artifact,
 )
 from fastcode.scip_models import SCIPIndex
+
+requires_protobuf = pytest.mark.skipif(
+    not _has_protobuf, reason="protobuf not installed"
+)
 
 # --- Strategies ---
 

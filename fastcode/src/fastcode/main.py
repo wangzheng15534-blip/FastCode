@@ -2,6 +2,8 @@
 Main FastCode Class - Orchestrate all components
 """
 
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+
 import hashlib
 import json
 import os

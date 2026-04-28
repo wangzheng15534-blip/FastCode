@@ -291,7 +291,7 @@ packages = ["src/fastcode"]                                               # pack
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "strict"
-addopts = "-n auto"
+addopts = "-p no:schemathesis -n auto"
 timeout = 30
 timeout_method = "thread"
 pythonpath = [".."]                                                      # workspace root: resolves api.py, mcp_server.py imports

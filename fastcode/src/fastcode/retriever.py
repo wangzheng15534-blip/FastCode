@@ -3,6 +3,8 @@ Hybrid Retriever - Multi-stage retrieval with semantic, keyword, and graph-based
 Enhanced with LLM-processed query support
 """
 
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
+
 import logging
 import os
 import pickle

@@ -9,9 +9,9 @@ from hypothesis import strategies as st
 from fastcode.ir_merge import merge_ir
 from fastcode.semantic_ir import (
     IRAttachment,
+    IRCodeUnit,
     IRDocument,
     IREdge,
-    IRCodeUnit,
     IROccurrence,
     IRSnapshot,
     IRSymbol,

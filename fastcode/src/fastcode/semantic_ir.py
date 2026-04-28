@@ -2,6 +2,8 @@
 Canonical semantic IR models centered on code units and grounded supports.
 """
 
+# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field

@@ -487,7 +487,7 @@ async def index_multiple(request: IndexMultipleRequest):
 
     try:
         logger.info(f"Indexing {len(request.sources)} repositories")
-        fastcode.load_multiple_repositories([s.dict() for s in request.sources])
+        fastcode.load_multiple_repositories([s.model_dump() for s in request.sources])
 
         fastcode.vector_store.invalidate_scan_cache()
 

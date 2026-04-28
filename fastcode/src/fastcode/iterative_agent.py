@@ -2,6 +2,8 @@
 Iterative Agent - Multi-round retrieval with confidence-based iteration control
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -37,7 +39,7 @@ class IterativeAgent:
         config: dict[str, Any],
         retriever: Any,
         repo_root: str,
-        bm25_elements: Any = None,
+        bm25_elements: list[CodeElement] | None = None,
     ):
         """
         Initialize iterative agent
@@ -51,7 +53,7 @@ class IterativeAgent:
         self.config: dict[str, Any] = config
         self.retriever: Any = retriever
         self.repo_root: str = repo_root
-        self.bm25_elements: list[CodeElement] | None = bm25_elements  # type: ignore[assignment]
+        self.bm25_elements: list[CodeElement] | None = bm25_elements
         self.logger: logging.Logger = logging.getLogger(__name__)
 
         # Initialize tools
@@ -731,7 +733,7 @@ If confidence < 95:
         """Normalize query enhancement payload to a consistent dict format."""
         normalized: dict[str, Any] = {}
         if isinstance(query_enhancement, dict):
-            normalized = dict(query_enhancement)  # type: ignore[assignment]
+            normalized = dict(query_enhancement)
         elif isinstance(query_enhancement, str):
             normalized = self._parse_query_enhancement_fallback(query_enhancement)
 

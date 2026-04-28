@@ -17,14 +17,14 @@ class _FakeFastCode:
         self.snapshot_store = MagicMock()
 
 
-def test_process_once_status_returns_none_when_no_tasks():
+def test_process_once_status_returns_none_when_no_tasks_double():
     fc = _FakeFastCode()
     fc.snapshot_store.claim_redo_task.return_value = None
     worker = RedoWorker(fc)
     assert worker.process_once_status() == "none"
 
 
-def test_process_once_status_succeeds_on_valid_task():
+def test_process_once_status_succeeds_on_valid_task_double():
     fc = _FakeFastCode()
     fc.snapshot_store.claim_redo_task.return_value = {
         "task_id": "redo_abc",
@@ -37,7 +37,7 @@ def test_process_once_status_succeeds_on_valid_task():
     fc.snapshot_store.mark_redo_task_done.assert_called_once_with("redo_abc")
 
 
-def test_process_once_status_fails_and_marks_failed():
+def test_process_once_status_fails_and_marks_failed_double():
     fc = _FakeFastCode()
     fc.snapshot_store.claim_redo_task.return_value = {
         "task_id": "redo_xyz",
@@ -53,7 +53,7 @@ def test_process_once_status_fails_and_marks_failed():
     assert "boom" in call_args[1]["error"]
 
 
-def test_dispatch_task_raises_on_missing_run_id():
+def test_dispatch_task_raises_on_missing_run_id_double():
     fc = _FakeFastCode()
     worker = RedoWorker(fc)
     task = {
@@ -65,7 +65,7 @@ def test_dispatch_task_raises_on_missing_run_id():
         worker._dispatch_task(task)
 
 
-def test_dispatch_task_raises_on_unsupported_type():
+def test_dispatch_task_raises_on_unsupported_type_double():
     fc = _FakeFastCode()
     worker = RedoWorker(fc)
     task = {"task_id": "redo_bad", "task_type": "unknown_type", "payload_json": "{}"}
@@ -73,7 +73,7 @@ def test_dispatch_task_raises_on_unsupported_type():
         worker._dispatch_task(task)
 
 
-def test_stop_sets_event_and_joins():
+def test_stop_sets_event_and_joins_double():
     fc = _FakeFastCode()
     worker = RedoWorker(fc, poll_interval_seconds=1)
     worker._thread = MagicMock()
@@ -82,7 +82,7 @@ def test_stop_sets_event_and_joins():
     worker._thread.join.assert_called_once_with(timeout=10)
 
 
-def test_start_creates_daemon_thread():
+def test_start_creates_daemon_thread_double():
     fc = _FakeFastCode()
     worker = RedoWorker(fc)
     worker.start()
@@ -92,7 +92,7 @@ def test_start_creates_daemon_thread():
     worker.stop()
 
 
-def test_start_idempotent_if_thread_alive():
+def test_start_idempotent_if_thread_alive_double():
     fc = _FakeFastCode()
     worker = RedoWorker(fc)
     worker.start()

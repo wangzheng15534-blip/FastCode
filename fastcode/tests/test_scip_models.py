@@ -148,7 +148,7 @@ def test_scip_symbol_kind_roundtrip(kind: bool):
     ],
 )
 @pytest.mark.edge
-def test_scip_occurrence_range_variants(range_vals: Any):
+def test_scip_occurrence_range_variants_edge(range_vals: Any):
     """EDGE: SCIPOccurrence handles various range formats including None and zero."""
     from fastcode.scip_models import SCIPOccurrence
 
@@ -174,7 +174,7 @@ def test_scip_occurrence_range_variants(range_vals: Any):
     ],
 )
 @pytest.mark.edge
-def test_scip_document_language_handling(language: str):
+def test_scip_document_language_handling_edge(language: str):
     """EDGE: SCIPDocument handles all language values including None."""
     from fastcode.scip_models import SCIPDocument
 

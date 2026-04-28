@@ -80,7 +80,7 @@ def _make_snapshot(num_symbols: int, num_occurrences: int) -> IRSnapshot:
         (1000, 5000),
     ],
 )
-def test_validation_throughput(
+def test_validation_throughput_perf(
     num_symbols: int, num_occurrences: int, benchmark: pytest.BenchmarkFixture
 ):
     """Benchmark validate_snapshot throughput."""

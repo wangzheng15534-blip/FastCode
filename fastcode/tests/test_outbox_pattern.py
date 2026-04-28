@@ -59,7 +59,7 @@ def _minimal_git_meta() -> dict[str, Any]:
 
 
 class TestEnqueuePublish:
-    def test_enqueue_returns_event_id(self):
+    def test_enqueue_returns_event_id_double(self):
         """enqueue_publish returns an event_id when snapshot_store accepts."""
         pub = _make_publisher()
         store = MagicMock()
@@ -77,7 +77,7 @@ class TestEnqueuePublish:
         assert call_kwargs.kwargs.get("event_type") == "lineage_publish"
         assert call_kwargs.kwargs.get("snapshot_id") == "snap:repo:abc"
 
-    def test_enqueue_uses_idempotency_key_when_provided(self):
+    def test_enqueue_uses_idempotency_key_when_provided_double(self):
         """enqueue_publish uses the provided idempotency_key as event_id."""
         pub = _make_publisher()
         store = MagicMock()
@@ -93,7 +93,7 @@ class TestEnqueuePublish:
         call_kwargs = store.enqueue_outbox_event.call_args.kwargs
         assert call_kwargs["event_id"] == "lineage:run1:snap:repo:abc"
 
-    def test_enqueue_deterministic_event_id(self):
+    def test_enqueue_deterministic_event_id_double(self):
         """Same snapshot_id + payload always produces the same event_id."""
         pub = _make_publisher()
         store = MagicMock()
@@ -103,7 +103,7 @@ class TestEnqueuePublish:
         result2 = pub.enqueue_publish("snap:repo:abc", payload, store)
         assert result1 == result2
 
-    def test_enqueue_different_payloads_different_ids(self):
+    def test_enqueue_different_payloads_different_ids_double(self):
         """Different payloads produce different event_ids."""
         pub = _make_publisher()
         store = MagicMock()
@@ -112,7 +112,7 @@ class TestEnqueuePublish:
         result2 = pub.enqueue_publish("snap:repo:abc", {"v": 2}, store)
         assert result1 != result2
 
-    def test_enqueue_returns_none_when_store_not_postgres(self):
+    def test_enqueue_returns_none_when_store_not_postgres_double(self):
         """enqueue_publish returns None when store rejects (non-postgres)."""
         pub = _make_publisher()
         store = MagicMock()
@@ -129,7 +129,7 @@ class TestEnqueuePublish:
 
 
 class TestFlushOutbox:
-    def test_flush_empty_outbox(self):
+    def test_flush_empty_outbox_double(self):
         """flush_outbox returns zeros when no events to process."""
         pub = _make_publisher()
         store = MagicMock()
@@ -137,7 +137,7 @@ class TestFlushOutbox:
         result = pub.flush_outbox(store)
         assert result == {"processed": 0, "succeeded": 0, "failed": 0}
 
-    def test_flush_successful_event(self):
+    def test_flush_successful_event_double(self):
         """flush_outbox marks event done on successful POST."""
         pub = _make_publisher()
         store = MagicMock()
@@ -157,7 +157,7 @@ class TestFlushOutbox:
         mock_post.assert_called_once_with(payload)
         store.mark_outbox_event_done.assert_called_once_with("evt1")
 
-    def test_flush_failed_event(self):
+    def test_flush_failed_event_double(self):
         """flush_outbox marks event failed on POST error."""
         pub = _make_publisher()
         store = MagicMock()
@@ -181,7 +181,7 @@ class TestFlushOutbox:
         assert call_args[0][0] == "evt2"
         assert "connection refused" in call_args[0][1]
 
-    def test_flush_malformed_payload(self):
+    def test_flush_malformed_payload_double(self):
         """flush_outbox marks event failed when payload is not valid JSON."""
         pub = _make_publisher()
         store = MagicMock()
@@ -200,7 +200,7 @@ class TestFlushOutbox:
             "evt3", "malformed payload JSON"
         )
 
-    def test_flush_multiple_events(self):
+    def test_flush_multiple_events_double(self):
         """flush_outbox processes up to limit events."""
         pub = _make_publisher()
         store = MagicMock()
@@ -218,7 +218,7 @@ class TestFlushOutbox:
         assert result["processed"] == 3
         assert result["succeeded"] == 3
 
-    def test_flush_respects_limit(self):
+    def test_flush_respects_limit_double(self):
         """flush_outbox passes limit to claim_outbox_event."""
         pub = _make_publisher()
         store = MagicMock()
@@ -233,7 +233,7 @@ class TestFlushOutbox:
 
 
 class TestGetPendingCount:
-    def test_delegates_to_store(self):
+    def test_delegates_to_store_double(self):
         """get_pending_count delegates to snapshot_store."""
         pub = _make_publisher()
         store = MagicMock()
@@ -248,7 +248,7 @@ class TestGetPendingCount:
 
 
 class TestPublishSnapshotLineageUnchanged:
-    def test_publish_still_raises_without_endpoint(self):
+    def test_publish_still_raises_without_endpoint_double(self):
         """publish_snapshot_lineage still raises when endpoint not configured."""
         pub = TerminusPublisher({"terminus": {}})
         with pytest.raises(RuntimeError, match="not configured"):
@@ -258,7 +258,7 @@ class TestPublishSnapshotLineageUnchanged:
                 git_meta=_minimal_git_meta(),
             )
 
-    def test_publish_still_does_direct_post(self):
+    def test_publish_still_does_direct_post_double(self):
         """publish_snapshot_lineage still calls _do_post directly."""
         pub = _make_publisher()
         with patch.object(pub, "_do_post") as mock_post:
@@ -279,7 +279,7 @@ class TestPublishSnapshotLineageUnchanged:
 
 
 class TestRedoWorkerOutboxFlush:
-    def test_dispatch_publish_outbox_flush(self):
+    def test_dispatch_publish_outbox_flush_double(self):
         """RedoWorker dispatches publish_outbox_flush task type."""
         fc = MagicMock()
         publisher = MagicMock()
@@ -301,7 +301,7 @@ class TestRedoWorkerOutboxFlush:
         worker._dispatch_task(task)  # should not raise
         publisher.flush_outbox.assert_called_once_with(fc.snapshot_store)
 
-    def test_dispatch_publish_outbox_flush_not_configured(self):
+    def test_dispatch_publish_outbox_flush_not_configured_double(self):
         """RedoWorker skips outbox flush when publisher not configured."""
         fc = MagicMock()
         fc.terminus_publisher = TerminusPublisher({"terminus": {}})
@@ -314,13 +314,13 @@ class TestRedoWorkerOutboxFlush:
         worker._dispatch_task(task)  # should not raise
         fc.snapshot_store.claim_outbox_event.assert_not_called()
 
-    def test_flush_outbox_no_publisher(self):
+    def test_flush_outbox_no_publisher_double(self):
         """_flush_outbox is safe when terminus_publisher attribute is missing."""
         fc = MagicMock(spec=[])
         worker = RedoWorker(fc)
         worker._flush_outbox()  # should not raise
 
-    def test_run_loop_includes_outbox_flush(self):
+    def test_run_loop_includes_outbox_flush_double(self):
         """_run_loop calls _flush_outbox after process_once_status."""
         fc = MagicMock()
         worker = RedoWorker(fc, poll_interval_seconds=60)
@@ -341,7 +341,7 @@ class TestRedoWorkerOutboxFlush:
 
 
 class TestSnapshotStoreOutbox:
-    def test_enqueue_outbox_event_non_postgres(self):
+    def test_enqueue_outbox_event_non_postgres_double(self):
         """enqueue_outbox_event returns False for non-postgres."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SnapshotStore(tmpdir)
@@ -351,31 +351,31 @@ class TestSnapshotStoreOutbox:
             )
             assert result is False
 
-    def test_claim_outbox_event_non_postgres(self):
+    def test_claim_outbox_event_non_postgres_double(self):
         """claim_outbox_event returns empty list for non-postgres."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SnapshotStore(tmpdir)
             assert store.claim_outbox_event() == []
 
-    def test_mark_outbox_event_done_non_postgres(self):
+    def test_mark_outbox_event_done_non_postgres_double(self):
         """mark_outbox_event_done is no-op for non-postgres."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SnapshotStore(tmpdir)
             store.mark_outbox_event_done("evt1")  # should not raise
 
-    def test_mark_outbox_event_failed_non_postgres(self):
+    def test_mark_outbox_event_failed_non_postgres_double(self):
         """mark_outbox_event_failed is no-op for non-postgres."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SnapshotStore(tmpdir)
             store.mark_outbox_event_failed("evt1", "error")  # should not raise
 
-    def test_get_outbox_pending_count_non_postgres(self):
+    def test_get_outbox_pending_count_non_postgres_double(self):
         """get_outbox_pending_count returns 0 for non-postgres."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SnapshotStore(tmpdir)
             assert store.get_outbox_pending_count() == 0
 
-    def test_deterministic_event_id_stability(self):
+    def test_deterministic_event_id_stability_double(self):
         """_deterministic_event_id is stable for same inputs."""
         pub = _make_publisher()
         id1 = pub._deterministic_event_id("snap:repo:abc", '{"v":1}')

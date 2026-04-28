@@ -10,11 +10,15 @@ from hypothesis import strategies as st
 
 from fastcode.ir_validators import validate_snapshot
 from fastcode.semantic_ir import (
+    IRCodeUnit,
     IRDocument,
     IREdge,
     IROccurrence,
+    IRRelation,
     IRSnapshot,
     IRSymbol,
+    IRUnitEmbedding,
+    IRUnitSupport,
 )
 
 # --- Local strategies (reused from conftest patterns) ---
@@ -598,3 +602,191 @@ class TestValidateSnapshotProperties:
         )
         errors = validate_snapshot(snap)
         assert errors == []
+
+
+# --- Canonical-model helpers for TestValidatorGaps ---
+
+
+def _unit(
+    unit_id: str,
+    kind: str = "function",
+    path: str = "a.py",
+    language: str = "python",
+    display_name: str = "fn",
+    source_set: set[str] | None = None,
+    parent_unit_id: str | None = None,
+    primary_anchor_symbol_id: str | None = None,
+) -> IRCodeUnit:
+    return IRCodeUnit(
+        unit_id=unit_id,
+        kind=kind,
+        path=path,
+        language=language,
+        display_name=display_name,
+        parent_unit_id=parent_unit_id,
+        primary_anchor_symbol_id=primary_anchor_symbol_id,
+        source_set=source_set or {"fc_structure"},
+    )
+
+
+def _support(
+    support_id: str,
+    unit_id: str,
+    source: str = "ast",
+    support_kind: str = "occurrence",
+) -> IRUnitSupport:
+    return IRUnitSupport(
+        support_id=support_id,
+        unit_id=unit_id,
+        source=source,
+        support_kind=support_kind,
+    )
+
+
+def _relation(
+    relation_id: str,
+    src_unit_id: str,
+    dst_unit_id: str,
+    relation_type: str = "call",
+    resolution_state: str = "structural",
+    support_sources: set[str] | None = None,
+    support_ids: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> IRRelation:
+    return IRRelation(
+        relation_id=relation_id,
+        src_unit_id=src_unit_id,
+        dst_unit_id=dst_unit_id,
+        relation_type=relation_type,
+        resolution_state=resolution_state,
+        support_sources=support_sources or {"fc_structure"},
+        support_ids=support_ids or [],
+        metadata=metadata or {},
+    )
+
+
+def _embedding(
+    embedding_id: str,
+    unit_id: str,
+    source: str = "all-minilm",
+) -> IRUnitEmbedding:
+    return IRUnitEmbedding(
+        embedding_id=embedding_id,
+        unit_id=unit_id,
+        source=source,
+    )
+
+
+def _canonical_snapshot(
+    units: list[IRCodeUnit] | None = None,
+    supports: list[IRUnitSupport] | None = None,
+    relations: list[IRRelation] | None = None,
+    embeddings: list[IRUnitEmbedding] | None = None,
+) -> IRSnapshot:
+    return IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:repo:abc",
+        units=units,
+        supports=supports,
+        relations=relations,
+        embeddings=embeddings,
+    )
+
+
+class TestValidatorGaps:
+    """Tests for 8 validator rules not covered by the legacy-based test suite."""
+
+    def test_duplicate_support_ids(self):
+        """Duplicate support_id values are flagged."""
+        u1 = _unit("u1")
+        snap = _canonical_snapshot(
+            units=[u1],
+            supports=[
+                _support("s1", "u1"),
+                _support("s1", "u1"),
+            ],
+        )
+        errors = validate_snapshot(snap)
+        assert any("duplicate support IDs" in e for e in errors)
+
+    def test_duplicate_relation_ids(self):
+        """Duplicate relation_id values are flagged."""
+        u1 = _unit("u1")
+        u2 = _unit("u2", path="b.py")
+        snap = _canonical_snapshot(
+            units=[u1, u2],
+            relations=[
+                _relation("r1", "u1", "u2"),
+                _relation("r1", "u1", "u2"),
+            ],
+        )
+        errors = validate_snapshot(snap)
+        assert any("duplicate relation IDs" in e for e in errors)
+
+    def test_duplicate_embedding_ids(self):
+        """Duplicate embedding_id values are flagged."""
+        u1 = _unit("u1")
+        snap = _canonical_snapshot(
+            units=[u1],
+            embeddings=[
+                _embedding("emb1", "u1"),
+                _embedding("emb1", "u1"),
+            ],
+        )
+        errors = validate_snapshot(snap)
+        assert any("duplicate embedding IDs" in e for e in errors)
+
+    def test_parent_unit_id_not_found(self):
+        """A unit whose parent_unit_id does not exist in the snapshot is flagged."""
+        u1 = _unit("u1", parent_unit_id="nonexistent_parent")
+        snap = _canonical_snapshot(units=[u1])
+        errors = validate_snapshot(snap)
+        assert any("unit parent not found" in e for e in errors)
+        assert any("u1" in e and "nonexistent_parent" in e for e in errors)
+
+    def test_primary_anchor_symbol_id_not_unique(self):
+        """Two different units sharing the same primary_anchor_symbol_id are flagged."""
+        u1 = _unit("u1", primary_anchor_symbol_id="anchor_42")
+        u2 = _unit("u2", path="b.py", primary_anchor_symbol_id="anchor_42")
+        snap = _canonical_snapshot(units=[u1, u2])
+        errors = validate_snapshot(snap)
+        assert any("primary anchor assigned to multiple units" in e for e in errors)
+
+    def test_relation_type_missing(self):
+        """A relation with empty relation_type is flagged."""
+        u1 = _unit("u1")
+        u2 = _unit("u2", path="b.py")
+        snap = _canonical_snapshot(
+            units=[u1, u2],
+            relations=[
+                _relation("r1", "u1", "u2", relation_type=""),
+            ],
+        )
+        errors = validate_snapshot(snap)
+        assert any("relation type missing" in e for e in errors)
+
+    def test_support_ids_in_relation_not_found(self):
+        """A relation referencing a support_id that does not exist is flagged."""
+        u1 = _unit("u1")
+        u2 = _unit("u2", path="b.py")
+        snap = _canonical_snapshot(
+            units=[u1, u2],
+            relations=[
+                _relation(
+                    "r1", "u1", "u2", support_ids=["ghost_support"]
+                ),
+            ],
+        )
+        errors = validate_snapshot(snap)
+        assert any("relation support not found" in e for e in errors)
+        assert any("ghost_support" in e for e in errors)
+
+    def test_embedding_source_missing(self):
+        """An embedding with empty source string is flagged."""
+        u1 = _unit("u1")
+        snap = _canonical_snapshot(
+            units=[u1],
+            embeddings=[_embedding("emb1", "u1", source="")],
+        )
+        errors = validate_snapshot(snap)
+        assert any("embedding source missing" in e for e in errors)

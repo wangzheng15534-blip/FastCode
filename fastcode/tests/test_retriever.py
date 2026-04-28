@@ -1,3 +1,7 @@
+"""Tests for retriever module."""
+
+from __future__ import annotations
+
 from typing import Any
 
 from fastcode.indexer import CodeElement
@@ -48,6 +52,81 @@ def _mk_retriever() -> HybridRetriever:
     retriever.filtered_bm25_elements = []
     retriever.full_bm25_elements = []
     return retriever
+
+
+# --- Adaptive fusion tests ---
+
+
+def test_adaptive_fusion_prefers_docs_for_design_intent_queries():
+    retriever = _mk_retriever()
+
+    code_rows = [_mk_row("code:1", "function", 0.45), _mk_row("code:2", "class", 0.42)]
+    doc_rows = [
+        _mk_row("doc:1", "design_document", 0.82),
+        _mk_row("doc:2", "design_document", 0.7),
+    ]
+    alpha, _, _ = retriever._compute_adaptive_fusion_params(
+        query="What is the architecture rationale for branch indexing design?",
+        query_info={"intent": "design_rationale"},
+        code_results=code_rows,
+        doc_results=doc_rows,
+    )
+    assert alpha < 0.8
+
+    fused = retriever._adaptive_fuse_channels(
+        query="What is the architecture rationale for branch indexing design?",
+        query_info={"intent": "design_rationale"},
+        code_results=code_rows,
+        doc_results=doc_rows,
+    )
+    ids = [r["element"]["id"] for r in fused]
+    assert "doc:1" in ids
+    assert "code:1" in ids
+    assert fused[0]["element"]["id"] == "doc:1"
+
+
+def test_adaptive_fusion_continuous_affinity_changes_alpha_gradually():
+    retriever = _mk_retriever()
+    code_rows = [_mk_row("code:1", "function", 0.6)]
+    doc_rows = [_mk_row("doc:1", "design_document", 0.6)]
+
+    alpha_low, _, _ = retriever._compute_adaptive_fusion_params(
+        query="architecture",
+        query_info={},
+        code_results=code_rows,
+        doc_results=doc_rows,
+    )
+    alpha_high, _, _ = retriever._compute_adaptive_fusion_params(
+        query="architecture design rationale adr rfc decision tradeoff",
+        query_info={},
+        code_results=code_rows,
+        doc_results=doc_rows,
+    )
+    assert alpha_high < alpha_low
+
+
+def test_adaptive_fusion_entropy_signal_affects_alpha_and_k():
+    retriever = _mk_retriever()
+    code_rows = [_mk_row("code:1", "function", 0.62)]
+    doc_rows = [_mk_row("doc:1", "design_document", 0.62)]
+
+    alpha_low_entropy, k_code_low, _ = retriever._compute_adaptive_fusion_params(
+        query="bug bug bug bug bug fix fix fix",
+        query_info={},
+        code_results=code_rows,
+        doc_results=doc_rows,
+    )
+    alpha_high_entropy, k_code_high, _ = retriever._compute_adaptive_fusion_params(
+        query="bug design call architecture method rationale trace decision implementation",
+        query_info={},
+        code_results=code_rows,
+        doc_results=doc_rows,
+    )
+    assert abs(alpha_high_entropy - 0.5) <= abs(alpha_low_entropy - 0.5)
+    assert k_code_high > k_code_low
+
+
+# --- Doc channel projection tests ---
 
 
 def test_doc_projection_builds_grounded_priors_from_doc_scores():

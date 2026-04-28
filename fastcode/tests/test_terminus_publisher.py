@@ -755,3 +755,119 @@ class TestGraphQuery:
         publisher = _make_publisher()
         with pytest.raises(NotImplementedError, match="query endpoint"):
             publisher.load_graph_edges("snap:repo:abc", edge_type="call")
+
+
+# ─── Edge cases for build_lineage_payload (negative/error paths) ───
+
+
+class TestLineagePayloadEdgeCases:
+    """Tests for build_lineage_payload error conditions and conditional node creation."""
+
+    def _pub(self) -> TerminusPublisher:
+        return TerminusPublisher({"terminus": {"endpoint": "http://localhost:6363"}})
+
+    def test_missing_snapshot_id_raises(self):
+        pub = self._pub()
+        with pytest.raises(ValueError, match="snapshot_id"):
+            pub.build_lineage_payload({}, {}, {})
+
+    def test_missing_repo_name_raises(self):
+        pub = self._pub()
+        with pytest.raises(ValueError, match="repo_name"):
+            pub.build_lineage_payload({"snapshot_id": "snap:test:abc"}, {}, {})
+
+    def test_none_branch_omits_branch_node(self):
+        pub = self._pub()
+        payload = pub.build_lineage_payload(
+            {"snapshot_id": "snap:test:abc", "repo_name": "test", "branch": None},
+            {},
+            {},
+        )
+        node_types = [n["type"] for n in payload["nodes"]]
+        assert "Branch" not in node_types
+
+    def test_none_commit_omits_commit_node(self):
+        pub = self._pub()
+        payload = pub.build_lineage_payload(
+            {"snapshot_id": "snap:test:abc", "repo_name": "test", "commit_id": None},
+            {},
+            {},
+        )
+        node_types = [n["type"] for n in payload["nodes"]]
+        assert "Commit" not in node_types
+
+    def test_none_run_omits_run_node(self):
+        pub = self._pub()
+        payload = pub.build_lineage_payload(
+            {"snapshot_id": "snap:test:abc", "repo_name": "test", "run_id": None},
+            {},
+            {},
+        )
+        node_types = [n["type"] for n in payload["nodes"]]
+        assert "IndexRun" not in node_types
+
+    def test_documents_with_none_doc_id_skipped(self):
+        pub = self._pub()
+        payload = pub.build_lineage_payload(
+            {
+                "snapshot_id": "snap:test:abc",
+                "repo_name": "test",
+                "documents": [{"doc_id": None, "path": "a.py"}],
+                "symbols": [],
+            },
+            {},
+            {},
+        )
+        doc_nodes = [n for n in payload["nodes"] if n["type"] == "DocumentVersion"]
+        assert len(doc_nodes) == 0
+
+    def test_symbols_with_none_symbol_id_skipped(self):
+        pub = self._pub()
+        payload = pub.build_lineage_payload(
+            {
+                "snapshot_id": "snap:test:abc",
+                "repo_name": "test",
+                "documents": [{"doc_id": "doc:a.py", "path": "a.py"}],
+                "symbols": [{"symbol_id": None, "path": "a.py"}],
+            },
+            {},
+            {},
+        )
+        sym_nodes = [n for n in payload["nodes"] if n["type"] == "SymbolVersion"]
+        assert len(sym_nodes) == 0
+
+    def test_empty_documents_and_symbols(self):
+        pub = self._pub()
+        payload = pub.build_lineage_payload(
+            {
+                "snapshot_id": "snap:test:abc",
+                "repo_name": "test",
+                "documents": [],
+                "symbols": [],
+            },
+            {},
+            {},
+        )
+        doc_nodes = [n for n in payload["nodes"] if n["type"] == "DocumentVersion"]
+        sym_nodes = [n for n in payload["nodes"] if n["type"] == "SymbolVersion"]
+        assert len(doc_nodes) == 0
+        assert len(sym_nodes) == 0
+
+    def test_git_meta_fallback_for_branch(self):
+        pub = self._pub()
+        payload = pub.build_lineage_payload(
+            {"snapshot_id": "snap:test:abc", "repo_name": "test"},
+            {},
+            {"branch": "feature/x"},
+        )
+        node_types = [n["type"] for n in payload["nodes"]]
+        assert "Branch" in node_types
+
+    def test_unconfigured_publisher_returns_empty_payload(self):
+        pub = TerminusPublisher({"terminus": {}})
+        payload = pub.build_lineage_payload(
+            {"snapshot_id": "snap:test:abc", "repo_name": "test"},
+            {},
+            {},
+        )
+        assert "nodes" in payload

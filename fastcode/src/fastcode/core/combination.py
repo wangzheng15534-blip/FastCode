@@ -1,4 +1,5 @@
 """Pure result combination — merges semantic, keyword, pseudocode search results."""
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
 

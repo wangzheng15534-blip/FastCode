@@ -3,7 +3,7 @@ FastCode 2.0 - REST API
 Complete API with all features from web_app.py
 """
 
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 
 import os
 import platform

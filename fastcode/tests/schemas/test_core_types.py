@@ -7,6 +7,7 @@ This version: tests actual conversion logic, error paths, and invariants.
 from __future__ import annotations
 
 import dataclasses
+from typing import Any
 
 import pytest
 
@@ -18,7 +19,7 @@ from fastcode.schemas.core_types import (
 )
 
 
-def _sample_retrieval_row(**overrides) -> dict:
+def _sample_retrieval_row(**overrides: Any) -> dict[str, Any]:
     """Minimal valid retrieval row matching what PgRetrievalStore returns."""
     base = {
         "element": {

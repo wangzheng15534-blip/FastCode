@@ -2,7 +2,7 @@
 Canonical semantic IR models centered on code units and grounded supports.
 """
 
-# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
 

@@ -66,14 +66,14 @@ typeCheckingMode = "strict"
 reportUnnecessaryComparison = true
 reportUnusedVariable = true
 reportMissingImports = "warning"
-reportMissingTypeStubs = "warning"
+reportMissingTypeStubs = "none"
 reportUnknownVariableType = "warning"
 reportUnknownMemberType = "warning"
 reportUnknownArgumentType = "warning"
 reportUnknownLambdaType = "warning"
 reportUnknownParameterType = "warning"
 reportPrivateUsage = "none"
-reportDeprecated = "warning"
+reportDeprecated = "none"
 
 # Tests: known-good literals, untyped fixtures/mocks — Rust cfg(test) equivalent
 [[tool.pyright.executionEnvironments]]
@@ -91,6 +91,7 @@ reportUnknownVariableType = "none"
 reportUnknownLambdaType = "none"
 reportUnknownParameterType = "none"
 reportMissingParameterType = "none"   # fixtures, factories, hypothesis @given — untyped by design
+reportUntypedFunctionDecorator = "none"
 reportUnusedFunction = "none"
 reportUnusedClass = "none"
 

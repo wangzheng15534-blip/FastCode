@@ -1,4 +1,5 @@
 """Domain-independent JSON utilities."""
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
 

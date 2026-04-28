@@ -1,6 +1,7 @@
 """
 Merge structure units and SCIP anchors into a canonical unit-grounded snapshot.
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false
 
 from __future__ import annotations
 

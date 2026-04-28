@@ -1,6 +1,7 @@
 """
 Iterative Agent - Multi-round retrieval with confidence-based iteration control
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
 

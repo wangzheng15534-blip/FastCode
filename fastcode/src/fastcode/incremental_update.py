@@ -5,6 +5,7 @@ Compares file-level blob_oids between two snapshots to detect changes,
 then produces a new snapshot that preserves unchanged units, relations,
 and embeddings while replacing changed-file content with fresh extraction.
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
 

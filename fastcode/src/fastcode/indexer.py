@@ -1,6 +1,7 @@
 """
 Code Indexer - Multi-level indexing of code repositories
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
 

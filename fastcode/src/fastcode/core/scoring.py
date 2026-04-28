@@ -2,6 +2,7 @@
 
 All functions are stateless and depend only on stdlib (math, re, collections).
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
 

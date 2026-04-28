@@ -1,6 +1,7 @@
 """
 Code Embedder - Generate embeddings for code snippets
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
 

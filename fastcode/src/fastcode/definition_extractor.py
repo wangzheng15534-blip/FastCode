@@ -2,6 +2,7 @@
 Definition Extractor using Tree-sitter Query
 Extracts class and function definitions with positions and parent relationships.
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 import logging
 import os

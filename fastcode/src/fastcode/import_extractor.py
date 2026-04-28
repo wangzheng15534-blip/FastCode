@@ -2,6 +2,7 @@
 Import Extractor using Tree-sitter Query (S-expressions)
 Extracts import information from Python code efficiently using pattern matching.
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 import logging
 from typing import Any

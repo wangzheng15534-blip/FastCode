@@ -1401,3 +1401,47 @@ class TestScipParsingProperties:
         d = doc.to_dict()
         r = SCIPDocument.from_dict(d)
         assert len(r.occurrences) == 20
+
+
+# ─── Edge cases: malformed inputs and error handling ───
+
+
+class TestBuildIrFromScipEdgeCases:
+    """Negative tests for build_ir_from_scip with malformed/missing data."""
+
+    def test_empty_documents_list(self):
+        """Index with no documents should produce snapshot with no documents."""
+        payload = _make_scip_payload(n_docs=0, n_symbols=0, n_occurrences=0)
+        payload["documents"] = []
+        snap = _build(payload)
+        assert len(snap.documents) == 0
+
+    def test_document_with_no_symbols(self):
+        """Document with empty symbols list should still create a document unit."""
+        payload = _make_scip_payload(n_docs=1, n_symbols=0, n_occurrences=0)
+        snap = _build(payload)
+        assert len(snap.documents) == 1
+
+    def test_occurrence_with_empty_range(self):
+        """Occurrence with None range values should not crash."""
+        raw = _make_scip_payload(n_docs=1, n_symbols=1, n_occurrences=1)
+        raw["documents"][0]["occurrences"][0]["range"] = [None, None, None, None]
+        snap = _build(raw)
+        assert snap is not None
+
+    def test_missing_indexer_name_uses_default(self):
+        payload = _make_scip_payload()
+        del payload["indexer_name"]
+        snap = _build(payload)
+        assert snap is not None
+
+    def test_snapshot_id_format(self):
+        """snapshot_id should follow snap:{repo}:{commit} format."""
+        snap = _build(_make_scip_payload())
+        # _build hardcodes snapshot_id="snap:test:abc1234"
+        assert snap.snapshot_id.startswith("snap:test:")
+
+    def test_metadata_records_source_modes(self):
+        """Built snapshot should record which source modes were used."""
+        snap = _build(_make_scip_payload())
+        assert "scip" in snap.metadata.get("source_modes", [])

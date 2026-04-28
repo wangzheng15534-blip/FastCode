@@ -1445,3 +1445,32 @@ class TestBuildIrFromScipEdgeCases:
         """Built snapshot should record which source modes were used."""
         snap = _build(_make_scip_payload())
         assert "scip" in snap.metadata.get("source_modes", [])
+
+
+class TestNormalizeKindEdge:
+    """Cover _normalize_kind mapping — completely untested per audit."""
+
+    @pytest.mark.parametrize(
+        ("kind", "expected"),
+        [
+            ("documentation", "doc"),
+            ("module", "file"),
+            ("type", "class"),
+            ("function", "function"),
+            ("method", "method"),
+            ("variable", "variable"),
+            ("CLASS", "class"),
+            ("Function", "function"),
+            ("unknown_kind", "unknown_kind"),
+            ("", "symbol"),
+        ],
+    )
+    def test_known_mappings(self, kind: str, expected: str) -> None:
+        from fastcode.adapters.scip_to_ir import _normalize_kind
+
+        assert _normalize_kind(kind) == expected
+
+    def test_none_returns_default(self) -> None:
+        from fastcode.adapters.scip_to_ir import _normalize_kind
+
+        assert _normalize_kind(None) == "symbol"

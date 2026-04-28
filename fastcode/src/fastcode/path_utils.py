@@ -259,12 +259,15 @@ class PathUtils:
             True if path is safe, False otherwise
         """
         try:
+            if "\0" in path:
+                return False
             resolved = self.resolve_path(path)
             if resolved is None:
                 # Also check if the joined path would be safe (even if doesn't exist yet)
-                abs_path = os.path.abspath(os.path.join(self.repo_root, path))
+                abs_path = os.path.realpath(os.path.join(self.repo_root, path))
                 return abs_path.startswith(self.repo_root)
-            return resolved.startswith(self.repo_root)
+            # Use realpath to resolve symlinks before containment check
+            return os.path.realpath(resolved).startswith(self.repo_root)
         except Exception as e:
             self.logger.warning(f"Path security check failed for {path}: {e}")
             return False

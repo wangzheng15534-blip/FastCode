@@ -1,5 +1,9 @@
 """Tests for pure iteration control functions."""
 
+import math
+
+import pytest
+
 from fastcode.core.iteration import (
     calculate_recent_confidence_gain,
     calculate_recent_lines_added,
@@ -272,3 +276,84 @@ class TestRateEfficiency:
 
     def test_inefficient(self):
         assert rate_efficiency(overall_roi=0.5, budget_used_pct=95) == "inefficient"
+
+
+class TestRepoFactorExactValues:
+    """Hand-computed exact values for calculate_repo_factor."""
+
+    def test_small_repo_exact(self) -> None:
+        """Small repo: file_factor clipped to 0.3 min, complexity to 0.5, depth to 0.7."""
+        factor = calculate_repo_factor(
+            {"total_files": 10, "avg_file_lines": 50, "max_depth": 2}
+        )
+        file_f = max(0.3, min(1.5, math.log10(11) / math.log10(1000)))
+        complexity_f = max(0.5, min(2.0, 50 / 200))
+        depth_f = max(0.7, min(1.3, 2 / 5))
+        expected = max(0.5, min(2.0, (file_f + complexity_f + depth_f) / 3))
+        assert factor == pytest.approx(expected, abs=0.001)
+
+    def test_large_repo_exact(self) -> None:
+        """Large repo: file_factor ≈ 1.0, complexity clipped to 1.5, depth clipped to 1.3."""
+        factor = calculate_repo_factor(
+            {"total_files": 1000, "avg_file_lines": 300, "max_depth": 8}
+        )
+        file_f = max(0.3, min(1.5, math.log10(1001) / math.log10(1000)))
+        complexity_f = max(0.5, min(2.0, 300 / 200))
+        depth_f = max(0.7, min(1.3, 8 / 5))
+        expected = max(0.5, min(2.0, (file_f + complexity_f + depth_f) / 3))
+        assert factor == pytest.approx(expected, abs=0.001)
+
+    def test_result_always_in_valid_range(self) -> None:
+        """Factor must always be in [0.5, 2.0]."""
+        for stats in [
+            None,
+            {},
+            {"total_files": 1, "avg_file_lines": 1, "max_depth": 1},
+            {"total_files": 100000, "avg_file_lines": 10000, "max_depth": 50},
+        ]:
+            factor = calculate_repo_factor(stats)
+            assert 0.5 <= factor <= 2.0, f"factor={factor} for stats={stats}"
+
+
+class TestInitializeAdaptiveExact:
+    """Hand-computed exact values for initialize_adaptive_parameters."""
+
+    def test_simple_query_max_iterations(self) -> None:
+        """Low complexity + repo_factor=1.0: max_iterations should be modest."""
+        params = initialize_adaptive_parameters(
+            query_complexity=20,
+            repo_factor=1.0,
+            config=IterationConfig(base_max_iterations=4),
+        )
+        # complexity_score = (0.2 + 1.0) / 2 = 0.6
+        # max_iter = max(2, min(6, int(4 * (0.7 + 0.6 * 0.6)))) = max(2, min(6, 4)) = 4
+        assert params.max_iterations == 4
+
+    def test_complex_query_max_iterations(self) -> None:
+        """High complexity + high repo_factor: max_iterations should increase."""
+        params = initialize_adaptive_parameters(
+            query_complexity=90,
+            repo_factor=1.5,
+            config=IterationConfig(base_max_iterations=4),
+        )
+        # complexity_score = (0.9 + 1.5) / 2 = 1.2
+        # max_iter = max(2, min(6, int(4 * (0.7 + 1.2 * 0.6)))) = max(2, min(6, 5)) = 5
+        assert params.max_iterations == 5
+
+    def test_line_budget_exact_simple(self) -> None:
+        """Simple query (complexity ≤ 30): budget = 60% of max_total_lines."""
+        params = initialize_adaptive_parameters(
+            query_complexity=20,
+            repo_factor=1.0,
+            config=IterationConfig(max_total_lines=12000),
+        )
+        assert params.adaptive_line_budget == int(12000 * 0.6)
+
+    def test_line_budget_exact_complex(self) -> None:
+        """Complex query (complexity > 60): budget = max_total_lines * repo_factor."""
+        params = initialize_adaptive_parameters(
+            query_complexity=90,
+            repo_factor=1.5,
+            config=IterationConfig(max_total_lines=12000),
+        )
+        assert params.adaptive_line_budget == int(12000 * 1.0 * 1.5)

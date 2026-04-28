@@ -1,6 +1,7 @@
 """
 Repository Loader - Handle git cloning, local repository loading, and ZIP file extraction
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 import logging
 import os

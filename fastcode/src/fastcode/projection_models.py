@@ -1,6 +1,7 @@
 """
 Projection-layer models for L0/L1/L2 artifacts.
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
 

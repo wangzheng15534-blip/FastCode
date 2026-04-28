@@ -4,7 +4,7 @@ IRAttachment, and IRSnapshot.  Helper functions for resolution/confidence
 mapping and set normalisation are also defined here.
 """
 
-# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
 

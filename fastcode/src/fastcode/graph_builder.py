@@ -1,6 +1,7 @@
 """
 Graph Builder - Build code relationship graphs
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 import logging
 import os

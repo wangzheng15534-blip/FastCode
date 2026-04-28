@@ -1,6 +1,7 @@
 """
 Repository Selector - LLM-based repository and file selection for multi-repo scenarios
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 import logging
 import os

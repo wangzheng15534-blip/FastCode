@@ -4,7 +4,10 @@ Previous version: 1152 lines of Hypothesis round-trip tests.
 This version: tests source_priority computation, occurrence dedup, confidence mapping,
               legacy payload conversion, and edge cases.
 """
+
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 
@@ -18,47 +21,61 @@ from fastcode.semantic_ir import (
     _resolution_to_confidence,
 )
 
-
 # --- source_priority computation ---
 
 
 class TestSourcePriority:
     def test_scip_and_fc_structure_gives_100(self):
         unit = IRCodeUnit(
-            unit_id="u1", kind="function", path="a.py",
-            language="python", display_name="f",
+            unit_id="u1",
+            kind="function",
+            path="a.py",
+            language="python",
+            display_name="f",
             source_set={"scip", "fc_structure"},
         )
         assert unit.source_priority == 100
 
     def test_scip_only_gives_100(self):
         unit = IRCodeUnit(
-            unit_id="u2", kind="function", path="a.py",
-            language="python", display_name="f",
+            unit_id="u2",
+            kind="function",
+            path="a.py",
+            language="python",
+            display_name="f",
             source_set={"scip"},
         )
         assert unit.source_priority == 100
 
     def test_fc_structure_only_gives_50(self):
         unit = IRCodeUnit(
-            unit_id="u3", kind="function", path="a.py",
-            language="python", display_name="f",
+            unit_id="u3",
+            kind="function",
+            path="a.py",
+            language="python",
+            display_name="f",
             source_set={"fc_structure"},
         )
         assert unit.source_priority == 50
 
     def test_no_known_source_gives_0(self):
         unit = IRCodeUnit(
-            unit_id="u4", kind="function", path="a.py",
-            language="python", display_name="f",
+            unit_id="u4",
+            kind="function",
+            path="a.py",
+            language="python",
+            display_name="f",
             source_set=set(),
         )
         assert unit.source_priority == 0
 
     def test_unknown_source_gives_0(self):
         unit = IRCodeUnit(
-            unit_id="u5", kind="function", path="a.py",
-            language="python", display_name="f",
+            unit_id="u5",
+            kind="function",
+            path="a.py",
+            language="python",
+            display_name="f",
             source_set={"custom_extractor"},
         )
         assert unit.source_priority == 0
@@ -68,12 +85,15 @@ class TestSourcePriority:
 
 
 class TestConfidenceMapping:
-    @pytest.mark.parametrize("state,expected", [
-        ("anchored", "precise"),
-        ("structural", "resolved"),
-        ("candidate", "heuristic"),
-    ])
-    def test_known_states_map_correctly(self, state, expected):
+    @pytest.mark.parametrize(
+        ("state", "expected"),
+        [
+            ("anchored", "precise"),
+            ("structural", "resolved"),
+            ("candidate", "heuristic"),
+        ],
+    )
+    def test_known_states_map_correctly(self, state: str, expected: str) -> None:
         assert _resolution_to_confidence(state) == expected
 
     def test_unknown_state_falls_back_to_derived(self):
@@ -82,12 +102,15 @@ class TestConfidenceMapping:
     def test_none_state_falls_back_to_derived(self):
         assert _resolution_to_confidence(None) == "derived"
 
-    @pytest.mark.parametrize("confidence,expected", [
-        ("precise", "anchored"),
-        ("resolved", "structural"),
-        ("heuristic", "candidate"),
-    ])
-    def test_reverse_mapping_known(self, confidence, expected):
+    @pytest.mark.parametrize(
+        ("confidence", "expected"),
+        [
+            ("precise", "anchored"),
+            ("resolved", "structural"),
+            ("heuristic", "candidate"),
+        ],
+    )
+    def test_reverse_mapping_known(self, confidence: str, expected: str) -> None:
         assert _confidence_to_resolution(confidence) == expected
 
     def test_reverse_unknown_falls_back(self):
@@ -100,39 +123,54 @@ class TestConfidenceMapping:
 class TestIRRelationProperties:
     def test_source_returns_first_sorted_support_source(self):
         rel = IRRelation(
-            relation_id="r1", src_unit_id="a", dst_unit_id="b",
-            relation_type="call", resolution_state="anchored",
+            relation_id="r1",
+            src_unit_id="a",
+            dst_unit_id="b",
+            relation_type="call",
+            resolution_state="anchored",
             support_sources={"z_source", "a_source"},
         )
         assert rel.source == "a_source"
 
     def test_source_falls_back_to_metadata_when_no_support_sources(self):
         rel = IRRelation(
-            relation_id="r2", src_unit_id="a", dst_unit_id="b",
-            relation_type="call", resolution_state="anchored",
+            relation_id="r2",
+            src_unit_id="a",
+            dst_unit_id="b",
+            relation_type="call",
+            resolution_state="anchored",
             metadata={"source": "meta_source"},
         )
         assert rel.source == "meta_source"
 
     def test_confidence_from_resolution_state(self):
         rel = IRRelation(
-            relation_id="r3", src_unit_id="a", dst_unit_id="b",
-            relation_type="call", resolution_state="anchored",
+            relation_id="r3",
+            src_unit_id="a",
+            dst_unit_id="b",
+            relation_type="call",
+            resolution_state="anchored",
         )
         assert rel.confidence == "precise"
 
     def test_doc_id_from_metadata(self):
         rel = IRRelation(
-            relation_id="r4", src_unit_id="a", dst_unit_id="b",
-            relation_type="call", resolution_state="anchored",
+            relation_id="r4",
+            src_unit_id="a",
+            dst_unit_id="b",
+            relation_type="call",
+            resolution_state="anchored",
             metadata={"doc_id": "doc:/src/main.py"},
         )
         assert rel.doc_id == "doc:/src/main.py"
 
     def test_doc_id_none_when_not_in_metadata(self):
         rel = IRRelation(
-            relation_id="r5", src_unit_id="a", dst_unit_id="b",
-            relation_type="call", resolution_state="anchored",
+            relation_id="r5",
+            src_unit_id="a",
+            dst_unit_id="b",
+            relation_type="call",
+            resolution_state="anchored",
         )
         assert rel.doc_id is None
 
@@ -141,36 +179,60 @@ class TestIRRelationProperties:
 
 
 class TestOccurrenceDeduplication:
-    def _snapshot_with_occurrences(self, supports, *, unit_source="scip"):
+    def _snapshot_with_occurrences(
+        self, supports: list[IRUnitSupport], *, unit_source: str = "scip"
+    ) -> IRSnapshot:
         """Build a snapshot with the given IRUnitSupport entries."""
         units = [
-            IRCodeUnit(unit_id="sym:func_a", kind="function",
-                       path="a.py", language="python", display_name="func_a",
-                       source_set={unit_source}),
-            IRCodeUnit(unit_id="doc:a.py", kind="file",
-                       path="a.py", language="python", display_name="a.py",
-                       source_set={"scip"}),
+            IRCodeUnit(
+                unit_id="sym:func_a",
+                kind="function",
+                path="a.py",
+                language="python",
+                display_name="func_a",
+                source_set={unit_source},
+            ),
+            IRCodeUnit(
+                unit_id="doc:a.py",
+                kind="file",
+                path="a.py",
+                language="python",
+                display_name="a.py",
+                source_set={"scip"},
+            ),
         ]
         return IRSnapshot(
-            repo_name="test", snapshot_id="snap:test:c1",
-            units=units, supports=supports,
+            repo_name="test",
+            snapshot_id="snap:test:c1",
+            units=units,
+            supports=supports,
         )
 
     def test_duplicate_occurrences_deduplicated(self):
         """Two occurrences with same (symbol, doc, role, position) should become one."""
         supports = [
             IRUnitSupport(
-                support_id="sup1", unit_id="sym:func_a",
-                source="scip", support_kind="occurrence",
+                support_id="sup1",
+                unit_id="sym:func_a",
+                source="scip",
+                support_kind="occurrence",
                 role="definition",
-                start_line=10, start_col=0, end_line=10, end_col=10,
+                start_line=10,
+                start_col=0,
+                end_line=10,
+                end_col=10,
                 metadata={"doc_id": "doc:a.py"},
             ),
             IRUnitSupport(
-                support_id="sup2", unit_id="sym:func_a",
-                source="fc_structure", support_kind="occurrence",
+                support_id="sup2",
+                unit_id="sym:func_a",
+                source="fc_structure",
+                support_kind="occurrence",
                 role="definition",
-                start_line=10, start_col=0, end_line=10, end_col=10,
+                start_line=10,
+                start_col=0,
+                end_line=10,
+                end_col=10,
                 metadata={"doc_id": "doc:a.py"},
             ),
         ]
@@ -181,17 +243,27 @@ class TestOccurrenceDeduplication:
         """When deduplicating, SCIP source should be kept over non-SCIP."""
         supports = [
             IRUnitSupport(
-                support_id="sup1", unit_id="sym:func_a",
-                source="fc_structure", support_kind="occurrence",
+                support_id="sup1",
+                unit_id="sym:func_a",
+                source="fc_structure",
+                support_kind="occurrence",
                 role="definition",
-                start_line=10, start_col=0, end_line=10, end_col=10,
+                start_line=10,
+                start_col=0,
+                end_line=10,
+                end_col=10,
                 metadata={"doc_id": "doc:a.py"},
             ),
             IRUnitSupport(
-                support_id="sup2", unit_id="sym:func_a",
-                source="scip", support_kind="occurrence",
+                support_id="sup2",
+                unit_id="sym:func_a",
+                source="scip",
+                support_kind="occurrence",
                 role="definition",
-                start_line=10, start_col=0, end_line=10, end_col=10,
+                start_line=10,
+                start_col=0,
+                end_line=10,
+                end_col=10,
                 metadata={"doc_id": "doc:a.py"},
             ),
         ]
@@ -202,17 +274,27 @@ class TestOccurrenceDeduplication:
     def test_different_positions_not_deduplicated(self):
         supports = [
             IRUnitSupport(
-                support_id="sup1", unit_id="sym:func_a",
-                source="scip", support_kind="occurrence",
+                support_id="sup1",
+                unit_id="sym:func_a",
+                source="scip",
+                support_kind="occurrence",
                 role="definition",
-                start_line=10, start_col=0, end_line=10, end_col=10,
+                start_line=10,
+                start_col=0,
+                end_line=10,
+                end_col=10,
                 metadata={"doc_id": "doc:a.py"},
             ),
             IRUnitSupport(
-                support_id="sup2", unit_id="sym:func_a",
-                source="scip", support_kind="occurrence",
+                support_id="sup2",
+                unit_id="sym:func_a",
+                source="scip",
+                support_kind="occurrence",
                 role="reference",
-                start_line=20, start_col=0, end_line=20, end_col=5,
+                start_line=20,
+                start_col=0,
+                end_line=20,
+                end_col=5,
                 metadata={"doc_id": "doc:a.py"},
             ),
         ]
@@ -224,20 +306,29 @@ class TestOccurrenceDeduplication:
 
 
 class TestLegacyConversion:
-    def _legacy_payload(self, **overrides) -> dict:
+    def _legacy_payload(self, **overrides: Any) -> dict[str, Any]:
         base = {
             "repo_name": "test",
             "snapshot_id": "snap:test:abc",
             "commit_id": "c1",
             "branch": "main",
             "documents": [
-                IRDocument(doc_id="doc:/a.py", path="/a.py", language="python").to_dict(),
+                IRDocument(
+                    doc_id="doc:/a.py", path="/a.py", language="python"
+                ).to_dict(),
             ],
             "symbols": [
-                {"symbol_id": "sym:f", "display_name": "f", "kind": "function",
-                 "qualified_name": "mod.f", "path": "/a.py", "language": "python",
-                 "start_line": 5, "end_line": 10,
-                 "external_symbol_id": None},
+                {
+                    "symbol_id": "sym:f",
+                    "display_name": "f",
+                    "kind": "function",
+                    "qualified_name": "mod.f",
+                    "path": "/a.py",
+                    "language": "python",
+                    "start_line": 5,
+                    "end_line": 10,
+                    "external_symbol_id": None,
+                },
             ],
             "occurrences": [],
             "edges": [],
@@ -258,9 +349,15 @@ class TestLegacyConversion:
         assert len(sym_units) == 1
 
     def test_legacy_with_empty_collections(self):
-        snap = IRSnapshot.from_dict(self._legacy_payload(
-            documents=[], symbols=[], occurrences=[], edges=[], attachments=[],
-        ))
+        snap = IRSnapshot.from_dict(
+            self._legacy_payload(
+                documents=[],
+                symbols=[],
+                occurrences=[],
+                edges=[],
+                attachments=[],
+            )
+        )
         assert len(snap.units) == 0
         assert len(snap.occurrences) == 0
         assert len(snap.edges) == 0
@@ -268,10 +365,16 @@ class TestLegacyConversion:
     def test_canonical_format_preserved(self):
         """When saving canonical format and reloading, units/supports survive."""
         snap = IRSnapshot(
-            repo_name="test", snapshot_id="snap:test:abc",
+            repo_name="test",
+            snapshot_id="snap:test:abc",
             units=[
-                IRCodeUnit(unit_id="u1", kind="function", path="a.py",
-                           language="python", display_name="f"),
+                IRCodeUnit(
+                    unit_id="u1",
+                    kind="function",
+                    path="a.py",
+                    language="python",
+                    display_name="f",
+                ),
             ],
             supports=[],
             relations=[],
@@ -289,10 +392,19 @@ class TestSmokeRoundTrip:
     def test_snapshot_roundtrip_smoke(self):
         """One smoke test: snapshot survives to_dict -> from_dict."""
         snap = IRSnapshot(
-            repo_name="r", snapshot_id="snap:r:c1",
-            units=[IRCodeUnit(unit_id="u1", kind="function", path="a.py",
-                              language="python", display_name="f")],
-            supports=[], relations=[],
+            repo_name="r",
+            snapshot_id="snap:r:c1",
+            units=[
+                IRCodeUnit(
+                    unit_id="u1",
+                    kind="function",
+                    path="a.py",
+                    language="python",
+                    display_name="f",
+                )
+            ],
+            supports=[],
+            relations=[],
         )
         restored = IRSnapshot.from_dict(snap.to_dict())
         assert restored.repo_name == snap.repo_name

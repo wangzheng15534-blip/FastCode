@@ -4,6 +4,7 @@ Global Index Builder - Build global lookup maps for code elements
 This module implements Task 2.1: 构建 FileID Map 和 Module Map
 Creates lookup tables to resolve "who在哪" (who is where) problems.
 """
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 import logging
 import os

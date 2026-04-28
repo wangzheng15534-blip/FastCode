@@ -1,9 +1,4 @@
-"""Property-based tests for ast_to_ir.build_ir_from_ast invariants.
-
-Covers document deduplication, symbol creation filtering, line clamping,
-source_priority/source_set tagging, containment edges, import/inheritance
-edge generation, and metadata consistency.
-"""
+"""Tests for adapters.ast_to_ir module."""
 
 from __future__ import annotations
 
@@ -15,8 +10,11 @@ from hypothesis import strategies as st
 
 from fastcode.adapters.ast_to_ir import build_ir_from_ast
 from fastcode.indexer import CodeElement
+from fastcode.semantic_ir import IRSnapshot
 
-# --- Strategies (self-contained, no conftest import) ---
+# ---------------------------------------------------------------------------
+# Strategies (self-contained, no conftest import)
+# ---------------------------------------------------------------------------
 
 identifier = st.text(
     alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-",
@@ -60,8 +58,78 @@ code_element_st = st.builds(
     ),
 )
 
+# ---------------------------------------------------------------------------
+# Inline factories / helpers
+# ---------------------------------------------------------------------------
 
-# --- Helpers ---
+
+def _make_code_elements(n: int = 3) -> list[CodeElement]:
+    """Create a list of CodeElement instances for AST adapter tests."""
+    elements = []
+    for i in range(n):
+        elements.append(
+            CodeElement(
+                id=f"elem_{i}",
+                type="function" if i % 2 == 0 else "class",
+                name=f"func_{i}" if i % 2 == 0 else f"Class_{i}",
+                file_path=f"src/file{i % 2}.py",
+                relative_path=f"src/file{i % 2}.py",
+                language="python",
+                start_line=i + 1,
+                end_line=i + 5,
+                code=f"def func_{i}(): pass",
+                signature=None,
+                docstring=None,
+                summary=None,
+                metadata={},
+            )
+        )
+    return elements
+
+
+def _elem(
+    *,
+    type: str = "function",
+    name: str = "my_func",
+    start_line: int = 1,
+    end_line: int = 5,
+    relative_path: str = "src/a.py",
+    language: str = "python",
+    summary: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> CodeElement:
+    """Create a single CodeElement with sensible defaults."""
+    return CodeElement(
+        id=f"elem_{name}",
+        type=type,
+        name=name,
+        file_path=relative_path,
+        relative_path=relative_path,
+        language=language,
+        start_line=start_line,
+        end_line=end_line,
+        code=f"def {name}(): pass",
+        signature=None,
+        docstring=None,
+        summary=summary,
+        metadata=metadata or {},
+    )
+
+
+def _build(elements: list[CodeElement] | None = None) -> IRSnapshot:
+    """Build an IRSnapshot from elements with default kwargs."""
+    if elements is None:
+        elements = _make_code_elements()
+    return build_ir_from_ast(
+        repo_name="test_repo",
+        snapshot_id="snap:test:abc1234",
+        elements=elements,
+        repo_root="/tmp/repo",
+        branch="main",
+        commit_id="abc1234",
+        tree_id="tree1",
+    )
+
 
 _repo_root = "/tmp/test_repo"
 
@@ -73,7 +141,7 @@ _element_types_without_symbols = st.sampled_from(["file", "documentation"])
 _small_int = st.integers(min_value=1, max_value=500)
 
 
-def _elem(
+def _elem_prop(
     type_: str,
     name: str,
     relative_path: str,
@@ -99,7 +167,363 @@ def _elem(
     )
 
 
-# --- Properties ---
+# =========================================================================
+# Basic tests
+# =========================================================================
+
+
+_SYMBOL_TYPES = ["function", "class", "variable", "method", "interface", "enum"]
+
+_SKIP_TYPES = ["file", "documentation"]
+
+
+@pytest.mark.parametrize("etype", _SYMBOL_TYPES)
+def test_type_produces_symbol(etype: str):
+    """Non-file/documentation types produce an IRSymbol."""
+    elements = [_elem(type=etype, name=f"item_{etype}")]
+    snap = _build(elements)
+    assert len(snap.symbols) == 1
+    assert snap.symbols[0].kind == etype
+
+
+@pytest.mark.parametrize("etype", _SKIP_TYPES)
+def test_type_skips_symbol_negative(etype: str):
+    """'file' and 'documentation' types produce no symbol."""
+    elements = [_elem(type=etype, name=f"item_{etype}")]
+    snap = _build(elements)
+    assert len(snap.symbols) == 0
+
+
+@pytest.mark.parametrize("etype", _SKIP_TYPES)
+def test_type_skips_symbol_but_still_creates_document_edge(etype: str):
+    """Skipped types still create a document for the file path."""
+    elements = [_elem(type=etype, name=f"item_{etype}", relative_path="src/x.py")]
+    snap = _build(elements)
+    assert len(snap.symbols) == 0
+    assert len(snap.documents) == 1
+    assert snap.documents[0].path == "src/x.py"
+
+
+def test_source_set_on_symbols():
+    """All structure-derived symbols have source_set={'fc_structure'}."""
+    elements = _make_code_elements(n=4)
+    snap = _build(elements)
+    for sym in snap.symbols:
+        assert sym.source_set == {"fc_structure"}
+
+
+def test_source_set_on_documents():
+    """All structure-derived documents have source_set={'fc_structure'}."""
+    elements = _make_code_elements(n=4)
+    snap = _build(elements)
+    for doc in snap.documents:
+        assert "fc_structure" in doc.source_set
+
+
+def test_source_priority_constant():
+    """All structure-derived symbols have source_priority == 50."""
+    elements = _make_code_elements(n=5)
+    snap = _build(elements)
+    for sym in snap.symbols:
+        assert sym.source_priority == 50
+
+
+def test_symbol_metadata_contains_ast_fields():
+    """Symbol metadata includes ast_element_id, source, confidence, extractor."""
+    elements = [_elem(type="function", name="compute", metadata={"key1": "val1"})]
+    snap = _build(elements)
+    meta = snap.symbols[0].metadata
+    assert meta["ast_element_id"] == "elem_compute"
+    assert meta["source"] == "fc_structure"
+    assert meta["confidence"] == "resolved"
+    assert meta["extractor"] == "fastcode.adapters.ast_to_ir"
+    assert meta["key1"] == "val1"
+
+
+def test_embedding_attachment_created_from_metadata():
+    """Embedding metadata is promoted into a first-class attachment."""
+    elements = [
+        _elem(
+            name="embed_me",
+            metadata={"embedding": [0.1, 0.2], "embedding_text": "vector text"},
+        ),
+    ]
+    snap = _build(elements)
+    assert len(snap.attachments) == 1
+    attachment = snap.attachments[0]
+    assert attachment.target_type == "symbol"
+    assert attachment.attachment_type == "embedding"
+    assert attachment.source == "fc_embedding"
+    assert attachment.payload["vector"] == [0.1, 0.2]
+    assert attachment.payload["text"] == "vector text"
+
+
+def test_summary_attachment_created_from_element_summary():
+    """Element summaries become summary attachments on the symbol."""
+    elements = [
+        _elem(name="summarized", summary="Important entry point"),
+    ]
+    snap = _build(elements)
+    assert len(snap.attachments) == 1
+    attachment = snap.attachments[0]
+    assert attachment.target_type == "symbol"
+    assert attachment.attachment_type == "summary"
+    assert attachment.source == "fc_structure"
+    assert attachment.payload["text"] == "Important entry point"
+
+
+def test_occurrence_metadata_kind():
+    """Occurrence metadata records the element kind."""
+    elements = [_elem(type="class", name="Foo")]
+    snap = _build(elements)
+    assert snap.occurrences[0].metadata["kind"] == "class"
+
+
+def test_snapshot_metadata_source_modes():
+    """Snapshot metadata has source_modes=['fc_structure']."""
+    snap = _build(_make_code_elements())
+    assert snap.metadata["source_modes"] == ["fc_structure"]
+
+
+def test_contain_edge_metadata():
+    """Contain edges carry extractor and source metadata."""
+    elements = [_elem(name="f")]
+    snap = _build(elements)
+    contain_edges = [e for e in snap.edges if e.edge_type == "contain"]
+    assert len(contain_edges) == 1
+    assert contain_edges[0].metadata["extractor"] == "fastcode.adapters.ast_to_ir"
+    assert contain_edges[0].metadata["source"] == "fc_structure"
+
+
+def test_multiple_elements_same_file_one_document():
+    """Multiple elements in the same file produce a single IRDocument."""
+    elements = [
+        _elem(name="f1", relative_path="src/mod.py"),
+        _elem(name="f2", relative_path="src/mod.py"),
+        _elem(name="f3", relative_path="src/mod.py"),
+    ]
+    snap = _build(elements)
+    assert len(snap.documents) == 1
+    assert len(snap.symbols) == 3
+
+
+def test_multiple_files_multiple_documents():
+    """Elements across different files produce separate documents."""
+    elements = [
+        _elem(name="a", relative_path="src/a.py"),
+        _elem(name="b", relative_path="src/b.py"),
+        _elem(name="c", relative_path="lib/c.py"),
+    ]
+    snap = _build(elements)
+    assert len(snap.documents) == 3
+
+
+def test_contain_edge_per_symbol():
+    """Each symbol gets exactly one contain edge."""
+    elements = _make_code_elements(n=4)
+    snap = _build(elements)
+    contain_edges = [e for e in snap.edges if e.edge_type == "contain"]
+    assert len(contain_edges) == len(snap.symbols)
+
+
+def test_occurrence_role_always_definition():
+    """All structure-derived occurrences have role='definition'."""
+    elements = _make_code_elements(n=3)
+    snap = _build(elements)
+    for occ in snap.occurrences:
+        assert occ.role == "definition"
+
+
+def test_occurrence_source_always_ast():
+    """All structure-derived occurrences have source='fc_structure'."""
+    elements = _make_code_elements(n=3)
+    snap = _build(elements)
+    for occ in snap.occurrences:
+        assert occ.source == "fc_structure"
+
+
+def test_class_element_creates_inheritance_edge_from_bases():
+    """A class with 'bases' metadata produces inheritance edges."""
+    elements = [
+        _elem(type="class", name="Child", metadata={"bases": ["Parent"]}),
+        _elem(type="class", name="Parent", metadata={}),
+    ]
+    snap = _build(elements)
+    inherit_edges = [e for e in snap.edges if e.edge_type == "inherit"]
+    assert len(inherit_edges) == 1
+    assert inherit_edges[0].metadata["base"] == "Parent"
+
+
+def test_file_element_with_imports_creates_import_edge():
+    """A file element with 'imports' metadata can produce import edges."""
+    elements = [
+        _elem(type="file", name="module_a", relative_path="src/a.py", metadata={}),
+        _elem(
+            type="file",
+            name="module_b",
+            relative_path="src/b.py",
+            metadata={"imports": [{"module": "src.a"}]},
+        ),
+    ]
+    snap = _build(elements)
+    import_edges = [e for e in snap.edges if e.edge_type == "import"]
+    assert len(import_edges) == 1
+    assert import_edges[0].metadata["module"] == "src.a"
+
+
+def test_qualified_name_with_class():
+    """When class_name is present, qualified_name is class.method."""
+    elements = [
+        _elem(type="method", name="do_stuff", metadata={"class_name": "Worker"}),
+    ]
+    snap = _build(elements)
+    assert snap.symbols[0].qualified_name == "Worker.do_stuff"
+
+
+def test_symbol_id_is_deterministic():
+    """Same element inputs always produce the same symbol_id."""
+    elements = [
+        _elem(name="compute", type="function", start_line=10, metadata={}),
+    ]
+    snap1 = _build(elements)
+    snap2 = _build(elements)
+    assert snap1.symbols[0].symbol_id == snap2.symbols[0].symbol_id
+
+
+# =========================================================================
+# Edge tests
+# =========================================================================
+
+
+_QUALIFIED_NAME_CASES = [
+    # (metadata, expected_qualified_name)
+    ({}, "my_func"),
+    ({"class_name": None}, "my_func"),
+    ({"class_name": "MyClass"}, "MyClass.my_func"),
+    ({"class_name": ""}, "my_func"),
+]
+
+
+@pytest.mark.edge
+@pytest.mark.parametrize(("meta", "expected_qname"), _QUALIFIED_NAME_CASES)
+def test_qualified_name_construction_edge(meta: dict[str, Any], expected_qname: str):
+    """qualified_name uses class_name.name when class_name is truthy."""
+    elements = [_elem(name="my_func", metadata=meta)]
+    snap = _build(elements)
+    assert len(snap.symbols) == 1
+    assert snap.symbols[0].qualified_name == expected_qname
+
+
+def test_qualified_name_without_class_edge():
+    """When class_name is absent, qualified_name equals the element name."""
+    elements = [_elem(type="function", name="standalone")]
+    snap = _build(elements)
+    assert snap.symbols[0].qualified_name == "standalone"
+
+
+def test_symbol_metadata_excludes_embedding_keys_edge():
+    """embedding and embedding_text are stripped from symbol metadata."""
+    elements = [
+        _elem(
+            name="f",
+            metadata={
+                "embedding": [0.1, 0.2],
+                "embedding_text": "code",
+                "visible": True,
+            },
+        ),
+    ]
+    snap = _build(elements)
+    meta = snap.symbols[0].metadata
+    assert "embedding" not in meta
+    assert "embedding_text" not in meta
+    assert meta["visible"] is True
+
+
+def test_empty_elements_identity_fields_edge():
+    """Empty snapshot still carries repo_name, snapshot_id, etc."""
+    snap = _build([])
+    assert snap.repo_name == "test_repo"
+    assert snap.snapshot_id == "snap:test:abc1234"
+    assert snap.branch == "main"
+    assert snap.commit_id == "abc1234"
+    assert snap.tree_id == "tree1"
+
+
+_LINE_CLAMP_CASES = [
+    # (start_line, expected_occurrence_start_line)
+    (0, 1),
+    (1, 1),
+    (5, 5),
+    (100, 100),
+]
+
+
+@pytest.mark.edge
+@pytest.mark.parametrize(("start_line", "expected"), _LINE_CLAMP_CASES)
+def test_start_line_clamping(start_line: int, expected: int):
+    """Occurrence start_line is clamped to >= 1 via max(... or 1, 1)."""
+    elements = [_elem(name="f", start_line=start_line, end_line=start_line + 5)]
+    snap = _build(elements)
+    assert len(snap.occurrences) == 1
+    assert snap.occurrences[0].start_line == expected
+
+
+@pytest.mark.edge
+def test_start_line_none_clamps_to_one_edge():
+    """start_line=None clamps to 1."""
+    elem = _elem(name="f", start_line=10, end_line=20)
+    elem.start_line = None  # type: ignore[assignment]
+    snap = _build([elem])
+    assert snap.occurrences[0].start_line == 1
+
+
+@pytest.mark.edge
+def test_start_line_negative_clamps_to_one_edge():
+    """Negative start_line would clamp to 1 (max(-1 or 1, 1) = max(-1, 1) = 1)."""
+    elem = _elem(name="f", start_line=10, end_line=20)
+    elem.start_line = -1  # type: ignore[assignment]
+    snap = _build([elem])
+    assert snap.occurrences[0].start_line == 1
+
+
+@pytest.mark.edge
+def test_empty_elements_no_symbols_or_docs_edge():
+    """An empty elements list produces an empty snapshot."""
+    snap = _build([])
+    assert len(snap.documents) == 0
+    assert len(snap.symbols) == 0
+    assert len(snap.occurrences) == 0
+    assert len(snap.edges) == 0
+
+
+@pytest.mark.edge
+def test_no_self_import_edge():
+    """A file importing itself does not produce an import edge."""
+    elements = [
+        _elem(
+            type="file",
+            name="mod",
+            relative_path="src/mod.py",
+            metadata={"imports": [{"module": "src.mod"}]},
+        ),
+    ]
+    snap = _build(elements)
+    import_edges = [e for e in snap.edges if e.edge_type == "import"]
+    assert len(import_edges) == 0
+
+
+@pytest.mark.edge
+def test_language_fallback_to_unknown_edge():
+    """An element with empty language falls back to 'unknown'."""
+    elem = _elem(name="f", language="")
+    snap = _build([elem])
+    assert snap.symbols[0].language == "unknown"
+
+
+# =========================================================================
+# Property-based tests
+# =========================================================================
 
 
 class TestDocumentDeduplication:
@@ -110,15 +534,14 @@ class TestDocumentDeduplication:
         language=language_st,
     )
     @settings(max_examples=30)
-    @pytest.mark.basic
     def test_same_path_produces_one_document_property(
         self, name1: str, name2: str, path: str, language: str
     ):
         """HAPPY: multiple elements from same file produce exactly one document."""
         assume(name1 != name2)
         elements = [
-            _elem("function", name1, path, language, start_line=1, end_line=5),
-            _elem("function", name2, path, language, start_line=10, end_line=15),
+            _elem_prop("function", name1, path, language, start_line=1, end_line=5),
+            _elem_prop("function", name2, path, language, start_line=10, end_line=15),
         ]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         assert len(snap.documents) == 1
@@ -132,15 +555,14 @@ class TestDocumentDeduplication:
         language=language_st,
     )
     @settings(max_examples=30)
-    @pytest.mark.basic
     def test_different_paths_produce_multiple_documents_property(
         self, name1: str, name2: str, path1: str, path2: str, language: str
     ):
         """HAPPY: elements from different files produce distinct documents."""
         assume(path1 != path2)
         elements = [
-            _elem("function", name1, path1, language),
-            _elem("function", name2, path2, language),
+            _elem_prop("function", name1, path1, language),
+            _elem_prop("function", name2, path2, language),
         ]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         assert len(snap.documents) == 2
@@ -154,13 +576,12 @@ class TestDocumentDeduplication:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.basic
     def test_many_elements_one_file_still_one_document_property(
         self, n: int, path: str, language: str
     ):
         """HAPPY: N elements in same file produce exactly one document."""
         elements = [
-            _elem("function", f"fn_{i}", path, language, start_line=i * 10)
+            _elem_prop("function", f"fn_{i}", path, language, start_line=i * 10)
             for i in range(n)
         ]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
@@ -174,10 +595,9 @@ class TestSymbolCreation:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.basic
     def test_file_type_skips_symbol_property(self, name: str, path: str, language: str):
         """HAPPY: file-type elements produce no symbols."""
-        elements = [_elem("file", name, path, language)]
+        elements = [_elem_prop("file", name, path, language)]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         assert len(snap.symbols) == 0
         assert len(snap.occurrences) == 0
@@ -188,10 +608,11 @@ class TestSymbolCreation:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.basic
-    def test_documentation_type_skips_symbol_property(self, name: str, path: str, language: str):
+    def test_documentation_type_skips_symbol_property(
+        self, name: str, path: str, language: str
+    ):
         """HAPPY: documentation-type elements produce no symbols."""
-        elements = [_elem("documentation", name, path, language)]
+        elements = [_elem_prop("documentation", name, path, language)]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         assert len(snap.symbols) == 0
 
@@ -202,17 +623,15 @@ class TestSymbolCreation:
         type_=_element_types_with_symbols,
     )
     @settings(max_examples=30)
-    @pytest.mark.basic
     def test_non_file_types_create_symbols_property(
         self, name: str, path: str, language: str, type_: str
     ):
         """HAPPY: function/class/variable/method elements produce exactly one symbol."""
-        elements = [_elem(type_, name, path, language)]
+        elements = [_elem_prop(type_, name, path, language)]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         assert len(snap.symbols) == 1
         assert snap.symbols[0].display_name == name
 
-    @pytest.mark.basic
     def test_empty_elements_produces_empty_snapshot_property(self):
         """HAPPY: empty element list produces snapshot with zero symbols/occurrences."""
         snap = build_ir_from_ast("repo", "snap:1", [], _repo_root)
@@ -259,10 +678,11 @@ class TestLineClamping:
         start_line=_small_int,
     )
     @settings(max_examples=30)
-    @pytest.mark.basic
-    def test_valid_start_line_preserved_property(self, name: str, path: str, start_line: int):
+    def test_valid_start_line_preserved_property(
+        self, name: str, path: str, start_line: int
+    ):
         """HAPPY: valid start_line >= 1 is preserved."""
-        elem = _elem(
+        elem = _elem_prop(
             "function", name, path, start_line=start_line, end_line=start_line + 5
         )
         snap = build_ir_from_ast("repo", "snap:1", [elem], _repo_root)
@@ -277,8 +697,9 @@ class TestSourcePriorityAndSet:
         ),
     )
     @settings(max_examples=30)
-    @pytest.mark.basic
-    def test_all_symbols_have_source_priority_50_property(self, elements: list[CodeElement]):
+    def test_all_symbols_have_source_priority_50_property(
+        self, elements: list[CodeElement]
+    ):
         """HAPPY: all symbols created by structure adapter have source_priority=50."""
         assume(len(elements) > 0)
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
@@ -289,7 +710,6 @@ class TestSourcePriorityAndSet:
         elements=st.lists(code_element_st, max_size=5),
     )
     @settings(max_examples=30)
-    @pytest.mark.basic
     def test_all_docs_have_fc_structure_in_source_set_property(
         self, elements: list[CodeElement]
     ):
@@ -306,7 +726,6 @@ class TestSourcePriorityAndSet:
         ),
     )
     @settings(max_examples=30)
-    @pytest.mark.basic
     def test_all_symbols_have_fc_structure_source_set_property(
         self, elements: list[CodeElement]
     ):
@@ -325,12 +744,11 @@ class TestContainmentEdges:
         type_=_element_types_with_symbols,
     )
     @settings(max_examples=30)
-    @pytest.mark.basic
     def test_non_file_symbols_have_containment_edge_property(
         self, name: str, path: str, language: str, type_: str
     ):
         """HAPPY: every non-file, non-doc symbol gets a containment edge."""
-        elements = [_elem(type_, name, path, language)]
+        elements = [_elem_prop(type_, name, path, language)]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         assert len(snap.edges) >= 1
         contain_edges = [e for e in snap.edges if e.edge_type == "contain"]
@@ -343,13 +761,12 @@ class TestContainmentEdges:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.basic
     def test_containment_count_equals_symbol_count_property(
         self, n: int, path: str, language: str
     ):
         """HAPPY: number of containment edges equals number of symbols."""
         elements = [
-            _elem("function", f"fn_{i}", path, language, start_line=i * 10)
+            _elem_prop("function", f"fn_{i}", path, language, start_line=i * 10)
             for i in range(n)
         ]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
@@ -362,7 +779,6 @@ class TestMetadataConsistency:
         elements=st.lists(code_element_st, max_size=4),
     )
     @settings(max_examples=30)
-    @pytest.mark.basic
     def test_snapshot_metadata_source_modes_is_fc_structure_property(
         self, elements: list[CodeElement]
     ):
@@ -376,12 +792,11 @@ class TestMetadataConsistency:
         language=language_st,
     )
     @settings(max_examples=30)
-    @pytest.mark.basic
     def test_symbol_metadata_has_source_and_confidence_property(
         self, name: str, path: str, language: str
     ):
         """HAPPY: every symbol metadata contains 'source' and 'confidence' keys."""
-        elements = [_elem("function", name, path, language)]
+        elements = [_elem_prop("function", name, path, language)]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         for sym in snap.symbols:
             assert "source" in sym.metadata
@@ -394,8 +809,9 @@ class TestMetadataConsistency:
         ),
     )
     @settings(max_examples=30)
-    @pytest.mark.basic
-    def test_symbol_metadata_source_is_fc_structure_property(self, elements: list[CodeElement]):
+    def test_symbol_metadata_source_is_fc_structure_property(
+        self, elements: list[CodeElement]
+    ):
         """HAPPY: all symbol metadata['source'] == 'fc_structure'."""
         assume(len(elements) > 0)
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
@@ -406,7 +822,6 @@ class TestMetadataConsistency:
 class TestAttachments:
     @given(name=identifier, path=file_path_st, language=language_st)
     @settings(max_examples=20)
-    @pytest.mark.basic
     def test_summary_generates_summary_attachment_property(
         self, name: str, path: str, language: str
     ):
@@ -435,7 +850,6 @@ class TestAttachments:
 
     @given(name=identifier, path=file_path_st, language=language_st)
     @settings(max_examples=20)
-    @pytest.mark.basic
     def test_embedding_metadata_generates_embedding_attachment_property(
         self, name: str, path: str, language: str
     ):
@@ -471,7 +885,6 @@ class TestImportEdges:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.basic
     def test_file_imports_create_dependency_edge_property(
         self, module_name: str, path1: str, path2: str, language: str
     ):
@@ -481,7 +894,7 @@ class TestImportEdges:
         adjusted_path2 = f"src/{module_name}.py"
 
         elements = [
-            _elem(
+            _elem_prop(
                 "file",
                 "mod",
                 path1,
@@ -490,7 +903,7 @@ class TestImportEdges:
                     "imports": [{"module": module_name}],
                 },
             ),
-            _elem("function", "fn1", adjusted_path2, language),
+            _elem_prop("function", "fn1", adjusted_path2, language),
         ]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         import_edges = [e for e in snap.edges if e.edge_type == "import"]
@@ -506,7 +919,7 @@ class TestImportEdges:
     def test_file_import_no_match_no_edge_property(self, path: str, language: str):
         """EDGE: file with imports but no matching target produces no import edge."""
         elements = [
-            _elem(
+            _elem_prop(
                 "file",
                 "mod",
                 path,
@@ -529,15 +942,14 @@ class TestInheritanceEdges:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.basic
     def test_class_with_bases_creates_inheritance_edge_property(
         self, base_name: Any, derived_name: Any, path: str, language: str
     ):
         """HAPPY: class with matching base creates an inheritance edge."""
         assume(base_name != derived_name)
         elements = [
-            _elem("class", base_name, path, language, metadata={}),
-            _elem(
+            _elem_prop("class", base_name, path, language, metadata={}),
+            _elem_prop(
                 "class",
                 derived_name,
                 path,
@@ -565,7 +977,7 @@ class TestInheritanceEdges:
     ):
         """EDGE: class with base not in snapshot produces no inheritance edge."""
         elements = [
-            _elem(
+            _elem_prop(
                 "class",
                 derived_name,
                 path,
@@ -586,10 +998,12 @@ class TestInheritanceEdges:
     )
     @settings(max_examples=15)
     @pytest.mark.edge
-    def test_class_with_self_base_no_edge_property(self, name: str, path: str, language: str):
+    def test_class_with_self_base_no_edge_property(
+        self, name: str, path: str, language: str
+    ):
         """EDGE: class inheriting from itself produces no edge."""
         elements = [
-            _elem(
+            _elem_prop(
                 "class",
                 name,
                 path,
@@ -614,7 +1028,6 @@ class TestSnapshotIdentity:
         tree_id=st.none() | identifier,
     )
     @settings(max_examples=20)
-    @pytest.mark.basic
     def test_snapshot_fields_preserved_property(
         self,
         repo_name: str,
@@ -648,13 +1061,12 @@ class TestQualifiedNameResolution:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.basic
     def test_method_with_class_name_gets_qualified_property(
         self, class_name: str, method_name: Any, path: str, language: str
     ):
         """HAPPY: method with class_name metadata gets qualified_name='Class.method'."""
         elements = [
-            _elem(
+            _elem_prop(
                 "method",
                 method_name,
                 path,
@@ -672,12 +1084,11 @@ class TestQualifiedNameResolution:
         language=language_st,
     )
     @settings(max_examples=20)
-    @pytest.mark.basic
     def test_function_without_class_name_uses_plain_name_property(
         self, name: str, path: str, language: str
     ):
         """HAPPY: function without class_name metadata uses name as qualified_name."""
-        elements = [_elem("function", name, path, language, metadata={})]
+        elements = [_elem_prop("function", name, path, language, metadata={})]
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         assert len(snap.symbols) == 1
         assert snap.symbols[0].qualified_name == name

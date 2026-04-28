@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from pathlib import Path
 
 import pytest
 from hypothesis import given, settings
@@ -301,3 +302,42 @@ class TestPathUtilsIsSafePath:
         with tempfile.TemporaryDirectory() as repo:
             pu = PathUtils(repo)
             assert pu.is_safe_path("") is True
+
+
+class TestIsSafePathTraversal:
+    """P0 security: is_safe_path must reject path traversal attacks."""
+
+    @pytest.fixture
+    def utils(self, tmp_path: Path) -> PathUtils:
+        return PathUtils(repo_root=str(tmp_path))
+
+    def test_rejects_parent_traversal(self, utils: PathUtils, tmp_path: Path) -> None:
+        evil = str(tmp_path / ".." / ".." / "etc" / "passwd")
+        assert not utils.is_safe_path(evil)
+
+    def test_rejects_absolute_path_outside_repo(self, utils: PathUtils) -> None:
+        assert not utils.is_safe_path("/etc/passwd")
+
+    def test_rejects_dotdot_mid_path(self, utils: PathUtils, tmp_path: Path) -> None:
+        evil = str(tmp_path / "subdir" / ".." / ".." / "etc" / "shadow")
+        assert not utils.is_safe_path(evil)
+
+    def test_accepts_path_inside_repo(self, utils: PathUtils, tmp_path: Path) -> None:
+        safe = str(tmp_path / "src" / "main.py")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").touch()
+        assert utils.is_safe_path(safe)
+
+    def test_accepts_relative_path_inside_repo(self, utils: PathUtils) -> None:
+        assert utils.is_safe_path("src/main.py")
+
+    def test_rejects_null_byte_injection(
+        self, utils: PathUtils, tmp_path: Path
+    ) -> None:
+        evil = str(tmp_path / "file.py\0../etc/passwd")
+        assert not utils.is_safe_path(evil)
+
+    def test_rejects_symlink_escape(self, utils: PathUtils, tmp_path: Path) -> None:
+        link = tmp_path / "evil_link"
+        link.symlink_to("/etc")
+        assert not utils.is_safe_path(str(link / "passwd"))

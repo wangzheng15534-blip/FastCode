@@ -2,6 +2,8 @@
 
 from typing import Any
 
+import pytest
+
 from fastcode.core.filtering import (
     apply_filters,
     diversify,
@@ -207,3 +209,48 @@ class TestRerank:
     def test_empty(self):
         result = rerank([])
         assert result == []
+
+
+class TestDiversifyExactArithmetic:
+    """Verify exact penalty arithmetic for diversify."""
+
+    def test_penalty_exact_arithmetic(self) -> None:
+        """Verify exact penalty: score * (1 - penalty)."""
+        rows = [
+            _mk_row("a", total=0.8, file_path="same.py"),
+            _mk_row("b", total=0.6, file_path="same.py"),
+        ]
+        result = diversify(rows, diversity_penalty=0.5)
+        # First: no penalty → 0.8. Second: 0.6 * (1-0.5) = 0.3
+        # After sort: [0.8, 0.3]
+        assert result[0]["total_score"] == pytest.approx(0.8)
+        assert result[1]["total_score"] == pytest.approx(0.3)
+        assert result[1]["semantic_score"] == pytest.approx(0.3)
+        assert result[1]["keyword_score"] == pytest.approx(0.15)  # 0.3 * 0.5
+
+    def test_penalty_100_percent_zeros_duplicate(self) -> None:
+        """100% penalty zeros out duplicate file scores."""
+        rows = [
+            _mk_row("a", total=0.9, file_path="f.py"),
+            _mk_row("b", total=0.7, file_path="f.py"),
+        ]
+        result = diversify(rows, diversity_penalty=1.0)
+        by_id = {r["element"]["id"]: r for r in result}
+        assert by_id["b"]["total_score"] == pytest.approx(0.0)
+        assert by_id["b"]["semantic_score"] == pytest.approx(0.0)
+
+    def test_three_same_file_cumulative_penalty(self) -> None:
+        """All duplicates get penalized, not just the second."""
+        rows = [
+            _mk_row("a", total=0.9, file_path="f.py"),
+            _mk_row("b", total=0.6, file_path="f.py"),
+            _mk_row("c", total=0.3, file_path="f.py"),
+        ]
+        result = diversify(rows, diversity_penalty=0.5)
+        by_id = {r["element"]["id"]: r for r in result}
+        # a: no penalty → 0.9
+        assert by_id["a"]["total_score"] == pytest.approx(0.9)
+        # b: 0.6 * 0.5 = 0.3
+        assert by_id["b"]["total_score"] == pytest.approx(0.3)
+        # c: 0.3 * 0.5 = 0.15
+        assert by_id["c"]["total_score"] == pytest.approx(0.15)

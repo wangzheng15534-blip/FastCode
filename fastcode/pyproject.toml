@@ -296,8 +296,7 @@ timeout = 30
 timeout_method = "thread"
 pythonpath = [".."]                                                      # workspace root: resolves api.py, mcp_server.py imports
 markers = [
-    # --- Technique markers (pre-commit tier) ---
-    "basic: straightforward assertion on known input/output",
+    # --- Technique markers ---
     "edge: boundary values, empty inputs, off-by-one",
     "negative: invalid input, expected failures (pytest.raises)",
     "test_double: mocks, fakes, stubs, patches",
@@ -308,6 +307,7 @@ markers = [
     "hypothesis: hypothesis property-based tests (auto-applied by @given)",
     "snapshot: syrupy snapshot tests",
     "benchmark: pytest-benchmark tests",
+    "parametrize: pytest parametrized tests (@pytest.mark.parametrize)",
 ]
 
 # ---------------------------------------------------------------------------

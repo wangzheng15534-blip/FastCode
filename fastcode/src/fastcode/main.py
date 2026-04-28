@@ -10,7 +10,7 @@ import re
 import tempfile
 from collections.abc import Callable, Generator
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import networkx as nx
@@ -30,7 +30,7 @@ from .graph_builder import CodeGraphBuilder
 from .graph_runtime import LadybugGraphRuntime
 from .incremental_update import apply_incremental_update, diff_changed_files
 from .index_run import IndexRunStore
-from .indexer import CodeElement, CodeIndexer
+from .indexer import CodeElement, CodeElementMeta, CodeIndexer
 from .ir_graph_builder import IRGraphBuilder
 from .ir_merge import merge_ir
 from .ir_validators import validate_snapshot
@@ -302,7 +302,7 @@ class FastCode:
 
             # Add embeddings to vector store
             vectors: list[Any] = []
-            metadata: list[dict[str, Any]] = []
+            metadata: list[CodeElementMeta] = []
 
             for elem in elements:
                 embedding = elem.metadata.get("embedding")
@@ -626,7 +626,7 @@ class FastCode:
             temp_store = VectorStore(self.config)
             temp_store.initialize(self.embedder.embedding_dim)
             vectors: list[list[float]] = []
-            metadata: list[dict[str, Any]] = []
+            metadata: list[CodeElementMeta] = []
             for elem in elements:
                 embedding = elem.metadata.get("embedding")
                 if embedding is not None:
@@ -930,7 +930,9 @@ class FastCode:
                 merged_snapshot,
                 metadata={"run_id": run_id, "artifact_key": artifact_key},
             )
-            all_pg_elements = [elem.to_dict() for elem in elements]
+            all_pg_elements: list[dict[str, Any]] = [
+                cast(dict[str, Any], elem.to_dict()) for elem in elements
+            ]
             if doc_elements_payload:
                 all_pg_elements.extend(doc_elements_payload)
             self.pg_retrieval_store.upsert_elements(
@@ -2411,7 +2413,7 @@ class FastCode:
 
                 # Add to temporary vector store
                 vectors: list[list[float]] = []
-                metadata: list[dict[str, Any]] = []
+                metadata: list[CodeElementMeta] = []
 
                 for elem in elements:
                     embedding = elem.metadata.get("embedding")
@@ -2996,7 +2998,8 @@ class FastCode:
         temp_store = VectorStore(self.config)
         temp_store.initialize(self.embedder.embedding_dim)
 
-        vectors, metadata_list = [], []
+        vectors: list[list[float]] = []
+        metadata_list: list[CodeElementMeta] = []
         for elem in all_elements:
             embedding = elem.metadata.get("embedding")
             if embedding is not None:

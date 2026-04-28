@@ -2,13 +2,18 @@
 Vector Store - Store and retrieve code embeddings
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import pickle
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import faiss
 import numpy as np
+
+if TYPE_CHECKING:
+    from .indexer import CodeElementMeta
 
 from .utils import ensure_dir
 
@@ -31,7 +36,7 @@ class VectorStore:
 
         self.dimension: int | None = None
         self.index: Any = None  # faiss index types are untyped
-        self.metadata: list[dict[str, Any]] = []  # Store metadata for each vector
+        self.metadata: list[CodeElementMeta] = []  # Store metadata for each vector
 
         self.persist_dir: str = self.vector_config.get(
             "persist_directory", "./data/vector_store"
@@ -91,12 +96,12 @@ class VectorStore:
         else:
             self.index = faiss.IndexFlatL2(dimension)  # L2 distance
 
-        self.metadata: list[dict[str, Any]] = []
+        self.metadata: list[CodeElementMeta] = []
         self.logger.info(
             f"Initialized {self.index_type} index with {self.distance_metric} distance"
         )
 
-    def add_vectors(self, vectors: np.ndarray, metadata: list[dict[str, Any]]) -> None:
+    def add_vectors(self, vectors: np.ndarray, metadata: list[CodeElementMeta]) -> None:
         """
         Add vectors to the store
 
@@ -132,7 +137,7 @@ class VectorStore:
         min_score: float | None = None,
         repo_filter: list[str] | None = None,
         element_type_filter: str | None = None,
-    ) -> list[tuple[dict[str, Any], float]]:
+    ) -> list[tuple[CodeElementMeta, float]]:
         """
         Search for similar vectors
 
@@ -163,7 +168,7 @@ class VectorStore:
         distances, indices = self.index.search(query_vector, search_k)
 
         # Prepare results
-        results: list[tuple[dict[str, Any], float]] = []
+        results: list[tuple[CodeElementMeta, float]] = []
         for dist, idx in zip(distances[0], indices[0], strict=True):
             if idx == -1:  # FAISS returns -1 for empty slots
                 continue
@@ -191,7 +196,7 @@ class VectorStore:
             if min_score is not None and score < min_score:
                 continue
 
-            results.append((self.metadata[idx], score))
+            results.append((cast(CodeElementMeta, self.metadata[idx]), score))
 
             # Stop if we have enough results
             if len(results) >= k:
@@ -383,7 +388,7 @@ class VectorStore:
 
     def search_batch(
         self, query_vectors: np.ndarray, k: int = 10, min_score: float | None = None
-    ) -> list[list[tuple[dict[str, Any], float]]]:
+    ) -> list[list[tuple[CodeElementMeta, float]]]:
         """
         Search for multiple queries at once
 
@@ -410,9 +415,9 @@ class VectorStore:
         distances, indices = self.index.search(query_vectors, k)
 
         # Prepare results for each query
-        all_results: list[list[tuple[dict[str, Any], float]]] = []
+        all_results: list[list[tuple[CodeElementMeta, float]]] = []
         for query_distances, query_indices in zip(distances, indices, strict=True):
-            results: list[tuple[dict[str, Any], float]] = []
+            results: list[tuple[CodeElementMeta, float]] = []
             for dist, idx in zip(query_distances, query_indices, strict=True):
                 if idx == -1:
                     continue
@@ -426,7 +431,7 @@ class VectorStore:
                 if min_score is not None and score < min_score:
                     continue
 
-                results.append((self.metadata[idx], score))
+                results.append((cast(CodeElementMeta, self.metadata[idx]), score))
 
             all_results.append(results)
 
@@ -535,7 +540,7 @@ class VectorStore:
             # Load metadata
             with open(metadata_path, "rb") as f:
                 data = pickle.load(f)
-                self.metadata = data["metadata"]
+                self.metadata = cast(list[CodeElementMeta], data["metadata"])
                 self.dimension = data["dimension"]
                 self.distance_metric = data.get("distance_metric", "cosine")
                 self.index_type = data.get("index_type", "HNSW")
@@ -560,7 +565,7 @@ class VectorStore:
             self.initialize(self.dimension)
         else:
             self.index = None
-            self.metadata: list[dict[str, Any]] = []
+            self.metadata: list[CodeElementMeta] = []
         self.logger.info("Cleared vector store")
 
     def merge_from_index(self, index_name: str) -> bool:
@@ -591,7 +596,7 @@ class VectorStore:
             # Load metadata
             with open(metadata_path, "rb") as f:
                 data = pickle.load(f)
-                other_metadata = data["metadata"]
+                other_metadata = cast(list[CodeElementMeta], data["metadata"])
                 other_dimension = data["dimension"]
 
             # Verify dimensions match
@@ -650,7 +655,7 @@ class VectorStore:
         """
         # FAISS doesn't support direct deletion, need to rebuild
         indices_to_keep: list[int] = []
-        metadata_to_keep: list[dict[str, Any]] = []
+        metadata_to_keep: list[CodeElementMeta] = []
 
         for i, meta in enumerate(self.metadata):
             if not filter_func(meta):

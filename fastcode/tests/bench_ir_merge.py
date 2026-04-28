@@ -88,7 +88,9 @@ def test_merge_throughput_perf(element_count: int, benchmark: pytest.BenchmarkFi
 
 
 @pytest.mark.parametrize("element_count", [10, 100, 500])
-def test_ast_adapter_throughput_perf(element_count: int, benchmark: pytest.BenchmarkFixture):
+def test_ast_adapter_throughput_perf(
+    element_count: int, benchmark: pytest.BenchmarkFixture
+):
     """Benchmark AST-to-IR adapter throughput."""
     elements = _make_code_elements(element_count)
 

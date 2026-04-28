@@ -475,12 +475,15 @@ def test_snapshot_identity_fields():
 
 
 @pytest.mark.edge
-@pytest.mark.parametrize("role", [
-    "unknown_role",
-    "read_access",
-    "call",
-    "",
-])
+@pytest.mark.parametrize(
+    "role",
+    [
+        "unknown_role",
+        "read_access",
+        "call",
+        "",
+    ],
+)
 def test_role_does_not_produce_ref_edge_negative(role: str):
     """Roles outside the whitelist do not produce a 'ref' edge."""
     payload = _make_scip_payload(n_docs=1, n_symbols=1, n_occurrences=1)
@@ -659,9 +662,7 @@ _DISPLAY_NAME_CASES = [
 
 @pytest.mark.edge
 @pytest.mark.parametrize(("name", "ext_symbol", "expected"), _DISPLAY_NAME_CASES)
-def test_display_name_fallback_edge(
-    name: str | None, ext_symbol: str, expected: str
-):
+def test_display_name_fallback_edge(name: str | None, ext_symbol: str, expected: str):
     """display_name falls back to last segment of external symbol."""
     payload = {
         "documents": [
@@ -1085,9 +1086,9 @@ class TestScipParsingProperties:
         assert snap.repo_name == "repo"
         assert snap.snapshot_id == snap_id
         assert len(snap.documents) >= len(index.documents)
-        _total_symbols = sum(len(d.symbols) for d in index.documents)
+        _ = sum(len(d.symbols) for d in index.documents)
         # The adapter may normalize module-kind symbols to file units, so
-        # snap.symbols can be fewer than total_symbols when modules are present.
+        # snap.symbols can be fewer than _total when modules are present.
         # It can also be fewer when duplicate symbol strings appear in the same doc.
         assert len(snap.symbols) + len(snap.documents) >= len(index.documents)
 

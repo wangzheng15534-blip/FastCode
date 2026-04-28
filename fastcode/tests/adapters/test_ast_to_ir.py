@@ -136,7 +136,7 @@ _repo_root = "/tmp/test_repo"
 _element_types_with_symbols = st.sampled_from(
     ["function", "class", "variable", "method"]
 )
-_element_types_without_symbols = st.sampled_from(["file", "documentation"])
+_element_types_without_symbols: Any = st.sampled_from(["file", "documentation"])
 
 _small_int = st.integers(min_value=1, max_value=500)
 

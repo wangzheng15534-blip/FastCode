@@ -2,6 +2,8 @@
 
 from typing import Any
 
+import pytest
+
 from fastcode.core.combination import combine_results
 
 
@@ -63,3 +65,37 @@ class TestCombineResults:
         kw = [(_mk_meta("a"), 2.0)]
         result = combine_results([], kw, keyword_weight=0.3)
         assert abs(result[0]["keyword_score"] - 0.3) < 1e-9
+
+
+class TestSourcePriorityBoostExact:
+    """Verify exact boost = 1 + min(max(priority, 0), 100) / 200."""
+
+    def test_priority_100_boost(self) -> None:
+        """priority=100: boost = 1 + 100/200 = 1.5, total = 0.8 * 1.5 = 1.2."""
+        sem = [(_mk_meta("a", metadata={"source_priority": 100}), 0.8)]
+        result = combine_results(sem, [])
+        assert result[0]["total_score"] == pytest.approx(1.2)
+
+    def test_priority_0_no_boost(self) -> None:
+        """priority=0: boost = 1 + 0/200 = 1.0, total = 0.8 * 1.0 = 0.8."""
+        sem = [(_mk_meta("a", metadata={"source_priority": 0}), 0.8)]
+        result = combine_results(sem, [])
+        assert result[0]["total_score"] == pytest.approx(0.8)
+
+    def test_priority_50_half_boost(self) -> None:
+        """priority=50: boost = 1 + 50/200 = 1.25, total = 0.8 * 1.25 = 1.0."""
+        sem = [(_mk_meta("a", metadata={"source_priority": 50}), 0.8)]
+        result = combine_results(sem, [])
+        assert result[0]["total_score"] == pytest.approx(1.0)
+
+    def test_negative_priority_clamped_to_zero(self) -> None:
+        """priority=-10: clamped to 0, boost = 1.0, total = 0.8."""
+        sem = [(_mk_meta("a", metadata={"source_priority": -10}), 0.8)]
+        result = combine_results(sem, [])
+        assert result[0]["total_score"] == pytest.approx(0.8)
+
+    def test_priority_above_100_clamped(self) -> None:
+        """priority=200: clamped to 100, boost = 1.5, total = 0.8 * 1.5 = 1.2."""
+        sem = [(_mk_meta("a", metadata={"source_priority": 200}), 0.8)]
+        result = combine_results(sem, [])
+        assert result[0]["total_score"] == pytest.approx(1.2)

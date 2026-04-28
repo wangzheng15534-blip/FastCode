@@ -45,7 +45,6 @@ extension_st = st.sampled_from(
 
 
 class TestUtcNow:
-    @pytest.mark.basic
     def test_returns_iso_string_property(self):
         result = utc_now()
         assert isinstance(result, str)
@@ -53,7 +52,6 @@ class TestUtcNow:
 
 
 class TestComputeFileHash:
-    @pytest.mark.basic
     def test_hash_deterministic_property(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write("hello world")
@@ -70,7 +68,6 @@ class TestComputeFileHash:
 
     @given(content=st.text(min_size=0, max_size=100))
     @settings(max_examples=15)
-    @pytest.mark.basic
     def test_hash_varies_with_content_property(self, content: str):
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write(content)
@@ -82,7 +79,6 @@ class TestComputeFileHash:
 
 
 class TestIsTextFile:
-    @pytest.mark.basic
     def test_text_file_true_property(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("hello")
@@ -102,17 +98,14 @@ class TestIsTextFile:
 class TestGetFileExtension:
     @given(ext=extension_st)
     @settings(max_examples=10)
-    @pytest.mark.basic
     def test_returns_extension_property(self, ext: Any):
         assert get_file_extension(f"file{ext}") == ext
 
-    @pytest.mark.basic
     def test_no_extension_property(self):
         assert get_file_extension("Makefile") == ""
 
 
 class TestIsSupportedFile:
-    @pytest.mark.basic
     def test_supported_property(self):
         assert is_supported_file("main.py", [".py", ".js"]) is True
 
@@ -122,11 +115,9 @@ class TestIsSupportedFile:
 
 
 class TestNormalizePath:
-    @pytest.mark.basic
     def test_forward_slash_property(self):
         assert normalize_path("a/b/c") == "a/b/c"
 
-    @pytest.mark.basic
     def test_dots_collapsed_property(self):
         result = normalize_path("a/../b")
         assert ".." not in result  # normpath collapses
@@ -135,22 +126,18 @@ class TestNormalizePath:
         path=st.text(alphabet="abcdefghijklmnopqrstuvwxyz/", min_size=1, max_size=20)
     )
     @settings(max_examples=10)
-    @pytest.mark.basic
     def test_no_backslashes_property(self, path: str):
         result = normalize_path(path)
         assert "\\" not in result
 
 
 class TestGetLanguageFromExtension:
-    @pytest.mark.basic
     def test_python_property(self):
         assert get_language_from_extension(".py") == "python"
 
-    @pytest.mark.basic
     def test_javascript_property(self):
         assert get_language_from_extension(".js") == "javascript"
 
-    @pytest.mark.basic
     def test_case_insensitive_property(self):
         assert get_language_from_extension(".PY") == "python"
 
@@ -160,7 +147,6 @@ class TestGetLanguageFromExtension:
 
 
 class TestExtractCodeSnippet:
-    @pytest.mark.basic
     def test_basic_extraction_property(self):
         content = "line0\nline1\nline2\nline3\nline4"
         result = extract_code_snippet(content, 1, 3)
@@ -175,13 +161,11 @@ class TestExtractCodeSnippet:
 
 
 class TestFormatCodeBlock:
-    @pytest.mark.basic
     def test_basic_format_property(self):
         result = format_code_block("x = 1", "python")
         assert result.startswith("```python")
         assert result.endswith("```")
 
-    @pytest.mark.basic
     def test_with_file_path_property(self):
         result = format_code_block("x = 1", "python", "a.py")
         assert "a.py" in result
@@ -193,26 +177,21 @@ class TestFormatCodeBlock:
 
 
 class TestCalculateCodeComplexity:
-    @pytest.mark.basic
     def test_simple_code_property(self):
         assert calculate_code_complexity("x = 1") == 1
 
-    @pytest.mark.basic
     def test_if_increases_property(self):
         c = calculate_code_complexity("if x:\n  pass")
         assert c >= 2
 
-    @pytest.mark.basic
     def test_empty_code_property(self):
         assert calculate_code_complexity("") == 1
 
 
 class TestMergeDicts:
-    @pytest.mark.basic
     def test_merge_two_property(self):
         assert merge_dicts({"a": 1}, {"b": 2}) == {"a": 1, "b": 2}
 
-    @pytest.mark.basic
     def test_latter_wins_property(self):
         assert merge_dicts({"a": 1}, {"a": 2}) == {"a": 2}
 
@@ -222,7 +201,6 @@ class TestMergeDicts:
 
 
 class TestSafeGet:
-    @pytest.mark.basic
     def test_simple_get_property(self):
         assert safe_get({"a": {"b": 1}}, "a", "b") == 1
 
@@ -240,7 +218,6 @@ class TestSafeGet:
 
 
 class TestEnsureDir:
-    @pytest.mark.basic
     def test_creates_directory_property(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "a", "b", "c")
@@ -249,19 +226,16 @@ class TestEnsureDir:
 
 
 class TestSafeJsonable:
-    @pytest.mark.basic
     def test_primitives_passthrough_property(self):
         assert safe_jsonable(None) is None
         assert safe_jsonable(42) == 42
         assert safe_jsonable("hello") == "hello"
         assert safe_jsonable(True) is True
 
-    @pytest.mark.basic
     def test_dict_property(self):
         result = safe_jsonable({"a": 1, "b": "x"})
         assert result == {"a": 1, "b": "x"}
 
-    @pytest.mark.basic
     def test_list_property(self):
         assert safe_jsonable([1, 2, 3]) == [1, 2, 3]
 
@@ -300,18 +274,15 @@ class TestSafeJsonable:
 
     @given(obj=st.one_of(st.integers(), st.text(min_size=0, max_size=10), st.none()))
     @settings(max_examples=15)
-    @pytest.mark.basic
     def test_primitives_always_jsonable_property(self, obj: Any):
         result = safe_jsonable(obj)
         assert result == obj
 
 
 class TestGetRepoNameFromUrl:
-    @pytest.mark.basic
     def test_github_https_property(self):
         assert get_repo_name_from_url("https://github.com/org/myrepo") == "myrepo"
 
-    @pytest.mark.basic
     def test_git_suffix_stripped_property(self):
         assert get_repo_name_from_url("https://github.com/org/myrepo.git") == "myrepo"
 
@@ -327,12 +298,10 @@ class TestGetRepoNameFromUrl:
 
 
 class TestCleanDocstring:
-    @pytest.mark.basic
     def test_basic_clean_property(self):
         result = clean_docstring("  hello  ")
         assert result == "hello"
 
-    @pytest.mark.basic
     def test_multiline_dedent_property(self):
         ds = "    line1\n    line2"
         result = clean_docstring(ds)
@@ -352,21 +321,17 @@ class TestCleanDocstring:
 
 
 class TestResolveConfigPaths:
-    @pytest.mark.basic
     def test_empty_config_property(self):
         assert resolve_config_paths({}, "/root") == {}
 
-    @pytest.mark.basic
     def test_none_config_property(self):
         assert resolve_config_paths(None, "/root") is None
 
-    @pytest.mark.basic
     def test_repo_root_resolved_property(self):
         cfg = {"repo_root": "relative/path"}
         result = resolve_config_paths(cfg, "/project")
         assert os.path.isabs(result["repo_root"])
 
-    @pytest.mark.basic
     def test_absolute_path_unchanged_property(self):
         cfg = {"repo_root": "/absolute/path"}
         result = resolve_config_paths(cfg, "/project")
@@ -374,7 +339,6 @@ class TestResolveConfigPaths:
 
 
 class TestTruncateToTokens:
-    @pytest.mark.basic
     def test_short_text_unchanged_property(self):
         text = "hello world"
         assert truncate_to_tokens(text, 100) == text

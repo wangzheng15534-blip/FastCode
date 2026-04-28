@@ -1,0 +1,19 @@
+# Mutmut configuration — mutation testing for FastCode
+# Run: cd fastcode && mutmut run --config-file tests/.mutmut-config.toml
+
+[mutmut]
+# Target modules for mutation testing (high-value algorithmic code)
+paths_to_mutate = [
+    "src/fastcode/core/scoring.py",
+    "src/fastcode/core/fusion.py",
+    "src/fastcode/core/filtering.py",
+    "src/fastcode/core/combination.py",
+    "src/fastcode/core/iteration.py",
+    "src/fastcode/adapters/scip_to_ir.py",
+    "src/fastcode/ir_validators.py",
+    "src/fastcode/path_utils.py",
+]
+# Test runner
+runner = "uv run pytest fastcode/tests/ -x -q --timeout=30"
+# Mutations to apply per file
+max_mutations_per_file = 50

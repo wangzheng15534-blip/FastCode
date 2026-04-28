@@ -1092,3 +1092,38 @@ class TestQualifiedNameResolution:
         snap = build_ir_from_ast("repo", "snap:1", elements, _repo_root)
         assert len(snap.symbols) == 1
         assert snap.symbols[0].qualified_name == name
+
+
+# ─── Edge cases: empty inputs, boundary conditions ───
+
+
+class TestBuildIrFromAstEdgeCases:
+    """Edge case tests for build_ir_from_ast with boundary inputs."""
+
+    def test_empty_elements_list(self):
+        """No code elements should produce snapshot with no symbols."""
+        snap = _build([])
+        assert len(snap.symbols) == 0
+
+    def test_element_with_no_metadata(self):
+        """Element with empty metadata dict should not crash."""
+        elements = [_elem(name="f", type="function", start_line=1, metadata={})]
+        snap = _build(elements)
+        assert len(snap.symbols) == 1
+
+    def test_element_with_zero_start_line(self):
+        """Start line of 0 should be clamped or handled."""
+        elements = [_elem(name="f", type="function", start_line=0, metadata={})]
+        snap = _build(elements)
+        assert len(snap.symbols) == 1
+
+    def test_multiple_elements_same_name_different_files(self):
+        """Elements with same name in different files get different symbol_ids."""
+        e1 = _elem(name="handler", type="function", start_line=10, metadata={},
+                    relative_path="a.py", language="python")
+        e2 = _elem(name="handler", type="function", start_line=20, metadata={},
+                    relative_path="b.py", language="python")
+        snap = _build([e1, e2])
+        assert len(snap.symbols) == 2
+        ids = [s.symbol_id for s in snap.symbols]
+        assert ids[0] != ids[1]

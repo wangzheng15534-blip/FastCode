@@ -1,54 +1,76 @@
-"""Tests for fastcode.infrastructure.llm — error handling and response extraction."""
+"""Tests for fastcode.infrastructure.llm — error handling and retry contracts."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
+from unittest.mock import MagicMock
 
 from fastcode.infrastructure.llm import chat_completion
 
 
-def _mock_client(
-    choice_content: str | None = "hello",
-    *,
-    empty_choices: bool = False,
-    none_message: bool = False,
-) -> MagicMock:
-    """Build a mock OpenAI client with configurable response shape."""
-    mock = MagicMock()
+def _client_returning(content: str | None) -> MagicMock:
+    """Mock client whose create() returns the given content string."""
+    client = MagicMock()
+    choice = MagicMock()
+    choice.message.content = content
     response = MagicMock()
-    if empty_choices:
-        response.choices = []
-    else:
-        choice = MagicMock()
-        if none_message:
-            choice.message = None
-        else:
-            choice.message.content = choice_content
-        response.choices = [choice]
-    mock.chat.completions.create.return_value = response
-    return mock
+    response.choices = [choice]
+    client.chat.completions.create.return_value = response
+    return client
+
+
+def _client_with_empty_choices() -> MagicMock:
+    """Mock client whose create() returns an empty choices list."""
+    client = MagicMock()
+    response = MagicMock()
+    response.choices = []
+    client.chat.completions.create.return_value = response
+    return client
 
 
 class TestChatCompletion:
-    def test_extracts_content_from_response(self):
-        client = _mock_client("test response text")
+    """Contract tests: what goes in, what comes out."""
+
+    def test_returns_content_string_unchanged(self):
+        """Returns choices[0].message.content as-is when it's a string."""
+        client = _client_returning("hello world")
         result = chat_completion(
             client,
-            messages=[{"role": "user", "content": "hi"}],
             model="gpt-4",
+            messages=[{"role": "user", "content": "hi"}],
             max_tokens=100,
-            temperature=0.5,
         )
-        assert result == "test response text"
+        assert result == "hello world"
 
-    def test_passes_parameters_to_client(self):
-        client = _mock_client("ok")
+    def test_returns_none_when_api_returns_none_content(self):
+        """Returns None when API returns None content (e.g. function call)."""
+        client = _client_returning(None)
+        result = chat_completion(
+            client,
+            model="gpt-4",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=100,
+        )
+        assert result is None
+
+    def test_raises_index_error_on_empty_choices(self):
+        """Empty choices list causes IndexError — crash is the signal."""
+        client = _client_with_empty_choices()
+        with pytest.raises(IndexError):
+            chat_completion(
+                client,
+                model="gpt-4",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=100,
+            )
+
+    def test_forwards_required_kwargs_to_client(self):
+        """Model, messages, max_tokens, temperature are all forwarded."""
+        client = _client_returning("ok")
         chat_completion(
             client,
-            messages=[{"role": "user", "content": "hi"}],
             model="gpt-4",
+            messages=[{"role": "user", "content": "hi"}],
             max_tokens=200,
             temperature=0.7,
         )
@@ -59,36 +81,30 @@ class TestChatCompletion:
             temperature=0.7,
         )
 
-    def test_raises_on_empty_choices(self):
-        client = _mock_client(empty_choices=True)
-        with pytest.raises(IndexError):
-            chat_completion(
-                client,
-                messages=[{"role": "user", "content": "hi"}],
-                model="gpt-4",
-                max_tokens=100,
-                temperature=0.5,
-            )
-
-    def test_raises_on_none_message(self):
-        client = _mock_client(none_message=True)
-        with pytest.raises(AttributeError):
-            chat_completion(
-                client,
-                messages=[{"role": "user", "content": "hi"}],
-                model="gpt-4",
-                max_tokens=100,
-                temperature=0.5,
-            )
-
-    def test_returns_none_content_as_none(self):
-        """If the API returns None content, chat_completion returns None."""
-        client = _mock_client(None)
-        result = chat_completion(
+    def test_forwards_extra_kwargs_to_client(self):
+        """Extra kwargs (stop, top_p, etc.) are passed through."""
+        client = _client_returning("ok")
+        chat_completion(
             client,
-            messages=[{"role": "user", "content": "hi"}],
             model="gpt-4",
+            messages=[{"role": "user", "content": "hi"}],
             max_tokens=100,
-            temperature=0.5,
+            temperature=0.3,
+            stop=["\n"],
+            top_p=0.9,
         )
-        assert result is None
+        call_kwargs = client.chat.completions.create.call_args[1]
+        assert call_kwargs["stop"] == ["\n"]
+        assert call_kwargs["top_p"] == 0.9
+
+    def test_uses_default_temperature(self):
+        """Temperature defaults to 0.3 when not specified."""
+        client = _client_returning("ok")
+        chat_completion(
+            client,
+            model="gpt-4",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=100,
+        )
+        call_kwargs = client.chat.completions.create.call_args[1]
+        assert call_kwargs["temperature"] == 0.3

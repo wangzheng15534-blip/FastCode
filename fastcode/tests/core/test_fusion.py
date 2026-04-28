@@ -1,5 +1,6 @@
 """Tests for fastcode.core.fusion — pure fusion functions extracted from HybridRetriever."""
 
+import pytest
 from types import SimpleNamespace
 from typing import Any
 
@@ -410,3 +411,73 @@ def test_extract_trace_links_ignores_ungrounded():
     assert len(links) == 1
     assert links[0]["unit_id"] == "ir:repo"
     assert links[0]["weight"] == 0.8
+
+
+# ---------------------------------------------------------------------------
+# Exact-value and determinism tests
+# ---------------------------------------------------------------------------
+
+
+def test_fusion_params_determinism():
+    """Same inputs must always produce identical outputs."""
+    config = _default_fusion_config()
+    kwargs = dict(
+        query="test query",
+        query_info={"intent": "code_search", "keywords": ["test"]},
+        code_results=[_mk_row("c:1", "function", 0.7)],
+        doc_results=[_mk_row("d:1", "design_document", 0.5)],
+        config=config,
+    )
+    r1 = compute_adaptive_fusion_params(**kwargs)
+    r2 = compute_adaptive_fusion_params(**kwargs)
+    assert r1[0] == pytest.approx(r2[0])
+    assert r1[1] == pytest.approx(r2[1])
+    assert r1[2] == pytest.approx(r2[2])
+
+
+def test_fusion_alpha_always_clamped():
+    """Alpha must always be within [alpha_min, alpha_max]."""
+    config = _default_fusion_config()
+    for q in ["", "a", "design architecture rationale", "bug fix call trace stack runtime implementation"]:
+        alpha, _, _ = compute_adaptive_fusion_params(
+            query=q,
+            query_info={},
+            code_results=[_mk_row("c:1", "function", 0.99)],
+            doc_results=[],
+            config=config,
+        )
+        assert config.alpha_min <= alpha <= config.alpha_max, f"alpha={alpha} out of range for query={q!r}"
+
+
+def test_fusion_k_always_in_range():
+    """k_code and k_doc must always be within [rrf_k_min, rrf_k_max]."""
+    config = _default_fusion_config()
+    _, k_code, k_doc = compute_adaptive_fusion_params(
+        query="test",
+        query_info={},
+        code_results=[_mk_row("c:1", "function", 0.5)],
+        doc_results=[_mk_row("d:1", "design_document", 0.5)],
+        config=config,
+    )
+    assert config.rrf_k_min <= k_code <= config.rrf_k_max
+    assert config.rrf_k_min <= k_doc <= config.rrf_k_max
+
+
+def test_more_code_strength_higher_alpha():
+    """Higher code result scores should produce higher alpha."""
+    config = _default_fusion_config()
+    alpha_low, _, _ = compute_adaptive_fusion_params(
+        query="test",
+        query_info={},
+        code_results=[_mk_row("c:1", "function", 0.3)],
+        doc_results=[_mk_row("d:1", "design_document", 0.8)],
+        config=config,
+    )
+    alpha_high, _, _ = compute_adaptive_fusion_params(
+        query="test",
+        query_info={},
+        code_results=[_mk_row("c:1", "function", 0.95)],
+        doc_results=[_mk_row("d:1", "design_document", 0.3)],
+        config=config,
+    )
+    assert alpha_high > alpha_low

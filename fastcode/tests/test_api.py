@@ -235,7 +235,7 @@ class TestManifests:
         order), so the URL-based TestClient test would hit the wrong handler.
         Instead we call the handler directly to verify the underlying logic.
         """
-        c, store = client
+        _c, store = client
         snap = _make_minimal_snapshot(
             repo_name="manifest-repo2",
             snapshot_id="snap:manifest-repo2:s1",

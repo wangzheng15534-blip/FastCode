@@ -13,6 +13,7 @@ from fastcode.semantic_ir import (
     IRDocument,
     IREdge,
     IROccurrence,
+    IRRelation,
     IRSnapshot,
     IRSymbol,
     IRUnitSupport,
@@ -777,3 +778,62 @@ class TestMergeIrProperties:
         assert len(merged.embeddings) >= 1
         unit_ids = {e.unit_id for e in merged.embeddings}
         assert "ast:s1" in unit_ids
+
+
+# --- pending_capabilities merge ---
+
+
+def test_upsert_relation_merges_pending_capabilities_via_intersection():
+    """pending_capabilities uses intersection: a capability is only still
+    pending if *both* sources consider it pending."""
+    from fastcode.ir_merge import _upsert_relation
+
+    merged: dict[tuple[str, str, str], IRRelation] = {}
+    r1 = IRRelation(
+        relation_id="r1",
+        src_unit_id="u1",
+        dst_unit_id="u2",
+        relation_type="call",
+        resolution_state="structural",
+        support_sources={"fc_structure"},
+        pending_capabilities={"resolve_calls", "resolve_types"},
+    )
+    r2 = IRRelation(
+        relation_id="r2",
+        src_unit_id="u1",
+        dst_unit_id="u2",
+        relation_type="call",
+        resolution_state="anchored",
+        support_sources={"scip"},
+        pending_capabilities={"resolve_calls"},
+    )
+    _upsert_relation(merged, r1)
+    _upsert_relation(merged, r2)
+    result = merged[("u1", "u2", "call")]
+    assert result.pending_capabilities == {"resolve_calls"}
+
+
+def test_upsert_relation_empty_intersection_removes_all_pending():
+    from fastcode.ir_merge import _upsert_relation
+
+    merged: dict[tuple[str, str, str], IRRelation] = {}
+    r1 = IRRelation(
+        relation_id="r1",
+        src_unit_id="u1",
+        dst_unit_id="u2",
+        relation_type="call",
+        resolution_state="structural",
+        pending_capabilities={"resolve_calls"},
+    )
+    r2 = IRRelation(
+        relation_id="r2",
+        src_unit_id="u1",
+        dst_unit_id="u2",
+        relation_type="call",
+        resolution_state="anchored",
+        pending_capabilities={"resolve_types"},
+    )
+    _upsert_relation(merged, r1)
+    _upsert_relation(merged, r2)
+    result = merged[("u1", "u2", "call")]
+    assert result.pending_capabilities == set()

@@ -27,6 +27,8 @@ def _normalize_set(values: list[str] | set[str] | tuple[str, ...] | None) -> set
 def resolution_to_confidence(resolution_state: str) -> str:
     return {
         "anchored": "precise",
+        "semantic": "precise",
+        "semantically_resolved": "precise",
         "structural": "resolved",
         "candidate": "heuristic",
     }.get(resolution_state or "", "derived")

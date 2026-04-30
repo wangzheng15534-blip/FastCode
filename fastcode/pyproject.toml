@@ -303,6 +303,8 @@ markers = [
     # --- Execution tier markers ---
     "integration: tests requiring real database or external service",
     "e2e: end-to-end user flow",
+    # --- Quality markers ---
+    "regression: guards against previously-identified bugs",
     # --- Framework markers (auto-registered by plugins) ---
     "hypothesis: hypothesis property-based tests (auto-applied by @given)",
     "snapshot: syrupy snapshot tests",

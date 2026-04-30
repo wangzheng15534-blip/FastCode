@@ -489,3 +489,227 @@ def test_fastcode_apply_semantic_resolvers_replaces_heuristic_import_relation():
     assert updated.relations[0].dst_unit_id == right.unit_id
     assert updated.relations[0].metadata["source"] == PYTHON_RESOLVER_SOURCE
     assert updated.metadata["semantic_resolver_runs"][0]["language"] == "python"
+
+
+def test_apply_resolution_patch_merges_pending_capabilities_via_intersection():
+    src = _symbol_unit("unit:src", "a.py", "caller", element_id="elem:src")
+    dst = _symbol_unit("unit:dst", "b.py", "callee", element_id="elem:dst")
+    existing_relation = IRRelation(
+        relation_id="rel:1",
+        src_unit_id="unit:src",
+        dst_unit_id="unit:dst",
+        relation_type="call",
+        resolution_state="structural",
+        support_sources={"fc_structure"},
+        pending_capabilities={"resolve_calls", "resolve_types"},
+    )
+    snapshot = _snapshot(
+        units=[_file_unit("a.py"), _file_unit("b.py"), src, dst],
+        relations=[existing_relation],
+    )
+    patch_relation = IRRelation(
+        relation_id="rel:2",
+        src_unit_id="unit:src",
+        dst_unit_id="unit:dst",
+        relation_type="call",
+        resolution_state="anchored",
+        support_sources={"python_resolver"},
+        pending_capabilities={"resolve_calls"},
+    )
+    updated = apply_resolution_patch(
+        snapshot, ResolutionPatch(relations=[patch_relation])
+    )
+    assert len(updated.relations) == 1
+    assert updated.relations[0].pending_capabilities == {"resolve_calls"}
+    assert updated.relations[0].support_sources == {"fc_structure", "python_resolver"}
+
+
+# ---------------------------------------------------------------------------
+# Regression guards
+# ---------------------------------------------------------------------------
+
+import pytest
+
+from fastcode.semantic_resolvers.patching import _source_preference
+
+
+@pytest.mark.regression
+def test_target_paths_includes_all_languages_on_fresh_index():
+    """F-3 regression: target_paths must not filter by language.
+
+    When no incremental changeset is available, all element paths must be
+    included so C/C++ resolvers can run on a fresh full-index.
+    """
+    fc = FastCode.__new__(FastCode)
+    file_cpp = _file_unit("main.cpp", language="cpp")
+    file_py = _file_unit("app.py")
+    snapshot = _snapshot(units=[file_cpp, file_py])
+    elements = [
+        _element(
+            element_id="file:cpp",
+            element_type="file",
+            name="main.cpp",
+            path="main.cpp",
+            metadata={"imports": [{"module": "util.h", "level": 0}]},
+            language="cpp",
+        ),
+        _element(
+            element_id="file:py",
+            element_type="file",
+            name="app.py",
+            path="app.py",
+            language="python",
+        ),
+    ]
+    warnings: list[str] = []
+
+    updated = fc._apply_semantic_resolvers(
+        snapshot=snapshot,
+        elements=elements,
+        legacy_graph_builder=None,
+        target_paths={"main.cpp", "app.py"},
+        warnings=warnings,
+    )
+
+    # CppSemanticResolver should be invoked for main.cpp — at minimum, its
+    # resolver run metadata should be recorded even if no edges are resolved.
+    resolver_runs = updated.metadata.get("semantic_resolver_runs", [])
+    languages_run = {run.get("language") for run in resolver_runs}
+    assert "cpp" in languages_run, (
+        "CppSemanticResolver must be triggered when target_paths includes .cpp files"
+    )
+
+
+@pytest.mark.regression
+def test_source_preference_ranks_c_and_cpp_resolvers_above_fc_structure():
+    """F-7 regression: _source_preference must rank C/C++ resolver sources
+    higher than fc_structure so resolver patches win tiebreaks.
+    """
+    fc_rel = IRRelation(
+        relation_id="rel:1",
+        src_unit_id="u:a",
+        dst_unit_id="u:b",
+        relation_type="import",
+        resolution_state="structural",
+        support_sources={"fc_structure"},
+    )
+    c_rel = IRRelation(
+        relation_id="rel:2",
+        src_unit_id="u:a",
+        dst_unit_id="u:b",
+        relation_type="import",
+        resolution_state="structural",
+        support_sources={"c_resolver"},
+    )
+    cpp_rel = IRRelation(
+        relation_id="rel:3",
+        src_unit_id="u:a",
+        dst_unit_id="u:b",
+        relation_type="import",
+        resolution_state="structural",
+        support_sources={"cpp_resolver"},
+    )
+    assert _source_preference(c_rel) > _source_preference(fc_rel)
+    assert _source_preference(cpp_rel) > _source_preference(fc_rel)
+
+
+@pytest.mark.regression
+def test_resolution_patch_allows_mutation():
+    """F-8 regression: ResolutionPatch must allow field mutation.
+
+    Resolvers build patches incrementally via .append() and .update().
+    The dataclass must not be frozen.
+    """
+    patch = ResolutionPatch()
+    # These operations must succeed without FrozenInstanceError:
+    patch.supports.append(
+        IRUnitSupport(
+            support_id="sup:1",
+            unit_id="u:1",
+            source="test",
+            support_kind="test",
+        )
+    )
+    patch.stats.update({"language": "python", "count": 1})
+    patch.warnings.append("test warning")
+
+    assert len(patch.supports) == 1
+    assert patch.stats["language"] == "python"
+    assert patch.warnings == ["test warning"]
+
+
+@pytest.mark.regression
+def test_c_family_resolver_populates_doc_id_from_dict_lookup():
+    """F-9 regression: _build_relation must use dict lookup for doc_id,
+    not a linear scan over snapshot units.
+    """
+    resolver = CSemanticResolver()
+    file_main = _file_unit("src/main.c", language="c")
+    file_header = _file_unit("include/util.h", language="c")
+    snapshot = _snapshot(units=[file_main, file_header])
+    elements = [
+        _element(
+            element_id="file:main",
+            element_type="file",
+            name="src/main.c",
+            path="src/main.c",
+            metadata={"imports": [{"module": "../include/util.h", "level": 0}]},
+            language="c",
+        ),
+    ]
+
+    patch = resolver.resolve(
+        snapshot=snapshot,
+        elements=elements,
+        target_paths={"src/main.c"},
+        legacy_graph_builder=None,
+    )
+
+    assert len(patch.relations) == 1
+    assert patch.relations[0].metadata.get("doc_id") == file_main.unit_id
+
+
+@pytest.mark.regression
+def test_resolver_failure_gracefully_degrades():
+    """Regression: a failing resolver must not crash the pipeline.
+
+    _apply_semantic_resolvers catches exceptions and appends warnings.
+    """
+    fc = FastCode.__new__(FastCode)
+    snapshot = _snapshot(units=[_file_unit("fail.py")])
+    elements = [
+        _element(
+            element_id="file:fail",
+            element_type="file",
+            name="fail.py",
+            path="fail.py",
+        ),
+    ]
+
+    class BrokenResolver:
+        language = "python"
+        capabilities = frozenset({"resolve_calls"})
+        cost_class = "low"
+
+        def applicable(self, *, snapshot, elements, target_paths):
+            return True
+
+        def resolve(self, *, snapshot, elements, target_paths, legacy_graph_builder):
+            raise RuntimeError("resolver crashed")
+
+    from fastcode.semantic_resolvers import SemanticResolverRegistry
+
+    fc.semantic_resolver_registry = SemanticResolverRegistry([BrokenResolver()])
+    warnings: list[str] = []
+
+    updated = fc._apply_semantic_resolvers(
+        snapshot=snapshot,
+        elements=elements,
+        legacy_graph_builder=None,
+        target_paths={"fail.py"},
+        warnings=warnings,
+    )
+
+    assert any("resolver_failed" in w or "resolver crashed" in w for w in warnings)
+    # Snapshot should be returned unchanged:
+    assert updated.units == snapshot.units

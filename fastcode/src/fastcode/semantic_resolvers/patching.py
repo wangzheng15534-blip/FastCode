@@ -13,7 +13,7 @@ from ..semantic_ir import (
     resolution_rank,
 )
 from ..utils import safe_jsonable
-from .base import ResolutionPatch
+from .base import ResolutionPatch, ResolutionTier
 
 
 def _clone_unit(unit: IRCodeUnit) -> IRCodeUnit:
@@ -33,21 +33,50 @@ def _clone_embedding(embedding: IRUnitEmbedding) -> IRUnitEmbedding:
 
 
 def _source_preference(relation: IRRelation) -> int:
-    return {
+    """Rank a relation by its best evidence source.
+
+    Higher value = stronger evidence.  ``compiler_confirmed`` resolver
+    sources outrank plain structural resolver sources.
+    """
+    preferences = {
         "fc_structure": 0,
         "python_resolver": 1,
         "c_resolver": 1,
         "cpp_resolver": 1,
+        "javascript_resolver": 1,
+        "typescript_resolver": 1,
+        "java_resolver": 1,
+        "go_resolver": 1,
+        "rust_resolver": 1,
+        "csharp_resolver": 1,
+        "zig_resolver": 1,
+        "fortran_resolver": 1,
+        "julia_resolver": 1,
         "scip": 2,
-    }.get(relation.source, 0)
+    }
+    sources = set(relation.support_sources)
+    if relation.source:
+        sources.add(relation.source)
+    base_pref = max((preferences.get(source, 0) for source in sources), default=0)
+    # Boost compiler-confirmed relations above graph-backed structural
+    tier = (relation.metadata or {}).get("resolution_tier", "")
+    if tier == ResolutionTier.COMPILER_CONFIRMED:
+        base_pref = max(base_pref, 2)
+    return base_pref
 
 
 def _relation_key(relation: IRRelation) -> tuple[str, ...]:
     metadata = relation.metadata or {}
     if relation.relation_type == "import" and metadata.get("module"):
         return ("import", relation.src_unit_id, str(metadata["module"]))
-    if relation.relation_type == "inherit" and metadata.get("base"):
-        return ("inherit", relation.src_unit_id, str(metadata["base"]))
+    if relation.relation_type == "inherit" and (
+        metadata.get("base_name") or metadata.get("base")
+    ):
+        return (
+            "inherit",
+            relation.src_unit_id,
+            str(metadata.get("base_name") or metadata["base"]),
+        )
     return (relation.relation_type, relation.src_unit_id, relation.dst_unit_id)
 
 

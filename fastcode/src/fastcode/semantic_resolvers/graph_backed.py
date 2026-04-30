@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 from typing import Any
 
 from ..indexer import CodeElement
 from ..semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
-from .base import ResolutionPatch, SemanticResolver
+from .base import ResolutionPatch, ResolutionTier, SemanticResolver, ToolDiagnostic
 
 
 def _hash_id(prefix: str, payload: str) -> str:
@@ -25,6 +26,23 @@ class GraphBackedSemanticResolver(SemanticResolver):
         ("inherit", "inheritance_graph"),
         ("call", "call_graph"),
     )
+    frontend_kind = "graph_backed_ast"
+    required_tools: tuple[str, ...] = ()
+
+    def _missing_tool_diagnostics(self) -> list[ToolDiagnostic]:
+        return [
+            ToolDiagnostic(
+                language=self.language,
+                tool=tool,
+                code="required_tool_missing",
+                message=(
+                    f"{tool} was not found in PATH; {self.language} semantic "
+                    "resolver will use existing structural graph evidence only."
+                ),
+            )
+            for tool in self.required_tools
+            if shutil.which(tool) is None
+        ]
 
     def applicable(
         self,
@@ -50,12 +68,16 @@ class GraphBackedSemanticResolver(SemanticResolver):
     ) -> ResolutionPatch:
         if legacy_graph_builder is None:
             return ResolutionPatch(
-                warnings=[f"{self.language}_resolver_skipped: legacy graph unavailable"],
+                warnings=[
+                    f"{self.language}_resolver_skipped: legacy graph unavailable"
+                ],
                 stats={"language": self.language, "skipped": True},
             )
 
         element_by_id = {str(elem.id): elem for elem in elements}
-        canonical_by_element_id = self._build_canonical_element_index(snapshot, elements)
+        canonical_by_element_id = self._build_canonical_element_index(
+            snapshot, elements
+        )
         unit_by_id = {unit.unit_id: unit for unit in snapshot.units}
         file_units_by_path = {
             unit.path: unit.unit_id for unit in snapshot.units if unit.kind == "file"
@@ -67,10 +89,20 @@ class GraphBackedSemanticResolver(SemanticResolver):
                         "language": self.language,
                         "source": self.source_name,
                         "capabilities": sorted(self.capabilities),
+                        "frontend_kind": self.frontend_kind,
+                        "required_tools": list(self.required_tools),
                     }
                 ]
-            }
+            },
+            resolution_tier=ResolutionTier.STRUCTURAL_FALLBACK,
         )
+        missing_diagnostics = self._missing_tool_diagnostics()
+        patch.diagnostics.extend(missing_diagnostics)
+        # When required tools are missing, record pending capabilities on
+        # emitted relations so the system is honest about uncertainty.
+        pending_caps: set[str] = set()
+        if missing_diagnostics:
+            pending_caps = set(self.capabilities)
         relation_counts = {"import": 0, "inherit": 0, "call": 0}
         skipped_edges = 0
 
@@ -90,6 +122,7 @@ class GraphBackedSemanticResolver(SemanticResolver):
                     relation_type=relation_type,
                     payload=dict(data or {}),
                     file_units_by_path=file_units_by_path,
+                    pending_caps=pending_caps,
                 )
                 if emitted is None:
                     skipped_edges += 1
@@ -105,6 +138,9 @@ class GraphBackedSemanticResolver(SemanticResolver):
                 "capabilities": sorted(self.capabilities),
                 "cost_class": self.cost_class,
                 "resolver_source": self.source_name,
+                "frontend_kind": self.frontend_kind,
+                "required_tools": list(self.required_tools),
+                "diagnostics": [d.to_dict() for d in patch.diagnostics],
                 "relations_emitted": relation_counts,
                 "supports_emitted": len(patch.supports),
                 "skipped_edges": skipped_edges,
@@ -149,6 +185,7 @@ class GraphBackedSemanticResolver(SemanticResolver):
         relation_type: str,
         payload: dict[str, Any],
         file_units_by_path: dict[str, str],
+        pending_caps: set[str] | None = None,
     ) -> tuple[IRUnitSupport, IRRelation] | None:
         source_elem = element_by_id.get(source_element_id)
         target_elem = element_by_id.get(target_element_id)
@@ -210,7 +247,9 @@ class GraphBackedSemanticResolver(SemanticResolver):
                 if target_unit is not None
                 else (target_elem.metadata or {}).get("qualified_name")
             ),
-            signature=target_unit.signature if target_unit is not None else target_elem.signature,
+            signature=target_unit.signature
+            if target_unit is not None
+            else target_elem.signature,
             start_line=source_elem.start_line,
             start_col=int((source_elem.metadata or {}).get("start_col") or 0),
             end_line=source_elem.end_line,
@@ -229,7 +268,12 @@ class GraphBackedSemanticResolver(SemanticResolver):
             ),
             support_sources={self.source_name},
             support_ids=[support_id],
-            metadata=metadata | {"doc_id": doc_id},
+            pending_capabilities=pending_caps or set(),
+            metadata=metadata
+            | {
+                "doc_id": doc_id,
+                "resolution_tier": ResolutionTier.STRUCTURAL_FALLBACK,
+            },
         )
         return support, relation
 

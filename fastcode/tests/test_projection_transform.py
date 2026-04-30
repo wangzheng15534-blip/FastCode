@@ -381,8 +381,12 @@ class TestProjectionProperties:
         result1 = transformer.build(scope=scope, snapshot=snapshot)
         result2 = transformer.build(scope=scope, snapshot=snapshot)
         assert result1.projection_id == result2.projection_id
-        assert _strip_timestamps_shallow(result1.l0) == _strip_timestamps_shallow(result2.l0)
-        assert _strip_timestamps_shallow(result1.l1) == _strip_timestamps_shallow(result2.l1)
+        assert _strip_timestamps_shallow(result1.l0) == _strip_timestamps_shallow(
+            result2.l0
+        )
+        assert _strip_timestamps_shallow(result1.l1) == _strip_timestamps_shallow(
+            result2.l1
+        )
         assert _strip_timestamps_shallow(result1.l2_index) == _strip_timestamps_shallow(
             result2.l2_index
         )

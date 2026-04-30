@@ -566,7 +566,9 @@ class TestCodeGraphPayload:
                 "support_sources": ["fc_structure"],
             },
         ]
-        result = publisher.build_code_graph_payload(_make_snapshot_v2(relations=relations))
+        result = publisher.build_code_graph_payload(
+            _make_snapshot_v2(relations=relations)
+        )
         assert len(result["edges"]) == 2
 
         contain_edge = result["edges"][0]
@@ -632,7 +634,9 @@ class TestCodeGraphPayload:
                 "relation_type": "ref",
             },
         ]
-        result = publisher.build_code_graph_payload(_make_snapshot_v2(relations=relations))
+        result = publisher.build_code_graph_payload(
+            _make_snapshot_v2(relations=relations)
+        )
         assert result["edges"] == []
 
     def test_build_code_graph_payload_support_sources_as_set(self):
@@ -648,7 +652,9 @@ class TestCodeGraphPayload:
                 "support_sources": {"scip", "fc_structure"},  # set, not list
             },
         ]
-        result = publisher.build_code_graph_payload(_make_snapshot_v2(relations=relations))
+        result = publisher.build_code_graph_payload(
+            _make_snapshot_v2(relations=relations)
+        )
         assert isinstance(result["edges"][0]["source_set"], list)
         assert set(result["edges"][0]["source_set"]) == {"scip", "fc_structure"}
 

@@ -30,9 +30,7 @@ requires_protobuf = pytest.mark.skipif(
 # --- Strategies ---
 
 language_st = st.sampled_from(list(SUPPORTED_LANGUAGES.keys()))
-unsupported_st = st.sampled_from(
-    ["brainfuck", "cobol", "fortran", "pascal", "assembly"]
-)
+unsupported_st = st.sampled_from(["brainfuck", "cobol", "pascal", "assembly"])
 
 # --- Tests ---
 
@@ -77,6 +75,20 @@ def test_get_indexer_command_unsupported():
     assert get_indexer_command("brainfuck", "/out.scip") is None
 
 
+def test_get_indexer_command_new_language_frontends():
+    """Zig, Fortran, and Julia expose required semantic frontend commands."""
+    zig = get_indexer_command("zig", "/out/zig.scip")
+    fortran = get_indexer_command("fortran", "/out/fortran.scip")
+    julia = get_indexer_command("julia", "/out/julia.scip")
+
+    assert zig is not None
+    assert fortran is not None
+    assert julia is not None
+    assert zig[0] == "zls"
+    assert fortran[0] == "fortls"
+    assert julia[0] == "julia"
+
+
 def test_supported_languages():
     """Check all expected languages are supported."""
     expected = {
@@ -92,6 +104,9 @@ def test_supported_languages():
         "rust",
         "kotlin",
         "scala",
+        "zig",
+        "fortran",
+        "julia",
     }
     assert expected.issubset(set(SUPPORTED_LANGUAGES.keys()))
 
@@ -357,3 +372,14 @@ class TestDetectScipLanguages:
                 f.write("# utils")
             langs = detect_scip_languages(tmpdir)
             assert "python" in langs
+
+    def test_new_language_extensions_detected_property(self):
+        """HAPPY: Zig, Fortran, and Julia source files are detected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for name in ["main.zig", "solver.f90", "model.jl"]:
+                with open(os.path.join(tmpdir, name), "w") as f:
+                    f.write("\n")
+            langs = detect_scip_languages(tmpdir)
+            assert "zig" in langs
+            assert "fortran" in langs
+            assert "julia" in langs

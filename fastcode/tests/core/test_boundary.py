@@ -178,18 +178,18 @@ class TestQueryRequestToCore:
 
 
 class TestDbEffectsReturnDataclasses:
-    """Rule 2: effects/db.py must return frozen dataclasses, never dict."""
+    """Rule 2: infrastructure/db.py must return frozen dataclasses, never dict."""
 
     def test_db_effects_return_dataclasses_not_dicts(self) -> None:
         db_effects = (
             pathlib.Path(__file__).resolve().parent.parent.parent
             / "src"
             / "fastcode"
-            / "effects"
+            / "infrastructure"
             / "db.py"
         )
         if not db_effects.exists():
-            pytest.skip("effects/db.py not yet created")
+            pytest.skip("infrastructure/db.py not yet created")
 
         tree = ast.parse(db_effects.read_text(encoding="utf-8"))
         violations: list[str] = []
@@ -203,8 +203,8 @@ class TestDbEffectsReturnDataclasses:
                     violations.append(
                         f"{node.name}: return type contains dict[str, Any]"
                     )
-        assert violations == [], "Rule 2 violations in effects/db.py:\n" + "\n".join(
-            violations
+        assert violations == [], (
+            "Rule 2 violations in infrastructure/db.py:\n" + "\n".join(violations)
         )
 
 
@@ -247,5 +247,66 @@ class TestBoundaryExplicitTranslation:
 
         assert violations == [], (
             "Forbidden patterns found in boundary.py (Rule 3 violation):\n"
+            + "\n".join(violations)
+        )
+
+
+class TestArchitectureBoundaries:
+    """Verify dependency flow: api → infrastructure → core → schemas."""
+
+    def _scan_imports(self, directory: pathlib.Path) -> dict[str, list[str]]:
+        """Return mapping: filename → list of top-level import module names."""
+        results: dict[str, list[str]] = {}
+        for py_file in sorted(directory.rglob("*.py")):
+            if py_file.name == "__init__.py":
+                continue
+            try:
+                source = py_file.read_text(encoding="utf-8")
+                results[str(py_file.relative_to(directory))] = _collect_imports(source)
+            except SyntaxError:
+                continue
+        return results
+
+    def test_infrastructure_does_not_import_api(self) -> None:
+        """infrastructure/ must never import from api modules."""
+        infra_dir = CORE_DIR.parent / "infrastructure"
+        if not infra_dir.exists():
+            pytest.skip("infrastructure/ not yet created")
+
+        violations: list[str] = []
+        for filename, imports in self._scan_imports(infra_dir).items():
+            for imp in imports:
+                if imp in ("fastapi", "uvicorn"):
+                    violations.append(
+                        f"{filename}: import '{imp}' violates api boundary"
+                    )
+
+        assert violations == [], "infrastructure/ imports api modules:\n" + "\n".join(
+            violations
+        )
+
+    def test_semantic_resolvers_do_not_import_infrastructure(self) -> None:
+        """semantic_resolvers/ must not import from infrastructure/."""
+        resolvers_dir = CORE_DIR.parent / "semantic_resolvers"
+        if not resolvers_dir.exists():
+            pytest.skip("semantic_resolvers/ not yet created")
+
+        violations: list[str] = []
+        for py_file in sorted(resolvers_dir.rglob("*.py")):
+            if py_file.name == "__init__.py":
+                continue
+            try:
+                source = py_file.read_text(encoding="utf-8")
+                imports = _collect_imports(source)
+            except SyntaxError:
+                continue
+            for imp in imports:
+                if "infrastructure" in imp:
+                    violations.append(
+                        f"{py_file.name}: import '{imp}' violates layer boundary"
+                    )
+
+        assert violations == [], (
+            "semantic_resolvers/ imports from infrastructure/:\n"
             + "\n".join(violations)
         )

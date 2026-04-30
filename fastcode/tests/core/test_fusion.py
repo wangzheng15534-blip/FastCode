@@ -1,8 +1,9 @@
 """Tests for fastcode.core.fusion — pure fusion functions extracted from HybridRetriever."""
 
-import pytest
 from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from fastcode.core.fusion import (
     adaptive_fuse_channels,
@@ -421,13 +422,13 @@ def test_extract_trace_links_ignores_ungrounded():
 def test_fusion_params_determinism():
     """Same inputs must always produce identical outputs."""
     config = _default_fusion_config()
-    kwargs = dict(
-        query="test query",
-        query_info={"intent": "code_search", "keywords": ["test"]},
-        code_results=[_mk_row("c:1", "function", 0.7)],
-        doc_results=[_mk_row("d:1", "design_document", 0.5)],
-        config=config,
-    )
+    kwargs = {
+        "query": "test query",
+        "query_info": {"intent": "code_search", "keywords": ["test"]},
+        "code_results": [_mk_row("c:1", "function", 0.7)],
+        "doc_results": [_mk_row("d:1", "design_document", 0.5)],
+        "config": config,
+    }
     r1 = compute_adaptive_fusion_params(**kwargs)
     r2 = compute_adaptive_fusion_params(**kwargs)
     assert r1[0] == pytest.approx(r2[0])
@@ -438,7 +439,12 @@ def test_fusion_params_determinism():
 def test_fusion_alpha_always_clamped():
     """Alpha must always be within [alpha_min, alpha_max]."""
     config = _default_fusion_config()
-    for q in ["", "a", "design architecture rationale", "bug fix call trace stack runtime implementation"]:
+    for q in [
+        "",
+        "a",
+        "design architecture rationale",
+        "bug fix call trace stack runtime implementation",
+    ]:
         alpha, _, _ = compute_adaptive_fusion_params(
             query=q,
             query_info={},
@@ -446,7 +452,9 @@ def test_fusion_alpha_always_clamped():
             doc_results=[],
             config=config,
         )
-        assert config.alpha_min <= alpha <= config.alpha_max, f"alpha={alpha} out of range for query={q!r}"
+        assert config.alpha_min <= alpha <= config.alpha_max, (
+            f"alpha={alpha} out of range for query={q!r}"
+        )
 
 
 def test_fusion_k_always_in_range():

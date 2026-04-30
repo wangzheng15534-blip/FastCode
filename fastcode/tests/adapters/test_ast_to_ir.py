@@ -1119,10 +1119,22 @@ class TestBuildIrFromAstEdgeCases:
 
     def test_multiple_elements_same_name_different_files(self):
         """Elements with same name in different files get different symbol_ids."""
-        e1 = _elem(name="handler", type="function", start_line=10, metadata={},
-                    relative_path="a.py", language="python")
-        e2 = _elem(name="handler", type="function", start_line=20, metadata={},
-                    relative_path="b.py", language="python")
+        e1 = _elem(
+            name="handler",
+            type="function",
+            start_line=10,
+            metadata={},
+            relative_path="a.py",
+            language="python",
+        )
+        e2 = _elem(
+            name="handler",
+            type="function",
+            start_line=20,
+            metadata={},
+            relative_path="b.py",
+            language="python",
+        )
         snap = _build([e1, e2])
         assert len(snap.symbols) == 2
         ids = [s.symbol_id for s in snap.symbols]

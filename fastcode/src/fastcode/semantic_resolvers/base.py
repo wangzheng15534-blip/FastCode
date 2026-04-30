@@ -18,7 +18,7 @@ def _empty_list() -> list[Any]:
     return []
 
 
-@dataclass(frozen=True)
+@dataclass
 class ResolutionPatch:
     """Patch emitted by a semantic resolver.
 
@@ -26,7 +26,9 @@ class ResolutionPatch:
     create or mutate snapshots directly.
     """
 
-    unit_metadata_updates: dict[str, dict[str, Any]] = field(default_factory=_empty_dict)
+    unit_metadata_updates: dict[str, dict[str, Any]] = field(
+        default_factory=_empty_dict
+    )
     metadata_updates: dict[str, Any] = field(default_factory=_empty_dict)
     supports: list[IRUnitSupport] = field(default_factory=_empty_list)
     relations: list[IRRelation] = field(default_factory=_empty_list)

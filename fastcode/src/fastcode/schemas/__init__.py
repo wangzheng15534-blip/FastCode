@@ -1,5 +1,18 @@
-"""fastcode.schemas — all frozen dataclasses and IR types."""
+"""fastcode.schemas - shared API models, frozen dataclasses, and IR types."""
 
+from fastcode.schemas.api import (
+    DeleteReposRequest,
+    IndexMultipleRequest,
+    IndexRunRequest,
+    LoadRepositoriesRequest,
+    LoadRepositoryRequest,
+    NewSessionResponse,
+    ProjectionBuildRequest,
+    QueryRequest,
+    QueryResponse,
+    QuerySnapshotRequest,
+    StatusResponse,
+)
 from fastcode.schemas.core_types import (
     ElementFilter,
     FileAnalysis,
@@ -21,29 +34,6 @@ from fastcode.schemas.core_types import (
     SourceRef,
     ToolCall,
 )
-
-__all__ = [
-    "ElementFilter",
-    "FileAnalysis",
-    "FusionConfig",
-    "FusionWeights",
-    "GenerationInput",
-    "GenerationResult",
-    "Hit",
-    "IterationConfig",
-    "IterationHistoryEntry",
-    "IterationMetrics",
-    "IterationState",
-    "RepoStructure",
-    "RetrievalChannelOutput",
-    "RoundResult",
-    "ScipKind",
-    "ScipRole",
-    "SnapshotRecord",
-    "SourceRef",
-    "ToolCall",
-]
-
 from fastcode.schemas.ir import (
     IRAttachment,
     IRDocument,
@@ -53,11 +43,41 @@ from fastcode.schemas.ir import (
     IRSymbol,
 )
 
-__all__ += [
+__all__ = [
+    "DeleteReposRequest",
+    "ElementFilter",
+    "FileAnalysis",
+    "FusionConfig",
+    "FusionWeights",
+    "GenerationInput",
+    "GenerationResult",
+    "Hit",
     "IRAttachment",
     "IRDocument",
     "IREdge",
     "IROccurrence",
     "IRSnapshot",
     "IRSymbol",
+    "IndexMultipleRequest",
+    "IndexRunRequest",
+    "IterationConfig",
+    "IterationHistoryEntry",
+    "IterationMetrics",
+    "IterationState",
+    "LoadRepositoriesRequest",
+    "LoadRepositoryRequest",
+    "NewSessionResponse",
+    "ProjectionBuildRequest",
+    "QueryRequest",
+    "QueryResponse",
+    "QuerySnapshotRequest",
+    "RepoStructure",
+    "RetrievalChannelOutput",
+    "RoundResult",
+    "ScipKind",
+    "ScipRole",
+    "SnapshotRecord",
+    "SourceRef",
+    "StatusResponse",
+    "ToolCall",
 ]

@@ -30,67 +30,18 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
 
 from fastcode import FastCode
-
-
-# Pydantic models
-class LoadRepositoryRequest(BaseModel):
-    source: str = Field(..., description="Repository URL or local path")
-    is_url: bool | None = Field(
-        None,
-        description="True if source is URL, False if local path. If omitted, auto-detect.",
-    )
-
-
-class QueryRequest(BaseModel):
-    question: str = Field(..., description="Question to ask about the repository")
-    filters: dict[str, Any] | None = Field(None, description="Optional filters")
-    repo_filter: list[str] | None = Field(
-        None, description="Repository names to search"
-    )
-    multi_turn: bool = Field(False, description="Enable multi-turn mode")
-    session_id: str | None = Field(
-        None, description="Session ID for multi-turn dialogue"
-    )
-
-
-class QueryResponse(BaseModel):
-    answer: str
-    query: str
-    context_elements: int
-    sources: list[dict[str, Any]]
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
-    session_id: str | None = None
-
-
-class LoadRepositoriesRequest(BaseModel):
-    repo_names: list[str] = Field(
-        ..., description="Repository names to load from existing indexes"
-    )
-
-
-class IndexMultipleRequest(BaseModel):
-    sources: list[LoadRepositoryRequest] = Field(
-        ..., description="Multiple repositories to load and index"
-    )
-
-
-class NewSessionResponse(BaseModel):
-    session_id: str
-
-
-class StatusResponse(BaseModel):
-    status: str
-    repo_loaded: bool
-    repo_indexed: bool
-    repo_info: dict[str, Any]
-    available_repositories: list[dict[str, Any]] = Field(default_factory=list)
-    loaded_repositories: list[dict[str, Any]] = Field(default_factory=list)
-
+from fastcode.schemas.api import (
+    DeleteReposRequest,
+    IndexMultipleRequest,
+    LoadRepositoriesRequest,
+    LoadRepositoryRequest,
+    NewSessionResponse,
+    QueryRequest,
+    QueryResponse,
+    StatusResponse,
+)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -276,7 +227,13 @@ async def index_multiple(request: IndexMultipleRequest):
     try:
         logger.info(f"Indexing {len(request.sources)} repositories")
         fastcode_instance.load_multiple_repositories(
-            [s.model_dump() for s in request.sources]
+            [
+                {
+                    "source": source.source,
+                    "is_url": source.is_url,
+                }
+                for source in request.sources
+            ]
         )
 
         # Invalidate scan cache since we just added/updated indexes
@@ -783,13 +740,6 @@ async def get_session(session_id: str):
     except Exception as e:
         logger.error(f"Failed to load session {session_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-class DeleteReposRequest(BaseModel):
-    repo_names: list[str] = Field(..., description="Repository names to delete")
-    delete_source: bool = Field(
-        True, description="Also delete cloned source code in repos/"
-    )
 
 
 @app.post("/api/delete-repos")

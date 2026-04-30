@@ -27,136 +27,24 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 
 from fastcode import FastCode
+from fastcode.schemas.api import (
+    DeleteReposRequest,
+    IndexMultipleRequest,
+    IndexRunRequest,
+    LoadRepositoriesRequest,
+    LoadRepositoryRequest,
+    NewSessionResponse,
+    ProjectionBuildRequest,
+    QueryRequest,
+    QueryResponse,
+    QuerySnapshotRequest,
+    StatusResponse,
+)
 from fastcode.utils import safe_jsonable
 
-
-# Pydantic models
-class LoadRepositoryRequest(BaseModel):
-    source: str = Field(..., description="Repository URL or local path")
-    is_url: bool | None = Field(
-        None,
-        description="True if source is URL, False if local path. If omitted, auto-detect.",
-    )
-
-
-class IndexRunRequest(BaseModel):
-    source: str = Field(..., description="Repository URL or local path")
-    is_url: bool | None = Field(None, description="Explicit source type override")
-    ref: str | None = Field(None, description="Branch/tag/ref to index")
-    commit: str | None = Field(None, description="Commit hash to index")
-    force: bool = Field(
-        False, description="Force re-index even if snapshot already exists"
-    )
-    publish: bool = Field(True, description="Publish manifest after indexing")
-    enable_scip: bool = Field(True, description="Enable SCIP extraction path")
-    scip_artifact_path: str | None = Field(
-        None, description="Optional pre-built SCIP artifact path"
-    )
-
-
-class QueryRequest(BaseModel):
-    question: str = Field(..., description="Question to ask about the repository")
-    snapshot_id: str | None = Field(None, description="Direct snapshot ID")
-    repo_name: str | None = Field(
-        None, description="Repository name (for ref resolution)"
-    )
-    ref_name: str | None = Field(
-        None, description="Branch/ref name (for ref resolution)"
-    )
-    filters: dict[str, Any] | None = Field(None, description="Optional filters")
-    multi_turn: bool = Field(False, description="Enable multi-turn mode")
-    session_id: str | None = Field(
-        None, description="Session ID for multi-turn dialogue"
-    )
-
-
-class QuerySnapshotRequest(BaseModel):
-    question: str = Field(..., description="Question to ask")
-    snapshot_id: str | None = Field(None, description="Direct snapshot ID")
-    repo_name: str | None = Field(
-        None, description="Repository name (when resolving by ref)"
-    )
-    ref_name: str | None = Field(
-        None, description="Branch/ref name (when resolving by ref)"
-    )
-    filters: dict[str, Any] | None = Field(
-        None, description="Optional retrieval filters"
-    )
-    multi_turn: bool = Field(False, description="Enable multi-turn mode")
-    session_id: str | None = Field(
-        None, description="Session ID for multi-turn dialogue"
-    )
-
-
-class ProjectionBuildRequest(BaseModel):
-    scope_kind: str = Field(
-        ..., description="Projection scope: snapshot | query | entity"
-    )
-    snapshot_id: str | None = Field(None, description="Direct snapshot ID")
-    repo_name: str | None = Field(
-        None, description="Repository name (for ref resolution)"
-    )
-    ref_name: str | None = Field(
-        None, description="Branch/ref name (for ref resolution)"
-    )
-    query: str | None = Field(
-        None, description="Query text for query-scoped projection"
-    )
-    target_id: str | None = Field(
-        None, description="Entity ID/path for entity-scoped projection"
-    )
-    filters: dict[str, Any] | None = Field(None, description="Optional scope filters")
-    force: bool = Field(False, description="Force regeneration even when cached")
-
-
-class QueryResponse(BaseModel):
-    answer: str
-    query: str
-    context_elements: int
-    sources: list[dict[str, Any]]
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
-    session_id: str | None = None
-
-
-class LoadRepositoriesRequest(BaseModel):
-    repo_names: list[str] = Field(
-        ..., description="Repository names to load from existing indexes"
-    )
-
-
-class IndexMultipleRequest(BaseModel):
-    sources: list[LoadRepositoryRequest] = Field(
-        ..., description="Multiple repositories to load and index"
-    )
-
-
-class NewSessionResponse(BaseModel):
-    session_id: str
-
-
-class DeleteReposRequest(BaseModel):
-    repo_names: list[str] = Field(..., description="Repository names to delete")
-    delete_source: bool = Field(
-        True, description="Also delete cloned source code in repos/"
-    )
-
-
-class StatusResponse(BaseModel):
-    status: str
-    repo_loaded: bool
-    repo_indexed: bool
-    repo_info: dict[str, Any]
-    graph_backend: str | None = None
-    storage_backend: str | None = None
-    retrieval_backend: str | None = None
-    available_repositories: list[dict[str, Any]] = Field(default_factory=list)
-    loaded_repositories: list[dict[str, Any]] = Field(default_factory=list)
-
+# Shared request/response schemas live in fastcode.schemas.api.
 
 # Initialize FastAPI app
 
@@ -489,7 +377,15 @@ async def index_multiple(request: IndexMultipleRequest):
 
     try:
         logger.info(f"Indexing {len(request.sources)} repositories")
-        fastcode.load_multiple_repositories([s.model_dump() for s in request.sources])
+        fastcode.load_multiple_repositories(
+            [
+                {
+                    "source": source.source,
+                    "is_url": source.is_url,
+                }
+                for source in request.sources
+            ]
+        )
 
         fastcode.vector_store.invalidate_scan_cache()
 

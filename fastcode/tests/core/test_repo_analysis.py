@@ -37,6 +37,12 @@ class TestGetLanguageFromExtension:
     def test_csharp(self):
         assert get_language_from_extension(".cs") == "csharp"
 
+    def test_c_header(self):
+        assert get_language_from_extension(".h") == "c"
+
+    def test_cpp_header(self):
+        assert get_language_from_extension(".hpp") == "cpp"
+
 
 class TestIsKeyFile:
     def test_main(self):

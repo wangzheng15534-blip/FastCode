@@ -145,6 +145,12 @@ class TestGetLanguageFromExtension:
     def test_unknown_property(self):
         assert get_language_from_extension(".xyz") == "unknown"
 
+    def test_c_header_property(self):
+        assert get_language_from_extension(".h") == "c"
+
+    def test_cpp_header_property(self):
+        assert get_language_from_extension(".hpp") == "cpp"
+
 
 class TestExtractCodeSnippet:
     def test_basic_extraction_property(self):

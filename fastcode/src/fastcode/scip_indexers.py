@@ -100,7 +100,10 @@ _EXTENSION_MAP: dict[str, str] = {
     ".h": "c",
     ".cpp": "cpp",
     ".cc": "cpp",
+    ".cxx": "cpp",
     ".hpp": "cpp",
+    ".hh": "cpp",
+    ".hxx": "cpp",
     ".cs": "csharp",
     ".rs": "rust",
 }

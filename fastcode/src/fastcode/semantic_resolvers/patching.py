@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from ..semantic_ir import (
     IRCodeUnit,
@@ -97,10 +97,8 @@ def apply_resolution_patch(snapshot: IRSnapshot, patch: ResolutionPatch) -> IRSn
     metadata: dict[str, Any] = safe_jsonable(snapshot.metadata)
     for key, value in (patch.metadata_updates or {}).items():
         if key == "semantic_resolver_runs":
-            existing = metadata.get(key) or []
-            if not isinstance(existing, list):
-                existing = [existing]
-            incoming = value if isinstance(value, list) else [value]
+            existing = cast(list[Any], metadata.get(key) or [])
+            incoming = cast(list[Any], value if isinstance(value, list) else [value])
             metadata[key] = safe_jsonable([*existing, *incoming])
             continue
         metadata[key] = safe_jsonable(value)

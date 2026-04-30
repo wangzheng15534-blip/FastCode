@@ -788,7 +788,6 @@ class FastCode:
                 else {
                     elem.relative_path or elem.file_path
                     for elem in elements
-                    if elem.language == "python"
                 }
             )
             merged_snapshot = self._apply_semantic_resolvers(

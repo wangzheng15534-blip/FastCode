@@ -48,7 +48,11 @@ from .query_processor import QueryProcessor
 from .redo_worker import RedoWorker
 from .retriever import HybridRetriever
 from .scip_loader import load_scip_artifact, run_scip_python_index
-from .semantic_ir import IRRelation, IRSnapshot
+from .semantic_ir import IRSnapshot
+from .semantic_resolvers import (
+    apply_resolution_patch,
+    build_default_semantic_resolver_registry,
+)
 from .snapshot_store import SnapshotStore
 from .snapshot_symbol_index import SnapshotSymbolIndex
 from .symbol_resolver import SymbolResolver
@@ -180,6 +184,8 @@ class FastCode:
             poll_interval = int(storage_cfg.get("redo_poll_interval_seconds", 30))
             self._redo_worker = RedoWorker(self, poll_interval_seconds=poll_interval)
             self._redo_worker.start()
+
+        self.semantic_resolver_registry = build_default_semantic_resolver_registry()
 
         # State
         self.repo_loaded: bool = False
@@ -653,9 +659,6 @@ class FastCode:
             except Exception as e:
                 warnings.append(f"resolver_init_failed: {e}")
             temp_graph.build_graphs(elements, module_resolver, symbol_resolver)
-            call_graph_edges_raw: list[tuple[Any, Any, dict[str, Any]]] = list(
-                temp_graph.call_graph.edges(data=True)
-            )
 
             temp_retriever = HybridRetriever(
                 self.config,
@@ -680,47 +683,6 @@ class FastCode:
                 branch=snapshot_ref.get("branch"),
                 commit_id=snapshot_ref.get("commit_id"),
                 tree_id=snapshot_ref.get("tree_id"),
-            )
-            ast_element_to_symbol: dict[str, str] = {}
-            for symbol in ast_snapshot.symbols:
-                ast_element_id = (symbol.metadata or {}).get("ast_element_id")
-                if ast_element_id:
-                    ast_element_to_symbol[str(ast_element_id)] = symbol.symbol_id
-            call_graph_relations: list[IRRelation] = []
-            for caller_id, callee_id, data in call_graph_edges_raw:
-                src_id = ast_element_to_symbol.get(str(caller_id))
-                dst_id = ast_element_to_symbol.get(str(callee_id))
-                if not src_id or not dst_id:
-                    continue
-                edge_id = f"edge:call:{hashlib.blake2b(f'{src_id}->{dst_id}'.encode(), digest_size=10).hexdigest()[:20]}"
-                call_graph_relations.append(
-                    IRRelation(
-                        relation_id=edge_id,
-                        src_unit_id=src_id,
-                        dst_unit_id=dst_id,
-                        relation_type="call",
-                        resolution_state="structural",
-                        support_sources={"fc_structure"},
-                        metadata={
-                            "source": "fc_structure",
-                            "extractor": "fastcode.graph_builder.call_graph_bridge",
-                            "call_name": (data or {}).get("call_name"),
-                            "call_type": (data or {}).get("call_type"),
-                            "file_path": (data or {}).get("file_path"),
-                        },
-                    )
-                )
-            ast_snapshot = IRSnapshot(
-                repo_name=ast_snapshot.repo_name,
-                snapshot_id=ast_snapshot.snapshot_id,
-                branch=ast_snapshot.branch,
-                commit_id=ast_snapshot.commit_id,
-                tree_id=ast_snapshot.tree_id,
-                units=ast_snapshot.units,
-                supports=ast_snapshot.supports,
-                relations=list(ast_snapshot.relations) + call_graph_relations,
-                embeddings=ast_snapshot.embeddings,
-                metadata=ast_snapshot.metadata,
             )
 
             scip_snapshot = None
@@ -780,9 +742,6 @@ class FastCode:
                     warnings.append(f"scip_unavailable_or_failed: {e}")
 
             merged_snapshot = merge_ir(ast_snapshot, scip_snapshot)
-            errors = validate_snapshot(merged_snapshot)
-            if errors:
-                raise RuntimeError(f"IR validation failed: {errors[:5]}")
 
             # Incremental update: if a previous snapshot exists for this branch,
             # diff blob_oids and merge only changed file content.
@@ -822,12 +781,26 @@ class FastCode:
                             merged_snapshot = apply_incremental_update(
                                 prev_snapshot, merged_snapshot, incremental_change_set
                             )
-                            # Re-validate after incremental merge.
-                            errors = validate_snapshot(merged_snapshot)
-                            if errors:
-                                raise RuntimeError(
-                                    f"IR validation failed after incremental merge: {errors[:5]}"
-                                )
+
+            target_paths = (
+                set(incremental_change_set.added + incremental_change_set.modified)
+                if incremental_change_set is not None
+                else {
+                    elem.relative_path or elem.file_path
+                    for elem in elements
+                    if elem.language == "python"
+                }
+            )
+            merged_snapshot = self._apply_semantic_resolvers(
+                snapshot=merged_snapshot,
+                elements=elements,
+                legacy_graph_builder=temp_graph,
+                target_paths=target_paths,
+                warnings=warnings,
+            )
+            errors = validate_snapshot(merged_snapshot)
+            if errors:
+                raise RuntimeError(f"IR validation failed: {errors[:5]}")
 
             self.snapshot_symbol_index.register_snapshot(merged_snapshot)
 
@@ -1046,6 +1019,43 @@ class FastCode:
             raise
         finally:
             self.snapshot_store.release_lock(lock_name, owner_id=run_id)
+
+    def _apply_semantic_resolvers(
+        self,
+        *,
+        snapshot: IRSnapshot,
+        elements: list[CodeElement],
+        legacy_graph_builder: CodeGraphBuilder | None,
+        target_paths: set[str],
+        warnings: list[str],
+    ) -> IRSnapshot:
+        if not target_paths:
+            return snapshot
+
+        upgraded = snapshot
+        registry = getattr(
+            self,
+            "semantic_resolver_registry",
+            build_default_semantic_resolver_registry(),
+        )
+        for resolver in registry.applicable(
+            snapshot=upgraded,
+            elements=elements,
+            target_paths=target_paths,
+        ):
+            try:
+                patch = resolver.resolve(
+                    snapshot=upgraded,
+                    elements=elements,
+                    target_paths=target_paths,
+                    legacy_graph_builder=legacy_graph_builder,
+                )
+            except Exception as exc:
+                warnings.append(f"{resolver.language}_resolver_failed: {exc}")
+                continue
+            warnings.extend(patch.warnings)
+            upgraded = apply_resolution_patch(upgraded, patch)
+        return upgraded
 
     def get_index_run(self, run_id: str) -> dict[str, Any] | None:
         return self.index_run_store.get_run(run_id)

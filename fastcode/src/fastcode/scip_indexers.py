@@ -29,6 +29,17 @@ SUPPORTED_LANGUAGES: dict[str, tuple[str, list[str]]] = {
     "cpp": ("scip-clang", ["index", "--output"]),
     "csharp": ("scip-dotnet", ["index", "--output"]),
     "rust": ("rust-analyzer", ["scip", "--output"]),
+    "zig": ("zls", ["scip", "--output"]),
+    "fortran": ("fortls", ["--scip-output"]),
+    "julia": (
+        "julia",
+        [
+            "--project=@.",
+            "-e",
+            "using SymbolServer; SymbolServer.scip_index()",
+            "--output",
+        ],
+    ),
 }
 
 
@@ -85,6 +96,23 @@ def run_scip_indexer(
     return output_path
 
 
+def is_scip_available(language: str) -> bool:
+    """Check if SCIP indexing is available for a given language.
+
+    Returns True if both the language is supported AND the required binary
+    is present in PATH.
+    """
+    entry = SUPPORTED_LANGUAGES.get(language)
+    if not entry:
+        return False
+    binary_name = entry[0]
+    return shutil.which(binary_name) is not None
+
+
+# Languages whose SCIP tooling is experimental / unstable.
+_EXPERIMENTAL_SCIP_LANGUAGES = frozenset({"zig", "fortran", "julia"})
+
+
 _EXTENSION_MAP: dict[str, str] = {
     ".java": "java",
     ".kt": "kotlin",
@@ -106,6 +134,15 @@ _EXTENSION_MAP: dict[str, str] = {
     ".hxx": "cpp",
     ".cs": "csharp",
     ".rs": "rust",
+    ".zig": "zig",
+    ".f": "fortran",
+    ".for": "fortran",
+    ".f77": "fortran",
+    ".f90": "fortran",
+    ".f95": "fortran",
+    ".f03": "fortran",
+    ".f08": "fortran",
+    ".jl": "julia",
 }
 
 _SKIP_DIRS = frozenset({".git", ".hg", "node_modules", "__pycache__", ".venv", "venv"})

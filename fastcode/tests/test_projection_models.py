@@ -8,27 +8,30 @@ from fastcode.projection_models import (
     utc_now_iso,
 )
 
-
 # --- Helpers ---
 
 
-def _make_scope(**overrides):
-    defaults = dict(scope_kind="snapshot", snapshot_id="snap:repo:abc123", scope_key="repo")
+def _make_scope(**overrides) -> ProjectionScope:
+    defaults = {
+        "scope_kind": "snapshot",
+        "snapshot_id": "snap:repo:abc123",
+        "scope_key": "repo",
+    }
     defaults.update(overrides)
     return ProjectionScope(**defaults)
 
 
-def _make_result(**overrides):
-    defaults = dict(
-        projection_id="proj_001",
-        snapshot_id="snap:repo:abc123",
-        scope_kind="snapshot",
-        scope_key="repo",
-        l0={"nodes": 10, "edges": 5},
-        l1={"clusters": 3},
-        l2_index={"index_size": 100},
-        chunks=[{"text": "chunk0"}],
-    )
+def _make_result(**overrides) -> ProjectionBuildResult:
+    defaults = {
+        "projection_id": "proj_001",
+        "snapshot_id": "snap:repo:abc123",
+        "scope_kind": "snapshot",
+        "scope_key": "repo",
+        "l0": {"nodes": 10, "edges": 5},
+        "l1": {"clusters": 3},
+        "l2_index": {"index_size": 100},
+        "chunks": [{"text": "chunk0"}],
+    }
     defaults.update(overrides)
     return ProjectionBuildResult(**defaults)
 
@@ -50,15 +53,23 @@ class TestUtcNowIso:
         b = utc_now_iso()
         # Not guaranteed to differ in the same microsecond, but extremely likely
         # to differ in practice — ISO format includes microseconds.
-        assert isinstance(a, str) and isinstance(b, str)
+        assert isinstance(a, str)
+        assert isinstance(b, str)
 
 
 class TestProjectionScope:
     def test_to_dict_includes_all_fields(self):
-        scope = _make_scope(query="find callers", target_id="sym:main", filters={"lang": "py"})
+        scope = _make_scope(
+            query="find callers", target_id="sym:main", filters={"lang": "py"}
+        )
         d = scope.to_dict()
         assert set(d.keys()) == {
-            "scope_kind", "snapshot_id", "scope_key", "query", "target_id", "filters",
+            "scope_kind",
+            "snapshot_id",
+            "scope_key",
+            "query",
+            "target_id",
+            "filters",
         }
 
     def test_to_dict_defaults_none_and_empty(self):
@@ -91,8 +102,16 @@ class TestProjectionBuildResult:
         result = _make_result()
         d = result.to_dict()
         assert set(d.keys()) == {
-            "projection_id", "snapshot_id", "scope_kind", "scope_key",
-            "l0", "l1", "l2_index", "chunks", "warnings", "created_at",
+            "projection_id",
+            "snapshot_id",
+            "scope_kind",
+            "scope_key",
+            "l0",
+            "l1",
+            "l2_index",
+            "chunks",
+            "warnings",
+            "created_at",
         }
 
     def test_warnings_default_empty(self):

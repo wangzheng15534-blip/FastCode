@@ -772,9 +772,7 @@ class TestValidatorGaps:
         snap = _canonical_snapshot(
             units=[u1, u2],
             relations=[
-                _relation(
-                    "r1", "u1", "u2", support_ids=["ghost_support"]
-                ),
+                _relation("r1", "u1", "u2", support_ids=["ghost_support"]),
             ],
         )
         errors = validate_snapshot(snap)

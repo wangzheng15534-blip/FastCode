@@ -47,6 +47,7 @@ from .projection_transform import ProjectionTransformer
 from .query_processor import QueryProcessor
 from .redo_worker import RedoWorker
 from .retriever import HybridRetriever
+from .scip_indexers import detect_scip_languages, run_scip_for_language
 from .scip_loader import load_scip_artifact, run_scip_python_index
 from .semantic_ir import IRSnapshot
 from .semantic_resolvers import (
@@ -689,10 +690,10 @@ class FastCode:
             scip_artifact_ref = None
             if enable_scip:
                 try:
-                    raw_scip_path = None
+                    scip_artifact_paths: list[str] = []
                     if scip_artifact_path:
                         scip_data = load_scip_artifact(scip_artifact_path)
-                        raw_scip_path = scip_artifact_path
+                        scip_artifact_paths = [scip_artifact_path]
                         scip_snapshot = build_ir_from_scip(
                             repo_name=repo_name,
                             snapshot_id=snapshot_id,
@@ -703,40 +704,103 @@ class FastCode:
                         )
                     else:
                         out_dir = tempfile.mkdtemp(prefix="fastcode_scip_")
-                        out_path = os.path.join(out_dir, "index.scip.json")
-                        run_scip_python_index(self.loader.repo_path or "", out_path)
-                        scip_data = load_scip_artifact(out_path)
-                        raw_scip_path = out_path
-                        scip_snapshot = build_ir_from_scip(
+                        scip_indexes = []
+                        for language in detect_scip_languages(
+                            self.loader.repo_path or ""
+                        ):
+                            scip_index = run_scip_for_language(
+                                language, self.loader.repo_path or "", out_dir
+                            )
+                            if scip_index is not None:
+                                scip_indexes.append((language, scip_index))
+                                artifact_path = os.path.join(
+                                    out_dir, f"{language}.scip"
+                                )
+                                if os.path.exists(artifact_path):
+                                    scip_artifact_paths.append(artifact_path)
+                        if not scip_indexes:
+                            out_path = os.path.join(out_dir, "index.scip.json")
+                            run_scip_python_index(self.loader.repo_path or "", out_path)
+                            scip_indexes.append(
+                                ("python", load_scip_artifact(out_path))
+                            )
+                            scip_artifact_paths.append(out_path)
+                        scip_snapshots = [
+                            build_ir_from_scip(
+                                repo_name=repo_name,
+                                snapshot_id=snapshot_id,
+                                scip_index=index,
+                                branch=snapshot_ref.get("branch"),
+                                commit_id=snapshot_ref.get("commit_id"),
+                                tree_id=snapshot_ref.get("tree_id"),
+                                language_hint=language,
+                            )
+                            for language, index in scip_indexes
+                        ]
+                        scip_snapshot = IRSnapshot(
                             repo_name=repo_name,
                             snapshot_id=snapshot_id,
-                            scip_index=scip_data,
                             branch=snapshot_ref.get("branch"),
                             commit_id=snapshot_ref.get("commit_id"),
                             tree_id=snapshot_ref.get("tree_id"),
-                            language_hint="python",
+                            units=[
+                                unit for snap in scip_snapshots for unit in snap.units
+                            ],
+                            supports=[
+                                support
+                                for snap in scip_snapshots
+                                for support in snap.supports
+                            ],
+                            relations=[
+                                relation
+                                for snap in scip_snapshots
+                                for relation in snap.relations
+                            ],
+                            embeddings=[
+                                embedding
+                                for snap in scip_snapshots
+                                for embedding in snap.embeddings
+                            ],
+                            metadata={
+                                "scip_languages": [
+                                    language for language, _ in scip_indexes
+                                ]
+                            },
                         )
-                    if raw_scip_path and os.path.exists(raw_scip_path):
+                        scip_data = scip_indexes[0][1]
+                    # Preserve ALL generated SCIP artifacts (not just the first)
+                    if scip_artifact_paths:
                         import shutil
 
                         scip_dir = os.path.join(
                             self.snapshot_store.snapshot_dir(snapshot_id), "scip"
                         )
                         ensure_dir(scip_dir)
-                        ext = os.path.splitext(raw_scip_path)[1] or ".json"
-                        preserved_path = os.path.join(scip_dir, f"raw{ext}")
-                        shutil.copy2(raw_scip_path, preserved_path)
-                        digest = hashlib.sha256()
-                        with open(preserved_path, "rb") as fh:
-                            for chunk in iter(lambda: fh.read(8192), b""):
-                                digest.update(chunk)
-                        scip_artifact_ref = self.snapshot_store.save_scip_artifact_ref(
-                            snapshot_id=snapshot_id,
-                            indexer_name=scip_data.indexer_name or "scip-python",
-                            indexer_version=scip_data.indexer_version,
-                            artifact_path=preserved_path,
-                            checksum=digest.hexdigest(),
-                        )
+                        preserved_paths: list[str] = []
+                        for artifact_src in scip_artifact_paths:
+                            if not os.path.exists(artifact_src):
+                                continue
+                            basename = os.path.basename(artifact_src)
+                            preserved_path = os.path.join(scip_dir, basename)
+                            shutil.copy2(artifact_src, preserved_path)
+                            preserved_paths.append(preserved_path)
+                        # Compute checksum from the primary artifact for the ref
+                        primary_path = preserved_paths[0] if preserved_paths else None
+                        if primary_path:
+                            digest = hashlib.sha256()
+                            with open(primary_path, "rb") as fh:
+                                for chunk in iter(lambda: fh.read(8192), b""):
+                                    digest.update(chunk)
+                            scip_artifact_ref = (
+                                self.snapshot_store.save_scip_artifact_ref(
+                                    snapshot_id=snapshot_id,
+                                    indexer_name=scip_data.indexer_name
+                                    or "scip-python",
+                                    indexer_version=scip_data.indexer_version,
+                                    artifact_path=primary_path,
+                                    checksum=digest.hexdigest(),
+                                )
+                            )
                 except Exception as e:
                     degraded = True
                     warnings.append(f"scip_unavailable_or_failed: {e}")
@@ -785,10 +849,7 @@ class FastCode:
             target_paths = (
                 set(incremental_change_set.added + incremental_change_set.modified)
                 if incremental_change_set is not None
-                else {
-                    elem.relative_path or elem.file_path
-                    for elem in elements
-                }
+                else {elem.relative_path or elem.file_path for elem in elements}
             )
             merged_snapshot = self._apply_semantic_resolvers(
                 snapshot=merged_snapshot,
@@ -1027,6 +1088,7 @@ class FastCode:
         legacy_graph_builder: CodeGraphBuilder | None,
         target_paths: set[str],
         warnings: list[str],
+        budget: str = "changed_files",
     ) -> IRSnapshot:
         if not target_paths:
             return snapshot
@@ -1037,11 +1099,31 @@ class FastCode:
             "semantic_resolver_registry",
             build_default_semantic_resolver_registry(),
         )
-        for resolver in registry.applicable(
-            snapshot=upgraded,
-            elements=elements,
-            target_paths=target_paths,
-        ):
+
+        # Collect pending capabilities from unresolved relations so we can
+        # capability-gate which resolvers actually run.
+        pending_caps: set[str] = set()
+        for relation in upgraded.relations:
+            if relation.pending_capabilities:
+                pending_caps |= relation.pending_capabilities
+
+        # Use capability-gated selection when there are pending capabilities;
+        # otherwise run all applicable resolvers (initial index path).
+        if pending_caps:
+            resolvers = registry.applicable_for_capabilities(
+                snapshot=upgraded,
+                elements=elements,
+                target_paths=target_paths,
+                required_capabilities=frozenset(pending_caps),
+            )
+        else:
+            resolvers = registry.applicable(
+                snapshot=upgraded,
+                elements=elements,
+                target_paths=target_paths,
+            )
+
+        for resolver in resolvers:
             try:
                 patch = resolver.resolve(
                     snapshot=upgraded,
@@ -2265,9 +2347,30 @@ class FastCode:
                 "supported_extensions": [  # [TUNABLE]  file extensions to index
                     ".py",
                     ".js",
+                    ".jsx",
                     ".ts",
+                    ".tsx",
                     ".java",
                     ".go",
+                    ".rs",
+                    ".cs",
+                    ".c",
+                    ".h",
+                    ".cc",
+                    ".cpp",
+                    ".cxx",
+                    ".hh",
+                    ".hpp",
+                    ".hxx",
+                    ".zig",
+                    ".f",
+                    ".for",
+                    ".f77",
+                    ".f90",
+                    ".f95",
+                    ".f03",
+                    ".f08",
+                    ".jl",
                 ],
             },
             # ── parser ───────────────────────────────────────────────

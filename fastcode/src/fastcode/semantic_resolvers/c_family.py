@@ -5,13 +5,14 @@ from __future__ import annotations
 import hashlib
 import posixpath
 import re
+import shutil
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
 from ..indexer import CodeElement
 from ..semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
-from .base import ResolutionPatch, SemanticResolver
+from .base import ResolutionPatch, SemanticResolver, ToolDiagnostic
 
 HEADER_EXTENSIONS = (".h", ".hh", ".hpp", ".hxx", ".inl")
 SOURCE_EXTENSIONS = (".c", ".cc", ".cpp", ".cxx")
@@ -49,6 +50,8 @@ class CFamilySemanticResolver(SemanticResolver):
     extractor_name: str
     capabilities = frozenset({"resolve_includes", "resolve_inheritance"})
     cost_class = "low"
+    frontend_kind = "clang_structural_fallback"
+    required_tools = ("clang",)
 
     def applicable(
         self,
@@ -89,10 +92,25 @@ class CFamilySemanticResolver(SemanticResolver):
                         "language": self.language,
                         "source": self.source_name,
                         "capabilities": sorted(self.capabilities),
+                        "frontend_kind": self.frontend_kind,
+                        "required_tools": list(self.required_tools),
                     }
                 ]
             }
         )
+        for tool in self.required_tools:
+            if shutil.which(tool) is None:
+                patch.diagnostics.append(
+                    ToolDiagnostic(
+                        language=self.language,
+                        tool=tool,
+                        code="required_tool_missing",
+                        message=(
+                            f"{tool} was not found in PATH; {self.language} "
+                            "resolver used structural include/inheritance fallback."
+                        ),
+                    )
+                )
         include_targets_by_path: dict[str, set[str]] = defaultdict(set)
         counts = {"import": 0, "inherit": 0}
         warnings: list[str] = []
@@ -110,7 +128,9 @@ class CFamilySemanticResolver(SemanticResolver):
             source_path = elem.relative_path or elem.file_path
             source_unit = file_units_by_path.get(source_path)
             if source_unit is None:
-                warnings.append(f"{self.language}_resolver_missing_file_unit:{source_path}")
+                warnings.append(
+                    f"{self.language}_resolver_missing_file_unit:{source_path}"
+                )
                 continue
 
             for import_info in elem.metadata.get("imports", []):
@@ -152,7 +172,9 @@ class CFamilySemanticResolver(SemanticResolver):
             source_unit_id = unit_ids_by_element_id.get(str(elem.id))
             source_unit = unit_by_id.get(source_unit_id) if source_unit_id else None
             if source_unit is None:
-                warnings.append(f"{self.language}_resolver_missing_class_unit:{elem.id}")
+                warnings.append(
+                    f"{self.language}_resolver_missing_class_unit:{elem.id}"
+                )
                 continue
 
             for raw_base in elem.metadata.get("bases", []):
@@ -189,6 +211,9 @@ class CFamilySemanticResolver(SemanticResolver):
                 "capabilities": sorted(self.capabilities),
                 "cost_class": self.cost_class,
                 "resolver_source": self.source_name,
+                "frontend_kind": self.frontend_kind,
+                "required_tools": list(self.required_tools),
+                "diagnostics": [d.to_dict() for d in patch.diagnostics],
                 "relations_emitted": counts,
                 "supports_emitted": len(patch.supports),
             }
@@ -254,9 +279,12 @@ class CFamilySemanticResolver(SemanticResolver):
             if basename and path_basename == basename:
                 matches.append(path)
                 continue
-            if stem and path_stem == stem:
-                if not ext or path_ext in HEADER_EXTENSIONS + SOURCE_EXTENSIONS:
-                    matches.append(path)
+            if (
+                stem
+                and path_stem == stem
+                and (not ext or path_ext in HEADER_EXTENSIONS + SOURCE_EXTENSIONS)
+            ):
+                matches.append(path)
         if len(matches) <= 1:
             return matches
         same_dir_matches = [
@@ -393,9 +421,11 @@ class CSemanticResolver(CFamilySemanticResolver):
     language = "c"
     source_name = "c_resolver"
     extractor_name = "fastcode.semantic_resolvers.c"
+    required_tools = ("clang",)
 
 
 class CppSemanticResolver(CFamilySemanticResolver):
     language = "cpp"
     source_name = "cpp_resolver"
     extractor_name = "fastcode.semantic_resolvers.cpp"
+    required_tools = ("clang++",)

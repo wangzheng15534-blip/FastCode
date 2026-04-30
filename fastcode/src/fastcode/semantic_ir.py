@@ -13,6 +13,22 @@ from .utils import safe_jsonable
 
 _T = dict[str, Any]
 
+RESOLUTION_CANDIDATE = "candidate"
+RESOLUTION_STRUCTURAL = "structural"
+RESOLUTION_ANCHORED = "anchored"
+RESOLUTION_SEMANTIC = "semantic"
+RESOLUTION_SEMANTICALLY_RESOLVED = "semantically_resolved"
+
+
+def resolution_rank(value: str) -> int:
+    return {
+        "candidate": 0,
+        "structural": 1,
+        "anchored": 2,
+        "semantic": 3,
+        "semantically_resolved": 3,
+    }.get(value, 0)
+
 
 def _sorted_set(values: set[str]) -> list[str]:
     return sorted(v for v in values if v)
@@ -35,6 +51,8 @@ def _copy_dict(data: dict[str, Any]) -> _T:
 def _resolution_to_confidence(resolution_state: str) -> str:
     return {
         "anchored": "precise",
+        "semantic": "precise",
+        "semantically_resolved": "precise",
         "structural": "resolved",
         "candidate": "heuristic",
     }.get(resolution_state or "", "derived")
@@ -288,6 +306,7 @@ class IRRelation:
     resolution_state: str
     support_sources: set[str] = field(default_factory=set)
     support_ids: list[str] = field(default_factory=list)
+    pending_capabilities: set[str] = field(default_factory=set)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -324,6 +343,7 @@ class IRRelation:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["support_sources"] = _sorted_set(self.support_sources)
+        data["pending_capabilities"] = _sorted_set(self.pending_capabilities)
         data["metadata"] = safe_jsonable(self.metadata)
         return data
 
@@ -332,6 +352,9 @@ class IRRelation:
         payload = _copy_dict(data)
         payload["support_sources"] = _normalize_set(payload.get("support_sources"))
         payload["support_ids"] = [str(v) for v in payload.get("support_ids", []) if v]
+        payload["pending_capabilities"] = _normalize_set(
+            payload.get("pending_capabilities")
+        )
         payload["metadata"] = safe_jsonable(payload.get("metadata", {}))
         return cls(**payload)
 

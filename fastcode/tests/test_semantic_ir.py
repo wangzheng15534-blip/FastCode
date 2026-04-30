@@ -19,6 +19,7 @@ from fastcode.semantic_ir import (
     IRUnitSupport,
     _confidence_to_resolution,
     _resolution_to_confidence,
+    resolution_rank,
 )
 
 # --- source_priority computation ---
@@ -89,6 +90,8 @@ class TestConfidenceMapping:
         ("state", "expected"),
         [
             ("anchored", "precise"),
+            ("semantic", "precise"),
+            ("semantically_resolved", "precise"),
             ("structural", "resolved"),
             ("candidate", "heuristic"),
         ],
@@ -409,3 +412,64 @@ class TestSmokeRoundTrip:
         restored = IRSnapshot.from_dict(snap.to_dict())
         assert restored.repo_name == snap.repo_name
         assert len(restored.units) == len(snap.units)
+
+
+# --- resolution_rank ordering ---
+
+
+class TestResolutionRank:
+    def test_candidate_is_lowest(self):
+        assert resolution_rank("candidate") == 0
+
+    def test_structural_above_candidate(self):
+        assert resolution_rank("structural") > resolution_rank("candidate")
+
+    def test_anchored_above_structural(self):
+        assert resolution_rank("anchored") > resolution_rank("structural")
+
+    def test_semantic_above_anchored(self):
+        assert resolution_rank("semantic") > resolution_rank("anchored")
+
+    def test_semantically_resolved_equals_semantic(self):
+        assert resolution_rank("semantically_resolved") == resolution_rank("semantic")
+
+    def test_unknown_defaults_to_zero(self):
+        assert resolution_rank("bogus") == 0
+
+
+# --- pending_capabilities ---
+
+
+class TestPendingCapabilities:
+    def test_defaults_to_empty_set(self):
+        rel = IRRelation(
+            relation_id="r1",
+            src_unit_id="u1",
+            dst_unit_id="u2",
+            relation_type="call",
+            resolution_state="structural",
+        )
+        assert rel.pending_capabilities == set()
+
+    def test_roundtrip_preserves_pending_capabilities(self):
+        rel = IRRelation(
+            relation_id="r1",
+            src_unit_id="u1",
+            dst_unit_id="u2",
+            relation_type="call",
+            resolution_state="structural",
+            pending_capabilities={"resolve_calls", "resolve_types"},
+        )
+        restored = IRRelation.from_dict(rel.to_dict())
+        assert restored.pending_capabilities == {"resolve_calls", "resolve_types"}
+
+    def test_backward_compat_missing_key(self):
+        data = {
+            "relation_id": "r1",
+            "src_unit_id": "u1",
+            "dst_unit_id": "u2",
+            "relation_type": "call",
+            "resolution_state": "structural",
+        }
+        restored = IRRelation.from_dict(data)
+        assert restored.pending_capabilities == set()

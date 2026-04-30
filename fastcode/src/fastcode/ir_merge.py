@@ -15,6 +15,7 @@ from .semantic_ir import (
     IRSnapshot,
     IRUnitEmbedding,
     IRUnitSupport,
+    resolution_rank,
 )
 
 PRIMARY_MATCH_THRESHOLD = 0.65
@@ -271,17 +272,16 @@ def _upsert_relation(
         return
     existing.support_sources.update(relation.support_sources)
     existing.support_ids = sorted(set(existing.support_ids) | set(relation.support_ids))
-    if _resolution_rank(relation.resolution_state) > _resolution_rank(
+    existing.pending_capabilities = (
+        existing.pending_capabilities & relation.pending_capabilities
+    )
+    if resolution_rank(relation.resolution_state) > resolution_rank(
         existing.resolution_state
     ):
         existing.resolution_state = relation.resolution_state
     existing.metadata.update(
         {k: v for k, v in relation.metadata.items() if v is not None}
     )
-
-
-def _resolution_rank(value: str) -> int:
-    return {"candidate": 0, "structural": 1, "anchored": 2}.get(value, 0)
 
 
 def _find_enclosing_unit_id(

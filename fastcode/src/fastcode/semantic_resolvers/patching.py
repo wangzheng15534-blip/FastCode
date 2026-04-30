@@ -10,6 +10,7 @@ from ..semantic_ir import (
     IRSnapshot,
     IRUnitEmbedding,
     IRUnitSupport,
+    resolution_rank,
 )
 from ..utils import safe_jsonable
 from .base import ResolutionPatch
@@ -31,20 +32,14 @@ def _clone_embedding(embedding: IRUnitEmbedding) -> IRUnitEmbedding:
     return IRUnitEmbedding.from_dict(embedding.to_dict())
 
 
-def _resolution_rank(value: str) -> int:
-    return {
-        "candidate": 0,
-        "structural": 1,
-        "anchored": 2,
-        "semantic": 3,
-        "semantically_resolved": 3,
-    }.get(value, 0)
-
-
 def _source_preference(relation: IRRelation) -> int:
-    return {"fc_structure": 0, "python_resolver": 1, "scip": 2}.get(
-        relation.source, 0
-    )
+    return {
+        "fc_structure": 0,
+        "python_resolver": 1,
+        "c_resolver": 1,
+        "cpp_resolver": 1,
+        "scip": 2,
+    }.get(relation.source, 0)
 
 
 def _relation_key(relation: IRRelation) -> tuple[str, ...]:
@@ -66,7 +61,10 @@ def _merge_relation(existing: IRRelation, candidate: IRRelation) -> IRRelation:
         existing.support_ids = sorted(
             set(existing.support_ids) | set(candidate.support_ids)
         )
-        if _resolution_rank(candidate.resolution_state) > _resolution_rank(
+        existing.pending_capabilities = (
+            existing.pending_capabilities & candidate.pending_capabilities
+        )
+        if resolution_rank(candidate.resolution_state) > resolution_rank(
             existing.resolution_state
         ):
             existing.resolution_state = candidate.resolution_state
@@ -76,11 +74,11 @@ def _merge_relation(existing: IRRelation, candidate: IRRelation) -> IRRelation:
         return existing
 
     existing_order = (
-        _resolution_rank(existing.resolution_state),
+        resolution_rank(existing.resolution_state),
         _source_preference(existing),
     )
     candidate_order = (
-        _resolution_rank(candidate.resolution_state),
+        resolution_rank(candidate.resolution_state),
         _source_preference(candidate),
     )
     if candidate_order > existing_order:
@@ -134,7 +132,10 @@ def apply_resolution_patch(snapshot: IRSnapshot, patch: ResolutionPatch) -> IRSn
                 existing.qualified_name = materialized.qualified_name
             if not existing.signature and materialized.signature:
                 existing.signature = materialized.signature
-            if not existing.enclosing_external_id and materialized.enclosing_external_id:
+            if (
+                not existing.enclosing_external_id
+                and materialized.enclosing_external_id
+            ):
                 existing.enclosing_external_id = materialized.enclosing_external_id
             if existing.start_line is None and materialized.start_line is not None:
                 existing.start_line = materialized.start_line

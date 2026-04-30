@@ -57,6 +57,9 @@ class GraphBackedSemanticResolver(SemanticResolver):
         element_by_id = {str(elem.id): elem for elem in elements}
         canonical_by_element_id = self._build_canonical_element_index(snapshot, elements)
         unit_by_id = {unit.unit_id: unit for unit in snapshot.units}
+        file_units_by_path = {
+            unit.path: unit.unit_id for unit in snapshot.units if unit.kind == "file"
+        }
         patch = ResolutionPatch(
             metadata_updates={
                 "semantic_resolver_runs": [
@@ -86,6 +89,7 @@ class GraphBackedSemanticResolver(SemanticResolver):
                     target_element_id=str(dst_id),
                     relation_type=relation_type,
                     payload=dict(data or {}),
+                    file_units_by_path=file_units_by_path,
                 )
                 if emitted is None:
                     skipped_edges += 1
@@ -144,6 +148,7 @@ class GraphBackedSemanticResolver(SemanticResolver):
         target_element_id: str,
         relation_type: str,
         payload: dict[str, Any],
+        file_units_by_path: dict[str, str],
     ) -> tuple[IRUnitSupport, IRRelation] | None:
         source_elem = element_by_id.get(source_element_id)
         target_elem = element_by_id.get(target_element_id)
@@ -191,6 +196,7 @@ class GraphBackedSemanticResolver(SemanticResolver):
             "resolver_language": self.language,
             "resolver_capabilities": sorted(self.capabilities),
         }
+        doc_id = file_units_by_path.get(source_path)
         support = IRUnitSupport(
             support_id=support_id,
             unit_id=src_unit_id,
@@ -223,16 +229,9 @@ class GraphBackedSemanticResolver(SemanticResolver):
             ),
             support_sources={self.source_name},
             support_ids=[support_id],
-            metadata=metadata | {"doc_id": self._doc_id_for_source(snapshot, source_path)},
+            metadata=metadata | {"doc_id": doc_id},
         )
         return support, relation
-
-    @staticmethod
-    def _doc_id_for_source(snapshot: IRSnapshot, path: str) -> str | None:
-        for unit in snapshot.units:
-            if unit.kind == "file" and unit.path == path:
-                return unit.unit_id
-        return None
 
     @staticmethod
     def _payload_key(

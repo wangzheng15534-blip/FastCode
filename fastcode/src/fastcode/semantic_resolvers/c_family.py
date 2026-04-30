@@ -134,6 +134,7 @@ class CFamilySemanticResolver(SemanticResolver):
                         "level": int(import_info.get("level") or 0),
                         "resolution_method": include_target.method,
                     },
+                    file_units_by_path=file_units_by_path,
                 )
                 patch.supports.append(support)
                 patch.relations.append(relation)
@@ -175,6 +176,7 @@ class CFamilySemanticResolver(SemanticResolver):
                         "base_name": base_name,
                         "resolution_method": resolved.method,
                     },
+                    file_units_by_path=file_units_by_path,
                 )
                 patch.supports.append(support)
                 patch.relations.append(relation)
@@ -322,6 +324,7 @@ class CFamilySemanticResolver(SemanticResolver):
         target_unit: IRCodeUnit,
         relation_type: str,
         payload: dict[str, Any],
+        file_units_by_path: dict[str, IRCodeUnit],
     ) -> tuple[IRUnitSupport, IRRelation]:
         payload_key = (
             str(payload.get("module"))
@@ -349,6 +352,8 @@ class CFamilySemanticResolver(SemanticResolver):
             "resolver_capabilities": sorted(self.capabilities),
             "target_unit_id": target_unit.unit_id,
         }
+        file_unit = file_units_by_path.get(source_unit.path)
+        doc_id = file_unit.unit_id if file_unit else None
         support = IRUnitSupport(
             support_id=support_id,
             unit_id=source_unit.unit_id,
@@ -379,16 +384,9 @@ class CFamilySemanticResolver(SemanticResolver):
             ),
             support_sources={self.source_name},
             support_ids=[support_id],
-            metadata=metadata | {"doc_id": self._doc_id_for_path(snapshot, source_unit.path)},
+            metadata=metadata | {"doc_id": doc_id},
         )
         return support, relation
-
-    @staticmethod
-    def _doc_id_for_path(snapshot: IRSnapshot, path: str) -> str | None:
-        for unit in snapshot.units:
-            if unit.kind == "file" and unit.path == path:
-                return unit.unit_id
-        return None
 
 
 class CSemanticResolver(CFamilySemanticResolver):

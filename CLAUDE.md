@@ -155,6 +155,19 @@ Snapshot identity format: `snap:{repo_name}:{commit_id}`
 - **Benchmarks**: `bench_*.py` files use `pytest-benchmark`
 - **E2E**: `test_e2e_indexing.py` tests against real Ollama + PostgreSQL
 
+### xdist-Safe Testing
+
+Tests run under `pytest-xdist` with `-n auto` (forked workers). Heavy ML models (SentenceTransformer, torch) are not fork-safe — loading them in a forked worker causes segfaults.
+
+**Pattern for tests that call code with lazy model loading:**
+- If the test only checks structural properties (metadata, keys, line numbers), disable model loading by mocking the lazy initializer:
+  ```python
+  ingester = _make_ingester()
+  ingester._ensure_chunker = lambda: None  # Skip SentenceTransformer, use word-based fallback
+  ```
+- If the test genuinely needs the ML model (similarity thresholds, semantic boundaries), mark it `@pytest.mark.integration` — these tests load real models and may be flaky under xdist.
+- Mark previously-crashing tests with `@pytest.mark.regression` to guard against regressions.
+
 ## Environment Variables
 
 Required for LLM features: `OPENAI_API_KEY`, `MODEL`, `BASE_URL`

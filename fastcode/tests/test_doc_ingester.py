@@ -41,6 +41,18 @@ def _make_ingester(**overrides) -> Any:
     return KeyDocIngester(**defaults)
 
 
+def _make_ingester_no_model(**overrides) -> Any:
+    """Create an ingester that skips SentenceTransformer model loading.
+
+    Prevents xdist worker crashes: SentenceTransformer uses torch C extensions
+    that are not fork-safe. Structural tests don't need the real chunker —
+    the word-based fallback produces identical heading/line-number metadata.
+    """
+    ingester = _make_ingester(**overrides)
+    ingester._ensure_chunker = lambda: None  # type: ignore[assignment]
+    return ingester
+
+
 def _make_config(**overrides) -> Any:
     """Build a docs_integration config with sensible defaults."""
     cfg = {
@@ -127,6 +139,7 @@ def test_doc_ingester_selects_curated_files_and_extracts_mentions():
 # --- Chonkie chunking tests ---
 
 
+@pytest.mark.regression
 def test_chunk_document_produces_semantic_boundaries():
     """SemanticChunker should split at semantic boundaries, not arbitrary word counts."""
     text = """# Architecture Overview
@@ -146,7 +159,7 @@ We use PostgreSQL for relational data and Redis for caching.
 Vector embeddings are stored in pgvector with HNSW indexing.
 Full-text search uses GIN indexes on materialized document views.
 """
-    ingester = KeyDocIngester(_make_config(), _DummyEmbedder())
+    ingester = _make_ingester_no_model()
     chunks = ingester._chunk_document(text)
 
     # Should produce multiple chunks
@@ -166,6 +179,7 @@ Full-text search uses GIN indexes on materialized document views.
     assert len(headings) >= 1, "At least one chunk should have heading metadata"
 
 
+@pytest.mark.integration
 def test_chunk_document_does_not_split_mid_sentence():
     """Semantic chunking should respect sentence boundaries."""
     # A single paragraph with clear sentences
@@ -190,6 +204,7 @@ def test_chunk_document_does_not_split_mid_sentence():
             )
 
 
+@pytest.mark.regression
 def test_heading_preserved_in_chunk_metadata():
     """Chunks under a heading should carry that heading in metadata."""
     text = """# Main Title
@@ -204,7 +219,7 @@ Content under subsection A.
 
 Content under subsection B.
 """
-    ingester = KeyDocIngester(_make_config(), _DummyEmbedder())
+    ingester = _make_ingester_no_model()
     chunks = ingester._chunk_document(text)
 
     # At least one chunk should reference each heading
@@ -225,7 +240,7 @@ First paragraph.
 Second paragraph.
 Third line.
 """
-    ingester = KeyDocIngester(_make_config(), _DummyEmbedder())
+    ingester = _make_ingester_no_model()
     chunks = ingester._chunk_document(text)
 
     total_lines = len(text.splitlines())
@@ -238,6 +253,7 @@ Third line.
         )
 
 
+@pytest.mark.integration
 def test_chunk_token_size_affects_chunk_granularity():
     """Smaller chunk_token_size should produce more chunks from the same text."""
     text = "Word. ".join(
@@ -259,6 +275,7 @@ def test_chunk_token_size_affects_chunk_granularity():
     )
 
 
+@pytest.mark.integration
 def test_similarity_threshold_affects_split_sensitivity():
     """Higher similarity_threshold should produce fewer splits (harder to break)."""
     text = (
@@ -584,21 +601,21 @@ class TestDocIngesterEdgeCases:
 
 def test_chunk_empty_text():
     """Empty text should produce no chunks."""
-    ingester = KeyDocIngester(_make_config(), _DummyEmbedder())
+    ingester = _make_ingester_no_model()
     chunks = ingester._chunk_document("")
     assert chunks == []
 
 
 def test_chunk_whitespace_only():
     """Whitespace-only text should produce no chunks."""
-    ingester = KeyDocIngester(_make_config(), _DummyEmbedder())
+    ingester = _make_ingester_no_model()
     chunks = ingester._chunk_document("   \n\n  \n  ")
     assert chunks == []
 
 
 def test_chunk_single_line():
     """A single line of text should produce at least one chunk."""
-    ingester = KeyDocIngester(_make_config(), _DummyEmbedder())
+    ingester = _make_ingester_no_model()
     chunks = ingester._chunk_document("Just a single line of text.")
     assert len(chunks) >= 1
     assert chunks[0]["text"].strip() == "Just a single line of text."
@@ -616,7 +633,7 @@ def test_chunk_very_long_section():
         )
     text = "\n\n".join(paragraphs)
 
-    ingester = KeyDocIngester(_make_config(chunk_token_size=64), _DummyEmbedder())
+    ingester = _make_ingester_no_model()
     chunks = ingester._chunk_document(text)
 
     assert len(chunks) >= 2, f"Expected >= 2 chunks for long text, got {len(chunks)}"

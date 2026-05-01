@@ -21,7 +21,7 @@ from .semantic_ir import IRSnapshot
 from .utils import utc_now
 
 try:
-    import igraph as ig  # type: ignore
+    import igraph as ig  # type: ignore[import-untyped]
 except Exception:  # pragma: no cover - optional dependency
     ig = None
 

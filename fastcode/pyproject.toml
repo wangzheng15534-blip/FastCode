@@ -265,8 +265,7 @@ packages = ["src/fastcode"]                                               # pack
     "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
     "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
     "B008",    # design: function calls in FastAPI default arguments (Depends, Body, etc.)
-    "PLW0602", # design: global for fastcode_instance in startup — no assignment in that scope
-    "PLW0603", # design: global statement for lazy singleton — intentional module-level cache
+    "PLW0603", # design: global statement for fastcode_instance — intentional module-level cache
     "PLR0912", # complexity: many branches for API endpoint handlers (track: extract handlers)
     "PLR0915", # complexity: many statements in API handler functions (track: extract handlers)
     "PLR2004", # design: HTTP status codes are domain literals, not magic numbers

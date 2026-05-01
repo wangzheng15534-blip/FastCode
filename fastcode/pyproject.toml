@@ -294,6 +294,9 @@ asyncio_mode = "strict"
 addopts = "-p no:schemathesis -n auto"
 timeout = 30
 timeout_method = "thread"
+filterwarnings = [
+    "ignore::pytest_benchmark.logger.PytestBenchmarkWarning",
+]
 pythonpath = [".."]                                                      # workspace root: resolves api.py, mcp_server.py imports
 markers = [
     # --- Technique markers ---

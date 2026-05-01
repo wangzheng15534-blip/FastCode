@@ -27,7 +27,9 @@ pre-push:
   commands:
     gitleaks:
       run: gitleaks protect --staged
+    pip-audit:
+      run: uv run pip-audit --desc 2>/dev/null || true
     unit-test:
-      run: uv run pytest fastcode/tests/ tests/ -q -n auto --timeout=30 -m "not (integration or e2e)" --ignore=fastcode/tests/bench_
+      run: uv run pytest fastcode/tests/ tests/ -q -n auto --timeout=30 -m "not (integration or e2e)" --ignore=fastcode/tests/bench_ --cov=fastcode --cov-fail-under=80 --cov-report=term-missing
     extended-tests:
       run: uv run pytest fastcode/tests/ tests/ -q -n auto --timeout=60 -m "hypothesis or snapshot"

@@ -123,6 +123,12 @@ packages = ["src/fastcode"]                                               # pack
     "S101",    # design: assert is the test assertion mechanism
     "ANN201",  # design: test functions named by convention; return type is noise
     "ANN003",  # design: factory **kwargs intentionally untyped for flexibility
+    "S108",    # design: hardcoded /tmp/ paths in test fixtures — no production exposure
+    "S310",    # design: urllib to localhost in e2e tests only
+    "S324",    # design: MD5/SHA1 for test artifact hashing — not cryptographic
+    "S607",    # design: partial paths for system binaries in e2e test subprocess calls
+    "S608",    # design: SQL in test assertions uses string literals, not user input
+    "B017",    # design: pytest.raises(Exception) is intentional for error-path tests
 ]
 "src/fastcode/retriever.py" = [
     "ANN201",  # complexity: retrieve() and index_for_bm25 need return types (track: annotate all public methods)
@@ -283,6 +289,70 @@ packages = ["src/fastcode"]                                               # pack
     "S607",    # design: partial path for system binaries (git, python)
     "SIM102",  # design: nested if clarifies two independent conditions
 ]
+# --- Security per-file ignores (scoped from global; each has specific justification) ---
+"src/fastcode/agent_tools.py" = [
+    "E722",    # design: bare-except in file size fallback — missing file returns 0, not crash
+]
+"src/fastcode/graph_builder.py" = [
+    "E722",    # design: bare-except in degree calculation — missing data returns 0, not crash
+    "S301",    # design: pickle for graph serialization to disk, not deserializing untrusted input
+]
+"src/fastcode/cache.py" = [
+    "S301",    # design: pickle for Redis cache serialization — trusted data round-trip only
+    "S324",    # design: MD5 for cache key dedup — not cryptographic
+]
+"src/fastcode/snapshot_store.py" = [
+    "S301",    # design: pickle for IR graph persistence — trusted local store, not untrusted input
+    "S324",    # design: MD5 for snapshot ID generation — not cryptographic
+]
+"src/fastcode/vector_store.py" = [
+    "S301",    # design: pickle for FAISS index serialization — trusted data round-trip only
+]
+"src/fastcode/embedder.py" = [
+    "S310",    # design: urllib to Ollama embedding endpoint on localhost — controlled environment
+]
+"src/fastcode/terminus_publisher.py" = [
+    "S310",    # design: urllib to TerminusDB endpoint on localhost — controlled environment
+]
+"src/fastcode/doc_ingester.py" = [
+    "S324",    # design: MD5 for document chunk ID generation — not cryptographic
+]
+"src/fastcode/indexer.py" = [
+    "S324",    # design: MD5 for code element hash suffix — not cryptographic
+]
+"src/fastcode/pipeline.py" = [
+    "S324",    # design: SHA1 for idempotency keys — not cryptographic
+]
+"src/fastcode/utils/hashing.py" = [
+    "S324",    # design: SHA1 for payload hashing — not cryptographic
+]
+"src/fastcode/utils/paths.py" = [
+    "S324",    # design: SHA1 for path hashing — not cryptographic
+]
+"src/fastcode/utils/json.py" = [
+    "S110",    # design: try-except-pass in JSON repair — individual repair failures should not abort
+    "S112",    # design: try-except-continue in JSON array/object parsing — skip malformed elements
+]
+"src/fastcode/graph_runtime.py" = [
+    "S110",    # design: try-except-pass in doc graph operations — individual doc failures are non-fatal
+]
+"src/fastcode/scip_indexers.py" = [
+    "S603",    # design: subprocess for SCIP indexer binary invocation; shell=False is already used
+]
+"src/fastcode/semantic_resolvers/*.py" = [
+    "S603",    # design: subprocess for language tooling (go vet, tsc, dotnet, etc.); shell=False is already used
+    "S607",    # design: partial path for language binaries found via shutil.which() fallback
+]
+"src/fastcode/index_run.py" = [
+    "S608",    # design: SQL with parameterized queries via psycopg; literals are table/column names
+]
+"src/fastcode/projection_transform.py" = [
+    "S324",    # design: SHA1 for deterministic projection hashing — not cryptographic
+    "S110",    # design: try-except-pass for leiden fallback — graceful degradation to greedy_modularity
+]
+"src/fastcode/repo_selector.py" = [
+    "S608",    # design: SQL with parameterized queries via psycopg; literals are table/column names
+]
 
 # ---------------------------------------------------------------------------
 # Pytest: test discovery and configuration
@@ -290,12 +360,13 @@ packages = ["src/fastcode"]                                               # pack
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "strict"
-addopts = "-p no:schemathesis -n auto"
-timeout = 30
-timeout_method = "thread"
+asyncio_mode = "strict"                                                     # explicit await required; prevents accidental coroutine leaks
+addopts = "-p no:schemathesis -n auto"                                      # schemathesis auto-registers on import (slow); xdist parallel workers
+timeout = 30                                                                # per-test wall-clock limit; catches hangs from deadlocks and network stalls
+timeout_method = "thread"                                                   # thread-based timeout; compatible with xdist forked workers
 filterwarnings = [
-    "ignore::pytest_benchmark.logger.PytestBenchmarkWarning",
+    # xdist disables benchmarks at collection time; suppress the informational warning to keep output clean
+    "ignore:Benchmarks are automatically disabled because xdist plugin is active:pytest_benchmark.logger.PytestBenchmarkWarning",
 ]
 pythonpath = [".."]                                                      # workspace root: resolves api.py, mcp_server.py imports
 markers = [
@@ -320,10 +391,10 @@ markers = [
 # ---------------------------------------------------------------------------
 
 [tool.coverage.run]
-branch = true
+branch = true                                                              # branch coverage, not just line coverage — catches uncovered if/else paths
 source = ["fastcode"]
 
 [tool.coverage.report]
-fail_under = 80
-show_missing = true
-skip_covered = true
+fail_under = 80                                                             # quality gate: CI fails below 80% branch coverage
+show_missing = true                                                         # print uncovered lines on failure for actionable fix
+skip_covered = true                                                         # hide fully-covered files to focus on gaps

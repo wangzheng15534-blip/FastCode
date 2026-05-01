@@ -22,6 +22,7 @@ import shutil
 import tempfile
 import uuid
 import zipfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -43,27 +44,6 @@ from fastcode.schemas.api import (
     StatusResponse,
 )
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="FastCode Web Interface",
-    description="Repository-Level Code Understanding System",
-    version="2.0.0",
-)
-
-# Mount static files for assets
-assets_path = Path(__file__).parent / "assets"
-if assets_path.exists():
-    app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
-
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # Global FastCode instance
 fastcode_instance: FastCode | None = None
 
@@ -81,12 +61,41 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize FastCode on startup"""
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Lifespan context manager for startup and shutdown"""
     global fastcode_instance
     logger.info("Initializing FastCode system")
     fastcode_instance = FastCode()
+    yield
+    try:
+        fastcode_instance.shutdown()
+    except Exception as e:
+        logger.warning(f"FastCode shutdown hook failed: {e}")
+    logger.info("FastCode Web UI shutting down")
+
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="FastCode Web Interface",
+    description="Repository-Level Code Understanding System",
+    version="2.0.0",
+    lifespan=lifespan,
+)
+
+# Mount static files for assets
+assets_path = Path(__file__).parent / "assets"
+if assets_path.exists():
+    app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/", response_class=HTMLResponse)

@@ -83,6 +83,7 @@ dev = [
     "lefthook",
     "pytest-timeout",
     "pytest-subprocess",
+    "mutmut",
     "schemathesis",
 ]
 scip = [
@@ -351,6 +352,28 @@ packages = ["src/fastcode"]                                               # pack
 "src/fastcode/repo_selector.py" = [
     "S608",    # design: SQL with parameterized queries via psycopg; literals are table/column names
 ]
+# ---------------------------------------------------------------------------
+# Mutmut: mutation testing (run from fastcode/ directory)
+#
+# Three fixes required for this codebase:
+#   1) pytest_add_cli_args (not 'runner') — mutmut 3.x API
+#   2) --override-ini=addopts= neutralizes -n auto from pytest.ini_options
+#   3) conftest.py suppresses HealthCheck.differing_executors under MUTANT_UNDER_TEST
+# Full mutation run (40K mutants) takes hours; scope paths_to_mutate for CI.
+# ---------------------------------------------------------------------------
+
+[tool.mutmut]
+paths_to_mutate = ["src/fastcode/"]
+tests_dir = ["tests/"]
+pytest_add_cli_args = [
+    "-p", "no:xdist",                    # mutmut runs pytest.main() in-process; xdist incompatible
+    "--override-ini=addopts=",           # neutralize -n auto from [tool.pytest.ini_options]
+    "--timeout=120",                     # per-test timeout; some hypothesis tests are slow
+    "-p", "no:syrupy",                   # snapshot fixture name collision in projection tests
+    "-m", "not integration and not e2e", # skip tests requiring real DB/network
+    "--ignore=tests/test_projection_transform.py",  # syrupy snapshot fixture conflict
+]
+
 # ---------------------------------------------------------------------------
 # Pytest: test discovery and configuration
 # ---------------------------------------------------------------------------

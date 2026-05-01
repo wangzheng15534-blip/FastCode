@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 from typing import Any
 
 import pytest
+from hypothesis import HealthCheck, settings
 from hypothesis import strategies as st
+
+# mutmut calls pytest.main() in-process, causing hypothesis to see
+# "multiple executors"; safe to suppress since mutmut owns the process
+if os.getenv("MUTANT_UNDER_TEST"):
+    settings.register_profile(
+        "mutmut",
+        settings(suppress_health_check=[HealthCheck.differing_executors]),
+    )
+    settings.load_profile("mutmut")
 
 from fastcode.db_runtime import DBRuntime
 from fastcode.indexer import CodeElement

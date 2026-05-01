@@ -613,7 +613,11 @@ class IRSnapshot:
             if unit.kind in {"file", "doc"}:
                 continue
             metadata: dict[str, Any] = safe_jsonable(unit.metadata)
-            raw_aliases: list[Any] = metadata.get("aliases") or []
+            _raw_aliases = metadata.get("aliases")
+            if isinstance(_raw_aliases, list):
+                raw_aliases: list[Any] = _raw_aliases
+            else:
+                raw_aliases = []
             alias_ids: list[str] = list(
                 dict.fromkeys(
                     [str(a) for a in raw_aliases] + unit.candidate_anchor_symbol_ids

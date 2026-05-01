@@ -79,7 +79,10 @@ ir_symbol_st = st.builds(
     end_col=st.none() | st.integers(min_value=0, max_value=120),
     source_priority=st.integers(min_value=0, max_value=200),
     source_set=st.sets(source_st, max_size=2),
-    metadata=st.dictionaries(st.text(min_size=1, max_size=10), st.integers()),
+    metadata=st.dictionaries(
+        st.text(min_size=1, max_size=10),
+        st.one_of(st.integers(), st.lists(st.text(min_size=1, max_size=8), max_size=3)),
+    ),
 )
 
 ir_occurrence_st = st.builds(
@@ -93,7 +96,10 @@ ir_occurrence_st = st.builds(
     end_line=line_number_st,
     end_col=st.integers(min_value=0, max_value=120),
     source=source_st,
-    metadata=st.dictionaries(st.text(min_size=1, max_size=10), st.integers()),
+    metadata=st.dictionaries(
+        st.text(min_size=1, max_size=10),
+        st.one_of(st.integers(), st.lists(st.text(min_size=1, max_size=8), max_size=3)),
+    ),
 )
 
 ir_edge_st = st.builds(
@@ -105,7 +111,10 @@ ir_edge_st = st.builds(
     source=source_st,
     confidence=st.sampled_from(["precise", "heuristic", "resolved", ""]),
     doc_id=st.none() | st.builds(lambda x: f"doc:{x}", identifier),
-    metadata=st.dictionaries(st.text(min_size=1, max_size=10), st.integers()),
+    metadata=st.dictionaries(
+        st.text(min_size=1, max_size=10),
+        st.one_of(st.integers(), st.lists(st.text(min_size=1, max_size=8), max_size=3)),
+    ),
 )
 
 

@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from diskcache import Cache as DiskCache  # type: ignore[import-untyped]
+from diskcache import Cache as DiskCache
 
 
 class CacheManager:

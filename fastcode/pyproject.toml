@@ -83,7 +83,6 @@ dev = [
     "lefthook",
     "pytest-timeout",
     "pytest-subprocess",
-    "mutmut",
     "schemathesis",
 ]
 scip = [
@@ -352,7 +351,6 @@ packages = ["src/fastcode"]                                               # pack
 "src/fastcode/repo_selector.py" = [
     "S608",    # design: SQL with parameterized queries via psycopg; literals are table/column names
 ]
-
 # ---------------------------------------------------------------------------
 # Pytest: test discovery and configuration
 # ---------------------------------------------------------------------------

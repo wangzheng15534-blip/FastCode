@@ -34,20 +34,8 @@ ignore = [
     "PLR0915", # complexity: too-many-statements -- decompose into smaller methods
     # --- Lazy imports (intentional to avoid circular deps and speed startup) ---
     "PLC0415", # design: import-outside-top-level -- guarded by try/except or deferred loading
-    # --- Security rules (usage is deliberate in this codebase) ---
-    "S108",    # design: hardcoded-temp-file -- test-only, no production exposure
-    "S110",    # design: try-except-pass -- intentional silencing of non-critical errors
-    "S112",    # design: try-except-continue -- intentional silencing in loop processing
-    "S301",    # design: suspicious-pickle -- used for BM25/index serialization, not untrusted input
-    "S310",    # design: suspicious-url-open -- test-only, connecting to localhost
-    "S324",    # design: insecure-hash -- MD5 used for non-crypto cache keys, not security
-    "S603",    # design: subprocess-without-shell -- shell=False is already the safer default
-    "S607",    # design: start-process-with-partial-path -- git and SCIP binaries in PATH
-    "S608",    # design: hardcoded-sql-expression -- parameterized queries, literals are table names
     # --- Other deliberate patterns ---
-    "B017",    # design: assert-raises-exception -- pytest Exception catch is intentional in tests
     "B904",    # design: raise-without-from -- re-raising with context already in message
-    "E722",    # design: bare-except -- intentional catch-all in error boundary patterns
     "PLR2004", # design: magic-value-comparison -- domain thresholds are tuning knobs, not constants
 ]
 
@@ -62,18 +50,18 @@ extraPaths = [".", "./fastcode/src"]
 stubPath = "fastcode/src/fastcode/_stubs"
 venvPath = "."
 venv = ".venv"
-typeCheckingMode = "strict"
+typeCheckingMode = "strict"                                                  # strict baseline; relaxations below are intentional
 reportUnnecessaryComparison = true
 reportUnusedVariable = true
-reportMissingImports = "warning"
-reportMissingTypeStubs = "none"
-reportUnknownVariableType = "warning"
+reportMissingImports = "warning"                                              # third-party untyped deps shouldn't error
+reportMissingTypeStubs = "none"                                               # custom stubs handle this; noise otherwise
+reportUnknownVariableType = "warning"                                         # third-party untyped deps produce unknowns — signal, not block
 reportUnknownMemberType = "warning"
 reportUnknownArgumentType = "warning"
 reportUnknownLambdaType = "warning"
 reportUnknownParameterType = "warning"
-reportPrivateUsage = "none"
-reportDeprecated = "none"
+reportPrivateUsage = "none"                                                   # internal cross-module access is common in this codebase
+reportDeprecated = "warning"                                                  # deprecated API usage should surface but not block
 
 # Tests: known-good literals, untyped fixtures/mocks — Rust cfg(test) equivalent
 [[tool.pyright.executionEnvironments]]

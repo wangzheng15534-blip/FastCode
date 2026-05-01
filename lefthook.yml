@@ -20,7 +20,7 @@ pre-commit:
       run: uv run pyright fastcode/src/ fastcode/tests/ tests/
     smoke-test:
       glob: "*.py"
-      run: uv run pytest fastcode/tests/ -q -n auto --timeout=60 -x -k "not (_property or _snapshot or _perf or _integration or _e2e)" --ignore=fastcode/tests/bench_
+      run: uv run pytest fastcode/tests/ -q -n auto --timeout=60 -x -m "not (integration or e2e)" --ignore=fastcode/tests/bench_
 
 pre-push:
   parallel: true
@@ -28,6 +28,6 @@ pre-push:
     gitleaks:
       run: gitleaks protect --staged
     unit-test:
-      run: uv run pytest fastcode/tests/ tests/ -q -n auto --timeout=30 -k "not (_property or _snapshot or _perf or _double or _integration or _e2e)"
+      run: uv run pytest fastcode/tests/ tests/ -q -n auto --timeout=30 -m "not (integration or e2e)" --ignore=fastcode/tests/bench_
     extended-tests:
-      run: uv run pytest fastcode/tests/ tests/ -q -n auto --timeout=60 -k "_property or _snapshot"
+      run: uv run pytest fastcode/tests/ tests/ -q -n auto --timeout=60 -m "hypothesis or snapshot"

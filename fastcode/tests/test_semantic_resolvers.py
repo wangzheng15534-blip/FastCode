@@ -11,6 +11,7 @@ import pytest
 
 from fastcode.indexer import CodeElement
 from fastcode.main import FastCode
+from fastcode.pipeline import IndexPipeline
 from fastcode.semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
 from fastcode.semantic_resolvers import (
     PYTHON_RESOLVER_EXTRACTOR,
@@ -100,6 +101,41 @@ def _element(
         docstring=None,
         summary=None,
         metadata=dict(metadata or {}),
+    )
+
+
+def _wire_pipeline(fc: Any) -> None:
+    """Wire a minimal IndexPipeline onto a bare FastCode.__new__() instance.
+
+    Only populates what _apply_semantic_resolvers needs (the registry).
+    """
+    registry = getattr(fc, "semantic_resolver_registry", None)
+    if registry is None:
+        registry = build_default_semantic_resolver_registry()
+        fc.semantic_resolver_registry = registry
+    fc.pipeline = IndexPipeline(
+        config=getattr(fc, "config", {}),
+        logger=SimpleNamespace(
+            info=lambda *a, **kw: None, warning=lambda *a, **kw: None
+        ),
+        loader=SimpleNamespace(repo_path=None, scan_files=lambda: []),
+        snapshot_store=SimpleNamespace(),
+        manifest_store=SimpleNamespace(),
+        index_run_store=SimpleNamespace(),
+        snapshot_symbol_index=SimpleNamespace(),
+        vector_store=SimpleNamespace(metadata=[]),
+        embedder=SimpleNamespace(),
+        indexer=SimpleNamespace(),
+        retriever=SimpleNamespace(),
+        graph_builder=SimpleNamespace(),
+        ir_graph_builder=SimpleNamespace(),
+        pg_retrieval_store=None,
+        terminus_publisher=SimpleNamespace(),
+        doc_ingester=SimpleNamespace(),
+        semantic_resolver_registry=registry,
+        set_repo_indexed=lambda v: None,
+        set_repo_loaded=lambda v: None,
+        set_repo_info=lambda v: None,
     )
 
 
@@ -502,6 +538,7 @@ def test_graph_backed_language_resolver_records_missing_tool_diagnostics():
 
 def test_fastcode_apply_semantic_resolvers_replaces_heuristic_import_relation():
     fc = FastCode.__new__(FastCode)
+    _wire_pipeline(fc)
     file_a = _file_unit("a.py")
     wrong = _file_unit("wrong.py")
     right = _file_unit("right.py")
@@ -609,6 +646,7 @@ def test_target_paths_includes_all_languages_on_fresh_index():
     included so C/C++ resolvers can run on a fresh full-index.
     """
     fc = FastCode.__new__(FastCode)
+    _wire_pipeline(fc)
     file_cpp = _file_unit("main.cpp", language="cpp")
     file_py = _file_unit("app.py")
     snapshot = _snapshot(units=[file_cpp, file_py])
@@ -744,6 +782,7 @@ def test_resolver_failure_gracefully_degrades():
     _apply_semantic_resolvers catches exceptions and appends warnings.
     """
     fc = FastCode.__new__(FastCode)
+    _wire_pipeline(fc)
     snapshot = _snapshot(units=[_file_unit("fail.py")])
     elements = [
         _element(
@@ -781,6 +820,7 @@ def test_resolver_failure_gracefully_degrades():
     from fastcode.semantic_resolvers import SemanticResolverRegistry
 
     fc.semantic_resolver_registry = SemanticResolverRegistry([BrokenResolver()])
+    fc.pipeline.semantic_resolver_registry = fc.semantic_resolver_registry
     warnings: list[str] = []
 
     updated = fc._apply_semantic_resolvers(
@@ -896,6 +936,7 @@ def test_capability_gating_runs_all_when_no_pending_capabilities():
     should run all applicable resolvers (initial index path) without error.
     """
     fc = FastCode.__new__(FastCode)
+    _wire_pipeline(fc)
     file_py = _file_unit("app.py")
     file_b = _file_unit("b.py")
     caller = _symbol_unit(

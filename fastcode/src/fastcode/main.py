@@ -4,24 +4,17 @@ Main FastCode Class - Orchestrate all components
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
-import hashlib
 import json
 import os
 import pickle
-import re
-import tempfile
 from collections.abc import Callable, Generator
 from datetime import datetime
-from typing import Any, cast
-from urllib.parse import urlparse
+from typing import Any
 
 import networkx as nx
 import numpy as np
-from git import GitCommandError, Repo
 from rank_bm25 import BM25Okapi
 
-from .adapters.ast_to_ir import build_ir_from_ast
-from .adapters.scip_to_ir import build_ir_from_scip
 from .answer_generator import AnswerGenerator
 from .cache import CacheManager
 from .core import snapshot as _snapshot
@@ -30,28 +23,25 @@ from .embedder import CodeEmbedder
 from .global_index_builder import GlobalIndexBuilder
 from .graph_builder import CodeGraphBuilder
 from .graph_runtime import LadybugGraphRuntime
-from .incremental_update import apply_incremental_update, diff_changed_files
 from .index_run import IndexRunStore
 from .indexer import CodeElement, CodeElementMeta, CodeIndexer
 from .ir_graph_builder import IRGraphBuilder
-from .ir_merge import merge_ir
-from .ir_validators import validate_snapshot
 from .loader import RepositoryLoader
 from .manifest_store import ManifestStore
 from .module_resolver import ModuleResolver
 from .parser import CodeParser
 from .pg_retrieval import PgRetrievalStore
-from .projection_models import ProjectionScope
+from .pipeline import IndexPipeline
+from .projection import ProjectionService
 from .projection_store import ProjectionStore
 from .projection_transform import ProjectionTransformer
+from .publishing import PublishingService
+from .query_handler import QueryPipeline
 from .query_processor import QueryProcessor
 from .redo_worker import RedoWorker
 from .retriever import HybridRetriever
-from .scip_indexers import detect_scip_languages, run_scip_for_language
-from .scip_loader import load_scip_artifact, run_scip_python_index
 from .semantic_ir import IRSnapshot
 from .semantic_resolvers import (
-    apply_resolution_patch,
     build_default_semantic_resolver_registry,
 )
 from .snapshot_store import SnapshotStore
@@ -59,13 +49,9 @@ from .snapshot_symbol_index import SnapshotSymbolIndex
 from .symbol_resolver import SymbolResolver
 from .terminus_publisher import TerminusPublisher
 from .utils import (
-    compute_file_hash,
     ensure_dir,
     load_config,
-    projection_params_hash,
-    projection_scope_key,
     resolve_config_paths,
-    safe_jsonable,
     setup_logging,
 )
 from .vector_store import VectorStore
@@ -188,10 +174,71 @@ class FastCode:
 
         self.semantic_resolver_registry = build_default_semantic_resolver_registry()
 
-        # State
+        # State (must exist before IndexPipeline wiring)
         self.repo_loaded: bool = False
         self.repo_indexed: bool = False
         self.repo_info: dict[str, Any] = {}
+
+        # --- IndexPipeline ---
+        self.pipeline = IndexPipeline(
+            config=self.config,
+            logger=self.logger,
+            loader=self.loader,
+            snapshot_store=self.snapshot_store,
+            manifest_store=self.manifest_store,
+            index_run_store=self.index_run_store,
+            snapshot_symbol_index=self.snapshot_symbol_index,
+            vector_store=self.vector_store,
+            embedder=self.embedder,
+            indexer=self.indexer,
+            retriever=self.retriever,
+            graph_builder=self.graph_builder,
+            ir_graph_builder=self.ir_graph_builder,
+            pg_retrieval_store=self.pg_retrieval_store,
+            terminus_publisher=self.terminus_publisher,
+            doc_ingester=self.doc_ingester,
+            semantic_resolver_registry=self.semantic_resolver_registry,
+            set_repo_indexed=lambda v: setattr(self, "repo_indexed", v),
+            set_repo_loaded=lambda v: setattr(self, "repo_loaded", v),
+            set_repo_info=lambda v: setattr(self, "repo_info", v),
+        )
+
+        # --- Services ---
+        self.projection_service = ProjectionService(
+            config=self.config,
+            logger=self.logger,
+            projection_store=self.projection_store,
+            projection_transformer=self.projection_transformer,
+            snapshot_store=self.snapshot_store,
+            manifest_store=self.manifest_store,
+            load_artifacts_by_key=self.pipeline._load_artifacts_by_key,
+        )
+        self.publishing_service = PublishingService(
+            config=self.config,
+            logger=self.logger,
+            index_run_store=self.index_run_store,
+            manifest_store=self.manifest_store,
+            snapshot_store=self.snapshot_store,
+            terminus_publisher=self.terminus_publisher,
+            redo_worker=self._redo_worker,
+            build_git_meta=self.pipeline._build_git_meta,
+            previous_snapshot_symbol_versions=self.pipeline._previous_snapshot_symbol_versions,
+            run_index_pipeline_cb=self.run_index_pipeline,
+        )
+
+        self.query_handler = QueryPipeline(
+            config=self.config,
+            logger=self.logger,
+            retriever=self.retriever,
+            query_processor=self.query_processor,
+            answer_generator=self.answer_generator,
+            cache_manager=self.cache_manager,
+            manifest_store=self.manifest_store,
+            snapshot_store=self.snapshot_store,
+            snapshot_symbol_index=self.snapshot_symbol_index,
+            is_repo_indexed=lambda: self.repo_indexed,
+            load_artifacts_by_key=self.pipeline._load_artifacts_by_key,
+        )
 
         # Multi-repository state
         self.multi_repo_mode: bool = False
@@ -201,24 +248,7 @@ class FastCode:
 
     @staticmethod
     def _infer_is_url(source: str) -> bool:
-        """
-        Infer whether source should be treated as URL.
-
-        Priority rule: existing local paths always win over URL heuristics.
-        """
-        normalized = (source or "").strip()
-        if not normalized:
-            return False
-
-        if os.path.exists(normalized):
-            return False
-
-        parsed = urlparse(normalized)
-        if parsed.scheme in {"http", "https", "ssh", "git", "file"}:
-            return True
-
-        # SCP-like git syntax, e.g. git@github.com:user/repo.git
-        return bool(re.match(r"^[^@\s]+@[^:\s]+:[^\s]+$", normalized))
+        return IndexPipeline._infer_is_url(source)
 
     def load_repository(
         self, source: str, is_url: bool | None = None, is_zip: bool = False
@@ -413,16 +443,7 @@ class FastCode:
     def _checkout_target_ref(
         self, ref: str | None = None, commit: str | None = None
     ) -> None:
-        """Checkout requested ref/commit inside loaded repository workspace."""
-        target = commit or ref
-        if not target or not self.loader.repo_path:
-            return
-        try:
-            repo = Repo(self.loader.repo_path)
-            repo.git.checkout(target)
-            self.logger.info(f"Checked out target: {target}")
-        except (GitCommandError, Exception) as e:
-            raise RuntimeError(f"Failed to checkout target '{target}': {e}")
+        return self.pipeline._checkout_target_ref(ref=ref, commit=commit)
 
     def _resolve_snapshot_ref(
         self,
@@ -430,62 +451,14 @@ class FastCode:
         requested_ref: str | None = None,
         requested_commit: str | None = None,
     ) -> dict[str, Any]:
-        """Resolve repo snapshot identity from git metadata or file hashes."""
-        repo_path = self.loader.repo_path or ""
-        try:
-            repo = Repo(repo_path)
-            commit_obj = repo.commit(requested_commit or requested_ref or "HEAD")
-            tree_id = commit_obj.tree.hexsha
-            commit_id = commit_obj.hexsha
-            branch = requested_ref
-            if branch is None:
-                try:
-                    branch = repo.active_branch.name
-                except Exception:
-                    branch = None
-            snapshot_id = f"snap:{repo_name}:{commit_id}"
-            return {
-                "repo_name": repo_name,
-                "branch": branch,
-                "commit_id": commit_id,
-                "tree_id": tree_id,
-                "snapshot_id": snapshot_id,
-            }
-        except Exception:
-            files = self.loader.scan_files()
-            if not files:
-                synthetic = "empty"
-            else:
-                digest = hashlib.sha1()
-                for f in sorted(files, key=lambda x: x["relative_path"]):
-                    digest.update(f["relative_path"].encode("utf-8"))
-                    try:
-                        digest.update(compute_file_hash(f["path"]).encode("utf-8"))
-                    except Exception:
-                        digest.update(str(f.get("size", 0)).encode("utf-8"))
-                synthetic = digest.hexdigest()
-            return {
-                "repo_name": repo_name,
-                "branch": requested_ref,
-                "commit_id": requested_commit,
-                "tree_id": synthetic,
-                "snapshot_id": f"snap:{repo_name}:{synthetic}",
-            }
+        return self.pipeline._resolve_snapshot_ref(
+            repo_name,
+            requested_ref=requested_ref,
+            requested_commit=requested_commit,
+        )
 
     def _build_git_meta(self, snapshot_ref: dict[str, Any]) -> dict[str, Any]:
-        git_meta = dict(snapshot_ref or {})
-        commit_id = git_meta.get("commit_id")
-        if not commit_id or not self.loader.repo_path:
-            return git_meta
-        try:
-            repo = Repo(self.loader.repo_path)
-            commit_obj = repo.commit(commit_id)
-            parent_ids = [p.hexsha for p in commit_obj.parents]
-            git_meta["parent_commit_id"] = parent_ids[0] if parent_ids else None
-            git_meta["parent_commit_ids"] = parent_ids
-        except (ValueError, KeyError) as e:
-            self.logger.warning(f"Failed to resolve commit parent metadata: {e}")
-        return git_meta
+        return self.pipeline._build_git_meta(snapshot_ref)
 
     def _previous_snapshot_symbol_versions(
         self,
@@ -493,53 +466,12 @@ class FastCode:
         ref_name: str,
         current_snapshot_id: str,
     ) -> dict[str, str] | None:
-        previous_manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
-        if not previous_manifest:
-            return None
-        previous_snapshot_id = previous_manifest.get("snapshot_id")
-        if not previous_snapshot_id or previous_snapshot_id == current_snapshot_id:
-            return None
-        previous_snapshot = self.snapshot_store.load_snapshot(previous_snapshot_id)
-        if not previous_snapshot:
-            return None
-        out: dict[str, str] = {}
-        for symbol in previous_snapshot.symbols:
-            if not symbol.external_symbol_id:
-                continue
-            out[symbol.external_symbol_id] = (
-                f"symbol:{previous_snapshot_id}:{symbol.symbol_id}"
-            )
-        return out
+        return self.pipeline._previous_snapshot_symbol_versions(
+            repo_name, ref_name, current_snapshot_id
+        )
 
     def _load_artifacts_by_key(self, artifact_key: str) -> bool:
-        """Load vector/BM25/graph artifacts for a snapshot artifact key."""
-        if not self.vector_store.load(artifact_key):
-            return False
-
-        bm25_loaded = self.retriever.load_bm25(artifact_key)
-        graph_loaded = self.graph_builder.load(artifact_key)
-        ir_graphs = None
-        if artifact_key.startswith("snap_"):
-            record = self.snapshot_store.find_by_artifact_key(artifact_key)
-            snapshot_id = record["snapshot_id"] if record else None
-            if snapshot_id:
-                ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
-                self.retriever.set_ir_graphs(ir_graphs, snapshot_id=snapshot_id)
-        else:
-            self.retriever.set_ir_graphs(None, snapshot_id=None)
-        self.retriever.build_repo_overview_bm25()
-
-        if not bm25_loaded or not graph_loaded:
-            elements = self._reconstruct_elements_from_metadata()
-            if elements:
-                if not bm25_loaded:
-                    self.retriever.index_for_bm25(elements)
-                if not graph_loaded:
-                    self.graph_builder.build_graphs(elements)
-
-        self.repo_indexed = True
-        self.repo_loaded = True
-        return True
+        return self.pipeline._load_artifacts_by_key(artifact_key)
 
     def run_index_pipeline(
         self,
@@ -552,533 +484,20 @@ class FastCode:
         scip_artifact_path: str | None = None,
         enable_scip: bool = True,
     ) -> dict[str, Any]:
-        """
-        Run snapshot-oriented indexing pipeline with AST + optional SCIP merge.
-        """
-        resolved_is_url = self._infer_is_url(source) if is_url is None else is_url
-        self.load_repository(source, is_url=resolved_is_url)
-        self._checkout_target_ref(ref=ref, commit=commit)
-        self.repo_info = self.loader.get_repository_info()
-
-        repo_name = self.repo_info.get("name", "default")
-        repo_url = self.repo_info.get("url", source)
-        snapshot_ref = self._resolve_snapshot_ref(
-            repo_name, requested_ref=ref, requested_commit=commit
+        """Run snapshot-oriented indexing pipeline (delegates to IndexPipeline)."""
+        return self.pipeline.run_index_pipeline(
+            source=source,
+            is_url=is_url,
+            ref=ref,
+            commit=commit,
+            force=force,
+            publish=publish,
+            scip_artifact_path=scip_artifact_path,
+            enable_scip=enable_scip,
+            load_repository_cb=self.load_repository,
+            get_loaded_repositories=lambda: self.loaded_repositories,
+            graph_runtime=self.graph_runtime,
         )
-        git_meta = self._build_git_meta(snapshot_ref)
-        snapshot_id = snapshot_ref["snapshot_id"]
-        warnings: list[str] = []
-        degraded = False
-
-        existing = self.snapshot_store.get_snapshot_record(snapshot_id)
-        if existing and not force:
-            artifact_key = existing["artifact_key"]
-            loaded = self._load_artifacts_by_key(artifact_key)
-            return {
-                "status": "reused",
-                "repo_name": repo_name,
-                "snapshot_id": snapshot_id,
-                "artifact_key": artifact_key,
-                "loaded": loaded,
-            }
-
-        idempotency_key = hashlib.sha1(
-            f"{repo_name}:{snapshot_id}:{bool(publish)}:{bool(enable_scip)}".encode()
-        ).hexdigest()
-        run_id = self.index_run_store.create_run(
-            repo_name=repo_name,
-            snapshot_id=snapshot_id,
-            branch=snapshot_ref.get("branch"),
-            commit_id=snapshot_ref.get("commit_id"),
-            idempotency_key=idempotency_key,
-        )
-        existing_run = self.index_run_store.get_run(run_id)
-        if (
-            existing_run
-            and existing_run.get("status")
-            in {"published", "succeeded", "degraded", "publish_pending"}
-            and not force
-        ):
-            existing_snapshot = self.snapshot_store.get_snapshot_record(snapshot_id)
-            if existing_snapshot:
-                loaded = self._load_artifacts_by_key(existing_snapshot["artifact_key"])
-                return {
-                    "status": existing_run.get("status"),
-                    "run_id": run_id,
-                    "repo_name": repo_name,
-                    "snapshot_id": snapshot_id,
-                    "artifact_key": existing_snapshot["artifact_key"],
-                    "loaded": loaded,
-                    "warnings": json.loads(existing_run.get("warnings_json") or "[]"),
-                }
-        self.index_run_store.mark_started(run_id)
-        lock_name = f"index:{snapshot_id}"
-        fencing_token: int | None = self.snapshot_store.acquire_lock(
-            lock_name, owner_id=run_id, ttl_seconds=600
-        )
-        if fencing_token is None:
-            raise RuntimeError(
-                f"snapshot is currently locked for indexing: {snapshot_id}"
-            )
-        lock_token: int = fencing_token
-        stage_id: str | None = None
-
-        try:
-            self.index_run_store.mark_status(run_id, "extracting")
-            elements: list[CodeElement] = self.indexer.extract_elements(
-                repo_name=repo_name, repo_url=repo_url
-            )
-
-            artifact_key = self.snapshot_store.artifact_key_for_snapshot(snapshot_id)
-
-            self.index_run_store.mark_status(run_id, "materializing")
-            temp_store = VectorStore(self.config)
-            temp_store.initialize(self.embedder.embedding_dim)
-            vectors: list[list[float]] = []
-            metadata: list[CodeElementMeta] = []
-            for elem in elements:
-                embedding = elem.metadata.get("embedding")
-                if embedding is not None:
-                    elem.metadata["snapshot_id"] = snapshot_id
-                    elem.metadata["source_priority"] = 10
-                    vectors.append(embedding)
-                    elem_dict = elem.to_dict()
-                    elem_dict["snapshot_id"] = snapshot_id
-                    metadata.append(elem_dict)
-            if not vectors:
-                raise RuntimeError("No embeddings produced during indexing")
-            temp_store.add_vectors(np.array(vectors), metadata)
-
-            temp_graph = CodeGraphBuilder(self.config)
-            module_resolver = None
-            symbol_resolver = None
-            try:
-                gib = GlobalIndexBuilder(self.config)
-                gib.build_maps(elements, self.loader.repo_path or "")
-                module_resolver = ModuleResolver(gib)
-                symbol_resolver = SymbolResolver(gib, module_resolver)
-            except Exception as e:
-                warnings.append(f"resolver_init_failed: {e}")
-            temp_graph.build_graphs(elements, module_resolver, symbol_resolver)
-
-            temp_retriever = HybridRetriever(
-                self.config,
-                temp_store,
-                self.embedder,
-                CodeGraphBuilder(self.config),
-                repo_root=self.loader.repo_path,
-            )
-            temp_retriever.index_for_bm25(elements)
-            temp_retriever.build_repo_overview_bm25()
-
-            temp_store.save(artifact_key)
-            temp_retriever.save_bm25(artifact_key)
-            temp_graph.save(artifact_key)
-
-            self.index_run_store.mark_status(run_id, "validating")
-            ast_snapshot: IRSnapshot = build_ir_from_ast(
-                repo_name=repo_name,
-                snapshot_id=snapshot_id,
-                elements=elements,
-                repo_root=self.loader.repo_path or "",
-                branch=snapshot_ref.get("branch"),
-                commit_id=snapshot_ref.get("commit_id"),
-                tree_id=snapshot_ref.get("tree_id"),
-            )
-
-            scip_snapshot = None
-            scip_artifact_ref = None
-            if enable_scip:
-                try:
-                    scip_artifact_paths: list[str] = []
-                    if scip_artifact_path:
-                        scip_data = load_scip_artifact(scip_artifact_path)
-                        scip_artifact_paths = [scip_artifact_path]
-                        scip_snapshot = build_ir_from_scip(
-                            repo_name=repo_name,
-                            snapshot_id=snapshot_id,
-                            scip_index=scip_data,
-                            branch=snapshot_ref.get("branch"),
-                            commit_id=snapshot_ref.get("commit_id"),
-                            tree_id=snapshot_ref.get("tree_id"),
-                        )
-                    else:
-                        out_dir = tempfile.mkdtemp(prefix="fastcode_scip_")
-                        scip_indexes = []
-                        for language in detect_scip_languages(
-                            self.loader.repo_path or ""
-                        ):
-                            scip_index = run_scip_for_language(
-                                language, self.loader.repo_path or "", out_dir
-                            )
-                            if scip_index is not None:
-                                scip_indexes.append((language, scip_index))
-                                artifact_path = os.path.join(
-                                    out_dir, f"{language}.scip"
-                                )
-                                if os.path.exists(artifact_path):
-                                    scip_artifact_paths.append(artifact_path)
-                        if not scip_indexes:
-                            out_path = os.path.join(out_dir, "index.scip.json")
-                            run_scip_python_index(self.loader.repo_path or "", out_path)
-                            scip_indexes.append(
-                                ("python", load_scip_artifact(out_path))
-                            )
-                            scip_artifact_paths.append(out_path)
-                        scip_snapshots = [
-                            build_ir_from_scip(
-                                repo_name=repo_name,
-                                snapshot_id=snapshot_id,
-                                scip_index=index,
-                                branch=snapshot_ref.get("branch"),
-                                commit_id=snapshot_ref.get("commit_id"),
-                                tree_id=snapshot_ref.get("tree_id"),
-                                language_hint=language,
-                            )
-                            for language, index in scip_indexes
-                        ]
-                        scip_snapshot = IRSnapshot(
-                            repo_name=repo_name,
-                            snapshot_id=snapshot_id,
-                            branch=snapshot_ref.get("branch"),
-                            commit_id=snapshot_ref.get("commit_id"),
-                            tree_id=snapshot_ref.get("tree_id"),
-                            units=[
-                                unit for snap in scip_snapshots for unit in snap.units
-                            ],
-                            supports=[
-                                support
-                                for snap in scip_snapshots
-                                for support in snap.supports
-                            ],
-                            relations=[
-                                relation
-                                for snap in scip_snapshots
-                                for relation in snap.relations
-                            ],
-                            embeddings=[
-                                embedding
-                                for snap in scip_snapshots
-                                for embedding in snap.embeddings
-                            ],
-                            metadata={
-                                "scip_languages": [
-                                    language for language, _ in scip_indexes
-                                ]
-                            },
-                        )
-                        scip_data = scip_indexes[0][1]
-                    # Preserve ALL generated SCIP artifacts (not just the first)
-                    if scip_artifact_paths:
-                        import shutil
-
-                        scip_dir = os.path.join(
-                            self.snapshot_store.snapshot_dir(snapshot_id), "scip"
-                        )
-                        ensure_dir(scip_dir)
-                        preserved_paths: list[str] = []
-                        for artifact_src in scip_artifact_paths:
-                            if not os.path.exists(artifact_src):
-                                continue
-                            basename = os.path.basename(artifact_src)
-                            preserved_path = os.path.join(scip_dir, basename)
-                            shutil.copy2(artifact_src, preserved_path)
-                            preserved_paths.append(preserved_path)
-                        # Compute checksum from the primary artifact for the ref
-                        primary_path = preserved_paths[0] if preserved_paths else None
-                        if primary_path:
-                            digest = hashlib.sha256()
-                            with open(primary_path, "rb") as fh:
-                                for chunk in iter(lambda: fh.read(8192), b""):
-                                    digest.update(chunk)
-                            scip_artifact_ref = (
-                                self.snapshot_store.save_scip_artifact_ref(
-                                    snapshot_id=snapshot_id,
-                                    indexer_name=scip_data.indexer_name
-                                    or "scip-python",
-                                    indexer_version=scip_data.indexer_version,
-                                    artifact_path=primary_path,
-                                    checksum=digest.hexdigest(),
-                                )
-                            )
-                except Exception as e:
-                    degraded = True
-                    warnings.append(f"scip_unavailable_or_failed: {e}")
-
-            merged_snapshot = merge_ir(ast_snapshot, scip_snapshot)
-
-            # Incremental update: if a previous snapshot exists for this branch,
-            # diff blob_oids and merge only changed file content.
-            incremental_change_set = None
-            ref_name_for_inc = snapshot_ref.get("branch") or ref or "HEAD"
-            prev_manifest = self.manifest_store.get_branch_manifest(
-                repo_name, ref_name_for_inc
-            )
-            if prev_manifest:
-                prev_snap_id = prev_manifest.get("snapshot_id")
-                if prev_snap_id and prev_snap_id != snapshot_id:
-                    prev_snapshot = self.snapshot_store.load_snapshot(prev_snap_id)
-                    if prev_snapshot:
-                        incremental_change_set = diff_changed_files(
-                            prev_snapshot, merged_snapshot
-                        )
-                        changed_count = (
-                            len(incremental_change_set.added)
-                            + len(incremental_change_set.modified)
-                            + len(incremental_change_set.removed)
-                        )
-                        if changed_count == 0:
-                            self.logger.info(
-                                "incremental: no file changes detected vs %s",
-                                prev_snap_id,
-                            )
-                        else:
-                            self.logger.info(
-                                "incremental: %d added, %d modified, %d removed "
-                                "(%d unchanged) vs %s",
-                                len(incremental_change_set.added),
-                                len(incremental_change_set.modified),
-                                len(incremental_change_set.removed),
-                                len(incremental_change_set.unchanged),
-                                prev_snap_id,
-                            )
-                            merged_snapshot = apply_incremental_update(
-                                prev_snapshot, merged_snapshot, incremental_change_set
-                            )
-
-            target_paths = (
-                set(incremental_change_set.added + incremental_change_set.modified)
-                if incremental_change_set is not None
-                else {elem.relative_path or elem.file_path for elem in elements}
-            )
-            merged_snapshot = self._apply_semantic_resolvers(
-                snapshot=merged_snapshot,
-                elements=elements,
-                legacy_graph_builder=temp_graph,
-                target_paths=target_paths,
-                warnings=warnings,
-            )
-            errors = validate_snapshot(merged_snapshot)
-            if errors:
-                raise RuntimeError(f"IR validation failed: {errors[:5]}")
-
-            self.snapshot_symbol_index.register_snapshot(merged_snapshot)
-
-            doc_chunks_payload: list[dict[str, Any]] = []
-            doc_mentions_payload: list[dict[str, Any]] = []
-            doc_elements_payload: list[dict[str, Any]] = []
-            if self._should_ingest_docs():
-                try:
-                    doc_ingest = self.doc_ingester.ingest(
-                        repo_path=self.loader.repo_path or "",
-                        repo_name=repo_name,
-                        snapshot_id=snapshot_id,
-                        snapshot=merged_snapshot,
-                    )
-                    doc_chunks_payload = [
-                        {
-                            "chunk_id": c.chunk_id,
-                            "snapshot_id": c.snapshot_id,
-                            "repo_name": c.repo_name,
-                            "path": c.path,
-                            "title": c.title,
-                            "heading": c.heading,
-                            "doc_type": c.doc_type,
-                            "content": c.text,
-                            "start_line": c.start_line,
-                            "end_line": c.end_line,
-                        }
-                        for c in (doc_ingest.get("chunks") or [])
-                    ]
-                    doc_mentions_payload = list(doc_ingest.get("mentions") or [])
-                    doc_elements_payload = list(doc_ingest.get("elements") or [])
-                except Exception as e:
-                    warnings.append(f"doc_ingestion_failed: {e}")
-
-            # Backfill canonical IR symbol IDs into vector metadata for IR-aware retrieval.
-            ast_id_to_ir: dict[str, str] = {}
-            for sym in merged_snapshot.symbols:
-                meta = sym.metadata or {}
-                ast_elem_id = meta.get("ast_element_id")
-                if ast_elem_id:
-                    ast_id_to_ir[str(ast_elem_id)] = sym.symbol_id
-                for alias in (
-                    meta.get("aliases", [])
-                    if isinstance(meta.get("aliases", []), list)
-                    else []
-                ):
-                    # alias can be an AST symbol id; keep as an extra hint only
-                    if alias:
-                        ast_id_to_ir.setdefault(str(alias), sym.symbol_id)
-            for row in temp_store.metadata:
-                elem_id = row.get("id")
-                ir_symbol_id = ast_id_to_ir.get(str(elem_id))
-                if ir_symbol_id:
-                    row["ir_symbol_id"] = ir_symbol_id
-                    row_meta = row.get("metadata") or {}
-                    row_meta["ir_symbol_id"] = ir_symbol_id
-                    row["metadata"] = row_meta
-            for elem in elements:
-                ir_symbol_id = ast_id_to_ir.get(str(elem.id))
-                if ir_symbol_id:
-                    elem.metadata["ir_symbol_id"] = ir_symbol_id
-            temp_store.save(artifact_key)
-
-            self.index_run_store.mark_status(run_id, "persisting")
-            if not self.snapshot_store.validate_fencing_token(lock_name, lock_token):
-                raise RuntimeError(f"stale_lock_detected_for_snapshot:{snapshot_id}")
-            self.snapshot_store.save_snapshot(
-                merged_snapshot,
-                metadata={
-                    "run_id": run_id,
-                    "artifact_key": artifact_key,
-                    "warnings": warnings,
-                    "scip_artifact_ref": scip_artifact_ref,
-                    "fencing_token": lock_token,
-                },
-            )
-            self.snapshot_store.import_git_backbone(merged_snapshot, git_meta=git_meta)
-            self.snapshot_store.save_relational_facts(merged_snapshot)
-            if doc_chunks_payload:
-                mentions_by_chunk: dict[str, list[dict[str, Any]]] = {}
-                for mention in doc_mentions_payload:
-                    chunk_id = mention.get("chunk_id")
-                    if not chunk_id:
-                        continue
-                    mentions_by_chunk.setdefault(str(chunk_id), []).append(
-                        dict(mention)
-                    )
-                for elem in doc_elements_payload:
-                    chunk_id = elem.get("id")
-                    elem_meta = elem.get("metadata") or {}
-                    elem_meta["trace_links"] = mentions_by_chunk.get(str(chunk_id), [])
-                    elem["metadata"] = elem_meta
-                self.snapshot_store.save_design_documents(
-                    snapshot_id=snapshot_id,
-                    repo_name=repo_name,
-                    chunks=doc_chunks_payload,
-                    mentions=doc_mentions_payload,
-                )
-            ir_graphs = self.ir_graph_builder.build_graphs(merged_snapshot)
-            self.snapshot_store.save_ir_graphs(snapshot_id, ir_graphs)
-            stage_id = self.snapshot_store.stage_snapshot(
-                merged_snapshot,
-                metadata={"run_id": run_id, "artifact_key": artifact_key},
-            )
-            all_pg_elements: list[dict[str, Any]] = [
-                cast(dict[str, Any], elem.to_dict()) for elem in elements
-            ]
-            if doc_elements_payload:
-                all_pg_elements.extend(doc_elements_payload)
-            self.pg_retrieval_store.upsert_elements(
-                snapshot_id=snapshot_id,
-                elements=all_pg_elements,
-            )
-            self._sync_doc_overlay(
-                chunks=doc_chunks_payload,
-                mentions=doc_mentions_payload,
-                warnings=warnings,
-            )
-
-            self._load_artifacts_by_key(artifact_key)
-            self.loaded_repositories[repo_name] = self.repo_info
-
-            manifest = None
-            status = "degraded" if degraded else "succeeded"
-
-            if publish:
-                self.index_run_store.mark_status(run_id, "publishing")
-                ref_name = snapshot_ref.get("branch") or ref or "HEAD"
-                previous_snapshot_symbols = self._previous_snapshot_symbol_versions(
-                    repo_name=repo_name,
-                    ref_name=ref_name,
-                    current_snapshot_id=snapshot_id,
-                )
-                manifest = self.manifest_store.publish(
-                    repo_name=repo_name,
-                    ref_name=ref_name,
-                    snapshot_id=snapshot_id,
-                    index_run_id=run_id,
-                    status="published",
-                )
-                if self.terminus_publisher.is_configured():
-                    try:
-                        self.terminus_publisher.publish_snapshot_lineage(
-                            snapshot=merged_snapshot.to_dict(),
-                            manifest=manifest,
-                            git_meta=git_meta,
-                            previous_snapshot_symbols=previous_snapshot_symbols,
-                            idempotency_key=f"lineage:{run_id}:{snapshot_id}",
-                        )
-                        status = "published" if not degraded else "degraded"
-                    except Exception as e:
-                        warnings.append(f"terminus_publish_failed: {e}")
-                        self.index_run_store.enqueue_publish_retry(
-                            run_id=run_id,
-                            snapshot_id=snapshot_id,
-                            manifest_id=manifest.get("manifest_id")
-                            if manifest
-                            else None,
-                            error_message=str(e),
-                        )
-                        status = "publish_pending"
-                else:
-                    warnings.append("terminus_not_configured")
-                if stage_id:
-                    self.snapshot_store.promote_staged_snapshot(
-                        snapshot_id=snapshot_id, stage_id=stage_id
-                    )
-
-            self.snapshot_store.update_snapshot_metadata(
-                snapshot_id,
-                {
-                    "run_id": run_id,
-                    "artifact_key": artifact_key,
-                    "warnings": warnings,
-                    "scip_artifact_ref": scip_artifact_ref,
-                    "fencing_token": lock_token,
-                },
-            )
-            self.index_run_store.mark_completed(
-                run_id, status=status, warnings=warnings
-            )
-            result: dict[str, Any] = {
-                "status": status,
-                "run_id": run_id,
-                "repo_name": repo_name,
-                "snapshot_id": snapshot_id,
-                "artifact_key": artifact_key,
-                "manifest": manifest,
-                "warnings": warnings,
-            }
-            if incremental_change_set is not None:
-                result["incremental"] = {
-                    "added": len(incremental_change_set.added),
-                    "modified": len(incremental_change_set.modified),
-                    "removed": len(incremental_change_set.removed),
-                    "unchanged": len(incremental_change_set.unchanged),
-                }
-            return result
-        except Exception as e:
-            self.index_run_store.mark_failed(run_id, str(e))
-            self.snapshot_store.enqueue_redo_task(
-                task_type="index_run_recovery",
-                payload={
-                    "run_id": run_id,
-                    "snapshot_id": snapshot_id,
-                    "source": source,
-                    "is_url": resolved_is_url,
-                    "ref": ref,
-                    "commit": commit,
-                    "publish": publish,
-                    "enable_scip": enable_scip,
-                    "scip_artifact_path": scip_artifact_path,
-                },
-                error=str(e),
-            )
-            raise
-        finally:
-            self.snapshot_store.release_lock(lock_name, owner_id=run_id)
 
     def _apply_semantic_resolvers(
         self,
@@ -1090,220 +509,33 @@ class FastCode:
         warnings: list[str],
         budget: str = "changed_files",
     ) -> IRSnapshot:
-        if not target_paths:
-            return snapshot
-
-        upgraded = snapshot
-        registry = getattr(
-            self,
-            "semantic_resolver_registry",
-            build_default_semantic_resolver_registry(),
+        return self.pipeline._apply_semantic_resolvers(
+            snapshot=snapshot,
+            elements=elements,
+            legacy_graph_builder=legacy_graph_builder,
+            target_paths=target_paths,
+            warnings=warnings,
+            budget=budget,
         )
 
-        # Collect pending capabilities from unresolved relations so we can
-        # capability-gate which resolvers actually run.
-        pending_caps: set[str] = set()
-        for relation in upgraded.relations:
-            if relation.pending_capabilities:
-                pending_caps |= relation.pending_capabilities
-
-        # Use capability-gated selection when there are pending capabilities;
-        # otherwise run all applicable resolvers (initial index path).
-        if pending_caps:
-            resolvers = registry.applicable_for_capabilities(
-                snapshot=upgraded,
-                elements=elements,
-                target_paths=target_paths,
-                required_capabilities=frozenset(pending_caps),
-            )
-        else:
-            resolvers = registry.applicable(
-                snapshot=upgraded,
-                elements=elements,
-                target_paths=target_paths,
-            )
-
-        for resolver in resolvers:
-            try:
-                patch = resolver.resolve(
-                    snapshot=upgraded,
-                    elements=elements,
-                    target_paths=target_paths,
-                    legacy_graph_builder=legacy_graph_builder,
-                )
-            except Exception as exc:
-                warnings.append(f"{resolver.language}_resolver_failed: {exc}")
-                continue
-            warnings.extend(patch.warnings)
-            upgraded = apply_resolution_patch(upgraded, patch)
-        return upgraded
-
     def get_index_run(self, run_id: str) -> dict[str, Any] | None:
-        return self.index_run_store.get_run(run_id)
+        return self.publishing_service.get_index_run(run_id)
 
     def publish_index_run(
         self, run_id: str, ref_name: str | None = None
     ) -> dict[str, Any]:
-        run = self.index_run_store.get_run(run_id)
-        if not run:
-            raise RuntimeError(f"index run not found: {run_id}")
-        snapshot = self.snapshot_store.load_snapshot(run["snapshot_id"])
-        if not snapshot:
-            raise RuntimeError(f"snapshot not found for run: {run_id}")
-
-        manifest = self.manifest_store.publish(
-            repo_name=run["repo_name"],
-            ref_name=ref_name or run.get("branch") or "HEAD",
-            snapshot_id=run["snapshot_id"],
-            index_run_id=run_id,
-            status="published",
-        )
-        status = "published"
-        if self.terminus_publisher.is_configured():
-            try:
-                git_meta = self._build_git_meta(
-                    {
-                        "repo_name": run["repo_name"],
-                        "branch": run.get("branch"),
-                        "commit_id": run.get("commit_id"),
-                    }
-                )
-                branch_name = manifest.get("ref_name") or run.get("branch") or "HEAD"
-                previous_snapshot_symbols = self._previous_snapshot_symbol_versions(
-                    repo_name=run["repo_name"],
-                    ref_name=branch_name,
-                    current_snapshot_id=run["snapshot_id"],
-                )
-                self.terminus_publisher.publish_snapshot_lineage(
-                    snapshot=snapshot.to_dict(),
-                    manifest=manifest,
-                    git_meta=git_meta,
-                    previous_snapshot_symbols=previous_snapshot_symbols,
-                    idempotency_key=f"lineage:{run_id}:{run['snapshot_id']}",
-                )
-            except Exception as e:
-                self.index_run_store.enqueue_publish_retry(
-                    run_id=run_id,
-                    snapshot_id=run["snapshot_id"],
-                    manifest_id=manifest.get("manifest_id"),
-                    error_message=str(e),
-                )
-                status = "publish_pending"
-        self.index_run_store.mark_completed(run_id, status=status)
-        return {"status": status, "manifest": manifest, "run_id": run_id}
+        return self.publishing_service.publish_index_run(run_id, ref_name=ref_name)
 
     def retry_pending_publishes(self, limit: int = 10) -> dict[str, Any]:
-        if not self.terminus_publisher.is_configured():
-            return {
-                "processed": 0,
-                "succeeded": 0,
-                "failed": 0,
-                "message": "terminus_not_configured",
-            }
-
-        processed = 0
-        succeeded = 0
-        failed = 0
-
-        while processed < limit:
-            task = self.index_run_store.claim_next_publish_task()
-            if not task:
-                break
-            processed += 1
-            task_id = task["task_id"]
-            run_id = task["run_id"]
-            try:
-                run = self.index_run_store.get_run(run_id)
-                if not run:
-                    raise RuntimeError(f"run not found: {run_id}")
-                snapshot = self.snapshot_store.load_snapshot(run["snapshot_id"])
-                if not snapshot:
-                    raise RuntimeError(f"snapshot not found: {run['snapshot_id']}")
-
-                ref_name = run.get("branch") or "HEAD"
-                manifest = self.manifest_store.get_branch_manifest(
-                    run["repo_name"], ref_name
-                )
-                if not manifest:
-                    manifest = self.manifest_store.publish(
-                        repo_name=run["repo_name"],
-                        ref_name=ref_name,
-                        snapshot_id=run["snapshot_id"],
-                        index_run_id=run_id,
-                        status="published",
-                    )
-
-                git_meta = self._build_git_meta(
-                    {
-                        "repo_name": run["repo_name"],
-                        "branch": run.get("branch"),
-                        "commit_id": run.get("commit_id"),
-                    }
-                )
-                previous_snapshot_symbols = self._previous_snapshot_symbol_versions(
-                    repo_name=run["repo_name"],
-                    ref_name=ref_name,
-                    current_snapshot_id=run["snapshot_id"],
-                )
-                self.terminus_publisher.publish_snapshot_lineage(
-                    snapshot=snapshot.to_dict(),
-                    manifest=manifest,
-                    git_meta=git_meta,
-                    previous_snapshot_symbols=previous_snapshot_symbols,
-                    idempotency_key=f"lineage:{run_id}:{run['snapshot_id']}",
-                )
-                self.index_run_store.mark_publish_task_done(task_id)
-                self.index_run_store.mark_completed(run_id, status="published")
-                succeeded += 1
-            except Exception as e:
-                self.index_run_store.mark_publish_task_failed(task_id, str(e))
-                failed += 1
-
-        return {
-            "processed": processed,
-            "succeeded": succeeded,
-            "failed": failed,
-        }
+        return self.publishing_service.retry_pending_publishes(limit)
 
     def retry_index_run_recovery(
         self, run_id: str, payload: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        payload = payload or {}
-        source = payload.get("source")
-        if not source:
-            raise RuntimeError(f"redo recovery payload missing source for run {run_id}")
-        return self.run_index_pipeline(
-            source=source,
-            is_url=payload.get("is_url"),
-            ref=payload.get("ref"),
-            commit=payload.get("commit"),
-            force=True,
-            publish=bool(payload.get("publish", True)),
-            scip_artifact_path=payload.get("scip_artifact_path"),
-            enable_scip=bool(payload.get("enable_scip", True)),
-        )
+        return self.publishing_service.retry_index_run_recovery(run_id, payload=payload)
 
     def process_redo_tasks(self, limit: int = 10) -> dict[str, Any]:
-        if not self._redo_worker:
-            return {
-                "processed": 0,
-                "succeeded": 0,
-                "failed": 0,
-                "message": "redo_worker_disabled",
-            }
-        processed = 0
-        succeeded = 0
-        failed = 0
-        while processed < max(1, min(int(limit), 100)):
-            status = self._redo_worker.process_once_status()
-            if status == "none":
-                break
-            processed += 1
-            if status == "succeeded":
-                succeeded += 1
-            elif status == "failed":
-                failed += 1
-        return {"processed": processed, "succeeded": succeeded, "failed": failed}
+        return self.publishing_service.process_redo_tasks(limit)
 
     def list_repo_refs(self, repo_name: str) -> list[dict[str, Any]]:
         with self.snapshot_store.db_runtime.connect() as conn:
@@ -1435,57 +667,13 @@ class FastCode:
         target_id: str | None,
         filters: dict[str, Any] | None,
     ) -> str:
-        return projection_scope_key(scope_kind, snapshot_id, query, target_id, filters)
+        return ProjectionService.projection_scope_key(
+            scope_kind, snapshot_id, query, target_id, filters
+        )
 
     @staticmethod
-    def _projection_params_hash(
-        scope: ProjectionScope, projection_algo_version: str = "v1"
-    ) -> str:
-        return projection_params_hash(scope.to_dict(), projection_algo_version)
-
-    def _resolve_snapshot_id(
-        self,
-        snapshot_id: str | None,
-        repo_name: str | None,
-        ref_name: str | None,
-    ) -> str:
-        if snapshot_id:
-            return snapshot_id
-        if not repo_name or not ref_name:
-            raise RuntimeError("projection requires snapshot_id or repo_name+ref_name")
-        manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
-        if not manifest:
-            raise RuntimeError(f"manifest not found for {repo_name}:{ref_name}")
-        return manifest["snapshot_id"]
-
-    def _mirror_projection_artifacts(
-        self, snapshot_id: str, result: dict[str, Any]
-    ) -> str:
-        import os
-
-        root = os.path.join(
-            self.snapshot_store.snapshot_dir(snapshot_id),
-            "projection",
-            result["projection_id"],
-        )
-        ensure_dir(root)
-        chunk_dir = os.path.join(root, "chunks")
-        ensure_dir(chunk_dir)
-        with open(os.path.join(root, "node.l0.json"), "w", encoding="utf-8") as f:
-            json.dump(result["l0"], f, ensure_ascii=False, indent=2)
-        with open(os.path.join(root, "node.l1.json"), "w", encoding="utf-8") as f:
-            json.dump(result["l1"], f, ensure_ascii=False, indent=2)
-        with open(os.path.join(root, "node.l2.index.json"), "w", encoding="utf-8") as f:
-            json.dump(result["l2_index"], f, ensure_ascii=False, indent=2)
-        for chunk in result.get("chunks", []):
-            chunk_id = chunk.get("chunk_id")
-            if not chunk_id:
-                continue
-            with open(
-                os.path.join(chunk_dir, f"{chunk_id}.json"), "w", encoding="utf-8"
-            ) as f:
-                json.dump(chunk, f, ensure_ascii=False, indent=2)
-        return root
+    def _projection_params_hash(scope: Any, projection_algo_version: str = "v1") -> str:
+        return ProjectionService.projection_params_hash(scope, projection_algo_version)
 
     def build_projection(
         self,
@@ -1498,183 +686,26 @@ class FastCode:
         filters: dict[str, Any] | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
-        if scope_kind not in {"snapshot", "query", "entity"}:
-            raise RuntimeError("scope_kind must be one of: snapshot, query, entity")
-        if not self.projection_store.enabled:
-            raise RuntimeError(
-                "projection store is not configured (set projection.postgres_dsn)"
-            )
-
-        resolved_snapshot_id = self._resolve_snapshot_id(
-            snapshot_id, repo_name, ref_name
-        )
-        snapshot_record = self.snapshot_store.get_snapshot_record(resolved_snapshot_id)
-        if not snapshot_record:
-            raise RuntimeError(f"snapshot not found: {resolved_snapshot_id}")
-
-        if not self._load_artifacts_by_key(snapshot_record["artifact_key"]):
-            raise RuntimeError(
-                f"failed to load artifacts for snapshot: {resolved_snapshot_id}"
-            )
-
-        snapshot = self.snapshot_store.load_snapshot(resolved_snapshot_id)
-        if not snapshot:
-            raise RuntimeError(f"IR snapshot not found: {resolved_snapshot_id}")
-        ir_graphs = self.snapshot_store.load_ir_graphs(resolved_snapshot_id)
-
-        scope_key = self._projection_scope_key(
+        return self.projection_service.build_projection(
             scope_kind=scope_kind,
-            snapshot_id=resolved_snapshot_id,
+            snapshot_id=snapshot_id,
+            repo_name=repo_name,
+            ref_name=ref_name,
             query=query,
             target_id=target_id,
             filters=filters,
+            force=force,
         )
-        scope = ProjectionScope(
-            scope_kind=scope_kind,
-            snapshot_id=resolved_snapshot_id,
-            scope_key=scope_key,
-            query=query,
-            target_id=target_id,
-            filters=filters or {},
-        )
-        params_hash = self._projection_params_hash(
-            scope,
-            projection_algo_version=getattr(
-                self.projection_transformer, "ALGO_VERSION", "v1"
-            ),
-        )
-
-        if not force:
-            cached_id = self.projection_store.find_cached_projection_id(
-                scope, params_hash
-            )
-            if cached_id:
-                l0 = self.projection_store.get_layer(cached_id, "L0")
-                l1 = self.projection_store.get_layer(cached_id, "L1")
-                l2 = self.projection_store.get_layer(cached_id, "L2")
-                if l0 and l1 and l2:
-                    return {
-                        "status": "reused",
-                        "projection_id": cached_id,
-                        "snapshot_id": resolved_snapshot_id,
-                        "scope_kind": scope_kind,
-                        "scope_key": scope_key,
-                        "l0": l0,
-                        "l1": l1,
-                        "l2_index": l2,
-                        "warnings": [],
-                    }
-
-        doc_mentions = None
-        try:
-            doc_mentions = self.snapshot_store.get_doc_mentions(resolved_snapshot_id)
-        except Exception:
-            doc_mentions = None
-
-        build = self.projection_transformer.build(
-            scope=scope,
-            snapshot=snapshot,
-            ir_graphs=ir_graphs,
-            doc_mentions=doc_mentions or None,
-        )
-        self.projection_store.save(build, params_hash=params_hash)
-        payload = build.to_dict()
-        mirror_root = self._mirror_projection_artifacts(resolved_snapshot_id, payload)
-        payload["status"] = "built"
-        payload["mirror_path"] = mirror_root
-        return payload
 
     def get_projection_layer(self, projection_id: str, layer: str) -> dict[str, Any]:
-        if not self.projection_store.enabled:
-            raise RuntimeError(
-                "projection store is not configured (set projection.postgres_dsn)"
-            )
-        layer_payload = self.projection_store.get_layer(projection_id, layer)
-        if not layer_payload:
-            raise RuntimeError(f"projection layer not found: {projection_id}:{layer}")
-        build = self.projection_store.get_build(projection_id)
-        return {
-            "projection_id": projection_id,
-            "layer": layer.upper(),
-            "node": layer_payload,
-            "build": build,
-        }
+        return self.projection_service.get_projection_layer(projection_id, layer)
 
     def get_projection_chunk(self, projection_id: str, chunk_id: str) -> dict[str, Any]:
-        if not self.projection_store.enabled:
-            raise RuntimeError(
-                "projection store is not configured (set projection.postgres_dsn)"
-            )
-        chunk_payload = self.projection_store.get_chunk(projection_id, chunk_id)
-        if not chunk_payload:
-            raise RuntimeError(
-                f"projection chunk not found: {projection_id}:{chunk_id}"
-            )
-        build = self.projection_store.get_build(projection_id)
-        return {
-            "projection_id": projection_id,
-            "chunk_id": chunk_id,
-            "chunk": chunk_payload,
-            "build": build,
-        }
+        return self.projection_service.get_projection_chunk(projection_id, chunk_id)
 
     def get_session_prefix(self, snapshot_id: str) -> dict[str, Any]:
-        """Return L0+L1 projection data for system prompt injection.
-
-        Finds the most recent snapshot-scoped projection for the given
-        snapshot_id and returns L0 (architectural overview) + L1 (navigation
-        structure) as a compact combined response.
-
-        Consumption pattern: agents call this at session start and inject
-        the returned JSON into their system prompt, gaining architectural
-        awareness without any queries.
-        """
-        if not self.projection_store.enabled:
-            raise RuntimeError(
-                "projection store is not configured (set projection.postgres_dsn)"
-            )
-
-        # Look for any ready snapshot-scoped projection for this snapshot.
-        with self.projection_store._connect() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                    SELECT projection_id
-                    FROM projection_builds
-                    WHERE snapshot_id=%s
-                      AND scope_kind='snapshot'
-                      AND status='ready'
-                    ORDER BY updated_at DESC
-                    LIMIT 1
-                    """,
-                (snapshot_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                return {
-                    "snapshot_id": snapshot_id,
-                    "l0": None,
-                    "l1": None,
-                    "error": f"no snapshot-scoped projection found for {snapshot_id}",
-                }
-            projection_id = row[0]
-
-        l0 = self.projection_store.get_layer(projection_id, "L0")
-        l1 = self.projection_store.get_layer(projection_id, "L1")
-        if not l0 and not l1:
-            return {
-                "snapshot_id": snapshot_id,
-                "projection_id": projection_id,
-                "l0": None,
-                "l1": None,
-                "error": f"projection {projection_id} has no L0 or L1 layers",
-            }
-
-        return {
-            "snapshot_id": snapshot_id,
-            "projection_id": projection_id,
-            "l0": l0,
-            "l1": l1,
-        }
+        """Return L0+L1 projection data for system prompt injection."""
+        return self.projection_service.get_session_prefix(snapshot_id)
 
     def query_snapshot(
         self,
@@ -1686,40 +717,15 @@ class FastCode:
         session_id: str | None = None,
         enable_multi_turn: bool | None = None,
     ) -> dict[str, Any]:
-        if not snapshot_id:
-            if not repo_name or not ref_name:
-                raise RuntimeError(
-                    "query_snapshot requires snapshot_id or repo_name+ref_name"
-                )
-            manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
-            if not manifest:
-                raise RuntimeError(f"manifest not found for {repo_name}:{ref_name}")
-            snapshot_id = str(manifest["snapshot_id"])
-
-        snapshot_record = self.snapshot_store.get_snapshot_record(snapshot_id)
-        if not snapshot_record:
-            raise RuntimeError(f"snapshot not found: {snapshot_id}")
-
-        if not self._load_artifacts_by_key(snapshot_record["artifact_key"]):
-            raise RuntimeError(f"failed to load artifacts for snapshot: {snapshot_id}")
-        if not self.snapshot_symbol_index.has_snapshot(snapshot_id):
-            loaded_snapshot = self.snapshot_store.load_snapshot(snapshot_id)
-            if loaded_snapshot:
-                self.snapshot_symbol_index.register_snapshot(loaded_snapshot)
-
-        merged_filters = dict(filters or {})
-        merged_filters["snapshot_id"] = snapshot_id
-
-        result = self.query(
+        return self.query_handler.query_snapshot(
             question=question,
-            filters=merged_filters,
-            repo_filter=None,
+            repo_name=repo_name,
+            ref_name=ref_name,
+            snapshot_id=snapshot_id,
+            filters=filters,
             session_id=session_id,
             enable_multi_turn=enable_multi_turn,
         )
-        result["snapshot_id"] = snapshot_id
-        result["artifact_key"] = snapshot_record["artifact_key"]
-        return result
 
     def query(
         self,
@@ -1734,180 +740,15 @@ class FastCode:
         ]
         | None = None,
     ) -> dict[str, Any]:
-        """
-        Query the repository (or multiple repositories)
-
-        Args:
-            question: User question
-            filters: Optional filters for retrieval
-            repo_filter: Optional list of repository names to search in
-            session_id: Optional session ID for multi-turn dialogue
-            enable_multi_turn: Override config setting for multi-turn mode
-            prompt_builder: Optional callable to build a custom LLM prompt using
-                (question, prepared_context, query_info, dialogue_history)
-
-        Returns:
-            Dictionary with answer and metadata (including summary if multi-turn)
-        """
-        if not self.repo_indexed:
-            raise RuntimeError("Repository not indexed. Call index_repository() first.")
-
-        # Determine if multi-turn mode is enabled
-        if enable_multi_turn is None:
-            enable_multi_turn = self.config.get("generation", {}).get(
-                "enable_multi_turn", False
-            )
-
-        if repo_filter:
-            self.logger.info(
-                f"Processing query: {question} in repositories: {repo_filter}"
-            )
-        else:
-            self.logger.info(f"Processing query: {question}")
-
-        # Get dialogue history if in multi-turn mode
-        dialogue_history = []
-        if enable_multi_turn and session_id:
-            # Get recent summaries from cache (last 10 turns for iterative agent)
-            history_summary_rounds = self.config.get("query", {}).get(
-                "history_summary_rounds", 10
-            )
-            dialogue_history = self.cache_manager.get_recent_summaries(
-                session_id, history_summary_rounds
-            )
-
-            if dialogue_history:
-                self.logger.info(
-                    f"Retrieved {len(dialogue_history)} previous dialogue summaries"
-                )
-
-        # NOTE: Query result caching is disabled to ensure full iterative_agent flow
-        # Original cache logic (disabled):
-        # use_cache = (not enable_multi_turn or not session_id) and self._should_use_cache()
-        # cached_result = None
-        # cache_key = None
-        # repo_hash = None
-        # if use_cache:
-        #     repo_hash = self._get_repo_hash()
-        #     cache_key = f"{question}_{','.join(sorted(repo_filter)) if repo_filter else 'all'}"
-        #     cached_result = self.cache_manager.get_query_result(cache_key, repo_hash)
-        #     if cached_result:
-        #         self.logger.info("Returning cached result")
-        # result = cached_result
-
-        result = None  # Always process through full flow
-        processed_query = None
-        retrieved: list[dict[str, Any]] = []
-
-        try:
-            if result is None:
-                # Determine if iterative enhancement should be used
-                use_iterative_enhancement = (
-                    self.retriever.enable_agency_mode
-                    and self.retriever.iterative_agent is not None
-                )
-
-                # Process query: skip query_processor entirely in iterative mode
-                if use_iterative_enhancement:
-                    # Iterative agent will handle all query enhancement
-                    # Create minimal ProcessedQuery object
-                    from .query_processor import ProcessedQuery
-
-                    processed_query = ProcessedQuery(
-                        original=question,
-                        expanded=question,
-                        keywords=[],
-                        intent="unknown",
-                        subqueries=[],
-                        filters=filters or {},
-                        rewritten_query=None,
-                        pseudocode_hints=None,
-                        search_strategy=None,
-                    )
-                    self.logger.info(
-                        "Iterative mode: skipping query_processor, all enhancements handled by iterative_agent"
-                    )
-                else:
-                    # Standard mode: use full query processing
-                    processed_query = self.query_processor.process(
-                        question, dialogue_history, use_llm_enhancement=True
-                    )
-                    self.logger.info(f"Query intent: {processed_query.intent}")
-                    self.logger.info(f"Keywords: {processed_query.keywords}")
-
-                # Retrieve relevant code (with repository filter and agency mode)
-                # Pass ProcessedQuery object for enhanced retrieval
-                # Pass dialogue_history for multi-turn context in iterative mode
-                retrieved = self.retriever.retrieve(
-                    processed_query,  # Pass full ProcessedQuery object for multi-repo support
-                    filters=filters,
-                    repo_filter=repo_filter,
-                    use_agency_mode=use_agency_mode,
-                    dialogue_history=dialogue_history if enable_multi_turn else None,
-                )
-
-                # Generate answer (with dialogue history for multi-turn)
-                result = self.answer_generator.generate(
-                    question,
-                    retrieved,
-                    query_info=processed_query.to_dict(),
-                    dialogue_history=self._get_full_dialogue_history(
-                        session_id, enable_multi_turn or False
-                    ),
-                    prompt_builder=prompt_builder,
-                )
-
-            # Add repository information to result
-            if repo_filter:
-                result["searched_repositories"] = repo_filter
-
-            # Persist dialogue for any session (even single-turn) so users keep history
-            if session_id:
-                turn_number = self._get_next_turn_number(session_id)
-                summary = result.get("summary", "")
-                # Use formatted sources from result instead of raw retrieved elements
-                # This ensures proper display format when loading history
-                sources = result.get("sources", [])
-                # Ensure sources are fully JSON-serializable
-                serializable_sources = safe_jsonable(sources)
-
-                # Ensure metadata is JSON-serializable
-                metadata = {
-                    "intent": getattr(processed_query, "intent", None),
-                    "keywords": getattr(processed_query, "keywords", None),
-                    "repo_filter": repo_filter,
-                    "multi_turn": enable_multi_turn,
-                }
-                serializable_metadata = safe_jsonable(metadata)
-
-                self.cache_manager.save_dialogue_turn(
-                    session_id=session_id,
-                    turn_number=turn_number,
-                    query=question,
-                    answer=result.get("answer", ""),
-                    summary=summary,
-                    retrieved_elements=serializable_sources,
-                    metadata=serializable_metadata,
-                )
-
-                self.logger.info(
-                    f"Saved dialogue turn {turn_number} for session {session_id}"
-                )
-
-            # Cache result for stateless flows (including single-turn sessions)
-            # NOTE: Query result caching is disabled to ensure full iterative_agent flow
-            # if use_cache and result is not None and cache_key and repo_hash:
-            #     self.cache_manager.set_query_result(cache_key, repo_hash, result)
-
-            return result
-
-        except Exception as e:
-            self.logger.error(f"Query failed: {e}")
-            return {
-                "answer": f"Error processing query: {e!s}",
-                "query": question,
-                "error": str(e),
-            }
+        return self.query_handler.query(
+            question=question,
+            filters=filters,
+            repo_filter=repo_filter,
+            session_id=session_id,
+            enable_multi_turn=enable_multi_turn,
+            use_agency_mode=use_agency_mode,
+            prompt_builder=prompt_builder,
+        )
 
     def query_stream(
         self,
@@ -1922,188 +763,15 @@ class FastCode:
         ]
         | None = None,
     ) -> Generator[tuple[str | None, dict[str, Any] | None], Any, None]:
-        """
-        Query the repository with streaming response (yields answer chunks)
-
-        Args:
-            question: User question
-            filters: Optional filters for retrieval
-            repo_filter: Optional list of repository names to search in
-            session_id: Optional session ID for multi-turn dialogue
-            enable_multi_turn: Override config setting for multi-turn mode
-            use_agency_mode: Override config setting for agency mode
-            prompt_builder: Optional callable to build custom LLM prompt
-
-        Yields:
-            Tuples of (chunk_text or None, metadata_dict or None)
-            - First yield: (None, {"status": "retrieving"})
-            - After retrieval: (None, {"status": "generating", "sources": [...], ...})
-            - During generation: (text_chunk, None)
-            - Final yield: (None, {"status": "complete", "summary": ..., ...})
-        """
-        if not self.repo_indexed:
-            yield (
-                None,
-                {"error": "Repository not indexed. Call index_repository() first."},
-            )
-            return
-
-        # Determine if multi-turn mode is enabled
-        if enable_multi_turn is None:
-            enable_multi_turn = self.config.get("generation", {}).get(
-                "enable_multi_turn", False
-            )
-
-        if repo_filter:
-            self.logger.info(
-                f"Processing streaming query: {question} in repositories: {repo_filter}"
-            )
-        else:
-            self.logger.info(f"Processing streaming query: {question}")
-
-        # Get dialogue history if in multi-turn mode
-        dialogue_history = []
-        if enable_multi_turn and session_id:
-            history_summary_rounds = self.config.get("query", {}).get(
-                "history_summary_rounds", 10
-            )
-            dialogue_history = self.cache_manager.get_recent_summaries(
-                session_id, history_summary_rounds
-            )
-            if dialogue_history:
-                self.logger.info(
-                    f"Retrieved {len(dialogue_history)} previous dialogue summaries"
-                )
-
-        try:
-            # Notify start of retrieval
-            yield None, {"status": "retrieving", "query": question}
-
-            # Retrieval phase (same as query method)
-            use_iterative_enhancement = (
-                self.retriever.enable_agency_mode
-                and self.retriever.iterative_agent is not None
-            )
-
-            if use_iterative_enhancement:
-                from .query_processor import ProcessedQuery
-
-                processed_query = ProcessedQuery(
-                    original=question,
-                    expanded=question,
-                    keywords=[],
-                    intent="unknown",
-                    subqueries=[],
-                    filters=filters or {},
-                    rewritten_query=None,
-                    pseudocode_hints=None,
-                    search_strategy=None,
-                )
-                self.logger.info(
-                    "Iterative mode: skipping query_processor, all enhancements handled by iterative_agent"
-                )
-            else:
-                processed_query = self.query_processor.process(
-                    question, dialogue_history, use_llm_enhancement=True
-                )
-                self.logger.info(f"Query intent: {processed_query.intent}")
-                self.logger.info(f"Keywords: {processed_query.keywords}")
-
-            # Retrieve relevant code
-            retrieved = self.retriever.retrieve(
-                processed_query,
-                filters=filters,
-                repo_filter=repo_filter,
-                use_agency_mode=use_agency_mode,
-                dialogue_history=dialogue_history if enable_multi_turn else None,
-            )
-
-            # Notify start of generation
-            yield None, {"status": "generating", "retrieved_count": len(retrieved)}
-
-            # Stream answer generation
-            full_answer_parts: list[str] = []
-            answer_metadata = {}
-
-            for chunk, metadata in self.answer_generator.generate_stream(
-                question,
-                retrieved,
-                query_info=processed_query.to_dict(),
-                dialogue_history=self._get_full_dialogue_history(
-                    session_id, enable_multi_turn or False
-                ),
-                prompt_builder=prompt_builder,
-            ):
-                if chunk:
-                    full_answer_parts.append(chunk)
-                    yield chunk, None
-                if metadata:
-                    answer_metadata.update(metadata)
-
-            # Build complete result
-            full_answer = "".join(full_answer_parts)
-            summary = answer_metadata.get("summary")
-
-            result = {
-                "status": "complete",
-                "answer": full_answer,
-                "query": question,
-                "context_elements": len(retrieved),
-                "sources": answer_metadata.get(
-                    "sources", self._extract_sources_from_elements(retrieved)
-                ),
-            }
-
-            if summary:
-                result["summary"] = summary
-
-            if repo_filter:
-                result["searched_repositories"] = repo_filter
-
-            # Save dialogue turn if session_id provided
-            if session_id:
-                turn_number = self._get_next_turn_number(session_id)
-                serializable_sources = safe_jsonable(result.get("sources", []))
-                serializable_metadata = safe_jsonable(
-                    {
-                        "intent": getattr(processed_query, "intent", None),
-                        "keywords": getattr(processed_query, "keywords", None),
-                        "repo_filter": repo_filter,
-                        "multi_turn": enable_multi_turn,
-                    }
-                )
-
-                self.cache_manager.save_dialogue_turn(
-                    session_id=session_id,
-                    turn_number=turn_number,
-                    query=question,
-                    answer=full_answer,
-                    summary=summary or "",
-                    retrieved_elements=serializable_sources,
-                    metadata=serializable_metadata,
-                )
-
-                self.logger.info(
-                    f"Saved dialogue turn {turn_number} for session {session_id}"
-                )
-
-            # Final yield with complete result
-            yield None, result
-
-        except Exception as e:
-            self.logger.error(f"Streaming query failed: {e}")
-            import traceback
-
-            error_trace = traceback.format_exc()
-            self.logger.error(f"Full error traceback:\n{error_trace}")
-            yield (
-                None,
-                {
-                    "status": "error",
-                    "error": str(e),
-                    "query": question,
-                },
-            )
+        yield from self.query_handler.query_stream(
+            question=question,
+            filters=filters,
+            repo_filter=repo_filter,
+            session_id=session_id,
+            enable_multi_turn=enable_multi_turn,
+            use_agency_mode=use_agency_mode,
+            prompt_builder=prompt_builder,
+        )
 
     def _extract_sources_from_elements(
         self, elements: list[dict[str, Any]]
@@ -3184,40 +1852,12 @@ class FastCode:
     def _get_full_dialogue_history(
         self, session_id: str | None, enable_multi_turn: bool = False
     ) -> list[dict[str, Any]] | None:
-        """
-        Get full dialogue history for answer generation
-
-        Args:
-            session_id: Session ID
-            enable_multi_turn: Whether multi-turn is enabled
-
-        Returns:
-            List of dialogue turns or None
-        """
-        if not enable_multi_turn or not session_id:
-            return None
-
-        context_rounds = self.config.get("generation", {}).get("context_rounds", 10)
-        history = self.cache_manager.get_dialogue_history(
-            session_id, max_turns=context_rounds
+        return self.query_handler._get_full_dialogue_history(
+            session_id, enable_multi_turn
         )
 
-        return history if history else None
-
     def _get_next_turn_number(self, session_id: str) -> int:
-        """
-        Get the next turn number for a session
-
-        Args:
-            session_id: Session ID
-
-        Returns:
-            Next turn number (1-indexed)
-        """
-        session_index = self.cache_manager._get_session_index(session_id)
-        if session_index:
-            return session_index.get("total_turns", 0) + 1
-        return 1
+        return self.query_handler._get_next_turn_number(session_id)
 
     def get_session_history(self, session_id: str) -> list[dict[str, Any]]:
         """

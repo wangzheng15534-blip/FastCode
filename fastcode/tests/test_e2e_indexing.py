@@ -37,6 +37,8 @@ from fastcode.main import FastCode
 from fastcode.manifest_store import ManifestStore
 from fastcode.parser import CodeParser
 from fastcode.pg_retrieval import PgRetrievalStore
+from fastcode.pipeline import IndexPipeline
+from fastcode.semantic_resolvers import build_default_semantic_resolver_registry
 from fastcode.snapshot_store import SnapshotStore
 from fastcode.snapshot_symbol_index import SnapshotSymbolIndex
 from fastcode.terminus_publisher import TerminusPublisher
@@ -352,6 +354,31 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
     fc.multi_repo_mode = False
     fc.loaded_repositories = {}
     fc._redo_worker = None
+
+    # Pipeline.
+    fc.semantic_resolver_registry = build_default_semantic_resolver_registry()
+    fc.pipeline = IndexPipeline(
+        config=fc.config,
+        logger=fc.logger,
+        loader=fc.loader,
+        snapshot_store=fc.snapshot_store,
+        manifest_store=fc.manifest_store,
+        index_run_store=fc.index_run_store,
+        snapshot_symbol_index=fc.snapshot_symbol_index,
+        vector_store=fc.vector_store,
+        embedder=fc.embedder,
+        indexer=fc.indexer,
+        retriever=fc.retriever,
+        graph_builder=fc.graph_builder,
+        ir_graph_builder=fc.ir_graph_builder,
+        pg_retrieval_store=fc.pg_retrieval_store,
+        terminus_publisher=fc.terminus_publisher,
+        doc_ingester=fc.doc_ingester,
+        semantic_resolver_registry=fc.semantic_resolver_registry,
+        set_repo_indexed=lambda v: setattr(fc, "repo_indexed", v),
+        set_repo_loaded=lambda v: setattr(fc, "repo_loaded", v),
+        set_repo_info=lambda v: setattr(fc, "repo_info", v),
+    )
 
     return fc
 

@@ -8,10 +8,18 @@ from pathlib import Path
 from typing import Any
 
 USE_RE = re.compile(r"^\s*use\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE | re.IGNORECASE)
-SUB_RE = re.compile(r"^\s*(?:subroutine|function)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE | re.IGNORECASE)
-MODULE_RE = re.compile(r"^\s*module\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE | re.IGNORECASE)
+SUB_RE = re.compile(
+    r"^\s*(?:subroutine|function)\s+([A-Za-z_][A-Za-z0-9_]*)",
+    re.MULTILINE | re.IGNORECASE,
+)
+MODULE_RE = re.compile(
+    r"^\s*module\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE | re.IGNORECASE
+)
 CALL_RE = re.compile(r"\bcall\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", re.IGNORECASE)
-TYPE_RE = re.compile(r"type\s*,\s*extends\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*::\s*([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
+TYPE_RE = re.compile(
+    r"type\s*,\s*extends\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*::\s*([A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
 
 
 def rel(path: Path, root: Path) -> str:
@@ -26,7 +34,9 @@ def line_col(text: str, index: int) -> tuple[int, int]:
 
 def main() -> int:
     root = Path.cwd()
-    files = [Path(arg) if Path(arg).is_absolute() else root / arg for arg in sys.argv[1:]]
+    files = [
+        Path(arg) if Path(arg).is_absolute() else root / arg for arg in sys.argv[1:]
+    ]
     declarations: dict[str, list[dict[str, Any]]] = {}
     imports: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
@@ -39,11 +49,15 @@ def main() -> int:
             for match in regex.finditer(text):
                 name = match.group(1)
                 line, col = line_col(text, match.start(1))
-                declarations.setdefault(name.lower(), []).append({"path": rel_path, "name": name, "line": line, "col": col})
+                declarations.setdefault(name.lower(), []).append(
+                    {"path": rel_path, "name": name, "line": line, "col": col}
+                )
         for match in TYPE_RE.finditer(text):
             child = match.group(2)
             line, col = line_col(text, match.start(2))
-            declarations.setdefault(child.lower(), []).append({"path": rel_path, "name": child, "line": line, "col": col})
+            declarations.setdefault(child.lower(), []).append(
+                {"path": rel_path, "name": child, "line": line, "col": col}
+            )
 
     for file_path in files:
         text = file_path.read_text(encoding="utf-8")
@@ -103,7 +117,12 @@ def main() -> int:
         "imports": imports,
         "calls": calls,
         "inherits": inherits,
-        "stats": {"files": len(files), "imports": len(imports), "calls": len(calls), "inherits": len(inherits)},
+        "stats": {
+            "files": len(files),
+            "imports": len(imports),
+            "calls": len(calls),
+            "inherits": len(inherits),
+        },
     }
     sys.stdout.write(json.dumps(payload))
     return 0

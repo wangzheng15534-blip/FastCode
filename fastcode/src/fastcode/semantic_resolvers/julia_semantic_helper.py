@@ -7,8 +7,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-IMPORT_RE = re.compile(r"^\s*(?:using|import)\s+([A-Za-z_][A-Za-z0-9_\.]*)", re.MULTILINE)
-FUNC_RE = re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(|\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^\)]*\)\s*=", re.MULTILINE)
+IMPORT_RE = re.compile(
+    r"^\s*(?:using|import)\s+([A-Za-z_][A-Za-z0-9_\.]*)", re.MULTILINE
+)
+FUNC_RE = re.compile(
+    r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(|\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^\)]*\)\s*=",
+    re.MULTILINE,
+)
 CALL_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 
@@ -24,7 +29,9 @@ def line_col(text: str, index: int) -> tuple[int, int]:
 
 def main() -> int:
     root = Path.cwd()
-    files = [Path(arg) if Path(arg).is_absolute() else root / arg for arg in sys.argv[1:]]
+    files = [
+        Path(arg) if Path(arg).is_absolute() else root / arg for arg in sys.argv[1:]
+    ]
     declarations: dict[str, list[dict[str, Any]]] = {}
     imports: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
@@ -36,8 +43,12 @@ def main() -> int:
             name = match.group(1) or match.group(2)
             if not name:
                 continue
-            line, col = line_col(text, match.start(1) if match.group(1) else match.start(2))
-            declarations.setdefault(name, []).append({"path": rel_path, "name": name, "line": line, "col": col})
+            line, col = line_col(
+                text, match.start(1) if match.group(1) else match.start(2)
+            )
+            declarations.setdefault(name, []).append(
+                {"path": rel_path, "name": name, "line": line, "col": col}
+            )
 
     for file_path in files:
         text = file_path.read_text(encoding="utf-8")
@@ -78,7 +89,11 @@ def main() -> int:
                 }
             )
 
-    payload = {"imports": imports, "calls": calls, "stats": {"files": len(files), "imports": len(imports), "calls": len(calls)}}
+    payload = {
+        "imports": imports,
+        "calls": calls,
+        "stats": {"files": len(files), "imports": len(imports), "calls": len(calls)},
+    }
     sys.stdout.write(json.dumps(payload))
     return 0
 

@@ -24,7 +24,9 @@ def line_col(text: str, index: int) -> tuple[int, int]:
 
 def main() -> int:
     root = Path.cwd()
-    files = [Path(arg) if Path(arg).is_absolute() else root / arg for arg in sys.argv[1:]]
+    files = [
+        Path(arg) if Path(arg).is_absolute() else root / arg for arg in sys.argv[1:]
+    ]
     declarations: dict[str, list[dict[str, Any]]] = {}
     imports: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
@@ -36,7 +38,9 @@ def main() -> int:
         for match in DECL_RE.finditer(text):
             name = match.group(1)
             line, col = line_col(text, match.start(1))
-            declarations.setdefault(name, []).append({"path": rel_path, "name": name, "line": line, "col": col})
+            declarations.setdefault(name, []).append(
+                {"path": rel_path, "name": name, "line": line, "col": col}
+            )
 
     for file_path in files:
         text = file_path.read_text(encoding="utf-8")
@@ -48,7 +52,9 @@ def main() -> int:
             imports.append(
                 {
                     "source_path": rel_path,
-                    "target_path": rel(target_path, root) if target_path in file_set else "",
+                    "target_path": rel(target_path, root)
+                    if target_path in file_set
+                    else "",
                     "module": module,
                     "source_line": line,
                     "source_col": col,
@@ -76,7 +82,11 @@ def main() -> int:
                 }
             )
 
-    payload = {"imports": imports, "calls": calls, "stats": {"files": len(files), "imports": len(imports), "calls": len(calls)}}
+    payload = {
+        "imports": imports,
+        "calls": calls,
+        "stats": {"files": len(files), "imports": len(imports), "calls": len(calls)},
+    }
     sys.stdout.write(json.dumps(payload))
     return 0
 

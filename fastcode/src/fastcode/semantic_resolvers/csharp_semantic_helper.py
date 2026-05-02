@@ -28,7 +28,9 @@ def line_col(text: str, index: int) -> tuple[int, int]:
 
 def main() -> int:
     root = Path.cwd()
-    files = [Path(arg) if Path(arg).is_absolute() else root / arg for arg in sys.argv[1:]]
+    files = [
+        Path(arg) if Path(arg).is_absolute() else root / arg for arg in sys.argv[1:]
+    ]
     declarations: dict[str, list[dict[str, Any]]] = {}
     imports: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
@@ -40,11 +42,15 @@ def main() -> int:
         for match in METHOD_RE.finditer(text):
             name = match.group(1)
             line, col = line_col(text, match.start(1))
-            declarations.setdefault(name, []).append({"path": rel_path, "name": name, "line": line, "col": col})
+            declarations.setdefault(name, []).append(
+                {"path": rel_path, "name": name, "line": line, "col": col}
+            )
         for match in CLASS_RE.finditer(text):
             name = match.group(1)
             line, col = line_col(text, match.start(1))
-            declarations.setdefault(name, []).append({"path": rel_path, "name": name, "line": line, "col": col})
+            declarations.setdefault(name, []).append(
+                {"path": rel_path, "name": name, "line": line, "col": col}
+            )
 
     for file_path in files:
         text = file_path.read_text(encoding="utf-8")
@@ -67,7 +73,11 @@ def main() -> int:
             name = match.group(1)
             line, _ = line_col(text, match.start(1))
             raw_bases = match.group(2) or ""
-            for base_name in [part.strip().split("<", 1)[0] for part in raw_bases.split(",") if part.strip()]:
+            for base_name in [
+                part.strip().split("<", 1)[0]
+                for part in raw_bases.split(",")
+                if part.strip()
+            ]:
                 targets = declarations.get(base_name, [])
                 if not targets:
                     continue
@@ -85,7 +95,18 @@ def main() -> int:
                 )
         for match in CALL_RE.finditer(text):
             name = match.group(1)
-            if name in {"if", "for", "while", "switch", "catch", "nameof", "typeof", "new", "base", "this"}:
+            if name in {
+                "if",
+                "for",
+                "while",
+                "switch",
+                "catch",
+                "nameof",
+                "typeof",
+                "new",
+                "base",
+                "this",
+            }:
                 continue
             target = declarations.get(name, [])
             if not target:
@@ -109,7 +130,12 @@ def main() -> int:
         "imports": imports,
         "calls": calls,
         "inherits": inherits,
-        "stats": {"files": len(files), "imports": len(imports), "calls": len(calls), "inherits": len(inherits)},
+        "stats": {
+            "files": len(files),
+            "imports": len(imports),
+            "calls": len(calls),
+            "inherits": len(inherits),
+        },
     }
     sys.stdout.write(json.dumps(payload))
     return 0

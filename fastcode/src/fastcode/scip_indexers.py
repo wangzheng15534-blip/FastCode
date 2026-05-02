@@ -25,6 +25,7 @@ class SCIPIndexerProfile:
     extra_args: tuple[str, ...]
     experimental: bool = False
 
+
 SUPPORTED_LANGUAGES: dict[str, tuple[str, list[str]]] = {
     "java": ("scip-java", ["index", "--output"]),
     "kotlin": ("scip-java", ["index", "--output"]),

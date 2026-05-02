@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import posixpath
 import re
 import shutil
@@ -12,22 +11,11 @@ from typing import Any
 
 from ..indexer import CodeElement
 from ..semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
+from ._utils import _hash_id, _normalize_path
 from .base import ResolutionPatch, SemanticResolver, ToolDiagnostic
 
 HEADER_EXTENSIONS = (".h", ".hh", ".hpp", ".hxx", ".inl")
 SOURCE_EXTENSIONS = (".c", ".cc", ".cpp", ".cxx")
-
-
-def _hash_id(prefix: str, payload: str) -> str:
-    digest = hashlib.blake2b(payload.encode("utf-8"), digest_size=12).hexdigest()
-    return f"{prefix}:{digest}"
-
-
-def _normalize_path(path: str) -> str:
-    normalized = path.replace("\\", "/")
-    if normalized.startswith("./"):
-        normalized = normalized[2:]
-    return posixpath.normpath(normalized)
 
 
 def _normalize_base_name(value: str) -> str:

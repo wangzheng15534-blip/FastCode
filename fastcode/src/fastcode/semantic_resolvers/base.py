@@ -41,6 +41,7 @@ def _empty_diagnostics() -> list[ToolDiagnostic]:
 def _empty_stats() -> dict[str, Any]:
     return {}
 
+
 # ---------------------------------------------------------------------------
 # Semantic capability constants
 # ---------------------------------------------------------------------------

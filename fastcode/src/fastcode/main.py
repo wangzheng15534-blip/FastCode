@@ -238,6 +238,7 @@ class FastCode:
             snapshot_symbol_index=self.snapshot_symbol_index,
             is_repo_indexed=lambda: self.repo_indexed,
             load_artifacts_by_key=self.pipeline._load_artifacts_by_key,
+            semantic_escalation_cb=self._escalate_query_semantics,
         )
 
         # Multi-repository state
@@ -742,7 +743,7 @@ class FastCode:
             [str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str
         ]
         | None = None,
-    ) -> dict[str, Any]:
+        ) -> dict[str, Any]:
         return self.query_handler.query(
             question=question,
             filters=filters,
@@ -752,6 +753,70 @@ class FastCode:
             use_agency_mode=use_agency_mode,
             prompt_builder=prompt_builder,
         )
+
+    def _escalate_query_semantics(
+        self,
+        *,
+        snapshot_id: str,
+        retrieved: list[dict[str, Any]],
+        processed_query: Any,
+        budget: str,
+    ) -> dict[str, Any]:
+        snapshot = self.snapshot_store.load_snapshot(snapshot_id)
+        if snapshot is None:
+            return {
+                "status": "skipped",
+                "reason": "snapshot_not_found",
+                "budget": budget,
+                "rerun_retrieval": False,
+            }
+
+        target_paths: set[str] = set()
+        for item in retrieved[:10]:
+            element = item.get("element") or {}
+            path = element.get("relative_path") or element.get("file_path")
+            if isinstance(path, str) and path:
+                target_paths.add(path)
+
+        query_filters = getattr(processed_query, "filters", {}) or {}
+        file_path_filter = query_filters.get("file_path")
+        if isinstance(file_path_filter, str) and file_path_filter:
+            target_paths.add(file_path_filter)
+
+        if not target_paths:
+            return {
+                "status": "skipped",
+                "reason": "no_target_paths",
+                "budget": budget,
+                "rerun_retrieval": False,
+            }
+
+        elements = list(self.graph_builder.element_by_id.values())
+        warnings: list[str] = []
+        upgraded_snapshot = self._apply_semantic_resolvers(
+            snapshot=snapshot,
+            elements=elements,
+            legacy_graph_builder=self.graph_builder,
+            target_paths=target_paths,
+            warnings=warnings,
+            budget=budget,
+        )
+        self.snapshot_symbol_index.register_snapshot(upgraded_snapshot)
+        upgraded_ir_graphs = self.ir_graph_builder.build_graphs(upgraded_snapshot)
+        self.retriever.set_ir_graphs(upgraded_ir_graphs, snapshot_id=snapshot_id)
+
+        semantic_runs = list(
+            (upgraded_snapshot.metadata or {}).get("semantic_resolver_runs", [])
+        )
+        return {
+            "status": "degraded" if warnings else "applied",
+            "budget": budget,
+            "target_path_count": len(target_paths),
+            "target_paths": sorted(target_paths),
+            "warnings": warnings,
+            "resolver_runs": len(semantic_runs),
+            "rerun_retrieval": True,
+        }
 
     def query_stream(
         self,

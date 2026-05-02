@@ -35,11 +35,23 @@ type CallFact struct {
 	TargetCol    int    `json:"target_col"`
 }
 
+type InheritFact struct {
+	SourcePath string `json:"source_path"`
+	SourceName string `json:"source_name"`
+	SourceLine int    `json:"source_line"`
+	SourceCol  int    `json:"source_col"`
+	TargetPath string `json:"target_path"`
+	TargetName string `json:"target_name"`
+	TargetLine int    `json:"target_line"`
+	TargetCol  int    `json:"target_col"`
+}
+
 type Output struct {
-	Imports []ImportFact       `json:"imports"`
-	Calls   []CallFact         `json:"calls"`
-	Stats   map[string]int     `json:"stats"`
-	Errors  []string           `json:"errors,omitempty"`
+	Imports  []ImportFact   `json:"imports"`
+	Calls    []CallFact     `json:"calls"`
+	Inherits []InheritFact  `json:"inherits"`
+	Stats    map[string]int `json:"stats"`
+	Errors   []string       `json:"errors,omitempty"`
 }
 
 func rel(path string) string {
@@ -119,6 +131,93 @@ func main() {
 			})
 		}
 		ast.Inspect(file, func(node ast.Node) bool {
+			if gen, ok := node.(*ast.GenDecl); ok && gen.Tok == token.TYPE {
+				for _, spec := range gen.Specs {
+					typeSpec, ok := spec.(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					sourcePos := fset.Position(typeSpec.Name.Pos())
+					switch typed := typeSpec.Type.(type) {
+					case *ast.StructType:
+						for _, field := range typed.Fields.List {
+							if len(field.Names) != 0 {
+								continue
+							}
+							targetName := exprName(field.Type)
+							if targetName == "" {
+								continue
+							}
+							var obj types.Object
+							switch expr := field.Type.(type) {
+							case *ast.Ident:
+								obj = info.Uses[expr]
+							case *ast.SelectorExpr:
+								obj = info.Uses[expr.Sel]
+							}
+							if obj == nil {
+								continue
+							}
+							objPos := fset.Position(obj.Pos())
+							if objPos.Filename == "" {
+								continue
+							}
+							targetAbs, err := filepath.Abs(objPos.Filename)
+							if err != nil || !fileSet[targetAbs] {
+								continue
+							}
+							out.Inherits = append(out.Inherits, InheritFact{
+								SourcePath: sourcePath,
+								SourceName: typeSpec.Name.Name,
+								SourceLine: sourcePos.Line,
+								SourceCol:  sourcePos.Column - 1,
+								TargetPath: rel(targetAbs),
+								TargetName: obj.Name(),
+								TargetLine: objPos.Line,
+								TargetCol:  objPos.Column - 1,
+							})
+						}
+					case *ast.InterfaceType:
+						for _, field := range typed.Methods.List {
+							if len(field.Names) != 0 {
+								continue
+							}
+							targetName := exprName(field.Type)
+							if targetName == "" {
+								continue
+							}
+							var obj types.Object
+							switch expr := field.Type.(type) {
+							case *ast.Ident:
+								obj = info.Uses[expr]
+							case *ast.SelectorExpr:
+								obj = info.Uses[expr.Sel]
+							}
+							if obj == nil {
+								continue
+							}
+							objPos := fset.Position(obj.Pos())
+							if objPos.Filename == "" {
+								continue
+							}
+							targetAbs, err := filepath.Abs(objPos.Filename)
+							if err != nil || !fileSet[targetAbs] {
+								continue
+							}
+							out.Inherits = append(out.Inherits, InheritFact{
+								SourcePath: sourcePath,
+								SourceName: typeSpec.Name.Name,
+								SourceLine: sourcePos.Line,
+								SourceCol:  sourcePos.Column - 1,
+								TargetPath: rel(targetAbs),
+								TargetName: obj.Name(),
+								TargetLine: objPos.Line,
+								TargetCol:  objPos.Column - 1,
+							})
+						}
+					}
+				}
+			}
 			call, ok := node.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -165,5 +264,6 @@ func main() {
 	}
 	out.Stats["imports"] = len(out.Imports)
 	out.Stats["calls"] = len(out.Calls)
+	out.Stats["inherits"] = len(out.Inherits)
 	_ = json.NewEncoder(os.Stdout).Encode(out)
 }

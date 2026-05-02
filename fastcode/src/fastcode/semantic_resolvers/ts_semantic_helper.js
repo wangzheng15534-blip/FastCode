@@ -27,7 +27,14 @@ const fileSet = new Set(files.map((file) => path.normalize(file)));
 const facts = {
   imports: [],
   calls: [],
-  stats: { files: files.length, imports: 0, calls: 0, unresolved_calls: 0 },
+  inherits: [],
+  stats: {
+    files: files.length,
+    imports: 0,
+    calls: 0,
+    inherits: 0,
+    unresolved_calls: 0,
+  },
 };
 
 function rel(fileName) {
@@ -105,6 +112,36 @@ function visit(sourceFile, node) {
     }
   }
 
+  if (
+    (ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node)) &&
+    node.name &&
+    node.heritageClauses
+  ) {
+    const sourcePos = pos(sourceFile, node.name);
+    for (const clause of node.heritageClauses) {
+      for (const heritageType of clause.types || []) {
+        const heritageSymbol = checker.getSymbolAtLocation(heritageType.expression);
+        const info = declarationInfo(heritageSymbol);
+        if (!info) continue;
+        facts.inherits.push({
+          source_path: rel(sourceFile.fileName),
+          source_name: node.name.text,
+          source_line: sourcePos.line,
+          source_col: sourcePos.col,
+          target_path: info.path,
+          target_name: info.name,
+          target_symbol: info.symbol,
+          target_line: info.line,
+          target_col: info.col,
+          relation_kind:
+            clause.token === ts.SyntaxKind.ImplementsKeyword
+              ? "implements"
+              : "extends",
+        });
+      }
+    }
+  }
+
   ts.forEachChild(node, (child) => visit(sourceFile, child));
 }
 
@@ -116,4 +153,5 @@ for (const sourceFile of program.getSourceFiles()) {
 
 facts.stats.imports = facts.imports.length;
 facts.stats.calls = facts.calls.length;
+facts.stats.inherits = facts.inherits.length;
 process.stdout.write(JSON.stringify(facts));

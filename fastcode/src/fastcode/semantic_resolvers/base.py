@@ -9,6 +9,38 @@ from typing import Any
 from ..indexer import CodeElement
 from ..semantic_ir import IRRelation, IRSnapshot, IRUnitSupport
 
+
+def _empty_tool_context() -> dict[str, Any]:
+    return {}
+
+
+def _empty_unit_metadata_updates() -> dict[str, dict[str, Any]]:
+    return {}
+
+
+def _empty_metadata_updates() -> dict[str, Any]:
+    return {}
+
+
+def _empty_supports() -> list[IRUnitSupport]:
+    return []
+
+
+def _empty_relations() -> list[IRRelation]:
+    return []
+
+
+def _empty_warnings() -> list[str]:
+    return []
+
+
+def _empty_diagnostics() -> list[ToolDiagnostic]:
+    return []
+
+
+def _empty_stats() -> dict[str, Any]:
+    return {}
+
 # ---------------------------------------------------------------------------
 # Semantic capability constants
 # ---------------------------------------------------------------------------
@@ -67,7 +99,7 @@ class SemanticResolutionRequest:
     target_paths: frozenset[str]
     budget: str = "changed_files"
     repo_root: str = ""
-    tool_context: dict[str, Any] = field(default_factory=dict)
+    tool_context: dict[str, Any] = field(default_factory=_empty_tool_context)
 
 
 # ---------------------------------------------------------------------------
@@ -135,13 +167,15 @@ class ResolutionPatch:
     create or mutate snapshots directly.
     """
 
-    unit_metadata_updates: dict[str, dict[str, Any]] = field(default_factory=dict)
-    metadata_updates: dict[str, Any] = field(default_factory=dict)
-    supports: list[IRUnitSupport] = field(default_factory=list)
-    relations: list[IRRelation] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-    diagnostics: list[ToolDiagnostic] = field(default_factory=list)
-    stats: dict[str, Any] = field(default_factory=dict)
+    unit_metadata_updates: dict[str, dict[str, Any]] = field(
+        default_factory=_empty_unit_metadata_updates
+    )
+    metadata_updates: dict[str, Any] = field(default_factory=_empty_metadata_updates)
+    supports: list[IRUnitSupport] = field(default_factory=_empty_supports)
+    relations: list[IRRelation] = field(default_factory=_empty_relations)
+    warnings: list[str] = field(default_factory=_empty_warnings)
+    diagnostics: list[ToolDiagnostic] = field(default_factory=_empty_diagnostics)
+    stats: dict[str, Any] = field(default_factory=_empty_stats)
     resolution_tier: str = ResolutionTier.STRUCTURAL_FALLBACK
 
 

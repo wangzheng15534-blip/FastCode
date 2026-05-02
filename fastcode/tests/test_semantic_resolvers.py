@@ -910,6 +910,38 @@ def test_resolution_patch_has_resolution_tier_default():
     assert patch.resolution_tier == ResolutionTier.STRUCTURAL_FALLBACK
 
 
+def test_resolution_patch_defaults_are_independent_per_instance():
+    """Mutable ResolutionPatch defaults must not be shared across instances."""
+    patch_a = ResolutionPatch()
+    patch_b = ResolutionPatch()
+
+    patch_a.warnings.append("a")
+    patch_a.stats["count"] = 1
+    patch_a.metadata_updates["language"] = "python"
+
+    assert patch_b.warnings == []
+    assert patch_b.stats == {}
+    assert patch_b.metadata_updates == {}
+
+
+def test_semantic_resolution_request_tool_context_defaults_are_independent():
+    """Mutable request tool_context must not be shared across instances."""
+    from fastcode.semantic_resolvers.base import SemanticResolutionRequest
+
+    request_a = SemanticResolutionRequest(
+        snapshot_id="snap:1",
+        target_paths=frozenset({"a.py"}),
+    )
+    request_b = SemanticResolutionRequest(
+        snapshot_id="snap:2",
+        target_paths=frozenset({"b.py"}),
+    )
+
+    request_a.tool_context["mode"] = "compiler"
+
+    assert request_b.tool_context == {}
+
+
 @pytest.mark.regression
 def test_capability_gating_filters_resolvers_by_pending_capabilities():
     """Registry.applicable_for_capabilities() must only return resolvers

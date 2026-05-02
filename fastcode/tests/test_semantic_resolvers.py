@@ -1958,6 +1958,48 @@ def test_helper_backed_resolver_prefers_nearest_target_line_for_ambiguous_symbol
     assert patch_result.relations[0].dst_unit_id == "unit:callee:near"
 
 
+def test_helper_backed_resolver_uses_snapshot_repo_root_for_helper_execution(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    source_path = repo_root / "a.py"
+    source_path.write_text("print('hi')\n", encoding="utf-8")
+    foreign_cwd = tmp_path / "elsewhere"
+    foreign_cwd.mkdir()
+
+    resolver = _DummyHelperResolver()
+    snapshot = _snapshot(units=[_file_unit("a.py")])
+    snapshot.metadata["repo_root"] = str(repo_root)
+    element = _element(
+        element_id="file:a",
+        element_type="file",
+        name="a.py",
+        path="a.py",
+    )
+
+    with (
+        patch.object(resolver, "_has_tools", return_value=True),
+        patch(
+            "fastcode.semantic_resolvers.helper_backed.os.getcwd",
+            return_value=str(foreign_cwd),
+        ),
+        patch("fastcode.semantic_resolvers.helper_backed.subprocess.run") as run_mock,
+    ):
+        run_mock.return_value = SimpleNamespace(returncode=0, stdout="{}", stderr="")
+        patch_result = resolver.resolve(
+            snapshot=snapshot,
+            elements=[element],
+            target_paths={"a.py"},
+            legacy_graph_builder=None,
+        )
+
+    command = patch_result.stats["helper_command"]
+    assert str(source_path) in command
+    assert run_mock.call_args.kwargs["cwd"] == str(repo_root)
+    assert patch_result.stats["helper_target_files"] == 1
+
+
 # ---------------------------------------------------------------------------
 # Workstream 3: SCIP indexer tests
 # ---------------------------------------------------------------------------

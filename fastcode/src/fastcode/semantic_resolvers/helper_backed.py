@@ -56,6 +56,7 @@ class HelperBackedSemanticResolver(SemanticResolver):
 
     def __init__(self, fallback: GraphBackedSemanticResolver | None = None) -> None:
         self._fallback = fallback
+        self._active_repo_root = ""
 
     def resolve(
         self,
@@ -65,22 +66,28 @@ class HelperBackedSemanticResolver(SemanticResolver):
         target_paths: set[str],
         legacy_graph_builder: Any,
     ) -> ResolutionPatch:
-        if self._has_tools():
-            return self._resolve_via_helper(
+        snapshot_metadata = cast(dict[str, Any], snapshot.metadata or {})
+        repo_root = cast(str | None, snapshot_metadata.get("repo_root"))
+        self._active_repo_root = repo_root or ""
+        try:
+            if self._has_tools():
+                return self._resolve_via_helper(
+                    snapshot=snapshot,
+                    elements=elements,
+                    target_paths=target_paths,
+                    legacy_graph_builder=legacy_graph_builder,
+                )
+
+            patch = self._fallback_patch(
                 snapshot=snapshot,
                 elements=elements,
                 target_paths=target_paths,
                 legacy_graph_builder=legacy_graph_builder,
             )
-
-        patch = self._fallback_patch(
-            snapshot=snapshot,
-            elements=elements,
-            target_paths=target_paths,
-            legacy_graph_builder=legacy_graph_builder,
-        )
-        patch.diagnostics.extend(self._missing_tool_diagnostics())
-        return patch
+            patch.diagnostics.extend(self._missing_tool_diagnostics())
+            return patch
+        finally:
+            self._active_repo_root = ""
 
     def _fallback_patch(
         self,
@@ -221,7 +228,7 @@ class HelperBackedSemanticResolver(SemanticResolver):
         return fallback_patch
 
     def _target_files(self, target_paths: set[str]) -> list[str]:
-        repo_root = os.getcwd()
+        repo_root = self._repo_root()
         raw: list[str] = []
         for path in sorted(target_paths):
             normalized = path if os.path.isabs(path) else os.path.join(repo_root, path)
@@ -265,7 +272,7 @@ class HelperBackedSemanticResolver(SemanticResolver):
                 text=True,
                 timeout=self.helper_timeout_seconds,
                 check=False,
-                cwd=os.getcwd(),
+                cwd=self._repo_root(),
             )
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
             patch.warnings.append(f"{self.source_name}_helper_failed: {exc}")
@@ -310,6 +317,10 @@ class HelperBackedSemanticResolver(SemanticResolver):
                 )
             )
             return {}
+
+    def _repo_root(self) -> str:
+        repo_root = getattr(self, "_active_repo_root", "") or os.getcwd()
+        return os.path.abspath(repo_root)
 
     def _apply_semantic_facts(
         self,

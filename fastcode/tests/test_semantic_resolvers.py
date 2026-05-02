@@ -1640,7 +1640,10 @@ class _DummyFallbackResolver:
             relation_type="call",
             resolution_state="structural",
             support_sources={"dummy_resolver"},
-            metadata={"source": "dummy_resolver", "resolution_tier": "structural_fallback"},
+            metadata={
+                "source": "dummy_resolver",
+                "resolution_tier": "structural_fallback",
+            },
         )
         return ResolutionPatch(
             metadata_updates={
@@ -1760,7 +1763,10 @@ def test_helper_backed_resolver_falls_back_on_helper_nonzero_exit(
 
     with (
         patch.object(resolver, "_has_tools", return_value=True),
-        patch("fastcode.semantic_resolvers.helper_backed.os.getcwd", return_value=str(tmp_path)),
+        patch(
+            "fastcode.semantic_resolvers.helper_backed.os.getcwd",
+            return_value=str(tmp_path),
+        ),
         patch("fastcode.semantic_resolvers.helper_backed.subprocess.run") as run_mock,
     ):
         run_mock.return_value = SimpleNamespace(returncode=7, stdout="", stderr="boom")
@@ -1806,7 +1812,10 @@ def test_helper_backed_resolver_falls_back_on_helper_timeout(tmp_path: Path) -> 
 
     with (
         patch.object(resolver, "_has_tools", return_value=True),
-        patch("fastcode.semantic_resolvers.helper_backed.os.getcwd", return_value=str(tmp_path)),
+        patch(
+            "fastcode.semantic_resolvers.helper_backed.os.getcwd",
+            return_value=str(tmp_path),
+        ),
         patch(
             "fastcode.semantic_resolvers.helper_backed.subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd=["dummy"], timeout=1),

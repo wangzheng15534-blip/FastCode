@@ -1072,7 +1072,9 @@ def test_graph_backed_relations_carry_resolution_tier_metadata():
     )
 
     with (
-        patch("fastcode.semantic_resolvers.js_ts.shutil.which", return_value=None),
+        patch(
+            "fastcode.semantic_resolvers.helper_backed.shutil.which", return_value=None
+        ),
         patch(
             "fastcode.semantic_resolvers.graph_backed.shutil.which", return_value=None
         ),
@@ -1131,7 +1133,9 @@ def test_graph_backed_relations_carry_pending_capabilities_when_tools_missing():
     )
 
     with (
-        patch("fastcode.semantic_resolvers.js_ts.shutil.which", return_value=None),
+        patch(
+            "fastcode.semantic_resolvers.helper_backed.shutil.which", return_value=None
+        ),
         patch(
             "fastcode.semantic_resolvers.graph_backed.shutil.which", return_value=None
         ),
@@ -1205,7 +1209,11 @@ def test_compiler_resolver_emits_diagnostics_when_tools_missing(
     ]
 
     # Ensure all tool checks return None (not installed)
-    with patch(f"{module_map[resolver_cls]}.shutil.which", return_value=None):
+    # _has_tools lives in HelperBackedSemanticResolver (helper_backed.py),
+    # so patch shutil.which there.
+    with patch(
+        "fastcode.semantic_resolvers.helper_backed.shutil.which", return_value=None
+    ):
         result = resolver.resolve(
             snapshot=snapshot,
             elements=elements,
@@ -1712,8 +1720,12 @@ def test_experimental_scip_languages_set():
 
 class TestSharedUtils:
     def test_hash_id_is_deterministic(self) -> None:
-        result = _hash_id("support", "snapshot:go_resolver:import:src/main.go:pkg/mod.go:fmt")
-        assert result == _hash_id("support", "snapshot:go_resolver:import:src/main.go:pkg/mod.go:fmt")
+        result = _hash_id(
+            "support", "snapshot:go_resolver:import:src/main.go:pkg/mod.go:fmt"
+        )
+        assert result == _hash_id(
+            "support", "snapshot:go_resolver:import:src/main.go:pkg/mod.go:fmt"
+        )
 
     def test_hash_id_different_inputs_differ(self) -> None:
         a = _hash_id("support", "aaa")
@@ -1732,7 +1744,9 @@ class TestSharedUtils:
         assert _normalize_path("src\\main.go") == "src/main.go"
 
     def test_normalize_path_idempotent(self) -> None:
-        assert _normalize_path(_normalize_path("src\\main.go")) == _normalize_path("src/main.go")
+        assert _normalize_path(_normalize_path("src\\main.go")) == _normalize_path(
+            "src/main.go"
+        )
 
     def test_validate_helper_paths_rejects_symlink(self, tmp_path: Path) -> None:
         target = tmp_path / "real.txt"

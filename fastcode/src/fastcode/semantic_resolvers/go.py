@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
-
 from .base import ResolverSpec, SemanticCapability
 from .graph_backed import GraphBackedSemanticResolver
 from .helper_backed import HelperBackedSemanticResolver
@@ -41,6 +39,3 @@ class GoCompilerResolver(HelperBackedSemanticResolver):
 
     def __init__(self, fallback: GraphBackedSemanticResolver | None = None) -> None:
         super().__init__(fallback)
-
-    def _has_tools(self) -> bool:
-        return all(shutil.which(tool) is not None for tool in self.required_tools)

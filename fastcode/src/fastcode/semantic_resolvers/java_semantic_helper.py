@@ -67,7 +67,17 @@ def main() -> int:
         rel_path = rel(file_path, root)
         for match in CALL_RE.finditer(text):
             name = match.group(1)
-            if name in {"if", "for", "while", "switch", "catch", "return", "new", "super", "this"}:
+            if name in {
+                "if",
+                "for",
+                "while",
+                "switch",
+                "catch",
+                "return",
+                "new",
+                "super",
+                "this",
+            }:
                 continue
             target = declarations.get(name, [])
             if not target:

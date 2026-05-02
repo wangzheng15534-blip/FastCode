@@ -92,7 +92,9 @@ class HelperBackedSemanticResolver(SemanticResolver):
         legacy_graph_builder: Any,
     ) -> ResolutionPatch:
         if self._has_tools():
-            return self._resolve_via_helper(snapshot=snapshot, target_paths=target_paths)
+            return self._resolve_via_helper(
+                snapshot=snapshot, target_paths=target_paths
+            )
 
         patch = self._fallback_patch(
             snapshot=snapshot,
@@ -433,7 +435,9 @@ class HelperBackedSemanticResolver(SemanticResolver):
         units_by_path: dict[str, list[IRCodeUnit]],
         file_units_by_path: dict[str, IRCodeUnit],
     ) -> IRCodeUnit | None:
-        candidates = [unit for unit in units_by_path.get(source_path, []) if unit.kind != "file"]
+        candidates = [
+            unit for unit in units_by_path.get(source_path, []) if unit.kind != "file"
+        ]
         if not candidates:
             return file_units_by_path.get(source_path)
 
@@ -488,7 +492,9 @@ class HelperBackedSemanticResolver(SemanticResolver):
         if not target_path:
             return None
 
-        candidates = [unit for unit in units_by_path.get(target_path, []) if unit.kind != "file"]
+        candidates = [
+            unit for unit in units_by_path.get(target_path, []) if unit.kind != "file"
+        ]
         if target_name:
             named = units_by_name.get((target_path, target_name), [])
             if len(named) == 1:

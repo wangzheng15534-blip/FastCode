@@ -9,7 +9,6 @@ import hashlib
 import json
 import logging
 import os
-import pickle
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -17,7 +16,7 @@ from typing import Any
 from .db_runtime import DBRuntime
 from .scip_models import SCIPArtifactRef
 from .semantic_ir import IRSnapshot
-from .utils import ensure_dir, utc_now
+from .utils import ensure_dir, safe_jsonable, utc_now
 
 
 class SnapshotStore:
@@ -474,9 +473,17 @@ class SnapshotStore:
 
     def save_ir_graphs(self, snapshot_id: str, ir_graphs: Any) -> str:
         snap_dir = self.snapshot_dir(snapshot_id)
-        path = os.path.join(snap_dir, "ir_graphs.pkl")
-        with open(path, "wb") as f:
-            pickle.dump(ir_graphs, f)
+        path = os.path.join(snap_dir, "ir_graphs.json")
+        import networkx as nx
+
+        serializable: dict[str, Any] = {}
+        for name, graph in (ir_graphs or {}).items():
+            if isinstance(graph, nx.Graph):
+                serializable[name] = nx.node_link_data(graph)
+            else:
+                serializable[name] = safe_jsonable(graph)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"graphs": serializable}, f)
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,
@@ -493,8 +500,33 @@ class SnapshotStore:
         path = row.get("ir_graphs_path")
         if not path or not os.path.exists(path):
             return None
-        with open(path, "rb") as f:
-            return pickle.load(f)
+        import networkx as nx
+
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            logging.getLogger(__name__).warning(
+                "ir_graphs at %s is not JSON (legacy pickle format?), skipping", path
+            )
+            return None
+        graphs_data = data.get("graphs", {})
+        result: dict[str, Any] = {}
+        for name, graph_data in graphs_data.items():
+            if (
+                isinstance(graph_data, dict)
+                and "nodes" in graph_data
+                and "links" in graph_data
+                and isinstance(graph_data["nodes"], list)
+                and (
+                    not graph_data["nodes"]
+                    or isinstance(graph_data["nodes"][0], dict)
+                )
+            ):
+                result[name] = nx.node_link_graph(graph_data, directed=True)
+            else:
+                result[name] = graph_data
+        return result
 
     def load_snapshot(self, snapshot_id: str) -> IRSnapshot | None:
         row = self.get_snapshot_record(snapshot_id)

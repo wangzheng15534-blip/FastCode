@@ -9,13 +9,18 @@ facts.
 
 from __future__ import annotations
 
+from .base import SemanticCapability
 from .graph_backed import GraphBackedSemanticResolver
 
 
 class JavaScriptSemanticResolver(GraphBackedSemanticResolver):
     language = "javascript"
     capabilities = frozenset(
-        {"resolve_calls", "resolve_import_aliases", "resolve_bindings"}
+        {
+            SemanticCapability.RESOLVE_CALLS,
+            SemanticCapability.RESOLVE_IMPORT_ALIASES,
+            SemanticCapability.RESOLVE_BINDINGS,
+        }
     )
     cost_class = "medium"
     source_name = "javascript_resolver"
@@ -28,10 +33,10 @@ class TypeScriptSemanticResolver(GraphBackedSemanticResolver):
     language = "typescript"
     capabilities = frozenset(
         {
-            "resolve_calls",
-            "resolve_import_aliases",
-            "resolve_types",
-            "resolve_bindings",
+            SemanticCapability.RESOLVE_CALLS,
+            SemanticCapability.RESOLVE_IMPORT_ALIASES,
+            SemanticCapability.RESOLVE_TYPES,
+            SemanticCapability.RESOLVE_BINDINGS,
         }
     )
     cost_class = "medium"
@@ -45,10 +50,10 @@ class JavaSemanticResolver(GraphBackedSemanticResolver):
     language = "java"
     capabilities = frozenset(
         {
-            "resolve_calls",
-            "resolve_inheritance",
-            "resolve_import_aliases",
-            "resolve_types",
+            SemanticCapability.RESOLVE_CALLS,
+            SemanticCapability.RESOLVE_INHERITANCE,
+            SemanticCapability.RESOLVE_IMPORT_ALIASES,
+            SemanticCapability.RESOLVE_TYPES,
         }
     )
     cost_class = "high"
@@ -61,7 +66,12 @@ class JavaSemanticResolver(GraphBackedSemanticResolver):
 class GoSemanticResolver(GraphBackedSemanticResolver):
     language = "go"
     capabilities = frozenset(
-        {"resolve_calls", "resolve_import_aliases", "resolve_types", "resolve_bindings"}
+        {
+            SemanticCapability.RESOLVE_CALLS,
+            SemanticCapability.RESOLVE_IMPORT_ALIASES,
+            SemanticCapability.RESOLVE_TYPES,
+            SemanticCapability.RESOLVE_BINDINGS,
+        }
     )
     cost_class = "medium"
     source_name = "go_resolver"
@@ -74,11 +84,11 @@ class RustSemanticResolver(GraphBackedSemanticResolver):
     language = "rust"
     capabilities = frozenset(
         {
-            "resolve_calls",
-            "resolve_inheritance",
-            "resolve_types",
-            "resolve_bindings",
-            "expand_macros",
+            SemanticCapability.RESOLVE_CALLS,
+            SemanticCapability.RESOLVE_INHERITANCE,
+            SemanticCapability.RESOLVE_TYPES,
+            SemanticCapability.RESOLVE_BINDINGS,
+            SemanticCapability.EXPAND_MACROS,
         }
     )
     cost_class = "high"
@@ -92,10 +102,10 @@ class CSharpSemanticResolver(GraphBackedSemanticResolver):
     language = "csharp"
     capabilities = frozenset(
         {
-            "resolve_calls",
-            "resolve_inheritance",
-            "resolve_import_aliases",
-            "resolve_types",
+            SemanticCapability.RESOLVE_CALLS,
+            SemanticCapability.RESOLVE_INHERITANCE,
+            SemanticCapability.RESOLVE_IMPORT_ALIASES,
+            SemanticCapability.RESOLVE_TYPES,
         }
     )
     cost_class = "high"
@@ -108,7 +118,12 @@ class CSharpSemanticResolver(GraphBackedSemanticResolver):
 class ZigSemanticResolver(GraphBackedSemanticResolver):
     language = "zig"
     capabilities = frozenset(
-        {"resolve_calls", "resolve_import_aliases", "resolve_types", "resolve_bindings"}
+        {
+            SemanticCapability.RESOLVE_CALLS,
+            SemanticCapability.RESOLVE_IMPORT_ALIASES,
+            SemanticCapability.RESOLVE_TYPES,
+            SemanticCapability.RESOLVE_BINDINGS,
+        }
     )
     cost_class = "high"
     source_name = "zig_resolver"
@@ -121,10 +136,10 @@ class FortranSemanticResolver(GraphBackedSemanticResolver):
     language = "fortran"
     capabilities = frozenset(
         {
-            "resolve_calls",
-            "resolve_import_aliases",
-            "resolve_types",
-            "resolve_inheritance",
+            SemanticCapability.RESOLVE_CALLS,
+            SemanticCapability.RESOLVE_IMPORT_ALIASES,
+            SemanticCapability.RESOLVE_TYPES,
+            SemanticCapability.RESOLVE_INHERITANCE,
         }
     )
     cost_class = "high"
@@ -137,7 +152,12 @@ class FortranSemanticResolver(GraphBackedSemanticResolver):
 class JuliaSemanticResolver(GraphBackedSemanticResolver):
     language = "julia"
     capabilities = frozenset(
-        {"resolve_calls", "resolve_import_aliases", "resolve_types", "resolve_bindings"}
+        {
+            SemanticCapability.RESOLVE_CALLS,
+            SemanticCapability.RESOLVE_IMPORT_ALIASES,
+            SemanticCapability.RESOLVE_TYPES,
+            SemanticCapability.RESOLVE_BINDINGS,
+        }
     )
     cost_class = "high"
     source_name = "julia_resolver"

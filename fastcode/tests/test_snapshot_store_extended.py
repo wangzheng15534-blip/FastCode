@@ -511,7 +511,7 @@ class TestIRGraphsPickleRoundtrip:
         # Use a simple dict as "graphs"
         graphs = {f"node_{i}": {"edges": list(range(i))} for i in range(n_nodes)}
         path = store.save_ir_graphs(snap.snapshot_id, graphs)
-        assert path.endswith(".pkl")
+        assert path.endswith(".json")
 
         loaded = store.load_ir_graphs(snap.snapshot_id)
         assert loaded == graphs
@@ -1061,14 +1061,14 @@ class TestArtifactRefLifecycle:
 
 class TestIRGraphsLifecycle:
     def test_save_load_graphs_property(self):
-        """HAPPY: save and load IR graphs via pickle."""
+        """HAPPY: save and load IR graphs via JSON."""
         store = _make_store()
         snap = _build_snapshot("repo_g", "c001", "main")
         store.save_snapshot(snap)
 
-        graphs = {"dependency": {"nodes": [1, 2, 3]}, "call": {"edges": [(1, 2)]}}
+        graphs = {"dependency": {"nodes": [1, 2, 3]}, "call": {"edges": [[1, 2]]}}
         path = store.save_ir_graphs(snap.snapshot_id, graphs)
-        assert path.endswith(".pkl")
+        assert path.endswith(".json")
 
         loaded = store.load_ir_graphs(snap.snapshot_id)
         assert loaded == graphs

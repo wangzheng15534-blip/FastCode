@@ -519,8 +519,7 @@ class SnapshotStore:
                 and "links" in graph_data
                 and isinstance(graph_data["nodes"], list)
                 and (
-                    not graph_data["nodes"]
-                    or isinstance(graph_data["nodes"][0], dict)
+                    not graph_data["nodes"] or isinstance(graph_data["nodes"][0], dict)
                 )
             ):
                 result[name] = nx.node_link_graph(graph_data, directed=True)

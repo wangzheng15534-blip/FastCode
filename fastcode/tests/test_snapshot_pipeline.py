@@ -619,7 +619,10 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
             branch="main",
             commit_id="c1",
             tree_id="t1",
-            metadata={"scip_languages": ["zig"], "experimental_scip_languages": ["zig"]},
+            metadata={
+                "scip_languages": ["zig"],
+                "experimental_scip_languages": ["zig"],
+            },
         )
         temp_store = SimpleNamespace(
             metadata=[],
@@ -628,9 +631,15 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
             save=lambda artifact_key: None,
         )
         temp_graph = SimpleNamespace(
-            dependency_graph=SimpleNamespace(number_of_nodes=lambda: 0, number_of_edges=lambda: 0),
-            inheritance_graph=SimpleNamespace(number_of_nodes=lambda: 0, number_of_edges=lambda: 0),
-            call_graph=SimpleNamespace(number_of_nodes=lambda: 0, number_of_edges=lambda: 0),
+            dependency_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            inheritance_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            call_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
             build_graphs=lambda elements, module_resolver, symbol_resolver: None,
             save=lambda artifact_key: None,
         )
@@ -665,7 +674,9 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
                 patch.object(pipeline, "_build_git_meta", return_value={})
             )
             stack.enter_context(
-                patch.object(pipeline.indexer, "extract_elements", return_value=[element])
+                patch.object(
+                    pipeline.indexer, "extract_elements", return_value=[element]
+                )
             )
             stack.enter_context(
                 patch("fastcode.pipeline.VectorStore", return_value=temp_store)
@@ -689,7 +700,9 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
                 )
             )
             stack.enter_context(
-                patch("fastcode.pipeline.build_ir_from_scip", return_value=scip_snapshot)
+                patch(
+                    "fastcode.pipeline.build_ir_from_scip", return_value=scip_snapshot
+                )
             )
             stack.enter_context(
                 patch("fastcode.pipeline.merge_ir", return_value=scip_snapshot)
@@ -705,7 +718,9 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
                 )
             )
             stack.enter_context(
-                patch.object(pipeline.snapshot_store, "stage_snapshot", return_value=None)
+                patch.object(
+                    pipeline.snapshot_store, "stage_snapshot", return_value=None
+                )
             )
             stack.enter_context(
                 patch.object(
@@ -713,7 +728,9 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
                 )
             )
             stack.enter_context(
-                patch.object(pipeline.snapshot_store, "save_ir_graphs", return_value=None)
+                patch.object(
+                    pipeline.snapshot_store, "save_ir_graphs", return_value=None
+                )
             )
             stack.enter_context(
                 patch.object(

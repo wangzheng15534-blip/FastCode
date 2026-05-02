@@ -789,15 +789,13 @@ class IndexPipeline:
                         experimental_scip_languages = [
                             language
                             for language in detected_languages
-                            if (
-                                profile := get_scip_indexer_profile(language)
-                            ) is not None
+                            if (profile := get_scip_indexer_profile(language))
+                            is not None
                             and profile.experimental
                         ]
                         if experimental_scip_languages:
-                            warning = (
-                                "experimental_scip_languages: "
-                                + ", ".join(sorted(experimental_scip_languages))
+                            warning = "experimental_scip_languages: " + ", ".join(
+                                sorted(experimental_scip_languages)
                             )
                             warnings.append(warning)
                             layer2["warnings"].append(warning)

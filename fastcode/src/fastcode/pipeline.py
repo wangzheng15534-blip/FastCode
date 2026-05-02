@@ -754,6 +754,7 @@ class IndexPipeline:
                 tree_id=snapshot_ref.get("tree_id"),
             )
 
+            ast_snapshot.metadata["repo_root"] = self.loader.repo_path or ""
             ast_snapshot.metadata["pipeline_layers"] = pipeline_layers
             scip_snapshot = None
             scip_artifact_ref = None
@@ -930,6 +931,7 @@ class IndexPipeline:
                 )
 
             merged_snapshot = merge_ir(ast_snapshot, scip_snapshot)
+            merged_snapshot.metadata["repo_root"] = self.loader.repo_path or ""
             merged_snapshot.metadata["pipeline_layers"] = pipeline_layers
             merged_snapshot.metadata["pipeline_layer_contract"] = {
                 "layer_1": "plain_ast_embedding",

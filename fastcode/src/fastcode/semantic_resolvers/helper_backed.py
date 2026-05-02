@@ -57,20 +57,6 @@ class HelperBackedSemanticResolver(SemanticResolver):
     def __init__(self, fallback: GraphBackedSemanticResolver | None = None) -> None:
         self._fallback = fallback
 
-    def applicable(
-        self,
-        *,
-        snapshot: IRSnapshot,
-        elements: list[CodeElement],
-        target_paths: set[str],
-    ) -> bool:
-        del snapshot
-        return any(
-            elem.language == self.language
-            and (elem.relative_path or elem.file_path) in target_paths
-            for elem in elements
-        )
-
     def resolve(
         self,
         *,

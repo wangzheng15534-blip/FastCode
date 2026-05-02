@@ -180,7 +180,6 @@ class SemanticResolver(ABC):
             required_tools=self.required_tools,
         )
 
-    @abstractmethod
     def applicable(
         self,
         *,
@@ -189,6 +188,12 @@ class SemanticResolver(ABC):
         target_paths: set[str],
     ) -> bool:
         """Return True when the resolver should run for this batch."""
+        del snapshot
+        return any(
+            elem.language == self.language
+            and (elem.relative_path or elem.file_path) in target_paths
+            for elem in elements
+        )
 
     @abstractmethod
     def resolve(

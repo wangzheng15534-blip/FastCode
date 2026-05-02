@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
 from fastcode.indexer import CodeElement
 from fastcode.main import FastCode
 from fastcode.query_handler import QueryPipeline
@@ -55,6 +57,8 @@ def _query_pipeline(
     retrieve_side_effect: Any = None,
 ) -> QueryPipeline:
     retriever = MagicMock()
+    retriever.enable_agency_mode = False
+    retriever.iterative_agent = None
     retriever.retrieve.side_effect = retrieve_side_effect or [
         [{"element": {"relative_path": "a.py"}}]
     ]
@@ -159,3 +163,206 @@ def test_fastcode_query_semantic_escalation_updates_ir_graphs() -> None:
     fc.snapshot_symbol_index.register_snapshot.assert_called_once_with(
         upgraded_snapshot
     )
+
+
+# ---------------------------------------------------------------------------
+# Regression gap #2: query-time semantic escalation changing IR graph
+# expansion behavior end to end
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.regression
+def test_semantic_escalation_changes_retrieval_results_end_to_end() -> None:
+    """After escalation, the answer generator must receive expanded results
+    from the second retrieval (not the first).
+    """
+    processed_query = _processed_query(
+        question="How does auth reach the token store?",
+        filters={"snapshot_id": "snap:repo:abc123"},
+    )
+    first_retrieval = [
+        {"element": {"relative_path": "src/auth.py"}, "total_score": 1.0},
+    ]
+    second_retrieval = [
+        {"element": {"relative_path": "src/auth.py"}, "total_score": 1.5},
+        {"element": {"relative_path": "src/token_store.py"}, "total_score": 1.2},
+        {"element": {"relative_path": "src/middleware.py"}, "total_score": 0.9},
+    ]
+    pipeline = _query_pipeline(
+        semantic_escalation_cb=lambda **kwargs: {
+            "status": "applied",
+            "budget": "path-critical",
+            "rerun_retrieval": True,
+        },
+        retrieve_side_effect=[first_retrieval, second_retrieval],
+    )
+    pipeline.query_processor.process.return_value = processed_query
+
+    result = pipeline.query(
+        "How does auth reach the token store?",
+        filters={"snapshot_id": "snap:repo:abc123"},
+    )
+
+    assert pipeline.retriever.retrieve.call_count == 2
+    assert result["semantic_escalation"]["budget"] == "path-critical"
+    assert result["semantic_escalation"]["status"] == "applied"
+    # The answer generator must receive the SECOND retrieval (expanded).
+    answer_call_args = pipeline.answer_generator.generate.call_args
+    generated_retrieved = answer_call_args[0][1]
+    assert len(generated_retrieved) == 3
+    paths = [r["element"]["relative_path"] for r in generated_retrieved]
+    assert "src/token_store.py" in paths
+    assert "src/middleware.py" in paths
+
+
+@pytest.mark.regression
+def test_local_budget_triggers_escalation_for_find_intent() -> None:
+    """Queries with find intent and snapshot scope should escalate with
+    budget='local' and still trigger a rerun.
+    """
+    processed_query = _processed_query(
+        question="Where is the config loaded?",
+        intent="find",
+        filters={"snapshot_id": "snap:1"},
+    )
+    pipeline = _query_pipeline(
+        semantic_escalation_cb=lambda **kwargs: {
+            "status": "applied",
+            "budget": "local",
+            "rerun_retrieval": True,
+        },
+        retrieve_side_effect=[
+            [{"element": {"relative_path": "a.py"}, "total_score": 1.0}],
+            [{"element": {"relative_path": "a.py"}, "total_score": 1.5}],
+        ],
+    )
+    pipeline.query_processor.process.return_value = processed_query
+
+    result = pipeline.query(
+        "Where is the config loaded?",
+        filters={"snapshot_id": "snap:1"},
+    )
+
+    assert pipeline.retriever.retrieve.call_count == 2
+    assert result["semantic_escalation"]["budget"] == "local"
+
+
+@pytest.mark.regression
+def test_escalate_query_semantics_returns_skipped_when_snapshot_not_found() -> None:
+    """_escalate_query_semantics must return early when the snapshot cannot
+    be loaded.
+    """
+    fc = FastCode.__new__(FastCode)
+    fc.snapshot_store = SimpleNamespace(load_snapshot=lambda snapshot_id: None)
+
+    result = fc._escalate_query_semantics(
+        snapshot_id="snap:missing",
+        retrieved=[{"element": {"relative_path": "a.py"}}],
+        processed_query=_processed_query(question="test", filters={}),
+        budget="path-critical",
+    )
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "snapshot_not_found"
+    assert result["rerun_retrieval"] is False
+
+
+@pytest.mark.regression
+def test_escalate_query_semantics_returns_skipped_when_no_target_paths() -> None:
+    """_escalate_query_semantics must return early when no target paths can
+    be extracted from retrieved elements or filters.
+    """
+    snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:1",
+        metadata={},
+    )
+    fc = FastCode.__new__(FastCode)
+    fc.snapshot_store = SimpleNamespace(load_snapshot=lambda snapshot_id: snapshot)
+
+    result = fc._escalate_query_semantics(
+        snapshot_id="snap:1",
+        retrieved=[],
+        processed_query=_processed_query(question="test", filters={}),
+        budget="path-critical",
+    )
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "no_target_paths"
+    assert result["rerun_retrieval"] is False
+
+
+@pytest.mark.regression
+def test_escalate_query_semantics_returns_degraded_when_warnings_present() -> None:
+    """_escalate_query_semantics must return status='degraded' when resolvers
+    produce warnings.
+    """
+    snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:1",
+        metadata={"semantic_resolver_runs": [{"language": "python"}]},
+    )
+    upgraded_snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:1",
+        metadata={"semantic_resolver_runs": [{"language": "python"}]},
+    )
+    element = _element("src/a.py")
+    fc = FastCode.__new__(FastCode)
+    fc.snapshot_store = SimpleNamespace(load_snapshot=lambda sid: snapshot)
+    fc.graph_builder = SimpleNamespace(element_by_id={element.id: element})
+    fc.ir_graph_builder = SimpleNamespace(build_graphs=lambda snap: "ir-graphs")
+    fc.retriever = SimpleNamespace(set_ir_graphs=MagicMock())
+    fc.snapshot_symbol_index = SimpleNamespace(register_snapshot=MagicMock())
+
+    def apply_with_warnings(
+        *,
+        snapshot: object,
+        elements: object,
+        legacy_graph_builder: object,
+        target_paths: object,
+        warnings: list[str],
+        budget: str,
+    ) -> IRSnapshot:
+        warnings.append("resolver produced a partial result")
+        return upgraded_snapshot
+
+    fc._apply_semantic_resolvers = apply_with_warnings
+
+    result = fc._escalate_query_semantics(
+        snapshot_id="snap:1",
+        retrieved=[{"element": {"relative_path": "src/a.py"}}],
+        processed_query=_processed_query(question="test", filters={}),
+        budget="path-critical",
+    )
+
+    assert result["status"] == "degraded"
+    assert result["warnings"] == ["resolver produced a partial result"]
+    assert result["rerun_retrieval"] is True
+
+
+@pytest.mark.regression
+def test_escalation_does_not_rerun_when_callback_returns_none() -> None:
+    """If the escalation callback returns None, no second retrieval should
+    occur and no escalation metadata should appear in the result.
+    """
+    processed_query = _processed_query(
+        question="How does auth reach the token store?",
+        filters={"snapshot_id": "snap:1"},
+        intent="debug",
+    )
+    pipeline = _query_pipeline(
+        semantic_escalation_cb=lambda **kwargs: None,
+        retrieve_side_effect=[
+            [{"element": {"relative_path": "a.py"}, "total_score": 1.0}],
+        ],
+    )
+    pipeline.query_processor.process.return_value = processed_query
+
+    result = pipeline.query(
+        "How does auth reach the token store?",
+        filters={"snapshot_id": "snap:1"},
+    )
+
+    assert pipeline.retriever.retrieve.call_count == 1
+    assert "semantic_escalation" not in result

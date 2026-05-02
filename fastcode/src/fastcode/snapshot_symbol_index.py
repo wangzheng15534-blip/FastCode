@@ -33,7 +33,9 @@ class SnapshotSymbolIndex:
                 aliases.add(unit.primary_anchor_symbol_id)
             aliases.update(unit.anchor_symbol_ids)
             aliases.update(unit.candidate_anchor_symbol_ids)
-            aliases.update((unit.metadata or {}).get("aliases", []))
+            _md_aliases = (unit.metadata or {}).get("aliases", [])
+            if isinstance(_md_aliases, list):
+                aliases.update(_md_aliases)
 
             for alias in aliases:
                 if not alias:

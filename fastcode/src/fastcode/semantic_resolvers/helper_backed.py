@@ -22,7 +22,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ..indexer import CodeElement
 from ..semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
@@ -67,7 +67,10 @@ class HelperBackedSemanticResolver(SemanticResolver):
     ) -> ResolutionPatch:
         if self._has_tools():
             return self._resolve_via_helper(
-                snapshot=snapshot, target_paths=target_paths
+                snapshot=snapshot,
+                elements=elements,
+                target_paths=target_paths,
+                legacy_graph_builder=legacy_graph_builder,
             )
 
         patch = self._fallback_patch(
@@ -131,7 +134,9 @@ class HelperBackedSemanticResolver(SemanticResolver):
         self,
         *,
         snapshot: IRSnapshot,
+        elements: list[CodeElement],
         target_paths: set[str],
+        legacy_graph_builder: Any,
     ) -> ResolutionPatch:
         patch = ResolutionPatch(
             metadata_updates={
@@ -154,9 +159,66 @@ class HelperBackedSemanticResolver(SemanticResolver):
             return patch
 
         payload = self._run_semantic_helper(helper_files, patch)
+        if self._helper_failed(patch):
+            return self._merge_with_fallback(
+                primary_patch=patch,
+                snapshot=snapshot,
+                elements=elements,
+                target_paths=target_paths,
+                legacy_graph_builder=legacy_graph_builder,
+            )
         self._apply_semantic_facts(snapshot=snapshot, patch=patch, payload=payload)
         patch.metadata_updates["semantic_resolver_runs"][0]["stats"] = patch.stats
         return patch
+
+    @staticmethod
+    def _helper_failed(patch: ResolutionPatch) -> bool:
+        return any(
+            diagnostic.code
+            in {"tool_invocation_failed", "helper_nonzero_exit", "invalid_helper_json"}
+            for diagnostic in patch.diagnostics
+        )
+
+    def _merge_with_fallback(
+        self,
+        *,
+        primary_patch: ResolutionPatch,
+        snapshot: IRSnapshot,
+        elements: list[CodeElement],
+        target_paths: set[str],
+        legacy_graph_builder: Any,
+    ) -> ResolutionPatch:
+        fallback_patch = self._fallback_patch(
+            snapshot=snapshot,
+            elements=elements,
+            target_paths=target_paths,
+            legacy_graph_builder=legacy_graph_builder,
+        )
+        fallback_patch.warnings = [*primary_patch.warnings, *fallback_patch.warnings]
+        fallback_patch.diagnostics = [
+            *primary_patch.diagnostics,
+            *fallback_patch.diagnostics,
+        ]
+        fallback_patch.stats = {
+            **fallback_patch.stats,
+            "helper_target_files": primary_patch.stats.get("helper_target_files", 0),
+            "helper_command": primary_patch.stats.get("helper_command", []),
+            "helper_exit_code": primary_patch.stats.get("helper_exit_code"),
+            "helper_failed": True,
+            "helper_failure_codes": [
+                diagnostic.code for diagnostic in primary_patch.diagnostics
+            ],
+        }
+        resolver_runs = fallback_patch.metadata_updates.get("semantic_resolver_runs")
+        if isinstance(resolver_runs, list) and resolver_runs:
+            run = dict(cast(dict[str, Any], resolver_runs[0]))
+            run["helper_backed"] = True
+            run["helper_failed"] = True
+            run["compiler_backed"] = False
+            run["fallback"] = True
+            run["stats"] = fallback_patch.stats
+            resolver_runs[0] = run
+        return fallback_patch
 
     def _target_files(self, target_paths: set[str]) -> list[str]:
         repo_root = os.getcwd()

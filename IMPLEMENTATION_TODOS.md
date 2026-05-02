@@ -1,47 +1,135 @@
-# FastCode Full TODOs
+# FastCode Status Tracker
 
-## Completed in current slice
+This file is the maintained source of truth for implementation status.
+The ad hoc audit report was removed on May 3, 2026.
 
-- Expanded semantic resolver contract with `ResolverSpec` and `ToolDiagnostic`.
-- Registered broad language resolver set: Python, JavaScript, TypeScript, Java, Go, Rust, C#, C, C++, Zig, Fortran, Julia.
-- Added graph-backed fallback resolver implementations for non-Python/C-family languages.
-- Hardened C/C++ resolver diagnostics and relation source preference logic.
-- Removed direct `model_dump()` handoff in API and web multi-repo endpoints.
-- Moved shared HTTP request/response models into `fastcode.schemas.api` and rewired `api.py` / `web_app.py` to import them.
-- Expanded default extension and language detection for Zig, Fortran, and Julia.
-- Added focused tests for resolver registry, diagnostics, and new language detection.
-- Added shared helper-backed semantic resolver infrastructure for compiler/LSP upgrade layers.
-- Added structured helper paths for JavaScript/TypeScript, Go, Java, Rust, C#, Zig, Fortran, and Julia semantic upgrades.
-- Added focused mapping tests for helper-backed semantic relation emission across core and added languages.
+## Current state
 
-## Remaining semantic resolver work
+The core architecture now works as a three-layer pipeline:
 
-- Deepen helper-backed resolvers toward richer semantics:
-  - Expand JavaScript/TypeScript beyond import/call facts to type and inheritance upgrades.
-  - Expand Java beyond import/call facts to type and inheritance upgrades.
-  - Expand Go beyond import/call facts to type and interface/implementation upgrades.
-  - Replace heuristic Rust/C#/Zig/Fortran/Julia helper parsing with stronger frontend-native semantic facts where available.
-- Add resolver-specific capability gating so unresolved graphs do not run every language resolver indiscriminately.
-- Add query-time semantic escalation budget instead of index-time-only upgrades.
-- Preserve stronger distinction between heuristic helper facts and true frontend-native semantic facts where available.
+1. `plain_ast_embedding`
+   - upstream-style tree-sitter structure + embeddings
+2. `unified_ir_scip_merge`
+   - canonical IR plus SCIP merge and persisted SCIP lineage
+3. `language_specific_semantic_upgrade`
+   - helper-backed or graph-backed resolver upgrades
 
-## Remaining SCIP/indexing work
+The pipeline now exposes explicit layer status, metrics, warnings, and non-silent fallback behavior.
 
-- Replace the placeholder Zig/Fortran/Julia SCIP command wiring with verified command contracts or feature-gated optional integrations.
-- Add tests for multi-language SCIP merge path in `FastCode.index_repository`.
-- Expand e2e configs and fixtures to include the new supported extensions.
+## Landed hardening
 
-## Remaining template-rule refactor work
+- Resolver contract expanded with:
+  - `ResolverSpec`
+  - `SemanticCapability`
+  - `ToolDiagnostic`
+  - `ResolutionPatch`
+- Registered resolver coverage for:
+  - Python
+  - JavaScript / TypeScript
+  - Java
+  - Go
+  - Rust
+  - C#
+  - C / C++
+  - Zig
+  - Fortran
+  - Julia
+- Added graph-backed fallback resolvers for non-C-family languages.
+- Added helper-backed upgrade infrastructure and packaged helper assets into builds.
+- Helper-backed resolvers now:
+  - degrade to structural fallback on helper failure
+  - preserve explicit diagnostics and helper failure stats
+  - honor the indexed repository root instead of shell `cwd`
+- Multi-language SCIP lineage now persists all artifact refs instead of collapsing to one row.
+- Experimental SCIP languages are now explicit:
+  - Zig
+  - Fortran
+  - Julia
+  - pipeline layer 2 records warnings and metrics for them
+- Reuse-path and legacy snapshot metadata now backfill and persist:
+  - `pipeline_layers`
+  - `pipeline_metrics`
+  - SCIP artifact lineage metadata
+- Query-time semantic escalation now exists for snapshot-scoped path/impact-style queries.
+- Store boundary typing improved with frozen records for:
+  - `ManifestRecord`
+  - `SnapshotRefRecord`
+- Typed default factories were added to semantic resolver base models and API schema defaults.
+- Core helper semantic fidelity improved:
+  - TypeScript helper emits inheritance facts
+  - Go helper emits embedded-relationship inheritance facts
+  - Java helper emits `extends` / `implements` inheritance facts
 
-- Move mutable dict-heavy core functions toward typed dataclass inputs/outputs.
-- Convert store/runtime methods that still return raw `dict[str, Any]` into frozen dataclass records.
-- Split orchestration from logic in `main.py`; reduce mixed responsibilities across loading, indexing, graphing, SCIP, and persistence.
-- Tighten architecture tests to cover `main`, `api`, `infrastructure`, and store modules consistently.
+## Critical verification currently green
 
-## Remaining verification work
+- Full smoke gate:
+  - `1613 passed, 7 skipped`
+- Focused regression areas repeatedly verified:
+  - `test_api`
+  - `test_manifest_store`
+  - `test_query_handler`
+  - `test_scip_indexers`
+  - `test_semantic_resolvers`
+  - `test_snapshot_pipeline`
+  - `test_snapshot_store`
 
-- Run focused `pyright` on touched semantic resolver and indexing modules.
-- Keep the focused regression suite green: `test_api`, `test_semantic_resolvers`, `test_scip_indexers`, and `core/test_boundary`.
-- Add regression tests for header-language classification (`.h` as C vs C++).
-- Add API tests that assert explicit source mapping for `index-multiple`.
-- Add integration tests that verify Zig/Fortran/Julia files enter the indexing pipeline when present.
+## Remaining highest-value work
+
+### 1. Deepen semantic fidelity in core helpers
+
+- JavaScript / TypeScript:
+  - export alias facts
+  - stronger type facts
+  - richer interface / implementation facts
+- Go:
+  - stronger interface implementation facts
+  - richer type facts beyond embedded relationships
+- Java:
+  - stronger type/member binding facts beyond regex/source heuristics
+
+### 2. Replace narrow helper heuristics in secondary languages
+
+- Rust
+- C#
+- Zig
+- Fortran
+- Julia
+
+These currently emit useful structured facts, but they are still narrower than frontend-native semantic APIs.
+
+### 3. Tighten query-time semantic escalation
+
+- Current hook is intentionally conservative and snapshot-scoped.
+- Remaining work:
+  - use better terminal selection than top retrieved file paths
+  - support induced-subgraph upgrades for path queries
+  - add deeper query-time tests around real graph expansion effects
+
+### 4. Keep experimental SCIP integrations honest
+
+- Zig / Fortran / Julia are now marked experimental in metadata.
+- Remaining work:
+  - verify actual command contracts in more environments
+  - add availability-gated integration tests for artifact loadability
+
+### 5. Continue store-boundary typing
+
+Typed records now exist for manifests and snapshot refs.
+
+Still raw-dict-heavy at boundaries:
+- some API-facing manifest / artifact payload adapters
+- index run records
+- parts of snapshot metadata payloads
+
+### 6. Add a few remaining critical regressions
+
+- header-language classification for `.h` as C vs C++
+- query-time semantic escalation changing IR graph expansion behavior end to end
+- experimental SCIP warning propagation in full index flow
+- helper asset execution from packaged installs
+
+## Rules for updating this file
+
+- Update this file whenever a hardening slice lands.
+- Remove completed items from the remaining-work sections or move them into landed status.
+- Do not create separate audit/status markdown files unless the user explicitly asks for one.

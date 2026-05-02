@@ -20,7 +20,10 @@ from .snapshot_symbol_index import SnapshotSymbolIndex
 from .utils import safe_jsonable
 
 if TYPE_CHECKING:
-    pass
+    from .query_processor import ProcessedQuery
+
+
+SemanticEscalationCallback = Callable[..., dict[str, Any] | None]
 
 
 class QueryPipeline:
@@ -40,6 +43,7 @@ class QueryPipeline:
         snapshot_symbol_index: SnapshotSymbolIndex,
         is_repo_indexed: Callable[[], bool],
         load_artifacts_by_key: Callable[[str], bool],
+        semantic_escalation_cb: SemanticEscalationCallback | None = None,
     ) -> None:
         self.config = config
         self.logger = logger
@@ -52,10 +56,71 @@ class QueryPipeline:
         self.snapshot_symbol_index = snapshot_symbol_index
         self.is_repo_indexed = is_repo_indexed
         self.load_artifacts_by_key = load_artifacts_by_key
+        self.semantic_escalation_cb = semantic_escalation_cb
 
     # ------------------------------------------------------------------
     # Public query methods
     # ------------------------------------------------------------------
+
+    def _semantic_escalation_budget(
+        self,
+        *,
+        question: str,
+        processed_query: ProcessedQuery,
+        filters: dict[str, Any] | None,
+    ) -> str:
+        snapshot_id = (filters or {}).get("snapshot_id")
+        if not snapshot_id or self.semantic_escalation_cb is None:
+            return "none"
+
+        normalized = question.lower()
+        path_critical_markers = (
+            "call chain",
+            "caller",
+            "callee",
+            "reach",
+            "path",
+            "impact",
+            "break",
+            "dependency",
+            "depends",
+            "inherit",
+            "override",
+            "implementation",
+            "used",
+            "usage",
+            "flow",
+        )
+        if any(marker in normalized for marker in path_critical_markers):
+            return "path-critical"
+        if processed_query.intent in {"debug", "find", "where"}:
+            return "local"
+        return "none"
+
+    def _maybe_escalate_query_semantics(
+        self,
+        *,
+        question: str,
+        processed_query: ProcessedQuery,
+        filters: dict[str, Any] | None,
+        retrieved: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        budget = self._semantic_escalation_budget(
+            question=question,
+            processed_query=processed_query,
+            filters=filters,
+        )
+        if budget == "none" or self.semantic_escalation_cb is None:
+            return None
+        snapshot_id = (filters or {}).get("snapshot_id")
+        if not isinstance(snapshot_id, str) or not snapshot_id:
+            return None
+        return self.semantic_escalation_cb(
+            snapshot_id=snapshot_id,
+            retrieved=retrieved,
+            processed_query=processed_query,
+            budget=budget,
+        )
 
     def query_snapshot(
         self,
@@ -226,6 +291,22 @@ class QueryPipeline:
                     use_agency_mode=use_agency_mode,
                     dialogue_history=dialogue_history if enable_multi_turn else None,
                 )
+                semantic_escalation = self._maybe_escalate_query_semantics(
+                    question=question,
+                    processed_query=processed_query,
+                    filters=filters,
+                    retrieved=retrieved,
+                )
+                if semantic_escalation and semantic_escalation.get("rerun_retrieval"):
+                    retrieved = self.retriever.retrieve(
+                        processed_query,
+                        filters=filters,
+                        repo_filter=repo_filter,
+                        use_agency_mode=use_agency_mode,
+                        dialogue_history=(
+                            dialogue_history if enable_multi_turn else None
+                        ),
+                    )
 
                 # Generate answer (with dialogue history for multi-turn)
                 result = self.answer_generator.generate(
@@ -237,6 +318,8 @@ class QueryPipeline:
                     ),
                     prompt_builder=prompt_builder,
                 )
+                if semantic_escalation is not None:
+                    result["semantic_escalation"] = semantic_escalation
 
             # Add repository information to result
             if repo_filter:

@@ -296,6 +296,30 @@ class TestRootAndHealth:
         assert body["status"] == "running"
 
 
+class TestSchemaDefaults:
+    """Schema default factories should be typed and instance-local."""
+
+    def test_status_response_default_lists_are_not_shared(self) -> None:
+        first = api.StatusResponse(
+            status="ok",
+            repo_loaded=False,
+            repo_indexed=False,
+            repo_info={},
+        )
+        second = api.StatusResponse(
+            status="ok",
+            repo_loaded=False,
+            repo_indexed=False,
+            repo_info={},
+        )
+
+        first.available_repositories.append({"name": "repo-a"})
+        first.loaded_repositories.append({"name": "repo-a"})
+
+        assert second.available_repositories == []
+        assert second.loaded_repositories == []
+
+
 class TestIndexMultiple:
     """POST /index-multiple explicit source mapping behavior."""
 

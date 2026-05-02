@@ -2221,3 +2221,171 @@ class TestSharedUtils:
         safe, rejected = validate_helper_paths([str(f)], str(repo))
         assert len(safe) == 1
         assert len(rejected) == 0
+
+
+# ---------------------------------------------------------------------------
+# Regression gap #4: Helper asset execution from packaged installs
+# ---------------------------------------------------------------------------
+
+_HELPER_RESOLVER_SPECS: list[tuple[str, str, str]] = [
+    (
+        "TypeScriptCompilerResolver",
+        "fastcode.semantic_resolvers.js_ts",
+        "ts_semantic_helper.js",
+    ),
+    (
+        "JavaScriptCompilerResolver",
+        "fastcode.semantic_resolvers.js_ts",
+        "ts_semantic_helper.js",
+    ),
+    ("GoCompilerResolver", "fastcode.semantic_resolvers.go", "go_semantic_helper.go"),
+    (
+        "JavaCompilerResolver",
+        "fastcode.semantic_resolvers.java",
+        "java_semantic_helper.py",
+    ),
+    (
+        "RustCompilerResolver",
+        "fastcode.semantic_resolvers.rust",
+        "rust_semantic_helper.py",
+    ),
+    (
+        "CSharpCompilerResolver",
+        "fastcode.semantic_resolvers.csharp",
+        "csharp_semantic_helper.py",
+    ),
+    (
+        "ZigCompilerResolver",
+        "fastcode.semantic_resolvers.zig",
+        "zig_semantic_helper.py",
+    ),
+    (
+        "FortranCompilerResolver",
+        "fastcode.semantic_resolvers.fortran",
+        "fortran_semantic_helper.py",
+    ),
+    (
+        "JuliaCompilerResolver",
+        "fastcode.semantic_resolvers.julia",
+        "julia_semantic_helper.py",
+    ),
+]
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    ("cls_name", "module_name", "expected_filename"),
+    _HELPER_RESOLVER_SPECS,
+    ids=[spec[0] for spec in _HELPER_RESOLVER_SPECS],
+)
+def test_helper_path_returns_existing_file_for_each_resolver(
+    cls_name: str,
+    module_name: str,
+    expected_filename: str,
+) -> None:
+    """_helper_path() must resolve to a file that exists on disk.
+
+    If Path(__file__).with_name(helper_filename) does not point to a real
+    file, the helper subprocess will fail at runtime.  This catches
+    packaging regressions where force-include misses an asset.
+    """
+    import importlib
+
+    mod = importlib.import_module(module_name)
+    cls = getattr(mod, cls_name)
+    resolver = cls()
+    helper_path = resolver._helper_path()
+    assert helper_path.name == expected_filename, (
+        f"{cls_name}._helper_path().name = {helper_path.name!r}, "
+        f"expected {expected_filename!r}"
+    )
+    assert helper_path.exists(), (
+        f"{cls_name}._helper_path() = {helper_path!r} does not exist on disk"
+    )
+
+
+@pytest.mark.regression
+def test_helper_command_includes_existing_helper_path() -> None:
+    """_helper_command() must build a command whose helper path exists."""
+    from fastcode.semantic_resolvers.js_ts import TypeScriptCompilerResolver
+
+    resolver = TypeScriptCompilerResolver()
+    command = resolver._helper_command(["/tmp/app.ts"])
+    helper_path_in_cmd = Path(command[1])
+    assert helper_path_in_cmd.exists(), (
+        f"Helper path in command does not exist: {helper_path_in_cmd}"
+    )
+
+
+@pytest.mark.regression
+def test_helper_backed_resolver_degrades_gracefully_when_helper_file_missing(
+    tmp_path: Path,
+) -> None:
+    """When _helper_path() points to a non-existent file, the resolver must
+    fall back gracefully without crashing.
+
+    Simulates a packaged install where the helper asset was accidentally
+    omitted from the wheel.
+    """
+
+    class _MissingHelperResolver(HelperBackedSemanticResolver):
+        language = "test_missing"
+        capabilities = frozenset({"resolve_calls"})
+        cost_class = "low"
+        source_name = "missing_helper_resolver"
+        extractor_name = "missing_extractor"
+        frontend_kind = "test"
+        required_tools = ()
+        helper_filename = "nonexistent_helper_xyz.py"
+        file_extensions = (".py",)
+
+    resolver = _MissingHelperResolver(fallback=_DummyFallbackResolver())
+    snapshot = _snapshot(
+        units=[
+            _file_unit("a.py"),
+            _symbol_unit("unit:caller", "a.py", "run", element_id="caller"),
+        ]
+    )
+    element = _element(
+        element_id="file:a",
+        element_type="file",
+        name="a.py",
+        path="a.py",
+    )
+    with (
+        patch.object(resolver, "_has_tools", return_value=True),
+        patch(
+            "fastcode.semantic_resolvers.helper_backed.os.getcwd",
+            return_value=str(tmp_path),
+        ),
+    ):
+        patch_result = resolver.resolve(
+            snapshot=snapshot,
+            elements=[element],
+            target_paths={"a.py"},
+            legacy_graph_builder=None,
+        )
+
+    assert patch_result.resolution_tier in {"structural_fallback", "compiler_confirmed"}
+    # The resolver must not crash; it degrades gracefully.
+    # Helper files rejected → stats may or may not include helper_failed
+    # depending on whether _run_semantic_helper was invoked after validation.
+    assert patch_result is not None
+
+
+@pytest.mark.regression
+def test_helper_path_co_located_with_resolver_module() -> None:
+    """All helper assets must live in the same directory as their resolver
+    module.  _helper_path() uses Path(__file__).with_name(), so the helper
+    must be co-located.
+    """
+    import fastcode.semantic_resolvers.helper_backed as _hb_mod
+    from fastcode.semantic_resolvers.java import JavaCompilerResolver
+
+    module_dir = Path(_hb_mod.__file__).parent
+    resolver = JavaCompilerResolver()
+    helper_path = resolver._helper_path()
+    assert helper_path.parent == module_dir, (
+        f"Helper {helper_path} is not co-located with helper_backed.py "
+        f"(expected parent {module_dir})"
+    )

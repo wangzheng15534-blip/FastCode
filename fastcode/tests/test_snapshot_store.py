@@ -823,11 +823,11 @@ class TestIRGraphsRoundtrip:
     def test_save_load_ir_graphs_roundtrip_property(
         self, snap: IRSnapshot, graph_data: dict[str, Any]
     ):
-        """HAPPY: save_ir_graphs then load_ir_graphs roundtrip via pickle."""
+        """HAPPY: save_ir_graphs then load_ir_graphs roundtrip via JSON."""
         store = _make_store()
         store.save_snapshot(snap)
         path = store.save_ir_graphs(snap.snapshot_id, graph_data)
-        assert path.endswith(".pkl")
+        assert path.endswith(".json")
         loaded = store.load_ir_graphs(snap.snapshot_id)
         assert loaded == graph_data
 
@@ -850,12 +850,12 @@ class TestIRGraphsRoundtrip:
 
     @given(snap=snapshot_st())
     @settings(max_examples=10)
-    def test_save_ir_graphs_returns_pkl_path_property(self, snap: IRSnapshot):
-        """HAPPY: save_ir_graphs returns path ending with ir_graphs.pkl."""
+    def test_save_ir_graphs_returns_json_path_property(self, snap: IRSnapshot):
+        """HAPPY: save_ir_graphs returns path ending with ir_graphs.json."""
         store = _make_store()
         store.save_snapshot(snap)
         path = store.save_ir_graphs(snap.snapshot_id, {"nodes": [1, 2, 3]})
-        assert "ir_graphs.pkl" in path
+        assert "ir_graphs.json" in path
 
     @given(
         snap=snapshot_st(),
@@ -866,10 +866,10 @@ class TestIRGraphsRoundtrip:
         ),
     )
     @settings(max_examples=15)
-    def test_ir_graphs_pickle_preserves_types_property(
+    def test_ir_graphs_json_preserves_types_property(
         self, snap: IRSnapshot, graph_obj: dict[str, Any]
     ):
-        """HAPPY: pickle serialization preserves exact Python types in graphs."""
+        """HAPPY: JSON serialization preserves dict structure in graphs."""
         store = _make_store()
         store.save_snapshot(snap)
         store.save_ir_graphs(snap.snapshot_id, graph_obj)

@@ -35,30 +35,27 @@ def _clone_embedding(embedding: IRUnitEmbedding) -> IRUnitEmbedding:
 def _source_preference(relation: IRRelation) -> int:
     """Rank a relation by its best evidence source.
 
-    Higher value = stronger evidence.  ``compiler_confirmed`` resolver
-    sources outrank plain structural resolver sources.
+    Higher value = stronger evidence.  Named resolvers rank above
+    ``fc_structure``.  Any relation with ``resolution_tier ==
+    "compiler_confirmed"`` is boosted to at least rank 2 (matching
+    SCIP).  New resolvers that set the tier correctly are automatically
+    ranked without updating the preferences dict.
     """
-    preferences = {
+    # fmt: off
+    preferences: dict[str, int] = {
         "fc_structure": 0,
+        "c_resolver": 1, "cpp_resolver": 1,
+        "javascript_resolver": 1, "typescript_resolver": 1,
+        "java_resolver": 1, "go_resolver": 1, "rust_resolver": 1,
+        "csharp_resolver": 1, "zig_resolver": 1,
+        "fortran_resolver": 1, "julia_resolver": 1,
         "python_resolver": 1,
-        "c_resolver": 1,
-        "cpp_resolver": 1,
-        "javascript_resolver": 1,
-        "typescript_resolver": 1,
-        "java_resolver": 1,
-        "go_resolver": 1,
-        "rust_resolver": 1,
-        "csharp_resolver": 1,
-        "zig_resolver": 1,
-        "fortran_resolver": 1,
-        "julia_resolver": 1,
-        "scip": 2,
     }
+    # fmt: on
     sources = set(relation.support_sources)
     if relation.source:
         sources.add(relation.source)
     base_pref = max((preferences.get(source, 0) for source in sources), default=0)
-    # Boost compiler-confirmed relations above graph-backed structural
     tier = (relation.metadata or {}).get("resolution_tier", "")
     if tier == ResolutionTier.COMPILER_CONFIRMED:
         base_pref = max(base_pref, 2)

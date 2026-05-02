@@ -1912,17 +1912,23 @@ def test_helper_backed_resolver_keeps_compiler_tier_on_valid_empty_payload(
     assert patch_result.stats.get("helper_failed") is None
 
 
-def test_helper_backed_resolver_prefers_nearest_target_line_for_ambiguous_symbol() -> None:
+def test_helper_backed_resolver_prefers_nearest_target_line_for_ambiguous_symbol() -> (
+    None
+):
     resolver = _DummyHelperResolver()
     file_a = _file_unit("a.py")
     file_b = _file_unit("b.py")
     caller = _symbol_unit("unit:caller", "a.py", "run", element_id="caller")
     caller.start_line = 1
     caller.end_line = 20
-    callee_near = _symbol_unit("unit:callee:near", "b.py", "helper", element_id="callee:near")
+    callee_near = _symbol_unit(
+        "unit:callee:near", "b.py", "helper", element_id="callee:near"
+    )
     callee_near.start_line = 40
     callee_near.end_line = 45
-    callee_far = _symbol_unit("unit:callee:far", "b.py", "helper", element_id="callee:far")
+    callee_far = _symbol_unit(
+        "unit:callee:far", "b.py", "helper", element_id="callee:far"
+    )
     callee_far.start_line = 5
     callee_far.end_line = 10
     snapshot = _snapshot(units=[file_a, file_b, caller, callee_near, callee_far])

@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import shutil
 from typing import Any
 
 from ..indexer import CodeElement
 from ..semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
+from ._utils import _hash_id
 from .base import ResolutionPatch, ResolutionTier, SemanticResolver, ToolDiagnostic
-
-
-def _hash_id(prefix: str, payload: str) -> str:
-    digest = hashlib.blake2b(payload.encode("utf-8"), digest_size=12).hexdigest()
-    return f"{prefix}:{digest}"
 
 
 class GraphBackedSemanticResolver(SemanticResolver):

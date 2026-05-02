@@ -1319,6 +1319,11 @@ def test_typescript_compiler_facts_emit_semantic_relations():
 
     with (
         patch.object(resolver, "_has_tools", return_value=True),
+        patch.object(
+            resolver,
+            "_target_files",
+            return_value=["src/app.ts", "src/lib.ts"],
+        ),
         patch.object(resolver, "_run_semantic_helper", return_value=payload),
     ):
         patch_result = resolver.resolve(
@@ -1345,11 +1350,14 @@ def test_typescript_compiler_facts_emit_semantic_relations():
     )
 
 
-def test_typescript_target_files_use_repo_root_for_absolute_paths(tmp_path: Path):
+def test_typescript_target_files_use_repo_root_for_absolute_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     resolver = TypeScriptCompilerResolver()
     target = tmp_path / "src" / "app.ts"
     target.parent.mkdir(parents=True)
     target.write_text("export const x = 1;", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
     result = resolver._target_files({str(target), "src/missing.ts"})
     assert str(target) in result
 
@@ -1398,6 +1406,11 @@ def test_go_compiler_facts_emit_semantic_relations():
 
     with (
         patch.object(resolver, "_has_tools", return_value=True),
+        patch.object(
+            resolver,
+            "_target_files",
+            return_value=["main.go", "util.go"],
+        ),
         patch.object(resolver, "_run_semantic_helper", return_value=payload),
     ):
         patch_result = resolver.resolve(
@@ -1416,11 +1429,14 @@ def test_go_compiler_facts_emit_semantic_relations():
     assert len(patch_result.supports) == 2
 
 
-def test_go_target_files_use_repo_root_for_absolute_paths(tmp_path: Path):
+def test_go_target_files_use_repo_root_for_absolute_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     resolver = GoCompilerResolver()
     target = tmp_path / "pkg" / "main.go"
     target.parent.mkdir(parents=True)
     target.write_text("package main", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
     result = resolver._target_files({str(target)})
     assert result == [str(target)]
 
@@ -1473,6 +1489,11 @@ def test_java_compiler_facts_emit_semantic_relations():
 
     with (
         patch.object(resolver, "_has_tools", return_value=True),
+        patch.object(
+            resolver,
+            "_target_files",
+            return_value=["src/App.java", "src/Lib.java"],
+        ),
         patch.object(resolver, "_run_semantic_helper", return_value=payload),
     ):
         patch_result = resolver.resolve(
@@ -1491,11 +1512,14 @@ def test_java_compiler_facts_emit_semantic_relations():
     assert len(patch_result.relations) == 2
 
 
-def test_java_target_files_use_repo_root_for_absolute_paths(tmp_path: Path):
+def test_java_target_files_use_repo_root_for_absolute_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     resolver = JavaCompilerResolver()
     target = tmp_path / "src" / "App.java"
     target.parent.mkdir(parents=True)
     target.write_text("class App {}", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
     result = resolver._target_files({str(target)})
     assert result == [str(target)]
 
@@ -1562,6 +1586,11 @@ def test_additional_compiler_resolvers_map_helper_facts(
 
     with (
         patch.object(resolver, "_has_tools", return_value=True),
+        patch.object(
+            resolver,
+            "_target_files",
+            return_value=[file_a, file_b],
+        ),
         patch.object(resolver, "_run_semantic_helper", return_value=payload),
     ):
         patch_result = resolver.resolve(

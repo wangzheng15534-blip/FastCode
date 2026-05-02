@@ -33,6 +33,11 @@ from fastcode.semantic_resolvers import (
     apply_resolution_patch,
     build_default_semantic_resolver_registry,
 )
+from fastcode.semantic_resolvers._utils import (
+    _hash_id,
+    _normalize_path,
+    validate_helper_paths,
+)
 from fastcode.semantic_resolvers.helper_backed import HelperBackedSemanticResolver
 from fastcode.semantic_resolvers.patching import _source_preference
 
@@ -1698,3 +1703,60 @@ def test_experimental_scip_languages_set():
     from fastcode.scip_indexers import _EXPERIMENTAL_SCIP_LANGUAGES
 
     assert frozenset({"zig", "fortran", "julia"}) == _EXPERIMENTAL_SCIP_LANGUAGES
+
+
+# ---------------------------------------------------------------------------
+# Shared utils tests
+# ---------------------------------------------------------------------------
+
+
+class TestSharedUtils:
+    def test_hash_id_is_deterministic(self) -> None:
+        result = _hash_id("support", "snapshot:go_resolver:import:src/main.go:pkg/mod.go:fmt")
+        assert result == _hash_id("support", "snapshot:go_resolver:import:src/main.go:pkg/mod.go:fmt")
+
+    def test_hash_id_different_inputs_differ(self) -> None:
+        a = _hash_id("support", "aaa")
+        b = _hash_id("support", "bbb")
+        assert a != b
+
+    def test_hash_id_different_prefixes_differ(self) -> None:
+        a = _hash_id("support", "same")
+        b = _hash_id("rel", "same")
+        assert a != b
+
+    def test_normalize_path_strips_dot_slash(self) -> None:
+        assert _normalize_path("./src/main.go") == "src/main.go"
+
+    def test_normalize_path_converts_backslashes(self) -> None:
+        assert _normalize_path("src\\main.go") == "src/main.go"
+
+    def test_normalize_path_idempotent(self) -> None:
+        assert _normalize_path(_normalize_path("src\\main.go")) == _normalize_path("src/main.go")
+
+    def test_validate_helper_paths_rejects_symlink(self, tmp_path: Path) -> None:
+        target = tmp_path / "real.txt"
+        target.write_text("ok")
+        link = tmp_path / "link.txt"
+        link.symlink_to(target)
+        safe, rejected = validate_helper_paths([str(link)], str(tmp_path))
+        assert len(rejected) == 1
+        assert len(safe) == 0
+
+    def test_validate_helper_paths_rejects_outside_repo(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside.txt"
+        outside.write_text("ok")
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        safe, rejected = validate_helper_paths([str(outside)], str(repo))
+        assert len(rejected) == 1
+        assert len(safe) == 0
+
+    def test_validate_helper_paths_accepts_valid(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        f = repo / "main.go"
+        f.write_text("ok")
+        safe, rejected = validate_helper_paths([str(f)], str(repo))
+        assert len(safe) == 1
+        assert len(rejected) == 0

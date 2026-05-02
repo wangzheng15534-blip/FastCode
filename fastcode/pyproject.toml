@@ -113,6 +113,16 @@ extend = "../pyproject.toml"                                             # inher
 [tool.hatch.build.targets.wheel]
 packages = ["src/fastcode"]                                               # package lives at src/fastcode/
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/fastcode/semantic_resolvers/ts_semantic_helper.js" = "fastcode/semantic_resolvers/ts_semantic_helper.js"
+"src/fastcode/semantic_resolvers/go_semantic_helper.go" = "fastcode/semantic_resolvers/go_semantic_helper.go"
+"src/fastcode/semantic_resolvers/java_semantic_helper.py" = "fastcode/semantic_resolvers/java_semantic_helper.py"
+"src/fastcode/semantic_resolvers/rust_semantic_helper.py" = "fastcode/semantic_resolvers/rust_semantic_helper.py"
+"src/fastcode/semantic_resolvers/csharp_semantic_helper.py" = "fastcode/semantic_resolvers/csharp_semantic_helper.py"
+"src/fastcode/semantic_resolvers/zig_semantic_helper.py" = "fastcode/semantic_resolvers/zig_semantic_helper.py"
+"src/fastcode/semantic_resolvers/fortran_semantic_helper.py" = "fastcode/semantic_resolvers/fortran_semantic_helper.py"
+"src/fastcode/semantic_resolvers/julia_semantic_helper.py" = "fastcode/semantic_resolvers/julia_semantic_helper.py"
+
 # ---------------------------------------------------------------------------
 # Ruff: per-file ignores (fastcode-specific, not global)
 # ---------------------------------------------------------------------------

@@ -1281,13 +1281,32 @@ def test_typescript_compiler_facts_emit_semantic_relations():
     )
     snapshot = _snapshot(units=[file_app, file_lib, caller, callee])
     payload = {
-        "imports": [{"source_path": "src/app.ts", "target_path": "src/lib.ts", "module": "./lib"}],
-        "calls": [{"source_path": "src/app.ts", "target_path": "src/lib.ts", "call_name": "helper", "target_name": "helper", "target_symbol": "helper", "source_line": 2, "source_col": 0, "target_line": 1, "target_col": 0}],
+        "imports": [
+            {
+                "source_path": "src/app.ts",
+                "target_path": "src/lib.ts",
+                "module": "./lib",
+            }
+        ],
+        "calls": [
+            {
+                "source_path": "src/app.ts",
+                "target_path": "src/lib.ts",
+                "call_name": "helper",
+                "target_name": "helper",
+                "target_symbol": "helper",
+                "source_line": 2,
+                "source_col": 0,
+                "target_line": 1,
+                "target_col": 0,
+            }
+        ],
         "stats": {"files": 2, "imports": 1, "calls": 1},
     }
 
-    with patch.object(resolver, "_has_tools", return_value=True), patch.object(
-        resolver, "_run_semantic_helper", return_value=payload
+    with (
+        patch.object(resolver, "_has_tools", return_value=True),
+        patch.object(resolver, "_run_semantic_helper", return_value=payload),
     ):
         patch_result = resolver.resolve(
             snapshot=snapshot,
@@ -1297,9 +1316,20 @@ def test_typescript_compiler_facts_emit_semantic_relations():
         )
 
     assert patch_result.resolution_tier == "compiler_confirmed"
-    assert patch_result.stats["relations_emitted"] == {"import": 1, "call": 1, "inherit": 0, "type": 0}
-    assert {relation.relation_type for relation in patch_result.relations} == {"import", "call"}
-    assert all(relation.resolution_state == "semantically_resolved" for relation in patch_result.relations)
+    assert patch_result.stats["relations_emitted"] == {
+        "import": 1,
+        "call": 1,
+        "inherit": 0,
+        "type": 0,
+    }
+    assert {relation.relation_type for relation in patch_result.relations} == {
+        "import",
+        "call",
+    }
+    assert all(
+        relation.resolution_state == "semantically_resolved"
+        for relation in patch_result.relations
+    )
 
 
 def test_typescript_target_files_use_repo_root_for_absolute_paths(tmp_path: Path):
@@ -1315,17 +1345,47 @@ def test_go_compiler_facts_emit_semantic_relations():
     resolver = GoCompilerResolver()
     file_main = _file_unit("main.go", language="go")
     file_util = _file_unit("util.go", language="go")
-    caller = _symbol_unit("unit:go:caller", "main.go", "run", element_id="go:caller", kind="function", language="go")
-    callee = _symbol_unit("unit:go:callee", "util.go", "helper", element_id="go:callee", kind="function", anchor="scip:go:helper", language="go")
+    caller = _symbol_unit(
+        "unit:go:caller",
+        "main.go",
+        "run",
+        element_id="go:caller",
+        kind="function",
+        language="go",
+    )
+    callee = _symbol_unit(
+        "unit:go:callee",
+        "util.go",
+        "helper",
+        element_id="go:callee",
+        kind="function",
+        anchor="scip:go:helper",
+        language="go",
+    )
     snapshot = _snapshot(units=[file_main, file_util, caller, callee])
     payload = {
-        "imports": [{"source_path": "main.go", "target_path": "util.go", "import_path": "util"}],
-        "calls": [{"source_path": "main.go", "target_path": "util.go", "call_name": "helper", "target_name": "helper", "target_symbol": "helper", "source_line": 2, "source_col": 0, "target_line": 1, "target_col": 0}],
+        "imports": [
+            {"source_path": "main.go", "target_path": "util.go", "import_path": "util"}
+        ],
+        "calls": [
+            {
+                "source_path": "main.go",
+                "target_path": "util.go",
+                "call_name": "helper",
+                "target_name": "helper",
+                "target_symbol": "helper",
+                "source_line": 2,
+                "source_col": 0,
+                "target_line": 1,
+                "target_col": 0,
+            }
+        ],
         "stats": {"files": 2, "imports": 1, "calls": 1},
     }
 
-    with patch.object(resolver, "_has_tools", return_value=True), patch.object(
-        resolver, "_run_semantic_helper", return_value=payload
+    with (
+        patch.object(resolver, "_has_tools", return_value=True),
+        patch.object(resolver, "_run_semantic_helper", return_value=payload),
     ):
         patch_result = resolver.resolve(
             snapshot=snapshot,
@@ -1334,7 +1394,12 @@ def test_go_compiler_facts_emit_semantic_relations():
             legacy_graph_builder=None,
         )
 
-    assert patch_result.stats["relations_emitted"] == {"import": 1, "call": 1, "inherit": 0, "type": 0}
+    assert patch_result.stats["relations_emitted"] == {
+        "import": 1,
+        "call": 1,
+        "inherit": 0,
+        "type": 0,
+    }
     assert len(patch_result.supports) == 2
 
 
@@ -1351,17 +1416,51 @@ def test_java_compiler_facts_emit_semantic_relations():
     resolver = JavaCompilerResolver()
     file_app = _file_unit("src/App.java", language="java")
     file_lib = _file_unit("src/Lib.java", language="java")
-    caller = _symbol_unit("unit:java:caller", "src/App.java", "run", element_id="java:caller", kind="function", language="java")
-    callee = _symbol_unit("unit:java:callee", "src/Lib.java", "helper", element_id="java:callee", kind="function", anchor="scip:java:helper", language="java")
+    caller = _symbol_unit(
+        "unit:java:caller",
+        "src/App.java",
+        "run",
+        element_id="java:caller",
+        kind="function",
+        language="java",
+    )
+    callee = _symbol_unit(
+        "unit:java:callee",
+        "src/Lib.java",
+        "helper",
+        element_id="java:callee",
+        kind="function",
+        anchor="scip:java:helper",
+        language="java",
+    )
     snapshot = _snapshot(units=[file_app, file_lib, caller, callee])
     payload = {
-        "imports": [{"source_path": "src/App.java", "target_path": "src/Lib.java", "import_name": "demo.Lib"}],
-        "calls": [{"source_path": "src/App.java", "target_path": "src/Lib.java", "call_name": "helper", "target_name": "helper", "target_symbol": "helper", "source_line": 2, "source_col": 0, "target_line": 1, "target_col": 0}],
+        "imports": [
+            {
+                "source_path": "src/App.java",
+                "target_path": "src/Lib.java",
+                "import_name": "demo.Lib",
+            }
+        ],
+        "calls": [
+            {
+                "source_path": "src/App.java",
+                "target_path": "src/Lib.java",
+                "call_name": "helper",
+                "target_name": "helper",
+                "target_symbol": "helper",
+                "source_line": 2,
+                "source_col": 0,
+                "target_line": 1,
+                "target_col": 0,
+            }
+        ],
         "stats": {"files": 2, "imports": 1, "calls": 1},
     }
 
-    with patch.object(resolver, "_has_tools", return_value=True), patch.object(
-        resolver, "_run_semantic_helper", return_value=payload
+    with (
+        patch.object(resolver, "_has_tools", return_value=True),
+        patch.object(resolver, "_run_semantic_helper", return_value=payload),
     ):
         patch_result = resolver.resolve(
             snapshot=snapshot,
@@ -1370,7 +1469,12 @@ def test_java_compiler_facts_emit_semantic_relations():
             legacy_graph_builder=None,
         )
 
-    assert patch_result.stats["relations_emitted"] == {"import": 1, "call": 1, "inherit": 0, "type": 0}
+    assert patch_result.stats["relations_emitted"] == {
+        "import": 1,
+        "call": 1,
+        "inherit": 0,
+        "type": 0,
+    }
     assert len(patch_result.relations) == 2
 
 
@@ -1418,13 +1522,34 @@ def test_additional_compiler_resolvers_map_helper_facts(
     )
     snapshot = _snapshot(units=[file_src, file_dst, caller, callee])
     payload = {
-        "imports": [{"source_path": file_a, "target_path": file_b, "module": file_b, "import_name": file_b, "import_path": file_b}],
-        "calls": [{"source_path": file_a, "target_path": file_b, "call_name": "helper", "target_name": "helper", "target_symbol": "helper", "source_line": 2, "source_col": 0, "target_line": 1, "target_col": 0}],
+        "imports": [
+            {
+                "source_path": file_a,
+                "target_path": file_b,
+                "module": file_b,
+                "import_name": file_b,
+                "import_path": file_b,
+            }
+        ],
+        "calls": [
+            {
+                "source_path": file_a,
+                "target_path": file_b,
+                "call_name": "helper",
+                "target_name": "helper",
+                "target_symbol": "helper",
+                "source_line": 2,
+                "source_col": 0,
+                "target_line": 1,
+                "target_col": 0,
+            }
+        ],
         "stats": {"files": 2, "imports": 1, "calls": 1},
     }
 
-    with patch.object(resolver, "_has_tools", return_value=True), patch.object(
-        resolver, "_run_semantic_helper", return_value=payload
+    with (
+        patch.object(resolver, "_has_tools", return_value=True),
+        patch.object(resolver, "_run_semantic_helper", return_value=payload),
     ):
         patch_result = resolver.resolve(
             snapshot=snapshot,
@@ -1435,12 +1560,17 @@ def test_additional_compiler_resolvers_map_helper_facts(
 
     assert patch_result.stats["relations_emitted"]["import"] == 1
     assert patch_result.stats["relations_emitted"]["call"] == 1
-    assert all(r.metadata.get("resolution_tier") == "compiler_confirmed" for r in patch_result.relations)
+    assert all(
+        r.metadata.get("resolution_tier") == "compiler_confirmed"
+        for r in patch_result.relations
+    )
 
 
 class _DummyHelperResolver(HelperBackedSemanticResolver):
     language = "python"
-    capabilities = frozenset({"resolve_calls", "resolve_imports", "resolve_inheritance"})
+    capabilities = frozenset(
+        {"resolve_calls", "resolve_imports", "resolve_inheritance"}
+    )
     cost_class = "low"
     source_name = "dummy_resolver"
     extractor_name = "dummy_extractor"

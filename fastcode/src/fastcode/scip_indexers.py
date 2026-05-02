@@ -11,10 +11,19 @@ import logging
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 
 from .scip_models import SCIPIndex
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SCIPIndexerProfile:
+    language: str
+    binary_name: str
+    extra_args: tuple[str, ...]
+    experimental: bool = False
 
 SUPPORTED_LANGUAGES: dict[str, tuple[str, list[str]]] = {
     "java": ("scip-java", ["index", "--output"]),
@@ -48,11 +57,23 @@ def get_indexer_command(
     output_path: str,
 ) -> list[str] | None:
     """Build the indexer command for a language. Returns None if unsupported."""
+    profile = get_scip_indexer_profile(language)
+    if profile is None:
+        return None
+    return [profile.binary_name, *profile.extra_args, output_path]
+
+
+def get_scip_indexer_profile(language: str) -> SCIPIndexerProfile | None:
     entry = SUPPORTED_LANGUAGES.get(language)
     if not entry:
         return None
     binary_name, extra_args = entry
-    return [binary_name, *extra_args, output_path]
+    return SCIPIndexerProfile(
+        language=language,
+        binary_name=binary_name,
+        extra_args=tuple(extra_args),
+        experimental=language in _EXPERIMENTAL_SCIP_LANGUAGES,
+    )
 
 
 def run_scip_indexer(
@@ -102,11 +123,10 @@ def is_scip_available(language: str) -> bool:
     Returns True if both the language is supported AND the required binary
     is present in PATH.
     """
-    entry = SUPPORTED_LANGUAGES.get(language)
-    if not entry:
+    profile = get_scip_indexer_profile(language)
+    if profile is None:
         return False
-    binary_name = entry[0]
-    return shutil.which(binary_name) is not None
+    return shutil.which(profile.binary_name) is not None
 
 
 # Languages whose SCIP tooling is experimental / unstable.

@@ -1,5 +1,7 @@
 import json
+import os
 import tempfile
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -8,6 +10,7 @@ import numpy as np
 from fastcode.index_run import IndexRunStore
 from fastcode.manifest_store import ManifestStore
 from fastcode.pipeline import IndexPipeline
+from fastcode.scip_models import SCIPIndex
 from fastcode.semantic_ir import IRAttachment, IRCodeUnit, IRSnapshot
 from fastcode.snapshot_store import SnapshotStore
 
@@ -574,3 +577,194 @@ def test_pipeline_backfill_persists_missing_layer_metadata_to_snapshot_store() -
         assert stored_metadata["pipeline_metrics"]["never_silent_fallback"] is True
         assert stored_metadata["pipeline_layers"][1]["status"] == "skipped"
         assert result["pipeline_metrics"]["never_silent_fallback"] is True
+
+
+def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_scip_experimental_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        element = SimpleNamespace(
+            id="file:a",
+            type="file",
+            name="a.zig",
+            file_path="a.zig",
+            relative_path="a.zig",
+            language="zig",
+            start_line=1,
+            end_line=1,
+            signature=None,
+            metadata={"embedding": np.array([0.1, 0.2, 0.3])},
+            to_dict=lambda: {"id": "file:a", "relative_path": "a.zig", "metadata": {}},
+        )
+        ast_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:test",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+            units=[
+                IRCodeUnit(
+                    unit_id="doc:snap:repo:test:a.zig",
+                    kind="file",
+                    path="a.zig",
+                    language="zig",
+                    display_name="a.zig",
+                    source_set={"fc_structure"},
+                    metadata={"source": "fc_structure"},
+                )
+            ],
+        )
+        scip_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:test",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+            metadata={"scip_languages": ["zig"], "experimental_scip_languages": ["zig"]},
+        )
+        temp_store = SimpleNamespace(
+            metadata=[],
+            initialize=lambda dim: None,
+            add_vectors=lambda vectors, metadata: None,
+            save=lambda artifact_key: None,
+        )
+        temp_graph = SimpleNamespace(
+            dependency_graph=SimpleNamespace(number_of_nodes=lambda: 0, number_of_edges=lambda: 0),
+            inheritance_graph=SimpleNamespace(number_of_nodes=lambda: 0, number_of_edges=lambda: 0),
+            call_graph=SimpleNamespace(number_of_nodes=lambda: 0, number_of_edges=lambda: 0),
+            build_graphs=lambda elements, module_resolver, symbol_resolver: None,
+            save=lambda artifact_key: None,
+        )
+        temp_retriever = SimpleNamespace(
+            index_for_bm25=lambda elements: None,
+            build_repo_overview_bm25=lambda: None,
+            save_bm25=lambda artifact_key: None,
+        )
+
+        def _fake_run_scip(language: str, repo_path: str, out_dir: str) -> SCIPIndex:
+            assert language == "zig"
+            artifact_path = os.path.join(out_dir, "zig.scip")
+            with open(artifact_path, "wb") as handle:
+                handle.write(b"fake")
+            return SCIPIndex(indexer_name="zls", indexer_version="1.0")
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    pipeline,
+                    "_resolve_snapshot_ref",
+                    return_value={
+                        "repo_name": "repo",
+                        "branch": "main",
+                        "commit_id": "c1",
+                        "tree_id": "t1",
+                        "snapshot_id": "snap:repo:test",
+                    },
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline, "_build_git_meta", return_value={})
+            )
+            stack.enter_context(
+                patch.object(pipeline.indexer, "extract_elements", return_value=[element])
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.VectorStore", return_value=temp_store)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.CodeGraphBuilder", return_value=temp_graph)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.HybridRetriever", return_value=temp_retriever)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.build_ir_from_ast", return_value=ast_snapshot)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.detect_scip_languages", return_value=["zig"])
+            )
+            stack.enter_context(
+                patch(
+                    "fastcode.pipeline.run_scip_for_language",
+                    side_effect=_fake_run_scip,
+                )
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.build_ir_from_scip", return_value=scip_snapshot)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.merge_ir", return_value=scip_snapshot)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.validate_snapshot", return_value=[])
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline,
+                    "_apply_semantic_resolvers",
+                    side_effect=lambda **kwargs: kwargs["snapshot"],
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline.snapshot_store, "stage_snapshot", return_value=None)
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "save_relational_facts", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline.snapshot_store, "save_ir_graphs", return_value=None)
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "import_git_backbone", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store,
+                    "update_snapshot_metadata",
+                    return_value=None,
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline.snapshot_store, "release_lock", return_value=None)
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store,
+                    "validate_fencing_token",
+                    return_value=True,
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store,
+                    "save_scip_artifact_refs",
+                    return_value=[
+                        {
+                            "snapshot_id": "snap:repo:test",
+                            "artifact_path": os.path.join(tmp, "zig.scip"),
+                            "indexer_name": "zls",
+                            "indexer_version": "1.0",
+                            "checksum": "abc",
+                            "created_at": "2026-01-01T00:00:00+00:00",
+                        }
+                    ],
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline, "_load_artifacts_by_key", return_value=True)
+            )
+            result = pipeline.run_index_pipeline(
+                source=tmp,
+                is_url=False,
+                enable_scip=True,
+                publish=False,
+            )
+
+        layer2 = result["pipeline_layers"][1]
+        assert "experimental_scip_languages: zig" in layer2["warnings"]
+        assert "experimental_scip_languages: zig" in result["warnings"]
+        assert layer2["metrics"]["experimental_scip_languages"] == ["zig"]
+        assert layer2["metrics"]["experimental_language_count"] == 1

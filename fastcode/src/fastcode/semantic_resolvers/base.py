@@ -9,7 +9,6 @@ from typing import Any
 from ..indexer import CodeElement
 from ..semantic_ir import IRRelation, IRSnapshot, IRUnitSupport
 
-
 # ---------------------------------------------------------------------------
 # Semantic capability constants
 # ---------------------------------------------------------------------------
@@ -136,9 +135,7 @@ class ResolutionPatch:
     create or mutate snapshots directly.
     """
 
-    unit_metadata_updates: dict[str, dict[str, Any]] = field(
-        default_factory=dict
-    )
+    unit_metadata_updates: dict[str, dict[str, Any]] = field(default_factory=dict)
     metadata_updates: dict[str, Any] = field(default_factory=dict)
     supports: list[IRUnitSupport] = field(default_factory=list)
     relations: list[IRRelation] = field(default_factory=list)

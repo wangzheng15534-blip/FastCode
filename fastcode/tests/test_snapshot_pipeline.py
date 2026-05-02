@@ -236,7 +236,9 @@ def _make_minimal_pipeline(tmp: str) -> IndexPipeline:
     )
     return IndexPipeline(
         config={},
-        logger=SimpleNamespace(info=lambda *a, **kw: None, warning=lambda *a, **kw: None),
+        logger=SimpleNamespace(
+            info=lambda *a, **kw: None, warning=lambda *a, **kw: None
+        ),
         loader=SimpleNamespace(
             repo_path=tmp,
             get_repository_info=lambda: {"name": "repo", "url": tmp},
@@ -255,7 +257,9 @@ def _make_minimal_pipeline(tmp: str) -> IndexPipeline:
             build_repo_overview_bm25=lambda: None,
         ),
         graph_builder=SimpleNamespace(load=lambda artifact_key: True),
-        ir_graph_builder=SimpleNamespace(build_graphs=lambda snapshot: SimpleNamespace()),
+        ir_graph_builder=SimpleNamespace(
+            build_graphs=lambda snapshot: SimpleNamespace()
+        ),
         pg_retrieval_store=SimpleNamespace(upsert_elements=lambda **kwargs: None),
         terminus_publisher=SimpleNamespace(is_configured=lambda: False),
         doc_ingester=SimpleNamespace(),
@@ -308,9 +312,15 @@ def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
             save=lambda artifact_key: None,
         )
         temp_graph = SimpleNamespace(
-            dependency_graph=SimpleNamespace(number_of_nodes=lambda: 0, number_of_edges=lambda: 0),
-            inheritance_graph=SimpleNamespace(number_of_nodes=lambda: 0, number_of_edges=lambda: 0),
-            call_graph=SimpleNamespace(number_of_nodes=lambda: 0, number_of_edges=lambda: 0),
+            dependency_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            inheritance_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            call_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
             build_graphs=lambda elements, module_resolver, symbol_resolver: None,
             save=lambda artifact_key: None,
         )
@@ -321,7 +331,17 @@ def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
         )
 
         with (
-            patch.object(pipeline, "_resolve_snapshot_ref", return_value={"repo_name": "repo", "branch": "main", "commit_id": "c1", "tree_id": "t1", "snapshot_id": "snap:repo:test"}),
+            patch.object(
+                pipeline,
+                "_resolve_snapshot_ref",
+                return_value={
+                    "repo_name": "repo",
+                    "branch": "main",
+                    "commit_id": "c1",
+                    "tree_id": "t1",
+                    "snapshot_id": "snap:repo:test",
+                },
+            ),
             patch.object(pipeline, "_build_git_meta", return_value={}),
             patch.object(pipeline.indexer, "extract_elements", return_value=[element]),
             patch("fastcode.pipeline.VectorStore", return_value=temp_store),
@@ -329,14 +349,26 @@ def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
             patch("fastcode.pipeline.HybridRetriever", return_value=temp_retriever),
             patch("fastcode.pipeline.build_ir_from_ast", return_value=ast_snapshot),
             patch("fastcode.pipeline.validate_snapshot", return_value=[]),
-            patch.object(pipeline, "_apply_semantic_resolvers", side_effect=lambda **kwargs: kwargs["snapshot"]),
+            patch.object(
+                pipeline,
+                "_apply_semantic_resolvers",
+                side_effect=lambda **kwargs: kwargs["snapshot"],
+            ),
             patch.object(pipeline.snapshot_store, "stage_snapshot", return_value=None),
-            patch.object(pipeline.snapshot_store, "save_relational_facts", return_value=None),
+            patch.object(
+                pipeline.snapshot_store, "save_relational_facts", return_value=None
+            ),
             patch.object(pipeline.snapshot_store, "save_ir_graphs", return_value=None),
-            patch.object(pipeline.snapshot_store, "import_git_backbone", return_value=None),
-            patch.object(pipeline.snapshot_store, "update_snapshot_metadata", return_value=None),
+            patch.object(
+                pipeline.snapshot_store, "import_git_backbone", return_value=None
+            ),
+            patch.object(
+                pipeline.snapshot_store, "update_snapshot_metadata", return_value=None
+            ),
             patch.object(pipeline.snapshot_store, "release_lock", return_value=None),
-            patch.object(pipeline.snapshot_store, "validate_fencing_token", return_value=True),
+            patch.object(
+                pipeline.snapshot_store, "validate_fencing_token", return_value=True
+            ),
             patch.object(pipeline, "_load_artifacts_by_key", return_value=True),
         ):
             result = pipeline.run_index_pipeline(
@@ -374,7 +406,10 @@ def test_pipeline_layer_helpers_report_semantic_gap_metrics() -> None:
         pipeline._finalize_layer_metrics(
             snapshot,
             layer3,
-            extra_metrics={"resolver_runs": 0, **pipeline._layer3_quality_metrics(snapshot)},
+            extra_metrics={
+                "resolver_runs": 0,
+                **pipeline._layer3_quality_metrics(snapshot),
+            },
         )
         layer3["status"] = "degraded"
         layer3["reason"] = "no_semantic_resolver_runs_recorded"
@@ -383,11 +418,15 @@ def test_pipeline_layer_helpers_report_semantic_gap_metrics() -> None:
         assert layer3["status"] == "degraded"
 
 
-def test_pipeline_reused_result_keeps_existing_behavior_without_fake_layer_claims() -> None:
+def test_pipeline_reused_result_keeps_existing_behavior_without_fake_layer_claims() -> (
+    None
+):
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_reuse_") as tmp:
         pipeline = _make_minimal_pipeline(tmp)
         snapshot = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:test")
-        pipeline.snapshot_store.save_snapshot(snapshot, metadata={"artifact_key": "snap_repo_test"})
+        pipeline.snapshot_store.save_snapshot(
+            snapshot, metadata={"artifact_key": "snap_repo_test"}
+        )
         pipeline.index_run_store.create_run(
             repo_name="repo",
             snapshot_id="snap:repo:test",
@@ -404,14 +443,28 @@ def test_pipeline_reused_result_keeps_existing_behavior_without_fake_layer_claim
         )
         run = pipeline.index_run_store.get_run(run_id)
         assert run is not None
-        pipeline.index_run_store.mark_completed(run["run_id"], status="succeeded", warnings=[])
+        pipeline.index_run_store.mark_completed(
+            run["run_id"], status="succeeded", warnings=[]
+        )
 
         with (
-            patch.object(pipeline, "_resolve_snapshot_ref", return_value={"repo_name": "repo", "branch": "main", "commit_id": "c1", "tree_id": "t1", "snapshot_id": "snap:repo:test"}),
+            patch.object(
+                pipeline,
+                "_resolve_snapshot_ref",
+                return_value={
+                    "repo_name": "repo",
+                    "branch": "main",
+                    "commit_id": "c1",
+                    "tree_id": "t1",
+                    "snapshot_id": "snap:repo:test",
+                },
+            ),
             patch.object(pipeline, "_build_git_meta", return_value={}),
             patch.object(pipeline, "_load_artifacts_by_key", return_value=True),
         ):
-            result = pipeline.run_index_pipeline(source=tmp, is_url=False, publish=False)
+            result = pipeline.run_index_pipeline(
+                source=tmp, is_url=False, publish=False
+            )
 
         assert result["status"] == "reused"
         assert [layer["name"] for layer in result["pipeline_layers"]] == [
@@ -422,11 +475,15 @@ def test_pipeline_reused_result_keeps_existing_behavior_without_fake_layer_claim
         assert result["pipeline_metrics"]["never_silent_fallback"] is True
 
 
-def test_pipeline_layer3_succeeds_when_semantic_runs_recorded_even_without_new_relations() -> None:
+def test_pipeline_layer3_succeeds_when_semantic_runs_recorded_even_without_new_relations() -> (
+    None
+):
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_layers_") as tmp:
         pipeline = _make_minimal_pipeline(tmp)
         snapshot = IRSnapshot(repo_name="repo", snapshot_id="snap:1")
-        snapshot.metadata["semantic_resolver_runs"] = [{"language": "python", "source": "python_resolver"}]
+        snapshot.metadata["semantic_resolver_runs"] = [
+            {"language": "python", "source": "python_resolver"}
+        ]
         metrics = pipeline._layer3_quality_metrics(snapshot)
         assert metrics["semantic_relations"] == 0
         assert len(snapshot.metadata["semantic_resolver_runs"]) == 1
@@ -489,7 +546,9 @@ def test_pipeline_backfill_reuses_full_scip_artifact_lineage_metadata() -> None:
         )
 
         assert result["scip_artifact_ref"]["artifact_path"] == "/tmp/a.scip"
-        assert [artifact["artifact_path"] for artifact in result["scip_artifact_refs"]] == [
+        assert [
+            artifact["artifact_path"] for artifact in result["scip_artifact_refs"]
+        ] == [
             "/tmp/a.scip",
             "/tmp/b.scip",
         ]
@@ -499,7 +558,9 @@ def test_pipeline_backfill_persists_missing_layer_metadata_to_snapshot_store() -
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_backfill_persist_") as tmp:
         pipeline = _make_minimal_pipeline(tmp)
         snapshot = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:legacy")
-        pipeline.snapshot_store.save_snapshot(snapshot, metadata={"artifact_key": "legacy_key"})
+        pipeline.snapshot_store.save_snapshot(
+            snapshot, metadata={"artifact_key": "legacy_key"}
+        )
 
         result = pipeline._backfill_result_layer_metadata(
             snapshot_id="snap:repo:legacy",

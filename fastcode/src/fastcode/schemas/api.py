@@ -7,6 +7,10 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+def _empty_repo_records() -> list[dict[str, Any]]:
+    return []
+
+
 class LoadRepositoryRequest(BaseModel):
     source: str = Field(..., description="Repository URL or local path")
     is_url: bool | None = Field(
@@ -130,5 +134,9 @@ class StatusResponse(BaseModel):
     graph_backend: str | None = None
     storage_backend: str | None = None
     retrieval_backend: str | None = None
-    available_repositories: list[dict[str, Any]] = Field(default_factory=list)
-    loaded_repositories: list[dict[str, Any]] = Field(default_factory=list)
+    available_repositories: list[dict[str, Any]] = Field(
+        default_factory=_empty_repo_records
+    )
+    loaded_repositories: list[dict[str, Any]] = Field(
+        default_factory=_empty_repo_records
+    )

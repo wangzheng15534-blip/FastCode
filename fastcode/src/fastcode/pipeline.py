@@ -13,6 +13,7 @@ import os
 import re
 import tempfile
 from collections.abc import Callable
+from time import perf_counter
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -340,6 +341,170 @@ class IndexPipeline:
     # Semantic resolvers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _make_layer_record(
+        *,
+        name: str,
+        ordinal: int,
+        enabled: bool,
+        source: str,
+        description: str,
+        status: str = "pending",
+        strict: bool = False,
+        conditional: bool = False,
+        reason: str | None = None,
+        metrics: dict[str, Any] | None = None,
+        warnings: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "ordinal": ordinal,
+            "enabled": enabled,
+            "source": source,
+            "description": description,
+            "status": status,
+            "strict": strict,
+            "conditional": conditional,
+            "reason": reason,
+            "metrics": dict(metrics or {}),
+            "warnings": list(warnings or []),
+        }
+
+    @staticmethod
+    def _finalize_layer_metrics(
+        snapshot: IRSnapshot | None,
+        layer: dict[str, Any],
+        *,
+        extra_metrics: dict[str, Any] | None = None,
+    ) -> None:
+        metrics = dict(layer.get("metrics") or {})
+        if snapshot is not None:
+            metrics.update(
+                {
+                    "units": len(snapshot.units),
+                    "supports": len(snapshot.supports),
+                    "relations": len(snapshot.relations),
+                    "embeddings": len(snapshot.embeddings),
+                }
+            )
+        if extra_metrics:
+            metrics.update(extra_metrics)
+        layer["metrics"] = metrics
+
+    def _snapshot_layer_metadata(self, snapshot: IRSnapshot) -> dict[str, Any]:
+        metadata = dict(snapshot.metadata or {})
+        record = self.snapshot_store.get_snapshot_record(snapshot.snapshot_id)
+        if record and record.get("metadata_json"):
+            try:
+                stored_metadata = json.loads(record["metadata_json"])
+            except (TypeError, json.JSONDecodeError):
+                stored_metadata = {}
+            if isinstance(stored_metadata, dict):
+                metadata = {**stored_metadata, **metadata}
+        return metadata
+
+    @staticmethod
+    def _layer3_quality_metrics(snapshot: IRSnapshot) -> dict[str, Any]:
+        relations = list(snapshot.relations)
+        total_relations = len(relations)
+        structural = 0
+        anchored = 0
+        semantic = 0
+        pending = 0
+        for relation in relations:
+            state = relation.resolution_state
+            if state == "structural":
+                structural += 1
+            elif state == "anchored":
+                anchored += 1
+            elif state in {"semantic", "semantically_resolved"}:
+                semantic += 1
+            if relation.pending_capabilities:
+                pending += 1
+        return {
+            "total_relations": total_relations,
+            "structural_relations": structural,
+            "anchored_relations": anchored,
+            "semantic_relations": semantic,
+            "relations_with_pending_capabilities": pending,
+        }
+
+    def _default_pipeline_layers(self, *, enable_scip: bool) -> list[dict[str, Any]]:
+        return [
+            self._make_layer_record(
+                name="plain_ast_embedding",
+                ordinal=1,
+                enabled=True,
+                source="hKUDS_fastcode_upstream",
+                description="Original tree-sitter/code-index graph plus embedding pipeline without SCIP patching.",
+                strict=True,
+            ),
+            self._make_layer_record(
+                name="unified_ir_scip_merge",
+                ordinal=2,
+                enabled=enable_scip,
+                source="fastcode_ir_patch",
+                description="Canonical IR built from AST and optionally merged with SCIP precision anchors.",
+                strict=False,
+                conditional=True,
+                reason="disabled_by_config" if not enable_scip else None,
+                status="skipped" if not enable_scip else "pending",
+            ),
+            self._make_layer_record(
+                name="language_specific_semantic_upgrade",
+                ordinal=3,
+                enabled=True,
+                source="language_specific_ast_resolvers",
+                description="Language-specific semantic resolver layer that upgrades graph relations beyond universal AST and SCIP anchors.",
+                strict=False,
+                conditional=True,
+            ),
+        ]
+
+    def _backfill_result_layer_metadata(
+        self,
+        *,
+        snapshot_id: str,
+        result: dict[str, Any],
+        enable_scip: bool,
+    ) -> dict[str, Any]:
+        snapshot = self.snapshot_store.load_snapshot(snapshot_id)
+        if snapshot is None:
+            return result
+        metadata = self._snapshot_layer_metadata(snapshot)
+        changed = False
+        layers = metadata.get("pipeline_layers")
+        if not layers:
+            layers = self._default_pipeline_layers(enable_scip=enable_scip)
+            metadata["pipeline_layers"] = layers
+            changed = True
+        metrics = metadata.get("pipeline_metrics")
+        if not metrics:
+            metrics = {
+                "never_silent_fallback": True,
+                "degraded": result.get("status") == "degraded",
+                "warning_count": len(result.get("warnings", [])),
+                "layer_statuses": {
+                    layer["name"]: layer["status"] for layer in layers
+                },
+            }
+            metadata["pipeline_metrics"] = metrics
+            changed = True
+
+        if "scip_artifact_ref" not in result and metadata.get("scip_artifact_ref") is not None:
+            result["scip_artifact_ref"] = metadata.get("scip_artifact_ref")
+        if "scip_artifact_refs" not in result:
+            if metadata.get("scip_artifact_refs") is not None:
+                result["scip_artifact_refs"] = metadata.get("scip_artifact_refs")
+            elif metadata.get("scip_artifact_ref") is not None:
+                result["scip_artifact_refs"] = [metadata.get("scip_artifact_ref")]
+        result["pipeline_layers"] = layers
+        result["pipeline_metrics"] = metrics
+
+        if changed:
+            self.snapshot_store.update_snapshot_metadata(snapshot_id, metadata)
+        return result
+
     def _apply_semantic_resolvers(
         self,
         *,
@@ -443,18 +608,23 @@ class IndexPipeline:
         snapshot_id = snapshot_ref["snapshot_id"]
         warnings: list[str] = []
         degraded = False
+        pipeline_layers = self._default_pipeline_layers(enable_scip=enable_scip)
 
         existing = self.snapshot_store.get_snapshot_record(snapshot_id)
         if existing and not force:
             artifact_key = existing["artifact_key"]
             loaded = self._load_artifacts_by_key(artifact_key)
-            return {
+            return self._backfill_result_layer_metadata(
+                snapshot_id=snapshot_id,
+                enable_scip=enable_scip,
+                result={
                 "status": "reused",
                 "repo_name": repo_name,
                 "snapshot_id": snapshot_id,
                 "artifact_key": artifact_key,
                 "loaded": loaded,
-            }
+                },
+            )
 
         idempotency_key = hashlib.sha1(
             f"{repo_name}:{snapshot_id}:{bool(publish)}:{bool(enable_scip)}".encode()
@@ -476,7 +646,10 @@ class IndexPipeline:
             existing_snapshot = self.snapshot_store.get_snapshot_record(snapshot_id)
             if existing_snapshot:
                 loaded = self._load_artifacts_by_key(existing_snapshot["artifact_key"])
-                return {
+                return self._backfill_result_layer_metadata(
+                    snapshot_id=snapshot_id,
+                    enable_scip=enable_scip,
+                    result={
                     "status": existing_run.get("status"),
                     "run_id": run_id,
                     "repo_name": repo_name,
@@ -484,7 +657,8 @@ class IndexPipeline:
                     "artifact_key": existing_snapshot["artifact_key"],
                     "loaded": loaded,
                     "warnings": json.loads(existing_run.get("warnings_json") or "[]"),
-                }
+                    },
+                )
         self.index_run_store.mark_started(run_id)
         lock_name = f"index:{snapshot_id}"
         fencing_token: int | None = self.snapshot_store.acquire_lock(
@@ -548,6 +722,23 @@ class IndexPipeline:
             temp_store.save(artifact_key)
             temp_retriever.save_bm25(artifact_key)
             temp_graph.save(artifact_key)
+            layer1 = pipeline_layers[0]
+            layer1["status"] = "succeeded"
+            self._finalize_layer_metrics(
+                None,
+                layer1,
+                extra_metrics={
+                    "elements": len(elements),
+                    "embedded_elements": len(vectors),
+                    "bm25_indexed": len(elements),
+                    "dependency_graph_nodes": temp_graph.dependency_graph.number_of_nodes(),
+                    "inheritance_graph_nodes": temp_graph.inheritance_graph.number_of_nodes(),
+                    "call_graph_nodes": temp_graph.call_graph.number_of_nodes(),
+                    "dependency_graph_edges": temp_graph.dependency_graph.number_of_edges(),
+                    "inheritance_graph_edges": temp_graph.inheritance_graph.number_of_edges(),
+                    "call_graph_edges": temp_graph.call_graph.number_of_edges(),
+                },
+            )
 
             self.index_run_store.mark_status(run_id, "validating")
             ast_snapshot: IRSnapshot = build_ir_from_ast(
@@ -560,9 +751,13 @@ class IndexPipeline:
                 tree_id=snapshot_ref.get("tree_id"),
             )
 
+            ast_snapshot.metadata["pipeline_layers"] = pipeline_layers
             scip_snapshot = None
             scip_artifact_ref = None
+            scip_artifact_refs: list[dict[str, Any]] = []
+            layer2 = pipeline_layers[1]
             if enable_scip:
+                layer2_start = perf_counter()
                 try:
                     scip_artifact_paths: list[str] = []
                     if scip_artifact_path:
@@ -661,26 +856,77 @@ class IndexPipeline:
                             preserved_paths.append(preserved_path)
                         # Compute checksum from the primary artifact for the ref
                         primary_path = preserved_paths[0] if preserved_paths else None
-                        if primary_path:
+                        artifact_records: list[dict[str, Any]] = []
+                        for artifact_path in preserved_paths:
                             digest = hashlib.sha256()
-                            with open(primary_path, "rb") as fh:
+                            with open(artifact_path, "rb") as fh:
                                 for chunk in iter(lambda: fh.read(8192), b""):
                                     digest.update(chunk)
-                            scip_artifact_ref = (
-                                self.snapshot_store.save_scip_artifact_ref(
-                                    snapshot_id=snapshot_id,
-                                    indexer_name=scip_data.indexer_name
-                                    or "scip-python",
-                                    indexer_version=scip_data.indexer_version,
-                                    artifact_path=primary_path,
-                                    checksum=digest.hexdigest(),
-                                )
+                            language_name = os.path.splitext(os.path.basename(artifact_path))[0]
+                            artifact_records.append(
+                                {
+                                    "indexer_name": scip_data.indexer_name or "scip-python",
+                                    "indexer_version": scip_data.indexer_version,
+                                    "artifact_path": artifact_path,
+                                    "checksum": digest.hexdigest(),
+                                    "language": language_name,
+                                }
                             )
+                        primary_path = preserved_paths[0] if preserved_paths else None
+                        if primary_path:
+                            scip_artifact_refs = self.snapshot_store.save_scip_artifact_refs(
+                                snapshot_id=snapshot_id,
+                                artifacts=artifact_records,
+                            )
+                            scip_artifact_ref = scip_artifact_refs[0]
+                    layer2["status"] = "succeeded"
+                    self._finalize_layer_metrics(
+                        scip_snapshot,
+                        layer2,
+                        extra_metrics={
+                            "duration_ms": round((perf_counter() - layer2_start) * 1000, 3),
+                            "artifact_count": len(scip_artifact_paths),
+                            "scip_enabled": True,
+                            "scip_languages": list(
+                                (scip_snapshot.metadata or {}).get("scip_languages", [])
+                            ),
+                        },
+                    )
                 except Exception as e:
                     degraded = True
-                    warnings.append(f"scip_unavailable_or_failed: {e}")
+                    message = f"scip_unavailable_or_failed: {e}"
+                    warnings.append(message)
+                    layer2["status"] = "degraded"
+                    layer2["reason"] = "scip_failed"
+                    layer2["warnings"].append(message)
+                    self._finalize_layer_metrics(
+                        None,
+                        layer2,
+                        extra_metrics={
+                            "scip_enabled": True,
+                            "artifact_count": 0,
+                            "error": str(e),
+                        },
+                    )
+            else:
+                layer2["warnings"].append("layer_disabled: enable_scip=false")
+                self._finalize_layer_metrics(
+                    None,
+                    layer2,
+                    extra_metrics={
+                        "scip_enabled": False,
+                        "artifact_count": 0,
+                    },
+                )
 
             merged_snapshot = merge_ir(ast_snapshot, scip_snapshot)
+            merged_snapshot.metadata["pipeline_layers"] = pipeline_layers
+            merged_snapshot.metadata["pipeline_layer_contract"] = {
+                "layer_1": "plain_ast_embedding",
+                "layer_2": "unified_ir_scip_merge",
+                "layer_3": "language_specific_semantic_upgrade",
+                "never_silent_fallback": True,
+            }
 
             # Incremental update: if a previous snapshot exists for this branch,
             # diff blob_oids and merge only changed file content.
@@ -728,6 +974,8 @@ class IndexPipeline:
                 if incremental_change_set is not None
                 else {elem.relative_path or elem.file_path for elem in elements}
             )
+            layer3 = pipeline_layers[2]
+            layer3_start = perf_counter()
             merged_snapshot = self._apply_semantic_resolvers(
                 snapshot=merged_snapshot,
                 elements=elements,
@@ -735,6 +983,45 @@ class IndexPipeline:
                 target_paths=target_paths,
                 warnings=warnings,
             )
+            semantic_runs = list(
+                (merged_snapshot.metadata or {}).get("semantic_resolver_runs", [])
+            )
+            layer3_quality = self._layer3_quality_metrics(merged_snapshot)
+            if semantic_runs and (
+                layer3_quality["semantic_relations"] > 0
+                or layer3_quality["anchored_relations"] > 0
+                or layer3_quality["relations_with_pending_capabilities"] > 0
+            ):
+                layer3["status"] = "succeeded"
+                layer3["reason"] = None
+            else:
+                layer3["status"] = "degraded"
+                layer3["reason"] = (
+                    "no_semantic_resolver_runs_recorded"
+                    if not semantic_runs
+                    else "semantic_resolver_runs_without_graph_upgrade_signal"
+                )
+                layer3["warnings"].append(layer3["reason"])
+                degraded = True
+            self._finalize_layer_metrics(
+                merged_snapshot,
+                layer3,
+                extra_metrics={
+                    "duration_ms": round((perf_counter() - layer3_start) * 1000, 3),
+                    "target_paths": len(target_paths),
+                    "resolver_runs": len(semantic_runs),
+                    **layer3_quality,
+                },
+            )
+            merged_snapshot.metadata["pipeline_layers"] = pipeline_layers
+            merged_snapshot.metadata["pipeline_metrics"] = {
+                "never_silent_fallback": True,
+                "degraded": degraded,
+                "warning_count": len(warnings),
+                "layer_statuses": {
+                    layer["name"]: layer["status"] for layer in pipeline_layers
+                },
+            }
             errors = validate_snapshot(merged_snapshot)
             if errors:
                 raise RuntimeError(f"IR validation failed: {errors[:5]}")
@@ -812,6 +1099,9 @@ class IndexPipeline:
                     "artifact_key": artifact_key,
                     "warnings": warnings,
                     "scip_artifact_ref": scip_artifact_ref,
+                    "scip_artifact_refs": scip_artifact_refs,
+                    "pipeline_layers": pipeline_layers,
+                    "pipeline_metrics": merged_snapshot.metadata.get("pipeline_metrics", {}),
                     "fencing_token": lock_token,
                 },
             )
@@ -920,6 +1210,9 @@ class IndexPipeline:
                     "artifact_key": artifact_key,
                     "warnings": warnings,
                     "scip_artifact_ref": scip_artifact_ref,
+                    "scip_artifact_refs": scip_artifact_refs,
+                    "pipeline_layers": pipeline_layers,
+                    "pipeline_metrics": merged_snapshot.metadata.get("pipeline_metrics", {}),
                     "fencing_token": lock_token,
                 },
             )
@@ -934,6 +1227,10 @@ class IndexPipeline:
                 "artifact_key": artifact_key,
                 "manifest": manifest,
                 "warnings": warnings,
+                "scip_artifact_ref": scip_artifact_ref,
+                "scip_artifact_refs": scip_artifact_refs,
+                "pipeline_layers": pipeline_layers,
+                "pipeline_metrics": merged_snapshot.metadata.get("pipeline_metrics", {}),
             }
             if incremental_change_set is not None:
                 result["incremental"] = {

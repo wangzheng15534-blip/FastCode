@@ -1,8 +1,14 @@
+import json
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import numpy as np
 
 from fastcode.index_run import IndexRunStore
 from fastcode.manifest_store import ManifestStore
-from fastcode.semantic_ir import IRAttachment, IRSnapshot
+from fastcode.pipeline import IndexPipeline
+from fastcode.semantic_ir import IRAttachment, IRCodeUnit, IRSnapshot
 from fastcode.snapshot_store import SnapshotStore
 
 
@@ -131,6 +137,45 @@ def test_snapshot_store_save_scip_artifact_ref_upsert():
         assert loaded["checksum"] == "new"
 
 
+def test_snapshot_store_persists_multiple_scip_artifact_refs():
+    with tempfile.TemporaryDirectory(prefix="fc_scip_multi_test_") as tmp:
+        store = SnapshotStore(tmp)
+        artifacts = store.save_scip_artifact_refs(
+            "snap:repo:multi",
+            artifacts=[
+                {
+                    "indexer_name": "scip-python",
+                    "indexer_version": "1.0",
+                    "artifact_path": "/tmp/python.scip",
+                    "checksum": "aaa",
+                    "language": "python",
+                },
+                {
+                    "indexer_name": "scip-go",
+                    "indexer_version": "1.0",
+                    "artifact_path": "/tmp/go.scip",
+                    "checksum": "bbb",
+                    "language": "go",
+                },
+            ],
+        )
+
+        assert len(artifacts) == 2
+        assert artifacts[0]["role"] == "primary"
+        assert artifacts[1]["role"] == "secondary"
+        assert artifacts[1]["metadata"]["language"] == "go"
+
+        primary = store.get_scip_artifact_ref("snap:repo:multi")
+        assert primary is not None
+        assert primary["artifact_path"] == "/tmp/python.scip"
+
+        listed = store.list_scip_artifact_refs("snap:repo:multi")
+        assert [artifact["artifact_path"] for artifact in listed] == [
+            "/tmp/python.scip",
+            "/tmp/go.scip",
+        ]
+
+
 def test_snapshot_store_lock_api_returns_fencing_token_shape():
     with tempfile.TemporaryDirectory(prefix="fc_lock_test_") as tmp:
         store = SnapshotStore(tmp)
@@ -181,3 +226,290 @@ def test_sqlite_redo_task_noops_do_not_raise():
         assert store.claim_redo_task() is None
         store.mark_redo_task_done("redo_fake")
         store.mark_redo_task_failed(task_id="redo_fake", error="test error")
+
+
+def _make_minimal_pipeline(tmp: str) -> IndexPipeline:
+    store = SnapshotStore(tmp)
+    registry = SimpleNamespace(
+        applicable=lambda **kwargs: [],
+        applicable_for_capabilities=lambda **kwargs: [],
+    )
+    return IndexPipeline(
+        config={},
+        logger=SimpleNamespace(info=lambda *a, **kw: None, warning=lambda *a, **kw: None),
+        loader=SimpleNamespace(
+            repo_path=tmp,
+            get_repository_info=lambda: {"name": "repo", "url": tmp},
+            scan_files=lambda: [],
+        ),
+        snapshot_store=store,
+        manifest_store=ManifestStore(store.db_runtime),
+        index_run_store=IndexRunStore(store.db_runtime),
+        snapshot_symbol_index=SimpleNamespace(register_snapshot=lambda snapshot: None),
+        vector_store=SimpleNamespace(persist_dir=tmp, load=lambda artifact_key: True),
+        embedder=SimpleNamespace(embedding_dim=3),
+        indexer=SimpleNamespace(extract_elements=lambda **kwargs: []),
+        retriever=SimpleNamespace(
+            load_bm25=lambda artifact_key: True,
+            set_ir_graphs=lambda *a, **kw: None,
+            build_repo_overview_bm25=lambda: None,
+        ),
+        graph_builder=SimpleNamespace(load=lambda artifact_key: True),
+        ir_graph_builder=SimpleNamespace(build_graphs=lambda snapshot: SimpleNamespace()),
+        pg_retrieval_store=SimpleNamespace(upsert_elements=lambda **kwargs: None),
+        terminus_publisher=SimpleNamespace(is_configured=lambda: False),
+        doc_ingester=SimpleNamespace(),
+        semantic_resolver_registry=registry,
+        set_repo_indexed=lambda v: None,
+        set_repo_loaded=lambda v: None,
+        set_repo_info=lambda v: None,
+    )
+
+
+def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_layers_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        element = SimpleNamespace(
+            id="file:a",
+            type="file",
+            name="a.py",
+            file_path="a.py",
+            relative_path="a.py",
+            language="python",
+            start_line=1,
+            end_line=1,
+            signature=None,
+            metadata={"embedding": np.array([0.1, 0.2, 0.3])},
+            to_dict=lambda: {"id": "file:a", "relative_path": "a.py", "metadata": {}},
+        )
+        ast_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:test",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+            units=[
+                IRCodeUnit(
+                    unit_id="doc:snap:repo:test:a.py",
+                    kind="file",
+                    path="a.py",
+                    language="python",
+                    display_name="a.py",
+                    source_set={"fc_structure"},
+                    metadata={"source": "fc_structure"},
+                )
+            ],
+        )
+
+        temp_store = SimpleNamespace(
+            metadata=[],
+            initialize=lambda dim: None,
+            add_vectors=lambda vectors, metadata: None,
+            save=lambda artifact_key: None,
+        )
+        temp_graph = SimpleNamespace(
+            dependency_graph=SimpleNamespace(number_of_nodes=lambda: 0, number_of_edges=lambda: 0),
+            inheritance_graph=SimpleNamespace(number_of_nodes=lambda: 0, number_of_edges=lambda: 0),
+            call_graph=SimpleNamespace(number_of_nodes=lambda: 0, number_of_edges=lambda: 0),
+            build_graphs=lambda elements, module_resolver, symbol_resolver: None,
+            save=lambda artifact_key: None,
+        )
+        temp_retriever = SimpleNamespace(
+            index_for_bm25=lambda elements: None,
+            build_repo_overview_bm25=lambda: None,
+            save_bm25=lambda artifact_key: None,
+        )
+
+        with (
+            patch.object(pipeline, "_resolve_snapshot_ref", return_value={"repo_name": "repo", "branch": "main", "commit_id": "c1", "tree_id": "t1", "snapshot_id": "snap:repo:test"}),
+            patch.object(pipeline, "_build_git_meta", return_value={}),
+            patch.object(pipeline.indexer, "extract_elements", return_value=[element]),
+            patch("fastcode.pipeline.VectorStore", return_value=temp_store),
+            patch("fastcode.pipeline.CodeGraphBuilder", return_value=temp_graph),
+            patch("fastcode.pipeline.HybridRetriever", return_value=temp_retriever),
+            patch("fastcode.pipeline.build_ir_from_ast", return_value=ast_snapshot),
+            patch("fastcode.pipeline.validate_snapshot", return_value=[]),
+            patch.object(pipeline, "_apply_semantic_resolvers", side_effect=lambda **kwargs: kwargs["snapshot"]),
+            patch.object(pipeline.snapshot_store, "stage_snapshot", return_value=None),
+            patch.object(pipeline.snapshot_store, "save_relational_facts", return_value=None),
+            patch.object(pipeline.snapshot_store, "save_ir_graphs", return_value=None),
+            patch.object(pipeline.snapshot_store, "import_git_backbone", return_value=None),
+            patch.object(pipeline.snapshot_store, "update_snapshot_metadata", return_value=None),
+            patch.object(pipeline.snapshot_store, "release_lock", return_value=None),
+            patch.object(pipeline.snapshot_store, "validate_fencing_token", return_value=True),
+            patch.object(pipeline, "_load_artifacts_by_key", return_value=True),
+        ):
+            result = pipeline.run_index_pipeline(
+                source=tmp,
+                is_url=False,
+                enable_scip=False,
+                publish=False,
+            )
+
+        layers = result["pipeline_layers"]
+        assert [layer["name"] for layer in layers] == [
+            "plain_ast_embedding",
+            "unified_ir_scip_merge",
+            "language_specific_semantic_upgrade",
+        ]
+        assert layers[0]["status"] == "succeeded"
+        assert layers[1]["status"] == "skipped"
+        assert layers[1]["reason"] == "disabled_by_config"
+        assert layers[1]["warnings"] == ["layer_disabled: enable_scip=false"]
+        assert result["pipeline_metrics"]["never_silent_fallback"] is True
+
+
+def test_pipeline_layer_helpers_report_semantic_gap_metrics() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_layers_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        snapshot = IRSnapshot(repo_name="repo", snapshot_id="snap:1")
+        layer3 = pipeline._make_layer_record(
+            name="language_specific_semantic_upgrade",
+            ordinal=3,
+            enabled=True,
+            source="language_specific_ast_resolvers",
+            description="semantic layer",
+            conditional=True,
+        )
+        pipeline._finalize_layer_metrics(
+            snapshot,
+            layer3,
+            extra_metrics={"resolver_runs": 0, **pipeline._layer3_quality_metrics(snapshot)},
+        )
+        layer3["status"] = "degraded"
+        layer3["reason"] = "no_semantic_resolver_runs_recorded"
+        assert layer3["metrics"]["resolver_runs"] == 0
+        assert layer3["metrics"]["semantic_relations"] == 0
+        assert layer3["status"] == "degraded"
+
+
+def test_pipeline_reused_result_keeps_existing_behavior_without_fake_layer_claims() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_reuse_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        snapshot = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:test")
+        pipeline.snapshot_store.save_snapshot(snapshot, metadata={"artifact_key": "snap_repo_test"})
+        pipeline.index_run_store.create_run(
+            repo_name="repo",
+            snapshot_id="snap:repo:test",
+            branch="main",
+            commit_id="c1",
+            idempotency_key="reuse-key",
+        )
+        run_id = pipeline.index_run_store.create_run(
+            repo_name="repo",
+            snapshot_id="snap:repo:test",
+            branch="main",
+            commit_id="c1",
+            idempotency_key="reuse-key",
+        )
+        run = pipeline.index_run_store.get_run(run_id)
+        assert run is not None
+        pipeline.index_run_store.mark_completed(run["run_id"], status="succeeded", warnings=[])
+
+        with (
+            patch.object(pipeline, "_resolve_snapshot_ref", return_value={"repo_name": "repo", "branch": "main", "commit_id": "c1", "tree_id": "t1", "snapshot_id": "snap:repo:test"}),
+            patch.object(pipeline, "_build_git_meta", return_value={}),
+            patch.object(pipeline, "_load_artifacts_by_key", return_value=True),
+        ):
+            result = pipeline.run_index_pipeline(source=tmp, is_url=False, publish=False)
+
+        assert result["status"] == "reused"
+        assert [layer["name"] for layer in result["pipeline_layers"]] == [
+            "plain_ast_embedding",
+            "unified_ir_scip_merge",
+            "language_specific_semantic_upgrade",
+        ]
+        assert result["pipeline_metrics"]["never_silent_fallback"] is True
+
+
+def test_pipeline_layer3_succeeds_when_semantic_runs_recorded_even_without_new_relations() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_layers_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        snapshot = IRSnapshot(repo_name="repo", snapshot_id="snap:1")
+        snapshot.metadata["semantic_resolver_runs"] = [{"language": "python", "source": "python_resolver"}]
+        metrics = pipeline._layer3_quality_metrics(snapshot)
+        assert metrics["semantic_relations"] == 0
+        assert len(snapshot.metadata["semantic_resolver_runs"]) == 1
+
+
+def test_pipeline_layer3_requires_upgrade_signal_not_just_run_metadata() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_layers_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        snapshot = IRSnapshot(repo_name="repo", snapshot_id="snap:1")
+        snapshot.metadata["semantic_resolver_runs"] = [
+            {"language": "python", "source": "python_resolver"}
+        ]
+        quality = pipeline._layer3_quality_metrics(snapshot)
+        assert quality["semantic_relations"] == 0
+        assert quality["anchored_relations"] == 0
+        assert quality["relations_with_pending_capabilities"] == 0
+
+
+def test_pipeline_backfill_reuses_full_scip_artifact_lineage_metadata() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_scip_meta_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        snapshot = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:test")
+        pipeline.snapshot_store.save_snapshot(
+            snapshot,
+            metadata={
+                "artifact_key": "snap_repo_test",
+                "scip_artifact_ref": {
+                    "snapshot_id": "snap:repo:test",
+                    "artifact_path": "/tmp/a.scip",
+                    "indexer_name": "scip-python",
+                    "indexer_version": "1.0",
+                    "checksum": "111",
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                },
+                "scip_artifact_refs": [
+                    {
+                        "snapshot_id": "snap:repo:test",
+                        "artifact_path": "/tmp/a.scip",
+                        "indexer_name": "scip-python",
+                        "indexer_version": "1.0",
+                        "checksum": "111",
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                    },
+                    {
+                        "snapshot_id": "snap:repo:test",
+                        "artifact_path": "/tmp/b.scip",
+                        "indexer_name": "scip-go",
+                        "indexer_version": "1.0",
+                        "checksum": "222",
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                    },
+                ],
+            },
+        )
+
+        result = pipeline._backfill_result_layer_metadata(
+            snapshot_id="snap:repo:test",
+            enable_scip=True,
+            result={"status": "reused", "snapshot_id": "snap:repo:test"},
+        )
+
+        assert result["scip_artifact_ref"]["artifact_path"] == "/tmp/a.scip"
+        assert [artifact["artifact_path"] for artifact in result["scip_artifact_refs"]] == [
+            "/tmp/a.scip",
+            "/tmp/b.scip",
+        ]
+
+
+def test_pipeline_backfill_persists_missing_layer_metadata_to_snapshot_store() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_backfill_persist_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        snapshot = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:legacy")
+        pipeline.snapshot_store.save_snapshot(snapshot, metadata={"artifact_key": "legacy_key"})
+
+        result = pipeline._backfill_result_layer_metadata(
+            snapshot_id="snap:repo:legacy",
+            enable_scip=False,
+            result={"status": "reused", "snapshot_id": "snap:repo:legacy"},
+        )
+
+        record = pipeline.snapshot_store.get_snapshot_record("snap:repo:legacy")
+        assert record is not None
+        stored_metadata = json.loads(record["metadata_json"])
+        assert stored_metadata["pipeline_metrics"]["never_silent_fallback"] is True
+        assert stored_metadata["pipeline_layers"][1]["status"] == "skipped"
+        assert result["pipeline_metrics"]["never_silent_fallback"] is True

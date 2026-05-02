@@ -484,14 +484,15 @@ class IndexPipeline:
                 "never_silent_fallback": True,
                 "degraded": result.get("status") == "degraded",
                 "warning_count": len(result.get("warnings", [])),
-                "layer_statuses": {
-                    layer["name"]: layer["status"] for layer in layers
-                },
+                "layer_statuses": {layer["name"]: layer["status"] for layer in layers},
             }
             metadata["pipeline_metrics"] = metrics
             changed = True
 
-        if "scip_artifact_ref" not in result and metadata.get("scip_artifact_ref") is not None:
+        if (
+            "scip_artifact_ref" not in result
+            and metadata.get("scip_artifact_ref") is not None
+        ):
             result["scip_artifact_ref"] = metadata.get("scip_artifact_ref")
         if "scip_artifact_refs" not in result:
             if metadata.get("scip_artifact_refs") is not None:
@@ -618,11 +619,11 @@ class IndexPipeline:
                 snapshot_id=snapshot_id,
                 enable_scip=enable_scip,
                 result={
-                "status": "reused",
-                "repo_name": repo_name,
-                "snapshot_id": snapshot_id,
-                "artifact_key": artifact_key,
-                "loaded": loaded,
+                    "status": "reused",
+                    "repo_name": repo_name,
+                    "snapshot_id": snapshot_id,
+                    "artifact_key": artifact_key,
+                    "loaded": loaded,
                 },
             )
 
@@ -650,13 +651,15 @@ class IndexPipeline:
                     snapshot_id=snapshot_id,
                     enable_scip=enable_scip,
                     result={
-                    "status": existing_run.get("status"),
-                    "run_id": run_id,
-                    "repo_name": repo_name,
-                    "snapshot_id": snapshot_id,
-                    "artifact_key": existing_snapshot["artifact_key"],
-                    "loaded": loaded,
-                    "warnings": json.loads(existing_run.get("warnings_json") or "[]"),
+                        "status": existing_run.get("status"),
+                        "run_id": run_id,
+                        "repo_name": repo_name,
+                        "snapshot_id": snapshot_id,
+                        "artifact_key": existing_snapshot["artifact_key"],
+                        "loaded": loaded,
+                        "warnings": json.loads(
+                            existing_run.get("warnings_json") or "[]"
+                        ),
                     },
                 )
         self.index_run_store.mark_started(run_id)
@@ -862,10 +865,13 @@ class IndexPipeline:
                             with open(artifact_path, "rb") as fh:
                                 for chunk in iter(lambda: fh.read(8192), b""):
                                     digest.update(chunk)
-                            language_name = os.path.splitext(os.path.basename(artifact_path))[0]
+                            language_name = os.path.splitext(
+                                os.path.basename(artifact_path)
+                            )[0]
                             artifact_records.append(
                                 {
-                                    "indexer_name": scip_data.indexer_name or "scip-python",
+                                    "indexer_name": scip_data.indexer_name
+                                    or "scip-python",
                                     "indexer_version": scip_data.indexer_version,
                                     "artifact_path": artifact_path,
                                     "checksum": digest.hexdigest(),
@@ -874,9 +880,11 @@ class IndexPipeline:
                             )
                         primary_path = preserved_paths[0] if preserved_paths else None
                         if primary_path:
-                            scip_artifact_refs = self.snapshot_store.save_scip_artifact_refs(
-                                snapshot_id=snapshot_id,
-                                artifacts=artifact_records,
+                            scip_artifact_refs = (
+                                self.snapshot_store.save_scip_artifact_refs(
+                                    snapshot_id=snapshot_id,
+                                    artifacts=artifact_records,
+                                )
                             )
                             scip_artifact_ref = scip_artifact_refs[0]
                     layer2["status"] = "succeeded"
@@ -884,7 +892,9 @@ class IndexPipeline:
                         scip_snapshot,
                         layer2,
                         extra_metrics={
-                            "duration_ms": round((perf_counter() - layer2_start) * 1000, 3),
+                            "duration_ms": round(
+                                (perf_counter() - layer2_start) * 1000, 3
+                            ),
                             "artifact_count": len(scip_artifact_paths),
                             "scip_enabled": True,
                             "scip_languages": list(
@@ -1101,7 +1111,9 @@ class IndexPipeline:
                     "scip_artifact_ref": scip_artifact_ref,
                     "scip_artifact_refs": scip_artifact_refs,
                     "pipeline_layers": pipeline_layers,
-                    "pipeline_metrics": merged_snapshot.metadata.get("pipeline_metrics", {}),
+                    "pipeline_metrics": merged_snapshot.metadata.get(
+                        "pipeline_metrics", {}
+                    ),
                     "fencing_token": lock_token,
                 },
             )
@@ -1212,7 +1224,9 @@ class IndexPipeline:
                     "scip_artifact_ref": scip_artifact_ref,
                     "scip_artifact_refs": scip_artifact_refs,
                     "pipeline_layers": pipeline_layers,
-                    "pipeline_metrics": merged_snapshot.metadata.get("pipeline_metrics", {}),
+                    "pipeline_metrics": merged_snapshot.metadata.get(
+                        "pipeline_metrics", {}
+                    ),
                     "fencing_token": lock_token,
                 },
             )
@@ -1230,7 +1244,9 @@ class IndexPipeline:
                 "scip_artifact_ref": scip_artifact_ref,
                 "scip_artifact_refs": scip_artifact_refs,
                 "pipeline_layers": pipeline_layers,
-                "pipeline_metrics": merged_snapshot.metadata.get("pipeline_metrics", {}),
+                "pipeline_metrics": merged_snapshot.metadata.get(
+                    "pipeline_metrics", {}
+                ),
             }
             if incremental_change_set is not None:
                 result["incremental"] = {

@@ -571,16 +571,71 @@ class SnapshotStore:
         artifact_path: str = "",
         checksum: str = "",
     ) -> dict[str, Any]:
-        created_at = utc_now()
-        artifact_ref = SCIPArtifactRef(
-            snapshot_id=snapshot_id,
-            indexer_name=indexer_name,
-            indexer_version=indexer_version,
-            artifact_path=artifact_path,
-            checksum=checksum,
-            created_at=created_at,
+        artifacts = self.save_scip_artifact_refs(
+            snapshot_id,
+            artifacts=[
+                {
+                    "indexer_name": indexer_name,
+                    "indexer_version": indexer_version,
+                    "artifact_path": artifact_path,
+                    "checksum": checksum,
+                }
+            ],
         )
+        return artifacts[0]
+
+    def _ensure_scip_artifact_entries_table(self, conn: Any) -> None:
+        self.db_runtime.execute(
+            conn,
+            """
+            CREATE TABLE IF NOT EXISTS scip_artifact_entries (
+                artifact_id TEXT PRIMARY KEY,
+                snapshot_id TEXT NOT NULL,
+                sequence_no INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                indexer_name TEXT NOT NULL,
+                indexer_version TEXT,
+                artifact_path TEXT NOT NULL,
+                checksum TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                metadata_json TEXT,
+                UNIQUE(snapshot_id, sequence_no)
+            )
+            """,
+        )
+
+    def save_scip_artifact_refs(
+        self,
+        snapshot_id: str,
+        *,
+        artifacts: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not artifacts:
+            return []
+
+        created_at = utc_now()
+        normalized_artifacts: list[dict[str, Any]] = []
+        for sequence_no, artifact in enumerate(artifacts):
+            metadata = dict(artifact.get("metadata") or {})
+            if artifact.get("language"):
+                metadata.setdefault("language", artifact.get("language"))
+            normalized_ref = SCIPArtifactRef(
+                snapshot_id=snapshot_id,
+                indexer_name=str(artifact.get("indexer_name") or "unknown"),
+                indexer_version=artifact.get("indexer_version"),
+                artifact_path=str(artifact.get("artifact_path") or ""),
+                checksum=str(artifact.get("checksum") or ""),
+                created_at=created_at,
+            ).to_dict()
+            normalized_ref["artifact_id"] = f"{snapshot_id}:scip:{sequence_no}"
+            normalized_ref["sequence_no"] = sequence_no
+            normalized_ref["role"] = "primary" if sequence_no == 0 else "secondary"
+            normalized_ref["metadata"] = metadata
+            normalized_artifacts.append(normalized_ref)
+
+        primary_artifact = normalized_artifacts[0]
         with self.db_runtime.connect() as conn:
+            self._ensure_scip_artifact_entries_table(conn)
             self.db_runtime.execute(
                 conn,
                 """
@@ -595,16 +650,43 @@ class SnapshotStore:
                     created_at=excluded.created_at
                 """,
                 (
-                    artifact_ref.snapshot_id,
-                    artifact_ref.indexer_name,
-                    artifact_ref.indexer_version,
-                    artifact_ref.artifact_path,
-                    artifact_ref.checksum,
+                    primary_artifact["snapshot_id"],
+                    primary_artifact["indexer_name"],
+                    primary_artifact["indexer_version"],
+                    primary_artifact["artifact_path"],
+                    primary_artifact["checksum"],
                     created_at,
                 ),
             )
+            self.db_runtime.execute(
+                conn,
+                "DELETE FROM scip_artifact_entries WHERE snapshot_id=?",
+                (snapshot_id,),
+            )
+            for artifact in normalized_artifacts:
+                self.db_runtime.execute(
+                    conn,
+                    """
+                    INSERT INTO scip_artifact_entries (
+                        artifact_id, snapshot_id, sequence_no, role, indexer_name,
+                        indexer_version, artifact_path, checksum, created_at, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        artifact["artifact_id"],
+                        artifact["snapshot_id"],
+                        artifact["sequence_no"],
+                        artifact["role"],
+                        artifact["indexer_name"],
+                        artifact["indexer_version"],
+                        artifact["artifact_path"],
+                        artifact["checksum"],
+                        artifact["created_at"],
+                        json.dumps(artifact.get("metadata") or {}, ensure_ascii=False),
+                    ),
+                )
             conn.commit()
-        return artifact_ref.to_dict()
+        return normalized_artifacts
 
     def get_scip_artifact_ref(self, snapshot_id: str) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
@@ -613,7 +695,46 @@ class SnapshotStore:
                 "SELECT * FROM scip_artifacts WHERE snapshot_id=?",
                 (snapshot_id,),
             ).fetchone()
-        return self.db_runtime.row_to_dict(row)
+        primary = self.db_runtime.row_to_dict(row)
+        if primary is not None:
+            return primary
+        artifacts = self.list_scip_artifact_refs(snapshot_id)
+        return artifacts[0] if artifacts else None
+
+    def list_scip_artifact_refs(self, snapshot_id: str) -> list[dict[str, Any]]:
+        with self.db_runtime.connect() as conn:
+            self._ensure_scip_artifact_entries_table(conn)
+            rows = self.db_runtime.execute(
+                conn,
+                """
+                SELECT * FROM scip_artifact_entries
+                WHERE snapshot_id=?
+                ORDER BY sequence_no ASC
+                """,
+                (snapshot_id,),
+            ).fetchall()
+        artifacts: list[dict[str, Any]] = []
+        for row in rows:
+            payload = self.db_runtime.row_to_dict(row) or {}
+            metadata_json = payload.pop("metadata_json", None)
+            if metadata_json:
+                try:
+                    payload["metadata"] = json.loads(metadata_json)
+                except (TypeError, json.JSONDecodeError):
+                    payload["metadata"] = {}
+            else:
+                payload["metadata"] = {}
+            artifacts.append(payload)
+        if artifacts:
+            return artifacts
+        with self.db_runtime.connect() as conn:
+            row = self.db_runtime.execute(
+                conn,
+                "SELECT * FROM scip_artifacts WHERE snapshot_id=?",
+                (snapshot_id,),
+            ).fetchone()
+        primary = self.db_runtime.row_to_dict(row)
+        return [primary] if primary else []
 
     def import_git_backbone(
         self, snapshot: IRSnapshot, git_meta: dict[str, Any] | None = None

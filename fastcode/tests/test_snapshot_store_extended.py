@@ -1019,6 +1019,39 @@ class TestArtifactRefLifecycle:
         assert ref["indexer_name"] == "scip-java"
         assert ref["checksum"] == "v2"
 
+    def test_list_artifact_refs_returns_ordered_lineage_property(self):
+        """HAPPY: multi-artifact lineage remains ordered and primary-stable."""
+        store = _make_store()
+        snap = _build_snapshot("repo_art3", "c003", "main")
+        store.save_snapshot(snap)
+
+        store.save_scip_artifact_refs(
+            snap.snapshot_id,
+            artifacts=[
+                {
+                    "indexer_name": "scip-python",
+                    "artifact_path": "/data/a.scip",
+                    "checksum": "a",
+                    "language": "python",
+                },
+                {
+                    "indexer_name": "scip-go",
+                    "artifact_path": "/data/b.scip",
+                    "checksum": "b",
+                    "language": "go",
+                },
+            ],
+        )
+
+        refs = store.list_scip_artifact_refs(snap.snapshot_id)
+        assert [ref["role"] for ref in refs] == ["primary", "secondary"]
+        assert refs[0]["artifact_path"] == "/data/a.scip"
+        assert refs[1]["metadata"]["language"] == "go"
+        assert (
+            store.get_scip_artifact_ref(snap.snapshot_id)["artifact_path"]
+            == "/data/a.scip"
+        )
+
     @pytest.mark.edge
     def test_get_artifact_ref_nonexistent_returns_none_property(self):
         """EDGE: getting artifact ref for unknown snapshot returns None."""

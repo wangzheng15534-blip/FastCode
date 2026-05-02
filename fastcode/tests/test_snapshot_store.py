@@ -602,6 +602,36 @@ class TestScipArtifactRefProperties:
         loaded = store.get_scip_artifact_ref(snapshot_id)
         assert loaded["indexer_name"] == "v2"
 
+    def test_save_scip_artifact_refs_preserves_primary_and_lineage_property(self):
+        """HAPPY: multi-artifact save keeps primary accessor and ordered lineage."""
+        store = _make_store()
+        artifacts = store.save_scip_artifact_refs(
+            "snap:repo:multi",
+            artifacts=[
+                {
+                    "indexer_name": "scip-ts",
+                    "artifact_path": "/tmp/ts.scip",
+                    "checksum": "111",
+                    "language": "typescript",
+                },
+                {
+                    "indexer_name": "scip-rust",
+                    "artifact_path": "/tmp/rust.scip",
+                    "checksum": "222",
+                    "language": "rust",
+                },
+            ],
+        )
+
+        assert len(artifacts) == 2
+        assert artifacts[0]["role"] == "primary"
+        assert artifacts[1]["metadata"]["language"] == "rust"
+        assert (
+            store.get_scip_artifact_ref("snap:repo:multi")["artifact_path"]
+            == "/tmp/ts.scip"
+        )
+        assert len(store.list_scip_artifact_refs("snap:repo:multi")) == 2
+
 
 # --- TestSnapshotStoreRelationalFacts ---
 

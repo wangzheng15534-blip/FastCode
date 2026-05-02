@@ -674,7 +674,8 @@ async def get_scip_artifact(snapshot_id: str):
     artifact = fastcode.get_scip_artifact_ref(snapshot_id)
     if not artifact:
         raise HTTPException(status_code=404, detail="SCIP artifact not found")
-    return {"status": "success", "artifact": artifact}
+    artifacts = fastcode.list_scip_artifact_refs(snapshot_id)
+    return {"status": "success", "artifact": artifact, "artifacts": artifacts}
 
 
 @app.get("/symbols/find")

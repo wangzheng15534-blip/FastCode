@@ -137,10 +137,12 @@ class QueryPipeline:
                 raise RuntimeError(
                     "query_snapshot requires snapshot_id or repo_name+ref_name"
                 )
-            manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
+            manifest = self.manifest_store.get_branch_manifest_record(
+                repo_name, ref_name
+            )
             if not manifest:
                 raise RuntimeError(f"manifest not found for {repo_name}:{ref_name}")
-            snapshot_id = str(manifest["snapshot_id"])
+            snapshot_id = manifest.snapshot_id
 
         snapshot_record = self.snapshot_store.get_snapshot_record(snapshot_id)
         if not snapshot_record:

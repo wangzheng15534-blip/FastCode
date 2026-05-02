@@ -16,6 +16,7 @@ from typing import Any
 from .db_runtime import DBRuntime
 from .scip_models import SCIPArtifactRef
 from .semantic_ir import IRSnapshot
+from .store_records import SnapshotRefRecord
 from .utils import ensure_dir, safe_jsonable, utc_now
 
 
@@ -580,6 +581,12 @@ class SnapshotStore:
     def resolve_snapshot_for_ref(
         self, repo_name: str, branch: str
     ) -> dict[str, Any] | None:
+        record = self.resolve_snapshot_for_ref_record(repo_name, branch)
+        return record.to_dict() if record is not None else None
+
+    def resolve_snapshot_for_ref_record(
+        self, repo_name: str, branch: str
+    ) -> SnapshotRefRecord | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -591,7 +598,25 @@ class SnapshotStore:
                 """,
                 (repo_name, branch),
             ).fetchone()
-        return self.db_runtime.row_to_dict(row)
+        return self._row_to_snapshot_ref_record(row)
+
+    def list_repo_ref_records(self, repo_name: str) -> list[SnapshotRefRecord]:
+        with self.db_runtime.connect() as conn:
+            rows = self.db_runtime.execute(
+                conn,
+                """
+                SELECT branch, commit_id, tree_id, snapshot_id, created_at, ref_id, repo_name
+                FROM snapshot_refs
+                WHERE repo_name=?
+                ORDER BY created_at DESC
+                """,
+                (repo_name,),
+            ).fetchall()
+        return [
+            record
+            for row in rows
+            if (record := self._row_to_snapshot_ref_record(row)) is not None
+        ]
 
     def save_scip_artifact_ref(
         self,
@@ -766,6 +791,10 @@ class SnapshotStore:
             ).fetchone()
         primary = self.db_runtime.row_to_dict(row)
         return [primary] if primary else []
+
+    def _row_to_snapshot_ref_record(self, row: Any) -> SnapshotRefRecord | None:
+        payload = self.db_runtime.row_to_dict(row)
+        return SnapshotRefRecord.from_dict(payload) if payload is not None else None
 
     def import_git_backbone(
         self, snapshot: IRSnapshot, git_meta: dict[str, Any] | None = None

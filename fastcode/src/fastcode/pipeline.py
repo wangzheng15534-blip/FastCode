@@ -217,10 +217,12 @@ class IndexPipeline:
         ref_name: str,
         current_snapshot_id: str,
     ) -> dict[str, str] | None:
-        previous_manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
+        previous_manifest = self.manifest_store.get_branch_manifest_record(
+            repo_name, ref_name
+        )
         if not previous_manifest:
             return None
-        previous_snapshot_id = previous_manifest.get("snapshot_id")
+        previous_snapshot_id = previous_manifest.snapshot_id
         if not previous_snapshot_id or previous_snapshot_id == current_snapshot_id:
             return None
         previous_snapshot = self.snapshot_store.load_snapshot(previous_snapshot_id)

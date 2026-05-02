@@ -67,10 +67,10 @@ class ProjectionService:
             return snapshot_id
         if not repo_name or not ref_name:
             raise RuntimeError("projection requires snapshot_id or repo_name+ref_name")
-        manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
+        manifest = self.manifest_store.get_branch_manifest_record(repo_name, ref_name)
         if not manifest:
             raise RuntimeError(f"manifest not found for {repo_name}:{ref_name}")
-        return manifest["snapshot_id"]
+        return manifest.snapshot_id
 
     def _mirror_projection_artifacts(
         self, snapshot_id: str, result: dict[str, Any]

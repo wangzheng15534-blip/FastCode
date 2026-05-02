@@ -539,23 +539,9 @@ class FastCode:
         return self.publishing_service.process_redo_tasks(limit)
 
     def list_repo_refs(self, repo_name: str) -> list[dict[str, Any]]:
-        with self.snapshot_store.db_runtime.connect() as conn:
-            rows = self.snapshot_store.db_runtime.execute(
-                conn,
-                """
-                SELECT branch, commit_id, tree_id, snapshot_id, created_at
-                FROM snapshot_refs
-                WHERE repo_name=?
-                ORDER BY created_at DESC
-                """,
-                (repo_name,),
-            ).fetchall()
         return [
-            d
-            for r in rows
-            if r
-            for d in [self.snapshot_store.db_runtime.row_to_dict(r)]
-            if d is not None
+            record.to_dict()
+            for record in self.snapshot_store.list_repo_ref_records(repo_name)
         ]
 
     def find_symbol(

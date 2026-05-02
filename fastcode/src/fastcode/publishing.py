@@ -59,7 +59,7 @@ class PublishingService:
         if not snapshot:
             raise RuntimeError(f"snapshot not found for run: {run_id}")
 
-        manifest = self.manifest_store.publish(
+        manifest = self.manifest_store.publish_record(
             repo_name=run["repo_name"],
             ref_name=ref_name or run.get("branch") or "HEAD",
             snapshot_id=run["snapshot_id"],
@@ -76,13 +76,13 @@ class PublishingService:
                         "commit_id": run.get("commit_id"),
                     }
                 )
-                branch_name = manifest.get("ref_name") or run.get("branch") or "HEAD"
+                branch_name = manifest.ref_name or run.get("branch") or "HEAD"
                 previous_snapshot_symbols = self._previous_snapshot_symbol_versions(
                     run["repo_name"], branch_name, run["snapshot_id"]
                 )
                 self.terminus_publisher.publish_snapshot_lineage(
                     snapshot=snapshot.to_dict(),
-                    manifest=manifest,
+                    manifest=manifest.to_dict(),
                     git_meta=git_meta,
                     previous_snapshot_symbols=previous_snapshot_symbols,
                     idempotency_key=f"lineage:{run_id}:{run['snapshot_id']}",
@@ -91,12 +91,12 @@ class PublishingService:
                 self.index_run_store.enqueue_publish_retry(
                     run_id=run_id,
                     snapshot_id=run["snapshot_id"],
-                    manifest_id=manifest.get("manifest_id"),
+                    manifest_id=manifest.manifest_id,
                     error_message=str(e),
                 )
                 status = "publish_pending"
         self.index_run_store.mark_completed(run_id, status=status)
-        return {"status": status, "manifest": manifest, "run_id": run_id}
+        return {"status": status, "manifest": manifest.to_dict(), "run_id": run_id}
 
     def retry_pending_publishes(self, limit: int = 10) -> dict[str, Any]:
         if not self.terminus_publisher.is_configured():
@@ -127,11 +127,11 @@ class PublishingService:
                     raise RuntimeError(f"snapshot not found: {run['snapshot_id']}")
 
                 ref_name = run.get("branch") or "HEAD"
-                manifest = self.manifest_store.get_branch_manifest(
+                manifest = self.manifest_store.get_branch_manifest_record(
                     run["repo_name"], ref_name
                 )
                 if not manifest:
-                    manifest = self.manifest_store.publish(
+                    manifest = self.manifest_store.publish_record(
                         repo_name=run["repo_name"],
                         ref_name=ref_name,
                         snapshot_id=run["snapshot_id"],
@@ -151,7 +151,7 @@ class PublishingService:
                 )
                 self.terminus_publisher.publish_snapshot_lineage(
                     snapshot=snapshot.to_dict(),
-                    manifest=manifest,
+                    manifest=manifest.to_dict(),
                     git_meta=git_meta,
                     previous_snapshot_symbols=previous_snapshot_symbols,
                     idempotency_key=f"lineage:{run_id}:{run['snapshot_id']}",

@@ -20,7 +20,7 @@ _RUST_SPEC = ResolverSpec(
     cost_class="high",
     source_name="rust_resolver",
     extractor_name="rust_analyzer",
-    frontend_kind="rust_analyzer_scip",
+    frontend_kind="regex_heuristic",
     required_tools=("rust-analyzer", "cargo"),
 )
 

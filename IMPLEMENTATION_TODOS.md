@@ -10,26 +10,24 @@
 - Moved shared HTTP request/response models into `fastcode.schemas.api` and rewired `api.py` / `web_app.py` to import them.
 - Expanded default extension and language detection for Zig, Fortran, and Julia.
 - Added focused tests for resolver registry, diagnostics, and new language detection.
+- Added shared helper-backed semantic resolver infrastructure for compiler/LSP upgrade layers.
+- Added structured helper paths for JavaScript/TypeScript, Go, Java, Rust, C#, Zig, Fortran, and Julia semantic upgrades.
+- Added focused mapping tests for helper-backed semantic relation emission across core and added languages.
 
 ## Remaining semantic resolver work
 
-- Replace graph-backed fallback resolvers with true frontend-backed adapters:
-  - JavaScript/TypeScript via Compiler API helper.
-  - Java via JDT or language-server-backed binding resolution.
-  - Go via `go/packages` or gopls-backed resolver.
-  - Rust via rust-analyzer semantic queries.
-  - C# via Roslyn-backed helper.
-  - Zig via ZLS or zig AST/semantic tooling.
-  - Fortran via fortls or fparser-backed semantic resolver.
-  - Julia via LanguageServer.jl-backed resolver.
+- Deepen helper-backed resolvers toward richer semantics:
+  - Expand JavaScript/TypeScript beyond import/call facts to type and inheritance upgrades.
+  - Expand Java beyond import/call facts to type and inheritance upgrades.
+  - Expand Go beyond import/call facts to type and interface/implementation upgrades.
+  - Replace heuristic Rust/C#/Zig/Fortran/Julia helper parsing with stronger frontend-native semantic facts where available.
 - Add resolver-specific capability gating so unresolved graphs do not run every language resolver indiscriminately.
 - Add query-time semantic escalation budget instead of index-time-only upgrades.
-- Distinguish structural fallback relations from true compiler-confirmed relations in `resolution_state` and metadata.
+- Preserve stronger distinction between heuristic helper facts and true frontend-native semantic facts where available.
 
 ## Remaining SCIP/indexing work
 
 - Replace the placeholder Zig/Fortran/Julia SCIP command wiring with verified command contracts or feature-gated optional integrations.
-- Preserve all generated SCIP artifacts for multi-language indexing instead of copying only the first artifact path.
 - Add tests for multi-language SCIP merge path in `FastCode.index_repository`.
 - Expand e2e configs and fixtures to include the new supported extensions.
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NoReturn
 from unittest.mock import patch
@@ -18,11 +19,21 @@ from fastcode.semantic_resolvers import (
     PYTHON_RESOLVER_SOURCE,
     CppSemanticResolver,
     CSemanticResolver,
+    CSharpCompilerResolver,
+    FortranCompilerResolver,
+    GoCompilerResolver,
+    JavaCompilerResolver,
+    JavaScriptCompilerResolver,
+    JuliaCompilerResolver,
     PythonSemanticResolver,
     ResolutionPatch,
+    RustCompilerResolver,
+    TypeScriptCompilerResolver,
+    ZigCompilerResolver,
     apply_resolution_patch,
     build_default_semantic_resolver_registry,
 )
+from fastcode.semantic_resolvers.helper_backed import HelperBackedSemanticResolver
 from fastcode.semantic_resolvers.patching import _source_preference
 
 
@@ -1245,6 +1256,276 @@ def test_compiler_resolver_spec_matches_language(resolver_cls: str, language: st
     assert resolver.spec.language == language
     assert len(resolver.capabilities) > 0
     assert "resolve_calls" in resolver.capabilities
+
+
+def test_typescript_compiler_facts_emit_semantic_relations():
+    resolver = TypeScriptCompilerResolver()
+    file_app = _file_unit("src/app.ts", language="typescript")
+    file_lib = _file_unit("src/lib.ts", language="typescript")
+    caller = _symbol_unit(
+        "unit:ts:caller",
+        "src/app.ts",
+        "run",
+        element_id="ts:caller",
+        kind="function",
+        language="typescript",
+    )
+    callee = _symbol_unit(
+        "unit:ts:callee",
+        "src/lib.ts",
+        "helper",
+        element_id="ts:callee",
+        kind="function",
+        anchor="scip:ts:helper",
+        language="typescript",
+    )
+    snapshot = _snapshot(units=[file_app, file_lib, caller, callee])
+    payload = {
+        "imports": [{"source_path": "src/app.ts", "target_path": "src/lib.ts", "module": "./lib"}],
+        "calls": [{"source_path": "src/app.ts", "target_path": "src/lib.ts", "call_name": "helper", "target_name": "helper", "target_symbol": "helper", "source_line": 2, "source_col": 0, "target_line": 1, "target_col": 0}],
+        "stats": {"files": 2, "imports": 1, "calls": 1},
+    }
+
+    with patch.object(resolver, "_has_tools", return_value=True), patch.object(
+        resolver, "_run_semantic_helper", return_value=payload
+    ):
+        patch_result = resolver.resolve(
+            snapshot=snapshot,
+            elements=[],
+            target_paths={"src/app.ts", "src/lib.ts"},
+            legacy_graph_builder=None,
+        )
+
+    assert patch_result.resolution_tier == "compiler_confirmed"
+    assert patch_result.stats["relations_emitted"] == {"import": 1, "call": 1, "inherit": 0, "type": 0}
+    assert {relation.relation_type for relation in patch_result.relations} == {"import", "call"}
+    assert all(relation.resolution_state == "semantically_resolved" for relation in patch_result.relations)
+
+
+def test_typescript_target_files_use_repo_root_for_absolute_paths(tmp_path: Path):
+    resolver = TypeScriptCompilerResolver()
+    target = tmp_path / "src" / "app.ts"
+    target.parent.mkdir(parents=True)
+    target.write_text("export const x = 1;", encoding="utf-8")
+    result = resolver._target_files({str(target), "src/missing.ts"})
+    assert str(target) in result
+
+
+def test_go_compiler_facts_emit_semantic_relations():
+    resolver = GoCompilerResolver()
+    file_main = _file_unit("main.go", language="go")
+    file_util = _file_unit("util.go", language="go")
+    caller = _symbol_unit("unit:go:caller", "main.go", "run", element_id="go:caller", kind="function", language="go")
+    callee = _symbol_unit("unit:go:callee", "util.go", "helper", element_id="go:callee", kind="function", anchor="scip:go:helper", language="go")
+    snapshot = _snapshot(units=[file_main, file_util, caller, callee])
+    payload = {
+        "imports": [{"source_path": "main.go", "target_path": "util.go", "import_path": "util"}],
+        "calls": [{"source_path": "main.go", "target_path": "util.go", "call_name": "helper", "target_name": "helper", "target_symbol": "helper", "source_line": 2, "source_col": 0, "target_line": 1, "target_col": 0}],
+        "stats": {"files": 2, "imports": 1, "calls": 1},
+    }
+
+    with patch.object(resolver, "_has_tools", return_value=True), patch.object(
+        resolver, "_run_semantic_helper", return_value=payload
+    ):
+        patch_result = resolver.resolve(
+            snapshot=snapshot,
+            elements=[],
+            target_paths={"main.go", "util.go"},
+            legacy_graph_builder=None,
+        )
+
+    assert patch_result.stats["relations_emitted"] == {"import": 1, "call": 1, "inherit": 0, "type": 0}
+    assert len(patch_result.supports) == 2
+
+
+def test_go_target_files_use_repo_root_for_absolute_paths(tmp_path: Path):
+    resolver = GoCompilerResolver()
+    target = tmp_path / "pkg" / "main.go"
+    target.parent.mkdir(parents=True)
+    target.write_text("package main", encoding="utf-8")
+    result = resolver._target_files({str(target)})
+    assert result == [str(target)]
+
+
+def test_java_compiler_facts_emit_semantic_relations():
+    resolver = JavaCompilerResolver()
+    file_app = _file_unit("src/App.java", language="java")
+    file_lib = _file_unit("src/Lib.java", language="java")
+    caller = _symbol_unit("unit:java:caller", "src/App.java", "run", element_id="java:caller", kind="function", language="java")
+    callee = _symbol_unit("unit:java:callee", "src/Lib.java", "helper", element_id="java:callee", kind="function", anchor="scip:java:helper", language="java")
+    snapshot = _snapshot(units=[file_app, file_lib, caller, callee])
+    payload = {
+        "imports": [{"source_path": "src/App.java", "target_path": "src/Lib.java", "import_name": "demo.Lib"}],
+        "calls": [{"source_path": "src/App.java", "target_path": "src/Lib.java", "call_name": "helper", "target_name": "helper", "target_symbol": "helper", "source_line": 2, "source_col": 0, "target_line": 1, "target_col": 0}],
+        "stats": {"files": 2, "imports": 1, "calls": 1},
+    }
+
+    with patch.object(resolver, "_has_tools", return_value=True), patch.object(
+        resolver, "_run_semantic_helper", return_value=payload
+    ):
+        patch_result = resolver.resolve(
+            snapshot=snapshot,
+            elements=[],
+            target_paths={"src/App.java", "src/Lib.java"},
+            legacy_graph_builder=None,
+        )
+
+    assert patch_result.stats["relations_emitted"] == {"import": 1, "call": 1, "inherit": 0, "type": 0}
+    assert len(patch_result.relations) == 2
+
+
+def test_java_target_files_use_repo_root_for_absolute_paths(tmp_path: Path):
+    resolver = JavaCompilerResolver()
+    target = tmp_path / "src" / "App.java"
+    target.parent.mkdir(parents=True)
+    target.write_text("class App {}", encoding="utf-8")
+    result = resolver._target_files({str(target)})
+    assert result == [str(target)]
+
+
+@pytest.mark.parametrize(
+    ("resolver", "language", "file_a", "file_b"),
+    [
+        (JavaScriptCompilerResolver(), "javascript", "app.js", "util.js"),
+        (RustCompilerResolver(), "rust", "src/main.rs", "src/lib.rs"),
+        (CSharpCompilerResolver(), "csharp", "App.cs", "Lib.cs"),
+        (ZigCompilerResolver(), "zig", "src/main.zig", "src/lib.zig"),
+        (FortranCompilerResolver(), "fortran", "main.f90", "util.f90"),
+        (JuliaCompilerResolver(), "julia", "app.jl", "lib.jl"),
+    ],
+)
+def test_additional_compiler_resolvers_map_helper_facts(
+    resolver: Any, language: str, file_a: str, file_b: str
+):
+    file_src = _file_unit(file_a, language=language)
+    file_dst = _file_unit(file_b, language=language)
+    caller = _symbol_unit(
+        f"unit:{language}:caller",
+        file_a,
+        "run",
+        element_id=f"{language}:caller",
+        kind="function",
+        language=language,
+    )
+    callee = _symbol_unit(
+        f"unit:{language}:callee",
+        file_b,
+        "helper",
+        element_id=f"{language}:callee",
+        kind="function",
+        anchor=f"scip:{language}:helper",
+        language=language,
+    )
+    snapshot = _snapshot(units=[file_src, file_dst, caller, callee])
+    payload = {
+        "imports": [{"source_path": file_a, "target_path": file_b, "module": file_b, "import_name": file_b, "import_path": file_b}],
+        "calls": [{"source_path": file_a, "target_path": file_b, "call_name": "helper", "target_name": "helper", "target_symbol": "helper", "source_line": 2, "source_col": 0, "target_line": 1, "target_col": 0}],
+        "stats": {"files": 2, "imports": 1, "calls": 1},
+    }
+
+    with patch.object(resolver, "_has_tools", return_value=True), patch.object(
+        resolver, "_run_semantic_helper", return_value=payload
+    ):
+        patch_result = resolver.resolve(
+            snapshot=snapshot,
+            elements=[],
+            target_paths={file_a, file_b},
+            legacy_graph_builder=None,
+        )
+
+    assert patch_result.stats["relations_emitted"]["import"] == 1
+    assert patch_result.stats["relations_emitted"]["call"] == 1
+    assert all(r.metadata.get("resolution_tier") == "compiler_confirmed" for r in patch_result.relations)
+
+
+class _DummyHelperResolver(HelperBackedSemanticResolver):
+    language = "python"
+    capabilities = frozenset({"resolve_calls", "resolve_imports", "resolve_inheritance"})
+    cost_class = "low"
+    source_name = "dummy_resolver"
+    extractor_name = "dummy_extractor"
+    frontend_kind = "dummy_frontend"
+    required_tools = ()
+    helper_filename = "dummy.py"
+    file_extensions = (".py",)
+
+
+def test_helper_backed_resolver_prefers_symbol_containing_source_line() -> None:
+    resolver = _DummyHelperResolver()
+    file_unit = _file_unit("a.py")
+    outer = _symbol_unit("unit:outer", "a.py", "outer", element_id="outer")
+    outer.start_line = 1
+    outer.end_line = 50
+    inner = _symbol_unit("unit:inner", "a.py", "inner", element_id="inner")
+    inner.start_line = 10
+    inner.end_line = 20
+    callee = _symbol_unit("unit:callee", "b.py", "helper", element_id="callee")
+    callee.start_line = 1
+    callee.end_line = 5
+    snapshot = _snapshot(units=[file_unit, outer, inner, _file_unit("b.py"), callee])
+
+    patch_result = ResolutionPatch(
+        metadata_updates={"semantic_resolver_runs": [{"language": "python"}]},
+        resolution_tier="compiler_confirmed",
+    )
+    resolver._apply_semantic_facts(
+        snapshot=snapshot,
+        patch=patch_result,
+        payload={
+            "calls": [
+                {
+                    "source_path": "a.py",
+                    "target_path": "b.py",
+                    "call_name": "helper",
+                    "target_name": "helper",
+                    "source_line": 12,
+                    "target_line": 1,
+                }
+            ]
+        },
+    )
+
+    assert len(patch_result.relations) == 1
+    assert patch_result.relations[0].src_unit_id == "unit:inner"
+
+
+def test_helper_backed_resolver_skips_ambiguous_import_target_matches() -> None:
+    resolver = _DummyHelperResolver()
+    file_src = _file_unit("src/a.py")
+    file_x = _file_unit("pkg1/util.py")
+    file_y = _file_unit("pkg2/util.py")
+    snapshot = _snapshot(units=[file_src, file_x, file_y])
+    patch_result = ResolutionPatch(
+        metadata_updates={"semantic_resolver_runs": [{"language": "python"}]},
+        resolution_tier="compiler_confirmed",
+    )
+
+    resolver._apply_semantic_facts(
+        snapshot=snapshot,
+        patch=patch_result,
+        payload={
+            "imports": [
+                {
+                    "source_path": "src/a.py",
+                    "module": "util.py",
+                }
+            ]
+        },
+    )
+
+    assert patch_result.relations == []
+
+
+def test_helper_backed_resolver_records_helper_json_failure() -> None:
+    resolver = _DummyHelperResolver()
+    patch_result = ResolutionPatch()
+    with patch("fastcode.semantic_resolvers.helper_backed.subprocess.run") as run_mock:
+        run_mock.return_value = SimpleNamespace(returncode=0, stdout="{", stderr="")
+        payload = resolver._run_semantic_helper(["/tmp/a.py"], patch_result)
+
+    assert payload == {}
+    assert any(d.code == "invalid_helper_json" for d in patch_result.diagnostics)
+    assert any("helper_invalid_json" in warning for warning in patch_result.warnings)
 
 
 # ---------------------------------------------------------------------------

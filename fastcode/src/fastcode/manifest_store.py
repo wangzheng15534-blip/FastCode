@@ -8,6 +8,7 @@ import uuid
 from typing import Any
 
 from .db_runtime import DBRuntime
+from .store_records import ManifestRecord
 from .utils import utc_now
 
 
@@ -88,6 +89,22 @@ class ManifestStore:
         index_run_id: str,
         status: str = "published",
     ) -> dict[str, Any]:
+        return self.publish_record(
+            repo_name=repo_name,
+            ref_name=ref_name,
+            snapshot_id=snapshot_id,
+            index_run_id=index_run_id,
+            status=status,
+        ).to_dict()
+
+    def publish_record(
+        self,
+        repo_name: str,
+        ref_name: str,
+        snapshot_id: str,
+        index_run_id: str,
+        status: str = "published",
+    ) -> ManifestRecord:
         manifest_id = f"manifest_{uuid.uuid4().hex[:16]}"
         now = utc_now()
 
@@ -102,10 +119,8 @@ class ManifestStore:
                 """,
                 (repo_name, ref_name),
             ).fetchone()
-            previous = (
-                self.db_runtime.row_to_dict(previous_row) if previous_row else None
-            )
-            previous_id = previous["manifest_id"] if previous else None
+            previous = self._row_to_manifest_record(previous_row)
+            previous_id = previous.manifest_id if previous else None
             self.db_runtime.execute(
                 conn,
                 """
@@ -138,20 +153,26 @@ class ManifestStore:
             )
             conn.commit()
 
-        return {
-            "manifest_id": manifest_id,
-            "repo_name": repo_name,
-            "ref_name": ref_name,
-            "snapshot_id": snapshot_id,
-            "index_run_id": index_run_id,
-            "published_at": now,
-            "previous_manifest_id": previous_id,
-            "status": status,
-        }
+        return ManifestRecord(
+            manifest_id=manifest_id,
+            repo_name=repo_name,
+            ref_name=ref_name,
+            snapshot_id=snapshot_id,
+            index_run_id=index_run_id,
+            published_at=now,
+            previous_manifest_id=previous_id,
+            status=status,
+        )
 
     def get_branch_manifest(
         self, repo_name: str, ref_name: str
     ) -> dict[str, Any] | None:
+        record = self.get_branch_manifest_record(repo_name, ref_name)
+        return record.to_dict() if record is not None else None
+
+    def get_branch_manifest_record(
+        self, repo_name: str, ref_name: str
+    ) -> ManifestRecord | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -162,9 +183,13 @@ class ManifestStore:
                 """,
                 (repo_name, ref_name),
             ).fetchone()
-        return self.db_runtime.row_to_dict(row)
+        return self._row_to_manifest_record(row)
 
     def get_snapshot_manifest(self, snapshot_id: str) -> dict[str, Any] | None:
+        record = self.get_snapshot_manifest_record(snapshot_id)
+        return record.to_dict() if record is not None else None
+
+    def get_snapshot_manifest_record(self, snapshot_id: str) -> ManifestRecord | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -176,4 +201,8 @@ class ManifestStore:
                 """,
                 (snapshot_id,),
             ).fetchone()
-        return self.db_runtime.row_to_dict(row)
+        return self._row_to_manifest_record(row)
+
+    def _row_to_manifest_record(self, row: Any) -> ManifestRecord | None:
+        payload = self.db_runtime.row_to_dict(row)
+        return ManifestRecord.from_dict(payload) if payload is not None else None

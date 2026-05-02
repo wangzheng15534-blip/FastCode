@@ -11,6 +11,7 @@ from hypothesis import strategies as st
 
 from fastcode.db_runtime import DBRuntime
 from fastcode.manifest_store import ManifestStore
+from fastcode.store_records import ManifestRecord
 
 # --- Helpers ---
 
@@ -28,6 +29,16 @@ small_id = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=8
 
 
 class TestManifestStoreProperties:
+    def test_publish_record_returns_frozen_manifest_record(self):
+        store = _make_store()
+        record = store.publish_record("repo", "main", "snap1", "run1")
+
+        assert isinstance(record, ManifestRecord)
+        assert record.snapshot_id == "snap1"
+        assert record.manifest_id.startswith("manifest_")
+        with pytest.raises(AttributeError):
+            record.snapshot_id = "snap2"  # type: ignore[misc]
+
     def test_publish_returns_valid_manifest_property(self):
         """HAPPY: publish returns dict with all required keys."""
         store = _make_store()
@@ -48,6 +59,16 @@ class TestManifestStoreProperties:
         assert result is not None
         assert result["snapshot_id"] == "snap1"
         assert result["repo_name"] == "repo"
+
+    def test_get_branch_manifest_record_returns_typed_record(self):
+        store = _make_store()
+        published = store.publish_record("repo", "main", "snap1", "run1")
+
+        result = store.get_branch_manifest_record("repo", "main")
+
+        assert result == published
+        assert result is not None
+        assert result.to_dict()["snapshot_id"] == "snap1"
 
     @pytest.mark.edge
     def test_get_branch_manifest_missing_returns_none_property(self):
@@ -70,6 +91,16 @@ class TestManifestStoreProperties:
         result = store.get_snapshot_manifest("snap1")
         assert result is not None
         assert result["snapshot_id"] == "snap1"
+
+    def test_get_snapshot_manifest_record_returns_typed_record(self):
+        store = _make_store()
+        published = store.publish_record("repo", "main", "snap1", "run1")
+
+        result = store.get_snapshot_manifest_record("snap1")
+
+        assert result == published
+        assert result is not None
+        assert result.repo_name == "repo"
 
     def test_publish_overwrites_branch_head_property(self):
         """HAPPY: second publish to same repo/ref updates branch head."""

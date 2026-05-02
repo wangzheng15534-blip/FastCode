@@ -18,6 +18,7 @@ from fastcode.semantic_ir import (
     IRSymbol,
 )
 from fastcode.snapshot_store import SnapshotStore
+from fastcode.store_records import SnapshotRefRecord
 
 # --- Strategies ---
 
@@ -395,6 +396,25 @@ class TestSnapshotSaveLoadProperties:
         """EDGE: resolve_snapshot_for_ref returns None for unknown ref."""
         store = _make_store()
         assert store.resolve_snapshot_for_ref(repo, branch) is None
+
+    def test_resolve_snapshot_for_ref_record_returns_typed_record(self):
+        store = _make_store()
+        snap = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:typed",
+            branch="main",
+            commit_id="abc1234",
+            tree_id="tree123",
+        )
+        store.save_snapshot(snap)
+
+        result = store.resolve_snapshot_for_ref_record("repo", "main")
+
+        assert isinstance(result, SnapshotRefRecord)
+        assert result is not None
+        assert result.snapshot_id == "snap:repo:typed"
+        with pytest.raises(AttributeError):
+            result.snapshot_id = "snap:repo:other"  # type: ignore[misc]
 
     @given(snap=snapshot_st(), metadata=metadata_st)
     @settings(max_examples=20)

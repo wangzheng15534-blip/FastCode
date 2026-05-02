@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NoReturn
@@ -1622,6 +1623,42 @@ class _DummyHelperResolver(HelperBackedSemanticResolver):
     file_extensions = (".py",)
 
 
+class _DummyFallbackResolver:
+    def resolve(
+        self,
+        *,
+        snapshot: IRSnapshot,
+        elements: list[CodeElement],
+        target_paths: set[str],
+        legacy_graph_builder: Any,
+    ) -> ResolutionPatch:
+        del snapshot, elements, target_paths, legacy_graph_builder
+        relation = IRRelation(
+            relation_id="rel:fallback",
+            src_unit_id="unit:caller",
+            dst_unit_id="unit:callee",
+            relation_type="call",
+            resolution_state="structural",
+            support_sources={"dummy_resolver"},
+            metadata={"source": "dummy_resolver", "resolution_tier": "structural_fallback"},
+        )
+        return ResolutionPatch(
+            metadata_updates={
+                "semantic_resolver_runs": [
+                    {
+                        "language": "python",
+                        "source": "dummy_resolver",
+                        "frontend_kind": "dummy_fallback",
+                        "fallback": True,
+                    }
+                ]
+            },
+            relations=[relation],
+            resolution_tier="structural_fallback",
+            stats={"fallback_used": True},
+        )
+
+
 def test_helper_backed_resolver_prefers_symbol_containing_source_line() -> None:
     resolver = _DummyHelperResolver()
     file_unit = _file_unit("a.py")
@@ -1698,6 +1735,93 @@ def test_helper_backed_resolver_records_helper_json_failure() -> None:
     assert payload == {}
     assert any(d.code == "invalid_helper_json" for d in patch_result.diagnostics)
     assert any("helper_invalid_json" in warning for warning in patch_result.warnings)
+
+
+def test_helper_backed_resolver_falls_back_on_helper_nonzero_exit(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "a.py"
+    source_path.write_text("print('hi')\n", encoding="utf-8")
+    resolver = _DummyHelperResolver(fallback=_DummyFallbackResolver())
+    snapshot = _snapshot(
+        units=[
+            _file_unit("a.py"),
+            _file_unit("b.py"),
+            _symbol_unit("unit:caller", "a.py", "run", element_id="caller"),
+            _symbol_unit("unit:callee", "b.py", "helper", element_id="callee"),
+        ]
+    )
+    element = _element(
+        element_id="file:a",
+        element_type="file",
+        name="a.py",
+        path="a.py",
+    )
+
+    with (
+        patch.object(resolver, "_has_tools", return_value=True),
+        patch("fastcode.semantic_resolvers.helper_backed.os.getcwd", return_value=str(tmp_path)),
+        patch("fastcode.semantic_resolvers.helper_backed.subprocess.run") as run_mock,
+    ):
+        run_mock.return_value = SimpleNamespace(returncode=7, stdout="", stderr="boom")
+        patch_result = resolver.resolve(
+            snapshot=snapshot,
+            elements=[element],
+            target_paths={"a.py"},
+            legacy_graph_builder=None,
+        )
+
+    assert patch_result.resolution_tier == "structural_fallback"
+    assert len(patch_result.relations) == 1
+    assert patch_result.stats["fallback_used"] is True
+    assert patch_result.stats["helper_failed"] is True
+    assert patch_result.stats["helper_exit_code"] == 7
+    assert "helper_nonzero_exit" in patch_result.stats["helper_failure_codes"]
+    resolver_run = patch_result.metadata_updates["semantic_resolver_runs"][0]
+    assert resolver_run["helper_backed"] is True
+    assert resolver_run["helper_failed"] is True
+    assert resolver_run["fallback"] is True
+    assert any(d.code == "helper_nonzero_exit" for d in patch_result.diagnostics)
+    assert any("helper_error" in warning for warning in patch_result.warnings)
+
+
+def test_helper_backed_resolver_falls_back_on_helper_timeout(tmp_path: Path) -> None:
+    source_path = tmp_path / "a.py"
+    source_path.write_text("print('hi')\n", encoding="utf-8")
+    resolver = _DummyHelperResolver(fallback=_DummyFallbackResolver())
+    snapshot = _snapshot(
+        units=[
+            _file_unit("a.py"),
+            _file_unit("b.py"),
+            _symbol_unit("unit:caller", "a.py", "run", element_id="caller"),
+            _symbol_unit("unit:callee", "b.py", "helper", element_id="callee"),
+        ]
+    )
+    element = _element(
+        element_id="file:a",
+        element_type="file",
+        name="a.py",
+        path="a.py",
+    )
+
+    with (
+        patch.object(resolver, "_has_tools", return_value=True),
+        patch("fastcode.semantic_resolvers.helper_backed.os.getcwd", return_value=str(tmp_path)),
+        patch(
+            "fastcode.semantic_resolvers.helper_backed.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["dummy"], timeout=1),
+        ),
+    ):
+        patch_result = resolver.resolve(
+            snapshot=snapshot,
+            elements=[element],
+            target_paths={"a.py"},
+            legacy_graph_builder=None,
+        )
+
+    assert patch_result.resolution_tier == "structural_fallback"
+    assert patch_result.stats["helper_failed"] is True
+    assert any(d.code == "tool_invocation_failed" for d in patch_result.diagnostics)
 
 
 # ---------------------------------------------------------------------------

@@ -26,7 +26,7 @@ from typing import Any
 
 from ..indexer import CodeElement
 from ..semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
-from ._utils import _hash_id, _normalize_path
+from ._utils import _hash_id, _normalize_path, validate_helper_paths
 from .base import (
     ResolutionPatch,
     ResolutionTier,
@@ -160,13 +160,21 @@ class HelperBackedSemanticResolver(SemanticResolver):
 
     def _target_files(self, target_paths: set[str]) -> list[str]:
         repo_root = os.getcwd()
-        files: list[str] = []
+        raw: list[str] = []
         for path in sorted(target_paths):
             normalized = path if os.path.isabs(path) else os.path.join(repo_root, path)
             if self.file_extensions and not normalized.endswith(self.file_extensions):
                 continue
-            files.append(os.path.abspath(normalized))
-        return files
+            raw.append(os.path.abspath(normalized))
+        safe, rejected = validate_helper_paths(raw, repo_root)
+        if rejected:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Rejected %d helper file paths (symlinks, missing, or outside repo)",
+                len(rejected),
+            )
+        return safe
 
     def _helper_path(self) -> Path:
         return Path(__file__).with_name(self.helper_filename)

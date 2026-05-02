@@ -1865,6 +1865,93 @@ def test_helper_backed_resolver_falls_back_on_helper_timeout(tmp_path: Path) -> 
     assert any(d.code == "tool_invocation_failed" for d in patch_result.diagnostics)
 
 
+def test_helper_backed_resolver_keeps_compiler_tier_on_valid_empty_payload(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "a.py"
+    source_path.write_text("print('hi')\n", encoding="utf-8")
+    resolver = _DummyHelperResolver(fallback=_DummyFallbackResolver())
+    snapshot = _snapshot(units=[_file_unit("a.py")])
+    element = _element(
+        element_id="file:a",
+        element_type="file",
+        name="a.py",
+        path="a.py",
+    )
+
+    with (
+        patch.object(resolver, "_has_tools", return_value=True),
+        patch(
+            "fastcode.semantic_resolvers.helper_backed.os.getcwd",
+            return_value=str(tmp_path),
+        ),
+        patch(
+            "fastcode.semantic_resolvers.helper_backed.subprocess.run",
+            return_value=SimpleNamespace(returncode=0, stdout="{}", stderr=""),
+        ),
+    ):
+        patch_result = resolver.resolve(
+            snapshot=snapshot,
+            elements=[element],
+            target_paths={"a.py"},
+            legacy_graph_builder=None,
+        )
+
+    assert patch_result.resolution_tier == "compiler_confirmed"
+    assert patch_result.relations == []
+    assert patch_result.stats["helper_target_files"] == 1
+    assert patch_result.stats["relations_emitted"] == {
+        "import": 0,
+        "call": 0,
+        "inherit": 0,
+        "type": 0,
+    }
+    resolver_run = patch_result.metadata_updates["semantic_resolver_runs"][0]
+    assert resolver_run["helper_backed"] is True
+    assert "fallback" not in resolver_run
+    assert patch_result.stats.get("helper_failed") is None
+
+
+def test_helper_backed_resolver_prefers_nearest_target_line_for_ambiguous_symbol() -> None:
+    resolver = _DummyHelperResolver()
+    file_a = _file_unit("a.py")
+    file_b = _file_unit("b.py")
+    caller = _symbol_unit("unit:caller", "a.py", "run", element_id="caller")
+    caller.start_line = 1
+    caller.end_line = 20
+    callee_near = _symbol_unit("unit:callee:near", "b.py", "helper", element_id="callee:near")
+    callee_near.start_line = 40
+    callee_near.end_line = 45
+    callee_far = _symbol_unit("unit:callee:far", "b.py", "helper", element_id="callee:far")
+    callee_far.start_line = 5
+    callee_far.end_line = 10
+    snapshot = _snapshot(units=[file_a, file_b, caller, callee_near, callee_far])
+    patch_result = ResolutionPatch(
+        metadata_updates={"semantic_resolver_runs": [{"language": "python"}]},
+        resolution_tier="compiler_confirmed",
+    )
+
+    resolver._apply_semantic_facts(
+        snapshot=snapshot,
+        patch=patch_result,
+        payload={
+            "calls": [
+                {
+                    "source_path": "a.py",
+                    "target_path": "b.py",
+                    "call_name": "helper",
+                    "target_name": "helper",
+                    "source_line": 3,
+                    "target_line": 42,
+                }
+            ]
+        },
+    )
+
+    assert len(patch_result.relations) == 1
+    assert patch_result.relations[0].dst_unit_id == "unit:callee:near"
+
+
 # ---------------------------------------------------------------------------
 # Workstream 3: SCIP indexer tests
 # ---------------------------------------------------------------------------

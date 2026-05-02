@@ -37,7 +37,11 @@ from .manifest_store import ManifestStore
 from .module_resolver import ModuleResolver
 from .pg_retrieval import PgRetrievalStore
 from .retriever import HybridRetriever
-from .scip_indexers import detect_scip_languages, run_scip_for_language
+from .scip_indexers import (
+    detect_scip_languages,
+    get_scip_indexer_profile,
+    run_scip_for_language,
+)
 from .scip_loader import load_scip_artifact, run_scip_python_index
 from .semantic_ir import IRSnapshot
 from .semantic_resolvers import (
@@ -764,6 +768,7 @@ class IndexPipeline:
                 layer2_start = perf_counter()
                 try:
                     scip_artifact_paths: list[str] = []
+                    experimental_scip_languages: list[str] = []
                     if scip_artifact_path:
                         scip_data = load_scip_artifact(scip_artifact_path)
                         scip_artifact_paths = [scip_artifact_path]
@@ -778,9 +783,25 @@ class IndexPipeline:
                     else:
                         out_dir = tempfile.mkdtemp(prefix="fastcode_scip_")
                         scip_indexes = []
-                        for language in detect_scip_languages(
+                        detected_languages = detect_scip_languages(
                             self.loader.repo_path or ""
-                        ):
+                        )
+                        experimental_scip_languages = [
+                            language
+                            for language in detected_languages
+                            if (
+                                profile := get_scip_indexer_profile(language)
+                            ) is not None
+                            and profile.experimental
+                        ]
+                        if experimental_scip_languages:
+                            warning = (
+                                "experimental_scip_languages: "
+                                + ", ".join(sorted(experimental_scip_languages))
+                            )
+                            warnings.append(warning)
+                            layer2["warnings"].append(warning)
+                        for language in detected_languages:
                             scip_index = run_scip_for_language(
                                 language, self.loader.repo_path or "", out_dir
                             )
@@ -837,7 +858,10 @@ class IndexPipeline:
                             metadata={
                                 "scip_languages": [
                                     language for language, _ in scip_indexes
-                                ]
+                                ],
+                                "experimental_scip_languages": list(
+                                    experimental_scip_languages
+                                ),
                             },
                         )
                         scip_data = scip_indexes[0][1]
@@ -901,6 +925,16 @@ class IndexPipeline:
                             "scip_languages": list(
                                 (scip_snapshot.metadata or {}).get("scip_languages", [])
                             ),
+                            "experimental_scip_languages": list(
+                                (scip_snapshot.metadata or {}).get(
+                                    "experimental_scip_languages", []
+                                )
+                            ),
+                            "experimental_language_count": len(
+                                (scip_snapshot.metadata or {}).get(
+                                    "experimental_scip_languages", []
+                                )
+                            ),
                         },
                     )
                 except Exception as e:
@@ -917,6 +951,8 @@ class IndexPipeline:
                             "scip_enabled": True,
                             "artifact_count": 0,
                             "error": str(e),
+                            "experimental_scip_languages": [],
+                            "experimental_language_count": 0,
                         },
                     )
             else:
@@ -927,6 +963,8 @@ class IndexPipeline:
                     extra_metrics={
                         "scip_enabled": False,
                         "artifact_count": 0,
+                        "experimental_scip_languages": [],
+                        "experimental_language_count": 0,
                     },
                 )
 

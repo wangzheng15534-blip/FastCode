@@ -21,6 +21,7 @@ from fastcode.scip_indexers import (
     SUPPORTED_LANGUAGES,
     detect_scip_languages,
     get_indexer_command,
+    get_scip_indexer_profile,
 )
 
 requires_protobuf = pytest.mark.skipif(
@@ -87,6 +88,22 @@ def test_get_indexer_command_new_language_frontends():
     assert zig[0] == "zls"
     assert fortran[0] == "fortls"
     assert julia[0] == "julia"
+
+
+def test_experimental_scip_profiles_are_marked_explicitly():
+    zig = get_scip_indexer_profile("zig")
+    fortran = get_scip_indexer_profile("fortran")
+    julia = get_scip_indexer_profile("julia")
+    python = get_scip_indexer_profile("python")
+
+    assert zig is not None
+    assert zig.experimental is True
+    assert fortran is not None
+    assert fortran.experimental is True
+    assert julia is not None
+    assert julia.experimental is True
+    assert python is not None
+    assert python.experimental is False
 
 
 def test_supported_languages():

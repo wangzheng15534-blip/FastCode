@@ -743,7 +743,7 @@ class FastCode:
             [str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str
         ]
         | None = None,
-        ) -> dict[str, Any]:
+    ) -> dict[str, Any]:
         return self.query_handler.query(
             question=question,
             filters=filters,

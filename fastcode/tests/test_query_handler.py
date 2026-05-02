@@ -55,7 +55,9 @@ def _query_pipeline(
     retrieve_side_effect: Any = None,
 ) -> QueryPipeline:
     retriever = MagicMock()
-    retriever.retrieve.side_effect = retrieve_side_effect or [[{"element": {"relative_path": "a.py"}}]]
+    retriever.retrieve.side_effect = retrieve_side_effect or [
+        [{"element": {"relative_path": "a.py"}}]
+    ]
     answer_generator = MagicMock()
     answer_generator.generate.return_value = {"answer": "ok", "sources": []}
     query_processor = MagicMock()
@@ -151,5 +153,9 @@ def test_fastcode_query_semantic_escalation_updates_ir_graphs() -> None:
     assert result["status"] == "applied"
     assert result["rerun_retrieval"] is True
     assert result["target_paths"] == ["src/a.py"]
-    fc.retriever.set_ir_graphs.assert_called_once_with("ir-graphs", snapshot_id="snap:1")
-    fc.snapshot_symbol_index.register_snapshot.assert_called_once_with(upgraded_snapshot)
+    fc.retriever.set_ir_graphs.assert_called_once_with(
+        "ir-graphs", snapshot_id="snap:1"
+    )
+    fc.snapshot_symbol_index.register_snapshot.assert_called_once_with(
+        upgraded_snapshot
+    )

@@ -1308,6 +1308,7 @@ def test_typescript_compiler_facts_emit_semantic_relations():
     resolver = TypeScriptCompilerResolver()
     file_app = _file_unit("src/app.ts", language="typescript")
     file_lib = _file_unit("src/lib.ts", language="typescript")
+    file_base = _file_unit("src/base.ts", language="typescript")
     caller = _symbol_unit(
         "unit:ts:caller",
         "src/app.ts",
@@ -1325,7 +1326,26 @@ def test_typescript_compiler_facts_emit_semantic_relations():
         anchor="scip:ts:helper",
         language="typescript",
     )
-    snapshot = _snapshot(units=[file_app, file_lib, caller, callee])
+    derived = _symbol_unit(
+        "unit:ts:derived",
+        "src/app.ts",
+        "Runner",
+        element_id="ts:derived",
+        kind="class",
+        language="typescript",
+    )
+    base = _symbol_unit(
+        "unit:ts:base",
+        "src/base.ts",
+        "BaseRunner",
+        element_id="ts:base",
+        kind="class",
+        anchor="scip:ts:base",
+        language="typescript",
+    )
+    snapshot = _snapshot(
+        units=[file_app, file_lib, file_base, caller, callee, derived, base]
+    )
     payload = {
         "imports": [
             {
@@ -1347,7 +1367,19 @@ def test_typescript_compiler_facts_emit_semantic_relations():
                 "target_col": 0,
             }
         ],
-        "stats": {"files": 2, "imports": 1, "calls": 1},
+        "inherits": [
+            {
+                "source_path": "src/app.ts",
+                "source_name": "Runner",
+                "source_line": 1,
+                "source_col": 0,
+                "target_path": "src/base.ts",
+                "target_name": "BaseRunner",
+                "target_line": 1,
+                "target_col": 0,
+            }
+        ],
+        "stats": {"files": 3, "imports": 1, "calls": 1, "inherits": 1},
     }
 
     with (
@@ -1370,13 +1402,21 @@ def test_typescript_compiler_facts_emit_semantic_relations():
     assert patch_result.stats["relations_emitted"] == {
         "import": 1,
         "call": 1,
-        "inherit": 0,
+        "inherit": 1,
         "type": 0,
     }
     assert {relation.relation_type for relation in patch_result.relations} == {
         "import",
         "call",
+        "inherit",
     }
+    inherit_relation = next(
+        relation
+        for relation in patch_result.relations
+        if relation.relation_type == "inherit"
+    )
+    assert inherit_relation.src_unit_id == derived.unit_id
+    assert inherit_relation.dst_unit_id == base.unit_id
     assert all(
         relation.resolution_state == "semantically_resolved"
         for relation in patch_result.relations
@@ -1399,6 +1439,7 @@ def test_go_compiler_facts_emit_semantic_relations():
     resolver = GoCompilerResolver()
     file_main = _file_unit("main.go", language="go")
     file_util = _file_unit("util.go", language="go")
+    file_base = _file_unit("base.go", language="go")
     caller = _symbol_unit(
         "unit:go:caller",
         "main.go",
@@ -1416,7 +1457,26 @@ def test_go_compiler_facts_emit_semantic_relations():
         anchor="scip:go:helper",
         language="go",
     )
-    snapshot = _snapshot(units=[file_main, file_util, caller, callee])
+    derived = _symbol_unit(
+        "unit:go:derived",
+        "main.go",
+        "Runner",
+        element_id="go:derived",
+        kind="class",
+        language="go",
+    )
+    base = _symbol_unit(
+        "unit:go:base",
+        "base.go",
+        "BaseRunner",
+        element_id="go:base",
+        kind="interface",
+        anchor="scip:go:base",
+        language="go",
+    )
+    snapshot = _snapshot(
+        units=[file_main, file_util, file_base, caller, callee, derived, base]
+    )
     payload = {
         "imports": [
             {"source_path": "main.go", "target_path": "util.go", "import_path": "util"}
@@ -1434,7 +1494,19 @@ def test_go_compiler_facts_emit_semantic_relations():
                 "target_col": 0,
             }
         ],
-        "stats": {"files": 2, "imports": 1, "calls": 1},
+        "inherits": [
+            {
+                "source_path": "main.go",
+                "source_name": "Runner",
+                "source_line": 1,
+                "source_col": 0,
+                "target_path": "base.go",
+                "target_name": "BaseRunner",
+                "target_line": 1,
+                "target_col": 0,
+            }
+        ],
+        "stats": {"files": 3, "imports": 1, "calls": 1, "inherits": 1},
     }
 
     with (
@@ -1456,10 +1528,17 @@ def test_go_compiler_facts_emit_semantic_relations():
     assert patch_result.stats["relations_emitted"] == {
         "import": 1,
         "call": 1,
-        "inherit": 0,
+        "inherit": 1,
         "type": 0,
     }
-    assert len(patch_result.supports) == 2
+    assert len(patch_result.supports) == 3
+    inherit_relation = next(
+        relation
+        for relation in patch_result.relations
+        if relation.relation_type == "inherit"
+    )
+    assert inherit_relation.src_unit_id == derived.unit_id
+    assert inherit_relation.dst_unit_id == base.unit_id
 
 
 def test_go_target_files_use_repo_root_for_absolute_paths(
@@ -1478,6 +1557,7 @@ def test_java_compiler_facts_emit_semantic_relations():
     resolver = JavaCompilerResolver()
     file_app = _file_unit("src/App.java", language="java")
     file_lib = _file_unit("src/Lib.java", language="java")
+    file_base = _file_unit("src/Base.java", language="java")
     caller = _symbol_unit(
         "unit:java:caller",
         "src/App.java",
@@ -1495,7 +1575,26 @@ def test_java_compiler_facts_emit_semantic_relations():
         anchor="scip:java:helper",
         language="java",
     )
-    snapshot = _snapshot(units=[file_app, file_lib, caller, callee])
+    derived = _symbol_unit(
+        "unit:java:derived",
+        "src/App.java",
+        "App",
+        element_id="java:derived",
+        kind="class",
+        language="java",
+    )
+    base = _symbol_unit(
+        "unit:java:base",
+        "src/Base.java",
+        "Base",
+        element_id="java:base",
+        kind="class",
+        anchor="scip:java:base",
+        language="java",
+    )
+    snapshot = _snapshot(
+        units=[file_app, file_lib, file_base, caller, callee, derived, base]
+    )
     payload = {
         "imports": [
             {
@@ -1517,7 +1616,19 @@ def test_java_compiler_facts_emit_semantic_relations():
                 "target_col": 0,
             }
         ],
-        "stats": {"files": 2, "imports": 1, "calls": 1},
+        "inherits": [
+            {
+                "source_path": "src/App.java",
+                "source_name": "App",
+                "source_line": 1,
+                "source_col": 0,
+                "target_path": "src/Base.java",
+                "target_name": "Base",
+                "target_line": 1,
+                "target_col": 0,
+            }
+        ],
+        "stats": {"files": 3, "imports": 1, "calls": 1, "inherits": 1},
     }
 
     with (
@@ -1539,10 +1650,17 @@ def test_java_compiler_facts_emit_semantic_relations():
     assert patch_result.stats["relations_emitted"] == {
         "import": 1,
         "call": 1,
-        "inherit": 0,
+        "inherit": 1,
         "type": 0,
     }
-    assert len(patch_result.relations) == 2
+    assert len(patch_result.relations) == 3
+    inherit_relation = next(
+        relation
+        for relation in patch_result.relations
+        if relation.relation_type == "inherit"
+    )
+    assert inherit_relation.src_unit_id == derived.unit_id
+    assert inherit_relation.dst_unit_id == base.unit_id
 
 
 def test_java_target_files_use_repo_root_for_absolute_paths(

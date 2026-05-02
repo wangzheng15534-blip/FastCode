@@ -9,7 +9,7 @@ returning hardcoded mock data.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -76,6 +76,9 @@ class _FakeFastCode:
 
     def get_scip_artifact_ref(self, snapshot_id: str) -> dict[str, Any] | None:
         return self.snapshot_store.get_scip_artifact_ref(snapshot_id)
+
+    def list_scip_artifact_refs(self, snapshot_id: str) -> list[dict[str, Any]]:
+        return self.snapshot_store.list_scip_artifact_refs(snapshot_id)
 
     def get_branch_manifest(
         self, repo_name: str, ref_name: str
@@ -190,9 +193,44 @@ class TestScipArtifacts:
 
         body = asyncio.run(api.get_scip_artifact("snap:repo:with-scip"))
         assert body["status"] == "success"
-        artifact = body["artifact"]
+        artifact = cast(dict[str, Any], body["artifact"])
+        artifacts = cast(list[dict[str, Any]], body["artifacts"])
         assert artifact["indexer_name"] == "scip-python"
         assert artifact["checksum"] == "abc123"
+        assert artifacts[0]["artifact_path"] == "/tmp/scip.dump"
+
+    def test_returns_full_artifact_lineage_when_multiple_saved(
+        self, stores: Any
+    ) -> None:
+        _fake_fc, store = stores
+        snap = _make_minimal_snapshot(snapshot_id="snap:repo:multi-scip")
+        store.save_snapshot(snap)
+        store.save_scip_artifact_refs(
+            snap.snapshot_id,
+            artifacts=[
+                {
+                    "indexer_name": "scip-python",
+                    "artifact_path": "/tmp/python.scip",
+                    "checksum": "111",
+                    "language": "python",
+                },
+                {
+                    "indexer_name": "scip-go",
+                    "artifact_path": "/tmp/go.scip",
+                    "checksum": "222",
+                    "language": "go",
+                },
+            ],
+        )
+
+        body = asyncio.run(api.get_scip_artifact("snap:repo:multi-scip"))
+        artifact = cast(dict[str, Any], body["artifact"])
+        artifacts = cast(list[dict[str, Any]], body["artifacts"])
+        assert artifact["artifact_path"] == "/tmp/python.scip"
+        assert [item["artifact_path"] for item in artifacts] == [
+            "/tmp/python.scip",
+            "/tmp/go.scip",
+        ]
 
 
 class TestManifests:

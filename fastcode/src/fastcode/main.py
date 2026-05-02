@@ -640,6 +640,9 @@ class FastCode:
     def get_scip_artifact_ref(self, snapshot_id: str) -> dict[str, Any] | None:
         return self.snapshot_store.get_scip_artifact_ref(snapshot_id)
 
+    def list_scip_artifact_refs(self, snapshot_id: str) -> list[dict[str, Any]]:
+        return self.snapshot_store.list_scip_artifact_refs(snapshot_id)
+
     def resolve_snapshot_symbol(
         self,
         snapshot_id: str,

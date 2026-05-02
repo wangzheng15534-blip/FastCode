@@ -123,10 +123,69 @@ Still raw-dict-heavy at boundaries:
 
 ### 6. Add a few remaining critical regressions
 
-- header-language classification for `.h` as C vs C++
-- query-time semantic escalation changing IR graph expansion behavior end to end
-- experimental SCIP warning propagation in full index flow
-- helper asset execution from packaged installs
+### 6a. Header-language classification for `.h` as C vs C++
+
+**Status:** Test guards added. Production fix still needed.
+
+**Audit verdict:** CONCERNS (risk score 6/9 — P3×I2)
+
+**Problem:** `get_language_from_extension(".h")` always returns `"c"` (`paths.py:43`, `_compat.py:200`). No context-aware classification exists. C++ projects with `.h` headers get wrong resolver dispatch.
+
+**Test coverage added** (`fastcode/tests/test_header_classification.py`):
+- `TestHeaderExtensionMapping` — baselines: `.h`→c, `.hpp`→cpp, `.hh`→cpp, `.hxx`→cpp
+- `TestHeaderResolverDispatch` — C resolver `applicable()` for `.h` tagged as `c`; C++ resolver correctly rejects `.h` tagged as `c` (exposes the gap)
+- `TestCppIncludeOfDotHResolution` — C++ resolver resolves `#include "util.h"` from `main.cpp` to `.h` unit tagged as `c`
+- `TestDuplicateExtensionMaps` — `paths.py` and `_compat.py` agree on `.h`
+- `TestHeaderAmbiguityContract` — skip-marked TDD targets for future context-aware classification (adjacent `.cpp` detection, C++ keyword content analysis)
+
+**Remaining work:**
+- Implement context-aware `.h` classification (adjacent file detection, content analysis)
+- Unskip the `TestHeaderAmbiguityContract` tests once implemented
+
+### 6b. Query-time semantic escalation changing IR graph expansion behavior end to end
+
+**Status:** Test guards added.
+
+**Audit verdict:** FAIL (risk score 6/9 — P2×I3)
+
+**Problem:** Existing tests verified mechanism (callback called, retrieve count) but not behavior (retrieval results actually change after IR graph expansion).
+
+**Test coverage added** (`fastcode/tests/test_query_handler.py`):
+- `test_semantic_escalation_changes_retrieval_results_end_to_end` — verifies answer generator receives expanded second-retrieval results (3 files vs 1)
+- `test_local_budget_triggers_escalation_for_find_intent` — budget="local" path with find intent
+- `test_escalate_query_semantics_returns_skipped_when_snapshot_not_found` — early return when snapshot missing
+- `test_escalate_query_semantics_returns_skipped_when_no_target_paths` — early return when no paths extractable
+- `test_escalate_query_semantics_returns_degraded_when_warnings_present` — degraded status with resolver warnings
+- `test_escalation_does_not_rerun_when_callback_returns_none` — no rerun when callback returns None
+
+### 6c. Experimental SCIP warning propagation in full index flow
+
+**Status:** Already covered by existing test.
+
+**Audit verdict:** CONCERNS/borderline PASS (risk score 2/9 — P1×I2)
+
+**Existing test coverage:**
+- `test_pipeline_layer2_records_experimental_scip_languages_non_silently` (`test_snapshot_pipeline.py:582`) — comprehensive single-language chain: detection → warning string → `layer2["warnings"]` → `result["warnings"]` + metrics
+- `test_experimental_scip_profiles_are_marked_explicitly` (`test_scip_indexers.py:93`) — profile classification guard
+- `test_experimental_scip_languages_set` (`test_semantic_resolvers.py:2156`) — canonical set guard
+
+**Minor gaps (low priority):**
+- Multi-language warning string (sorted join for Zig+Fortran) untested
+- Warning persistence to snapshot store metadata untested
+
+### 6d. Helper asset execution from packaged installs
+
+**Status:** Test guards added.
+
+**Audit verdict:** CONCERNS (risk score 6/9 — P2×I3)
+
+**Problem:** `_helper_path()` at `helper_backed.py:248` uses `Path(__file__).with_name(self.helper_filename)`. All 12 existing helper tests bypass this method via patches. Zero tests verify helper assets exist on disk.
+
+**Test coverage added** (`fastcode/tests/test_semantic_resolvers.py`):
+- `test_helper_path_returns_existing_file_for_each_resolver` — parametrized across 9 resolvers; asserts `_helper_path().exists()` and correct filename
+- `test_helper_command_includes_existing_helper_path` — full chain `_helper_path()` → `_helper_command()` → file exists
+- `test_helper_backed_resolver_degrades_gracefully_when_helper_file_missing` — missing asset simulation with `_DummyFallbackResolver`; asserts `structural_fallback` tier and `tool_invocation_failed` diagnostic
+- `test_helper_path_co_located_with_resolver_module` — co-location invariant: helper parent directory matches `helper_backed.py` module directory
 
 ## Rules for updating this file
 

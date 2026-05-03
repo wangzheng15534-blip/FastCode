@@ -76,13 +76,14 @@ The pipeline now exposes explicit layer status, metrics, warnings, and non-silen
 - Async endpoint hardening:
   - REST API repository load/index/cache-load/multi-index/upload paths offload blocking work with `asyncio.to_thread`
   - web UI upload and upload+index paths offload ZIP extraction, repository load, and indexing
+  - REST API and web UI delete/cache/refresh maintenance endpoints offload blocking mutations
 - Lock fencing hardening:
   - PostgreSQL same-owner lock refresh preserves the current fencing token instead of invalidating in-flight work
 
 ## Critical verification currently green
 
 - Full smoke gate:
-  - `1676 passed, 7 skipped`
+  - `1677 passed, 7 skipped`
 - Focused regression areas repeatedly verified:
   - `test_api`
   - `test_manifest_store`

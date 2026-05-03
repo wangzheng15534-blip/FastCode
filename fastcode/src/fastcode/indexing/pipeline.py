@@ -1000,8 +1000,9 @@ class IndexPipeline:
         source: str,
         changed_paths: list[str],
         modified_count: int,
+        widened: bool,
     ) -> dict[str, Any] | None:
-        if not changed_paths:
+        if not changed_paths or not widened:
             return None
         return {
             "task_type": "semantic_repair_frontier",
@@ -1012,6 +1013,7 @@ class IndexPipeline:
                 "changed_paths": changed_paths,
                 "reason": "api_or_edge_surface_changed",
                 "modified_count": modified_count,
+                "widened": widened,
             },
         }
 
@@ -1769,6 +1771,12 @@ class IndexPipeline:
                 }
             if incremental_plan is not None:
                 result["incremental_prefilter"] = dict(incremental_plan)
+            widened_repair_needed = bool(
+                incremental_plan is None
+                or incremental_plan.get("modified", 0) > 0
+                and incremental_plan.get("reused_changed_embeddings", 0)
+                < incremental_plan.get("reindexed_elements", 0)
+            )
             repair_task = self._build_repair_frontier_task(
                 snapshot_id=snapshot_id,
                 repo_name=repo_name,
@@ -1777,6 +1785,7 @@ class IndexPipeline:
                 modified_count=(
                     incremental_plan["modified"] if incremental_plan is not None else 0
                 ),
+                widened=widened_repair_needed,
             )
             if repair_task is not None:
                 task_id = self.snapshot_store.enqueue_redo_task(
@@ -1788,6 +1797,8 @@ class IndexPipeline:
                     "task_ids": [task_id],
                     "task_type": repair_task["task_type"],
                 }
+            else:
+                result["repair_queue"] = {"pending": 0}
             return result
         except Exception as e:
             self.index_run_store.mark_failed(run_id, str(e))

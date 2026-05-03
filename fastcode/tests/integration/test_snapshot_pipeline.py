@@ -1473,6 +1473,16 @@ def test_plan_incremental_elements_reuses_changed_unit_embedding_when_text_hash_
         )
         assert planned_elements[0].metadata["embedding_text"] == previous_embedding_text
 
+        repair_task = pipeline._build_repair_frontier_task(
+            snapshot_id="snap:repo:current",
+            repo_name="repo",
+            source=tmp,
+            changed_paths=["b.py"],
+            modified_count=1,
+            widened=False,
+        )
+        assert repair_task is None
+
 
 def test_resolve_snapshot_ref_uses_dirty_worktree_hash_for_local_changes() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_git_") as tmp:

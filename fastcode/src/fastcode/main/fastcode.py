@@ -586,6 +586,8 @@ class FastCode:
         source = payload.get("source")
         if not source:
             raise RuntimeError("semantic_repair_frontier payload missing source")
+        scope_kind = str(payload.get("scope_kind") or "path")
+        scope_roots = list(payload.get("scope_roots") or [])
         result = self.run_index_pipeline(
             source=str(source),
             is_url=bool(payload.get("is_url", False)),
@@ -601,6 +603,8 @@ class FastCode:
             "repo_name": payload.get("repo_name"),
             "changed_paths": list(payload.get("changed_paths") or []),
             "reason": payload.get("reason") or "api_or_edge_surface_changed",
+            "scope_kind": scope_kind,
+            "scope_roots": scope_roots,
         }
         return result
 

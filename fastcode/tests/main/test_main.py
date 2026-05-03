@@ -128,6 +128,8 @@ def test_process_semantic_repair_frontier_replays_pipeline_with_payload():
             "source": "/tmp/repo",
             "changed_paths": ["a.py"],
             "reason": "api_or_edge_surface_changed",
+            "scope_kind": "package",
+            "scope_roots": ["pkg"],
         }
     )
 
@@ -136,3 +138,5 @@ def test_process_semantic_repair_frontier_replays_pipeline_with_payload():
     assert result["kwargs"]["force"] is True
     assert result["repair_frontier"]["snapshot_id"] == "snap:1"
     assert result["repair_frontier"]["changed_paths"] == ["a.py"]
+    assert result["repair_frontier"]["scope_kind"] == "package"
+    assert result["repair_frontier"]["scope_roots"] == ["pkg"]

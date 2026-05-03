@@ -12,9 +12,11 @@ from hypothesis import strategies as st
 from fastcode.ir_graph_builder import IRGraphBuilder, IRGraphs
 from fastcode.semantic_ir import (
     IRAttachment,
+    IRCodeUnit,
     IRDocument,
     IREdge,
     IROccurrence,
+    IRRelation,
     IRSnapshot,
     IRSymbol,
 )
@@ -934,3 +936,116 @@ class TestIRGraphsRoundtrip:
         store.save_ir_graphs(snap.snapshot_id, {"v": 2})
         loaded = store.load_ir_graphs(snap.snapshot_id)
         assert loaded == {"v": 2}
+
+    def test_save_load_rich_dataclass_roundtrip(self):
+        """REGRESSION: deterministic multi-file snapshot with nested units roundtrips."""
+        snap = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:rich",
+            units=[
+                IRCodeUnit(
+                    unit_id="doc:snap:repo:rich:a.py",
+                    kind="file",
+                    path="a.py",
+                    language="python",
+                    display_name="a.py",
+                    source_set={"fc_structure"},
+                ),
+                IRCodeUnit(
+                    unit_id="doc:snap:repo:rich:b.py",
+                    kind="file",
+                    path="b.py",
+                    language="python",
+                    display_name="b.py",
+                    source_set={"fc_structure"},
+                ),
+                IRCodeUnit(
+                    unit_id="ast:class:Config",
+                    kind="class",
+                    path="a.py",
+                    language="python",
+                    display_name="Config",
+                    qualified_name="Config",
+                    start_line=1,
+                    end_line=20,
+                    parent_unit_id="doc:snap:repo:rich:a.py",
+                    source_set={"fc_structure"},
+                ),
+                IRCodeUnit(
+                    unit_id="ast:method:Config.load",
+                    kind="method",
+                    path="a.py",
+                    language="python",
+                    display_name="load",
+                    qualified_name="Config.load",
+                    start_line=5,
+                    end_line=10,
+                    parent_unit_id="ast:class:Config",
+                    source_set={"fc_structure"},
+                ),
+                IRCodeUnit(
+                    unit_id="ast:method:run",
+                    kind="method",
+                    path="b.py",
+                    language="python",
+                    display_name="run",
+                    qualified_name="run",
+                    start_line=1,
+                    end_line=15,
+                    parent_unit_id="doc:snap:repo:rich:b.py",
+                    source_set={"fc_structure"},
+                ),
+            ],
+            relations=[
+                IRRelation(
+                    relation_id="rel:import:b.py:a.py",
+                    src_unit_id="doc:snap:repo:rich:b.py",
+                    dst_unit_id="doc:snap:repo:rich:a.py",
+                    relation_type="import",
+                    resolution_state="structural",
+                    support_sources={"fc_structure"},
+                ),
+                IRRelation(
+                    relation_id="rel:call:run:Config.load",
+                    src_unit_id="ast:method:run",
+                    dst_unit_id="ast:method:Config.load",
+                    relation_type="call",
+                    resolution_state="structural",
+                    support_sources={"fc_structure"},
+                ),
+                IRRelation(
+                    relation_id="rel:contain:a.py:Config",
+                    src_unit_id="doc:snap:repo:rich:a.py",
+                    dst_unit_id="ast:class:Config",
+                    relation_type="contain",
+                    resolution_state="structural",
+                    support_sources={"fc_structure"},
+                ),
+                IRRelation(
+                    relation_id="rel:contain:Config:load",
+                    src_unit_id="ast:class:Config",
+                    dst_unit_id="ast:method:Config.load",
+                    relation_type="contain",
+                    resolution_state="structural",
+                    support_sources={"fc_structure"},
+                ),
+            ],
+        )
+        store = _make_store()
+        store.save_snapshot(snap)
+        graphs = IRGraphBuilder().build_graphs(snap)
+        store.save_ir_graphs(snap.snapshot_id, graphs)
+
+        loaded = store.load_ir_graphs(snap.snapshot_id)
+
+        assert isinstance(loaded, IRGraphs)
+        assert loaded.dependency_graph.number_of_nodes() > 0
+        assert loaded.call_graph.number_of_edges() > 0
+        assert loaded.containment_graph.number_of_edges() > 0
+        assert set(loaded.dependency_graph.nodes()) == set(
+            graphs.dependency_graph.nodes()
+        )
+        assert set(loaded.call_graph.edges()) == set(graphs.call_graph.edges())
+        assert set(loaded.containment_graph.edges()) == set(
+            graphs.containment_graph.edges()
+        )

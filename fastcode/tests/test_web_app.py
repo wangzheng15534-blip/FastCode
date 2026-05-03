@@ -86,6 +86,9 @@ def test_load_endpoint_offloads_blocking_call(
     response = client.post("/api/load", json={"source": "/tmp/repo", "is_url": False})
 
     assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["repo_info"] == {"name": "repo"}
     assert fake.calls == [("load_repository", ("/tmp/repo", False), {})]
 
 
@@ -103,6 +106,9 @@ def test_load_and_index_endpoint_offloads_both_calls(
     )
 
     assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["summary"] == "summary"
     assert fake.calls == [
         ("load_repository", ("/tmp/repo", False), {}),
         ("index_repository", (), {"force": True}),
@@ -124,6 +130,11 @@ def test_query_endpoint_offloads_blocking_query(
     )
 
     assert response.status_code == 200
+    body = response.json()
+    assert body["answer"] == "ok"
+    assert body["query"] == "where is x?"
+    assert body["context_elements"] == 1
+    assert body["session_id"] == "abcd1234"
     assert fake.calls == [
         (
             "query",

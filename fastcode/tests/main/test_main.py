@@ -115,17 +115,23 @@ def test_apply_repository_runtime_overrides_refreshes_loader_and_runtime_config(
 
 def test_process_semantic_repair_frontier_replays_pipeline_with_payload():
     fc = FastCode.__new__(FastCode)
-    fc.run_index_pipeline = lambda **kwargs: {
-        "status": "published",
-        "snapshot_id": "snap:2",
-        "kwargs": kwargs,
-    }
+    fc.pipeline = SimpleNamespace(
+        run_semantic_repair_frontier=lambda **kwargs: {
+            "status": "repaired",
+            "kwargs": kwargs,
+            "repair_frontier": {
+                "scope_kind": kwargs["scope_kind"],
+                "scope_roots": kwargs["scope_roots"],
+                "changed_paths": kwargs["changed_paths"],
+                "target_paths": kwargs["changed_paths"],
+            },
+        }
+    )
 
     result = fc.process_semantic_repair_frontier(
         {
             "snapshot_id": "snap:1",
             "repo_name": "repo",
-            "source": "/tmp/repo",
             "changed_paths": ["a.py"],
             "reason": "api_or_edge_surface_changed",
             "scope_kind": "package",
@@ -133,9 +139,8 @@ def test_process_semantic_repair_frontier_replays_pipeline_with_payload():
         }
     )
 
-    assert result["status"] == "published"
-    assert result["kwargs"]["source"] == "/tmp/repo"
-    assert result["kwargs"]["force"] is True
+    assert result["status"] == "repaired"
+    assert result["kwargs"]["snapshot_id"] == "snap:1"
     assert result["repair_frontier"]["snapshot_id"] == "snap:1"
     assert result["repair_frontier"]["changed_paths"] == ["a.py"]
     assert result["repair_frontier"]["scope_kind"] == "package"

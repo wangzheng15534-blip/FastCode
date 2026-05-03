@@ -583,29 +583,25 @@ class FastCode:
         self, payload: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         payload = payload or {}
-        source = payload.get("source")
-        if not source:
-            raise RuntimeError("semantic_repair_frontier payload missing source")
         scope_kind = str(payload.get("scope_kind") or "path")
         scope_roots = list(payload.get("scope_roots") or [])
-        result = self.run_index_pipeline(
-            source=str(source),
-            is_url=bool(payload.get("is_url", False)),
-            ref=payload.get("ref"),
-            commit=payload.get("commit"),
-            force=True,
-            publish=bool(payload.get("publish", True)),
-            scip_artifact_path=payload.get("scip_artifact_path"),
-            enable_scip=bool(payload.get("enable_scip", True)),
+        snapshot_id = str(payload.get("snapshot_id") or "")
+        if not snapshot_id:
+            raise RuntimeError("semantic_repair_frontier payload missing snapshot_id")
+        result = self.pipeline.run_semantic_repair_frontier(
+            snapshot_id=snapshot_id,
+            scope_kind=scope_kind,
+            scope_roots=scope_roots,
+            changed_paths=list(payload.get("changed_paths") or []),
+            repo_name=(
+                str(payload.get("repo_name")) if payload.get("repo_name") else None
+            ),
         )
-        result["repair_frontier"] = {
-            "snapshot_id": payload.get("snapshot_id"),
-            "repo_name": payload.get("repo_name"),
-            "changed_paths": list(payload.get("changed_paths") or []),
-            "reason": payload.get("reason") or "api_or_edge_surface_changed",
-            "scope_kind": scope_kind,
-            "scope_roots": scope_roots,
-        }
+        result["repair_frontier"]["snapshot_id"] = snapshot_id
+        result["repair_frontier"]["repo_name"] = payload.get("repo_name")
+        result["repair_frontier"]["reason"] = (
+            payload.get("reason") or "api_or_edge_surface_changed"
+        )
         return result
 
     def process_redo_tasks(self, limit: int = 10) -> dict[str, Any]:

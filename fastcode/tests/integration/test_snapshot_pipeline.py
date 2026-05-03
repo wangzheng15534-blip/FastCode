@@ -1660,6 +1660,50 @@ def test_resolve_snapshot_ref_uses_dirty_worktree_hash_for_local_changes() -> No
         assert ":dirty:" in dirty_ref["tree_id"]
 
 
+def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_repair_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:repair",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+            metadata={"semantic_resolver_runs": []},
+        )
+        record = pipeline.snapshot_store.save_snapshot(snapshot, metadata={})
+        pipeline.snapshot_store.save_relational_facts = Mock(return_value=None)
+        pipeline.snapshot_store.save_ir_graphs = Mock(return_value=None)
+        pipeline.snapshot_symbol_index.register_snapshot = Mock(return_value=None)
+        pipeline.ir_graph_builder.build_graphs = Mock(return_value=SimpleNamespace())
+        pipeline._load_artifacts_by_key = Mock(return_value=True)
+        pipeline._reconstruct_elements_from_metadata = Mock(
+            return_value=[
+                SimpleNamespace(relative_path="pkg/a.py", file_path="pkg/a.py"),
+                SimpleNamespace(relative_path="pkg/sub/b.py", file_path="pkg/sub/b.py"),
+                SimpleNamespace(relative_path="other/c.py", file_path="other/c.py"),
+            ]
+        )
+        pipeline._apply_semantic_resolvers = Mock(return_value=snapshot)
+
+        result = pipeline.run_semantic_repair_frontier(
+            snapshot_id=record.snapshot_id,
+            scope_kind="package",
+            scope_roots=["pkg"],
+            changed_paths=["pkg/a.py"],
+            repo_name="repo",
+        )
+
+        assert result["status"] == "repaired"
+        assert sorted(result["repair_frontier"]["target_paths"]) == [
+            "pkg/a.py",
+            "pkg/sub/b.py",
+        ]
+        kwargs = pipeline._apply_semantic_resolvers.call_args.kwargs
+        assert kwargs["budget"] == "repair_frontier"
+        assert kwargs["target_paths"] == {"pkg/a.py", "pkg/sub/b.py"}
+
+
 # ---------------------------------------------------------------------------
 # Regression: stale fencing token must not leave artifact files
 # ---------------------------------------------------------------------------

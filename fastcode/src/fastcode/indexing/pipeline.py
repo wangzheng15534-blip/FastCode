@@ -1136,6 +1136,109 @@ class IndexPipeline:
             },
         }
 
+    def _repair_scope_paths(
+        self,
+        *,
+        elements: list[CodeElement],
+        changed_paths: list[str],
+        scope_kind: str,
+        scope_roots: list[str],
+    ) -> set[str]:
+        candidate_paths = {
+            normalize_path(elem.relative_path or elem.file_path)
+            for elem in elements
+            if (elem.relative_path or elem.file_path)
+        }
+        if scope_kind == "package" and scope_roots:
+            selected: set[str] = set()
+            for root in scope_roots:
+                normalized_root = normalize_path(root)
+                if normalized_root == ".":
+                    selected |= candidate_paths
+                    continue
+                prefix = f"{normalized_root}/"
+                selected |= {
+                    path
+                    for path in candidate_paths
+                    if path == normalized_root or path.startswith(prefix)
+                }
+            if selected:
+                return selected
+        changed = {normalize_path(path) for path in changed_paths if path}
+        return changed or candidate_paths
+
+    def run_semantic_repair_frontier(
+        self,
+        *,
+        snapshot_id: str,
+        scope_kind: str,
+        scope_roots: list[str],
+        changed_paths: list[str],
+        repo_name: str | None = None,
+    ) -> dict[str, Any]:
+        record = self.snapshot_store.get_snapshot_record(snapshot_id)
+        if not record:
+            raise RuntimeError(f"snapshot not found: {snapshot_id}")
+        snapshot = self.snapshot_store.load_snapshot(snapshot_id)
+        if snapshot is None:
+            raise RuntimeError(f"snapshot IR not found: {snapshot_id}")
+        if not self._load_artifacts_by_key(record.artifact_key):
+            raise RuntimeError(f"failed to load artifacts for snapshot: {snapshot_id}")
+
+        elements = self._reconstruct_elements_from_metadata()
+        target_paths = self._repair_scope_paths(
+            elements=elements,
+            changed_paths=changed_paths,
+            scope_kind=scope_kind,
+            scope_roots=scope_roots,
+        )
+        warnings: list[str] = []
+        if not target_paths:
+            return {
+                "status": "skipped",
+                "snapshot_id": snapshot_id,
+                "repo_name": repo_name or snapshot.repo_name,
+                "warnings": warnings,
+                "repair_frontier": {
+                    "scope_kind": scope_kind,
+                    "scope_roots": scope_roots,
+                    "changed_paths": changed_paths,
+                    "target_paths": [],
+                },
+            }
+
+        repaired_snapshot = self._apply_semantic_resolvers(
+            snapshot=snapshot,
+            elements=elements,
+            legacy_graph_builder=self.graph_builder,
+            target_paths=target_paths,
+            warnings=warnings,
+            budget="repair_frontier",
+        )
+        metadata = (
+            json.loads(record.metadata_json)
+            if record.metadata_json is not None
+            else {}
+        )
+        self.snapshot_store.save_snapshot(repaired_snapshot, metadata=metadata)
+        self.snapshot_symbol_index.register_snapshot(repaired_snapshot)
+        self.snapshot_store.save_relational_facts(repaired_snapshot)
+        repaired_ir_graphs = self.ir_graph_builder.build_graphs(repaired_snapshot)
+        self.snapshot_store.save_ir_graphs(snapshot_id, repaired_ir_graphs)
+        self._load_artifacts_by_key(record.artifact_key)
+        return {
+            "status": "repaired",
+            "snapshot_id": snapshot_id,
+            "repo_name": repo_name or snapshot.repo_name,
+            "warnings": warnings,
+            "repair_frontier": {
+                "scope_kind": scope_kind,
+                "scope_roots": scope_roots,
+                "changed_paths": changed_paths,
+                "target_paths": sorted(target_paths),
+            },
+        }
+
     # ------------------------------------------------------------------
     # The big one: run_index_pipeline
     # ------------------------------------------------------------------

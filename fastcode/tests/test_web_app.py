@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+from fastcode import web_app
+
+
+class _FakeVectorStore:
+    def invalidate_scan_cache(self) -> None:
+        return None
+
+
+class _FakeFastCode:
+    def __init__(self) -> None:
+        self.repo_loaded = True
+        self.repo_indexed = True
+        self.repo_info = {"name": "repo"}
+        self.vector_store = _FakeVectorStore()
+        self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+
+    def load_repository(self, source: str, is_url: bool | None) -> None:
+        self.calls.append(("load_repository", (source, is_url), {}))
+
+    def index_repository(self, force: bool = False) -> None:
+        self.calls.append(("index_repository", (), {"force": force}))
+
+    def load_multiple_repositories(self, sources: list[dict[str, Any]]) -> None:
+        self.calls.append(("load_multiple_repositories", (sources,), {}))
+
+    def _load_multi_repo_cache(self, *, repo_names: list[str]) -> bool:
+        self.calls.append(("_load_multi_repo_cache", (), {"repo_names": repo_names}))
+        return True
+
+    def list_repositories(self) -> list[dict[str, Any]]:
+        return [{"repo_name": "repo"}]
+
+    def get_repository_stats(self) -> dict[str, Any]:
+        return {"repo_count": 1}
+
+    def get_repository_summary(self) -> str:
+        return "summary"
+
+    def query(
+        self,
+        question: str,
+        filters: dict[str, Any] | None = None,
+        *,
+        repo_filter: list[str] | None = None,
+        session_id: str | None = None,
+        enable_multi_turn: bool | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "query",
+                (question, filters),
+                {
+                    "repo_filter": repo_filter,
+                    "session_id": session_id,
+                    "enable_multi_turn": enable_multi_turn,
+                },
+            )
+        )
+        return {
+            "answer": "ok",
+            "query": question,
+            "context_elements": 1,
+            "sources": [],
+        }
+
+
+async def _run_inline(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+    return func(*args, **kwargs)
+
+
+def test_load_endpoint_offloads_blocking_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeFastCode()
+    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
+
+    client = TestClient(web_app.app)
+    response = client.post("/api/load", json={"source": "/tmp/repo", "is_url": False})
+
+    assert response.status_code == 200
+    assert fake.calls == [("load_repository", ("/tmp/repo", False), {})]
+
+
+def test_load_and_index_endpoint_offloads_both_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeFastCode()
+    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
+
+    client = TestClient(web_app.app)
+    response = client.post(
+        "/api/load-and-index?force=true",
+        json={"source": "/tmp/repo", "is_url": False},
+    )
+
+    assert response.status_code == 200
+    assert fake.calls == [
+        ("load_repository", ("/tmp/repo", False), {}),
+        ("index_repository", (), {"force": True}),
+    ]
+
+
+def test_query_endpoint_offloads_blocking_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeFastCode()
+    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
+    monkeypatch.setattr(web_app.uuid, "uuid4", lambda: "abcd1234-uuid")
+
+    client = TestClient(web_app.app)
+    response = client.post(
+        "/api/query",
+        json={"question": "where is x?", "filters": {"snapshot_id": "snap:1"}},
+    )
+
+    assert response.status_code == 200
+    assert fake.calls == [
+        (
+            "query",
+            ("where is x?", {"snapshot_id": "snap:1"}),
+            {
+                "repo_filter": None,
+                "session_id": "abcd1234",
+                "enable_multi_turn": False,
+            },
+        )
+    ]

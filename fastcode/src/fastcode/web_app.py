@@ -61,6 +61,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _ensure_fastcode_initialized() -> FastCode:
+    if fastcode_instance is None:
+        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    return fastcode_instance
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Lifespan context manager for startup and shutdown"""
@@ -179,17 +185,18 @@ async def list_repositories(full_scan: bool = False):
 @app.post("/api/load")
 async def load_repository(request: LoadRepositoryRequest):
     """Load a repository"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode = _ensure_fastcode_initialized()
 
     try:
         logger.info(f"Loading repository: {request.source}")
-        fastcode_instance.load_repository(request.source, request.is_url)
+        await asyncio.to_thread(
+            fastcode.load_repository, request.source, request.is_url
+        )
 
         return {
             "status": "success",
             "message": "Repository loaded successfully",
-            "repo_info": fastcode_instance.repo_info,
+            "repo_info": fastcode.repo_info,
         }
 
     except Exception as e:
@@ -200,23 +207,22 @@ async def load_repository(request: LoadRepositoryRequest):
 @app.post("/api/index")
 async def index_repository(force: bool = False):
     """Index the loaded repository"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode = _ensure_fastcode_initialized()
 
-    if not fastcode_instance.repo_loaded:
+    if not fastcode.repo_loaded:
         raise HTTPException(status_code=400, detail="No repository loaded")
 
     try:
         logger.info("Indexing repository")
-        fastcode_instance.index_repository(force=force)
+        await asyncio.to_thread(fastcode.index_repository, force=force)
 
         # Invalidate scan cache since we just added/updated an index
-        fastcode_instance.vector_store.invalidate_scan_cache()
+        fastcode.vector_store.invalidate_scan_cache()
 
         return {
             "status": "success",
             "message": "Repository indexed successfully",
-            "summary": fastcode_instance.get_repository_summary(),
+            "summary": fastcode.get_repository_summary(),
         }
 
     except Exception as e:
@@ -227,31 +233,31 @@ async def index_repository(force: bool = False):
 @app.post("/api/index-multiple")
 async def index_multiple(request: IndexMultipleRequest):
     """Load and index multiple repositories"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode = _ensure_fastcode_initialized()
 
     if not request.sources:
         raise HTTPException(status_code=400, detail="No repositories provided")
 
     try:
         logger.info(f"Indexing {len(request.sources)} repositories")
-        fastcode_instance.load_multiple_repositories(
+        await asyncio.to_thread(
+            fastcode.load_multiple_repositories,
             [
                 {
                     "source": source.source,
                     "is_url": source.is_url,
                 }
                 for source in request.sources
-            ]
+            ],
         )
 
         # Invalidate scan cache since we just added/updated indexes
-        fastcode_instance.vector_store.invalidate_scan_cache()
+        fastcode.vector_store.invalidate_scan_cache()
 
         return {
             "status": "success",
             "message": "Repositories indexed successfully",
-            "stats": fastcode_instance.get_repository_stats(),
+            "stats": fastcode.get_repository_stats(),
         }
     except Exception as e:
         logger.error(f"Failed to index multiple repositories: {e}")
@@ -261,23 +267,24 @@ async def index_multiple(request: IndexMultipleRequest):
 @app.post("/api/load-and-index")
 async def load_and_index(request: LoadRepositoryRequest, force: bool = False):
     """Load and index repository in one call"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode = _ensure_fastcode_initialized()
 
     try:
         logger.info(f"Loading repository: {request.source}")
-        fastcode_instance.load_repository(request.source, request.is_url)
+        await asyncio.to_thread(
+            fastcode.load_repository, request.source, request.is_url
+        )
 
         logger.info("Indexing repository")
-        fastcode_instance.index_repository(force=force)
+        await asyncio.to_thread(fastcode.index_repository, force=force)
 
         # Invalidate scan cache since we just added/updated an index
-        fastcode_instance.vector_store.invalidate_scan_cache()
+        fastcode.vector_store.invalidate_scan_cache()
 
         return {
             "status": "success",
             "message": "Repository loaded and indexed successfully",
-            "summary": fastcode_instance.get_repository_summary(),
+            "summary": fastcode.get_repository_summary(),
         }
 
     except Exception as e:
@@ -288,16 +295,15 @@ async def load_and_index(request: LoadRepositoryRequest, force: bool = False):
 @app.post("/api/load-repositories")
 async def load_repositories(request: LoadRepositoriesRequest):
     """Load existing indexed repositories from cache"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode = _ensure_fastcode_initialized()
 
     if not request.repo_names:
         raise HTTPException(status_code=400, detail="No repository names provided")
 
     try:
         logger.info(f"Loading repositories from cache: {request.repo_names}")
-        success = fastcode_instance._load_multi_repo_cache(
-            repo_names=request.repo_names
+        success = await asyncio.to_thread(
+            fastcode._load_multi_repo_cache, repo_names=request.repo_names
         )
 
         if not success:
@@ -307,8 +313,8 @@ async def load_repositories(request: LoadRepositoriesRequest):
 
         return {
             "status": "success",
-            "loaded": fastcode_instance.list_repositories(),
-            "stats": fastcode_instance.get_repository_stats(),
+            "loaded": fastcode.list_repositories(),
+            "stats": fastcode.get_repository_stats(),
         }
     except HTTPException:
         raise
@@ -450,10 +456,9 @@ async def upload_and_index(file: UploadFile = File(...), force: bool = False):
 @app.post("/api/query", response_model=QueryResponse)
 async def query_repository(request: QueryRequest):
     """Query the repository"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode = _ensure_fastcode_initialized()
 
-    if not fastcode_instance.repo_indexed:
+    if not fastcode.repo_indexed:
         raise HTTPException(status_code=400, detail="Repository not indexed")
 
     try:
@@ -465,7 +470,8 @@ async def query_repository(request: QueryRequest):
             logger.info(f"Generated session for single-turn request: {session_id}")
 
         logger.info(f"Processing query: {request.question}")
-        result = fastcode_instance.query(
+        result = await asyncio.to_thread(
+            fastcode.query,
             request.question,
             request.filters,
             repo_filter=request.repo_filter,

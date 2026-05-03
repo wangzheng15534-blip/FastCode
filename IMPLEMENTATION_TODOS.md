@@ -62,11 +62,18 @@ The pipeline now exposes explicit layer status, metrics, warnings, and non-silen
 - Context-aware C/C++ header classification now upgrades ambiguous `.h` files:
   - parser-time language detection uses C++ content markers and sibling-source layout
   - C/C++ resolver dispatch applies the same heuristics during snapshot-scoped upgrades
+- Store-boundary typing hardened:
+  - `SnapshotRecord` frozen dataclass with `to_dict()`/`from_dict()`
+  - `get_snapshot_record()` and `save_snapshot()` return typed records instead of raw dicts
+  - All call sites migrated from bracket access to attribute access
+- Snapshot query concurrency safety:
+  - `query_snapshot` serializes load+query with a `threading.Lock`
+  - Thread-barrier regression tests (2 and 3 concurrent callers) verify artifact isolation
 
 ## Critical verification currently green
 
 - Full smoke gate:
-  - `1613 passed, 7 skipped`
+  - `1663 passed, 7 skipped`
 - Focused regression areas repeatedly verified:
   - `test_api`
   - `test_manifest_store`
@@ -117,12 +124,11 @@ These currently emit useful structured facts, but they are still narrower than f
 
 ### 5. Continue store-boundary typing
 
-Typed records now exist for manifests and snapshot refs.
+Typed records now exist for manifests, snapshot refs, and snapshot records.
 
 Still raw-dict-heavy at boundaries:
 - some API-facing manifest / artifact payload adapters
 - index run records
-- parts of snapshot metadata payloads
 
 ### 6. Add a few remaining critical regressions
 

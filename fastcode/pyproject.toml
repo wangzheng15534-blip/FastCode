@@ -66,9 +66,9 @@ nanobot-ai = { workspace = true }
 
 [project.scripts]
 fastcode = "fastcode.cli:cli"
-fastcode-api = "fastcode.api:main"
-fastcode-mcp = "fastcode.mcp_server:main"
-fastcode-web = "fastcode.web_app:main"
+fastcode-api = "fastcode.api.routes:main"
+fastcode-mcp = "fastcode.mcp.server:main"
+fastcode-web = "fastcode.api.web:main"
 
 [project.optional-dependencies]
 dev = [
@@ -236,7 +236,7 @@ packages = ["src/fastcode"]                                               # pack
     "PLC0415", # design: lazy import to avoid circular dep between schemas/ir.py and semantic_ir.py
     "PLR0913", # complexity: IRSnapshot.__init__ takes 7 params (track: bundle into Builder)
 ]
-"src/fastcode/mcp_server.py" = [
+"src/fastcode/mcp/server.py" = [
     "PLC0415", # design: lazy imports inside tool functions to keep startup fast
     "ANN001",  # complexity: MCP tool helper args need types (track: annotate all tool handlers)
     "ANN201",  # complexity: entry point function needs return type (track: annotate all public methods)
@@ -248,7 +248,7 @@ packages = ["src/fastcode"]                                               # pack
     "RUF013",  # design: implicit Optional in default arg is deliberate for MCP tool ergonomics
     "RUF003",  # design: en-dash in docstring is intentional typographic choice
 ]
-"src/fastcode/api.py" = [
+"src/fastcode/api/routes.py" = [
     "ANN001",  # complexity: API endpoint args need types (track: annotate all public methods)
     "ANN201",  # complexity: API endpoints need return types (track: annotate all public methods)
     "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
@@ -269,7 +269,7 @@ packages = ["src/fastcode"]                                               # pack
     "S607",    # design: partial path for system binaries (git, python)
     "RUF013",  # design: implicit Optional in Pydantic model fields
 ]
-"src/fastcode/web_app.py" = [
+"src/fastcode/api/web.py" = [
     "ANN001",  # complexity: API endpoint args need types (track: annotate all public methods)
     "ANN201",  # complexity: API endpoints need return types (track: annotate all public methods)
     "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)

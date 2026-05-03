@@ -160,7 +160,7 @@ app = FastAPI(
 )
 
 # Mount static files for assets
-assets_path = Path(__file__).parent / "assets"
+assets_path = Path(__file__).parent.parent / "assets"
 if assets_path.exists():
     app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
 
@@ -177,7 +177,7 @@ app.add_middleware(
 @app.get("/", response_class=HTMLResponse)
 async def get_web_interface():
     """Serve the main web interface"""
-    html_file = Path(__file__).parent / "web_interface.html"
+    html_file = Path(__file__).parent.parent / "web_interface.html"
     if html_file.exists():
         return FileResponse(html_file)
     raise HTTPException(status_code=404, detail="Web interface not found")
@@ -817,7 +817,7 @@ async def delete_session(session_id: str):
 def start_web_app(host: str = "127.0.0.1", port: int = 5777, reload: bool = False):
     """Start the web application server"""
     logger.info(f"Starting FastCode Web Interface at http://{host}:{port}")
-    uvicorn.run("fastcode.web_app:app", host=host, port=port, reload=reload)
+    uvicorn.run("fastcode.api.web:app", host=host, port=port, reload=reload)
 
 
 def main():

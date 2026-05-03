@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from fastcode import web_app
+from fastcode.api import web as web_app
 
 
 class _FakeVectorStore:

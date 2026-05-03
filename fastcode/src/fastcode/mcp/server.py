@@ -33,7 +33,7 @@ from mcp.server.fastmcp import FastMCP
 
 from fastcode import FastCode
 from fastcode.graph.build import CodeGraphBuilder
-from fastcode.mcp_graph_tools import (
+from fastcode.mcp.graph_tools import (
     compute_directed_path,
     compute_find_callers,
     compute_impact_analysis,
@@ -44,7 +44,7 @@ from fastcode.mcp_graph_tools import (
 # ---------------------------------------------------------------------------
 # Logging (file only – stdout is reserved for MCP JSON-RPC in stdio mode)
 # ---------------------------------------------------------------------------
-log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "logs")
+log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "logs")
 os.makedirs(log_dir, exist_ok=True)
 
 logging.basicConfig(

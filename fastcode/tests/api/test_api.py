@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from fastcode import api
+from fastcode.api import routes as api
 from fastcode.ir.types import IRSnapshot
 from fastcode.store.manifest import ManifestStore
 from fastcode.store.snapshot import SnapshotStore
@@ -336,7 +336,7 @@ class TestIndexMultiple:
         fake_fastcode.get_repository_stats.return_value = {"repos": 2}
 
         with patch(
-            "fastcode.api._ensure_fastcode_initialized", return_value=fake_fastcode
+            "fastcode.api.routes._ensure_fastcode_initialized", return_value=fake_fastcode
         ):
             result = asyncio.run(api.index_multiple(request))
 
@@ -378,7 +378,7 @@ class TestBlockingEndpointOffloads:
         monkeypatch.setattr(api.asyncio, "to_thread", record_to_thread)
 
         with patch(
-            "fastcode.api._ensure_fastcode_initialized", return_value=fake_fastcode
+            "fastcode.api.routes._ensure_fastcode_initialized", return_value=fake_fastcode
         ):
             asyncio.run(
                 api.load_repository(

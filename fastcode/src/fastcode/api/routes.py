@@ -1016,7 +1016,7 @@ def start_api(host: str = "0.0.0.0", port: int = 8000, reload: bool = False):
     """Start the API server"""
     logger.info(f"Starting FastCode API at http://{host}:{port}")
     logger.info(f"API documentation available at http://{host}:{port}/docs")
-    uvicorn.run("fastcode.api:app", host=host, port=port, reload=reload)
+    uvicorn.run("fastcode.api.routes:app", host=host, port=port, reload=reload)
 
 
 def main():

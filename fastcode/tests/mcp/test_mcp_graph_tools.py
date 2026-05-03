@@ -1,12 +1,12 @@
-"""Tests for mcp_graph_tools module.
+"""Tests for mcp.graph_tools module.
 
-Tests the pure compute functions from fastcode.mcp_graph_tools, which are
-the production code extracted from mcp_server.py.
+Tests the pure compute functions from fastcode.mcp.graph_tools, which are
+the production code extracted from mcp.server.
 """
 
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot
-from fastcode.mcp_graph_tools import (
+from fastcode.mcp.graph_tools import (
     compute_directed_path,
     compute_find_callers,
     compute_impact_analysis,

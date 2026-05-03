@@ -10,7 +10,7 @@ import pytest
 import schemathesis
 from fastapi.testclient import TestClient
 
-from fastcode import api
+from fastcode.api import routes as api
 
 schema = schemathesis.openapi.from_asgi("/openapi.json", api.app)
 

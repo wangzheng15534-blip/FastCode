@@ -269,7 +269,7 @@ class QueryPipeline:
                         original=question,
                         expanded=question,
                         keywords=[],
-                        intent=intent,
+                        intent=str(intent or "unknown"),
                         subqueries=[],
                         filters=filters or {},
                         rewritten_query=None,

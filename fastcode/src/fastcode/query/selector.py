@@ -12,7 +12,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from .llm_utils import openai_chat_completion
+from ..llm_utils import openai_chat_completion
 
 
 class RepositorySelector:
@@ -166,12 +166,12 @@ class RepositorySelector:
         # )
 
         task_prefix = (
-            "Task: Analyze the query and repository information. Select the fewest files needed "
+            "Task: Analyze the query and repository information. Select the fewest files needed "  # noqa: S608
             "to solve the problem (up to "
             f"{max_files} most relevant files) from this repository that would contain "
             "the answer or relevant code. For example, if one file is sufficient, pick only that file.\n"
             if is_single_repo
-            else "Task: Analyze the query and repository information. Select the fewest files needed "
+            else "Task: Analyze the query and repository information. Select the fewest files needed "  # noqa: S608
             "to solve the problem (up to "
             f"{max_files} most relevant files) from the relevant repositories that would contain "
             "the answer or relevant code. For example, if one file is sufficient, pick only that file.\n"

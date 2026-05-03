@@ -10,18 +10,18 @@ import traceback
 from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Any
 
-from .answer_generator import AnswerGenerator
-from .query_processor import QueryProcessor
-from .retrieval.core import snapshot as _snapshot
-from .retrieval.hybrid import HybridRetriever
-from .semantic.symbol_index import SnapshotSymbolIndex
-from .store.cache import CacheManager
-from .store.manifest import ManifestStore
-from .store.snapshot import SnapshotStore
-from .utils import safe_jsonable
+from ..retrieval.core import snapshot as _snapshot
+from ..retrieval.hybrid import HybridRetriever
+from ..semantic.symbol_index import SnapshotSymbolIndex
+from ..store.cache import CacheManager
+from ..store.manifest import ManifestStore
+from ..store.snapshot import SnapshotStore
+from ..utils import safe_jsonable
+from .answer import AnswerGenerator
+from .processor import QueryProcessor
 
 if TYPE_CHECKING:
-    from .query_processor import ProcessedQuery
+    from .processor import ProcessedQuery
 
 
 SemanticEscalationCallback = Callable[..., dict[str, Any] | None]
@@ -265,7 +265,7 @@ class QueryPipeline:
                 if use_iterative_enhancement:
                     # Iterative agent will handle all query enhancement
                     # Create minimal ProcessedQuery object
-                    from .query_processor import ProcessedQuery
+                    from .processor import ProcessedQuery
 
                     intent = "unknown"
                     detect_intent = getattr(
@@ -464,7 +464,7 @@ class QueryPipeline:
             )
 
             if use_iterative_enhancement:
-                from .query_processor import ProcessedQuery
+                from .processor import ProcessedQuery
 
                 intent = "unknown"
                 detect_intent = getattr(self.query_processor, "_detect_intent", None)

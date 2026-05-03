@@ -15,7 +15,6 @@ import networkx as nx
 import numpy as np
 from rank_bm25 import BM25Okapi
 
-from .answer_generator import AnswerGenerator
 from .graph.build import CodeGraphBuilder
 from .graph_runtime import LadybugGraphRuntime
 from .indexing.doc_ingester import KeyDocIngester
@@ -34,8 +33,9 @@ from .ir.element import CodeElement, CodeElementMeta
 from .ir.graph import IRGraphBuilder
 from .ir.types import IRSnapshot
 from .module_resolver import ModuleResolver
-from .query_handler import QueryPipeline
-from .query_processor import QueryProcessor
+from .query.answer import AnswerGenerator
+from .query.handler import QueryPipeline
+from .query.processor import QueryProcessor
 from .retrieval.core import snapshot as _snapshot
 from .retrieval.hybrid import HybridRetriever
 from .scip.symbol_resolver import SymbolResolver

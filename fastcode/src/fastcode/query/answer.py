@@ -12,16 +12,16 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from .llm_utils import openai_chat_completion
-from .retrieval.core import context as _context
-from .retrieval.core import summary as _summary
-from .utils import count_tokens, truncate_to_tokens
+from ..llm_utils import openai_chat_completion
+from ..retrieval.core import context as _context
+from ..retrieval.core import summary as _summary
+from ..utils import count_tokens, truncate_to_tokens
 
 
 class AnswerGenerator:
     """Generate natural language answers using LLM"""
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.gen_config = config.get("generation", {})
         self.logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class AnswerGenerator:
         self.model = os.getenv("MODEL")
         self.client: OpenAI | Anthropic | None = self._initialize_client()
 
-    def _initialize_client(self):
+    def _initialize_client(self) -> Any:
         """Initialize LLM client based on provider"""
         if self.provider == "openai":
             api_key = self.api_key
@@ -637,11 +637,7 @@ Symbol Mappings:
         user_prompt = "\n".join(user_parts)
 
         # Combine
-        full_prompt = f"{system_prompt}\n\n{user_prompt}"
-
-        # print("full_prompt: ", full_prompt)
-
-        return full_prompt
+        return f"{system_prompt}\n\n{user_prompt}"
 
     def _truncate_context(self, context: str, max_tokens: int) -> str:
         """Truncate context to fit within token limit"""
@@ -744,8 +740,7 @@ Symbol Mappings:
                 temperature=self.temperature,
                 messages=[{"role": "user", "content": prompt}],
             ) as stream:
-                for text in stream.text_stream:
-                    yield text
+                yield from stream.text_stream
 
         except Exception as e:
             self.logger.error(f"Anthropic streaming API error: {e}")

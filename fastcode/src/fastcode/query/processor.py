@@ -12,7 +12,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from .llm_utils import openai_chat_completion
+from ..llm_utils import openai_chat_completion
 
 
 @dataclass

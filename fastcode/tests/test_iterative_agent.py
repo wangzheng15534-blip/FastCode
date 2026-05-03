@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from fastcode.query_processor import ProcessedQuery
+from fastcode.query.processor import ProcessedQuery
 from fastcode.retrieval.iterative import IterativeAgent
 
 

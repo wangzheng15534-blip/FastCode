@@ -12,8 +12,8 @@ from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs
 from fastcode.ir.types import IRSnapshot
 from fastcode.main import FastCode
-from fastcode.query_handler import QueryPipeline
-from fastcode.query_processor import ProcessedQuery
+from fastcode.query.handler import QueryPipeline
+from fastcode.query.processor import ProcessedQuery
 from fastcode.retrieval.hybrid import HybridRetriever
 
 

@@ -20,8 +20,8 @@ from ..graph.build import CodeGraphBuilder
 from ..indexing.embedder import CodeEmbedder
 from ..ir.element import CodeElement, CodeElementMeta
 from ..ir.graph import IRGraphs
-from ..query_processor import ProcessedQuery
-from ..repo_selector import RepositorySelector
+from ..query.processor import ProcessedQuery
+from ..query.selector import RepositorySelector
 from ..schemas.core_types import FusionConfig
 from ..store.pg_retrieval import PgRetrievalStore
 from ..store.vector import VectorStore
@@ -1908,7 +1908,7 @@ class HybridRetriever:
             # Use iterative agent if available
             if self.iterative_agent:
                 # Get processed query (should be in query_info or we need to pass it)
-                from ..query_processor import ProcessedQuery
+                from ..query.processor import ProcessedQuery
 
                 # Create a ProcessedQuery object from query_info
                 processed_query = ProcessedQuery(

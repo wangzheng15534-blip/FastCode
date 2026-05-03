@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fastcode.query_handler import QueryPipeline
+from fastcode.query.handler import QueryPipeline
 from fastcode.store.records import SnapshotRecord
 
 

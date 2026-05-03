@@ -335,7 +335,7 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
 
     fc.indexer = CodeIndexer(config, fc.loader, fc.parser, fc.embedder, fc.vector_store)
 
-    from fastcode.query_processor import QueryProcessor
+    from fastcode.query.processor import QueryProcessor
     from fastcode.retrieval.hybrid import HybridRetriever
     from fastcode.store.cache import CacheManager
 

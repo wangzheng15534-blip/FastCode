@@ -51,11 +51,15 @@ class _FakeFastCodeWithStore:
         self.snapshot_store = snapshot_store or _FakeSnapshotStore()
         self._retry_raises = retry_raises
         self.retried_runs = []
+        self.repair_payloads = []
 
     def retry_index_run_recovery(self, run_id: str, payload: Any) -> None:
         self.retried_runs.append(run_id)
         if self._retry_raises:
             raise self._retry_raises
+
+    def process_semantic_repair_frontier(self, payload: Any) -> None:
+        self.repair_payloads.append(payload)
 
 
 def _make_worker(fastcode: Any = None, poll: int = 30) -> Any:
@@ -128,6 +132,19 @@ def test_dispatch_task_raises_on_unsupported_type_double():
     task = {"task_id": "redo_bad", "task_type": "unknown_type", "payload_json": "{}"}
     with pytest.raises(RuntimeError, match="unsupported redo task type"):
         worker._dispatch_task(task)
+
+
+def test_dispatch_semantic_repair_frontier_task_double():
+    fc = _FakeFastCode()
+    fc.process_semantic_repair_frontier = MagicMock(return_value={"status": "deferred"})
+    worker = RedoWorker(fc)
+    task = {
+        "task_id": "redo_repair",
+        "task_type": "semantic_repair_frontier",
+        "payload_json": json.dumps({"snapshot_id": "snap:1", "changed_paths": ["a.py"]}),
+    }
+    worker._dispatch_task(task)
+    fc.process_semantic_repair_frontier.assert_called_once()
 
 
 def test_stop_sets_event_and_joins_double():

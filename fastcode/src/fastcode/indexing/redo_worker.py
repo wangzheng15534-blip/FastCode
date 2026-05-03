@@ -84,6 +84,9 @@ class RedoWorker:
                 raise RuntimeError("redo task missing run_id")
             self.fastcode.retry_index_run_recovery(run_id=str(run_id), payload=payload)
             return
+        if task_type == "semantic_repair_frontier":
+            self.fastcode.process_semantic_repair_frontier(payload=payload)
+            return
         if task_type == "publish_outbox_flush":
             self._flush_outbox()
             return

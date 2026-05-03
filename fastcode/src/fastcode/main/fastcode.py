@@ -579,6 +579,18 @@ class FastCode:
     ) -> dict[str, Any]:
         return self.publishing_service.retry_index_run_recovery(run_id, payload=payload)
 
+    def process_semantic_repair_frontier(
+        self, payload: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        payload = payload or {}
+        return {
+            "status": "deferred",
+            "snapshot_id": payload.get("snapshot_id"),
+            "repo_name": payload.get("repo_name"),
+            "changed_paths": list(payload.get("changed_paths") or []),
+            "reason": payload.get("reason") or "api_or_edge_surface_changed",
+        }
+
     def process_redo_tasks(self, limit: int = 10) -> dict[str, Any]:
         return self.publishing_service.process_redo_tasks(limit)
 

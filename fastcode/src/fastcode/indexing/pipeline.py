@@ -992,6 +992,29 @@ class IndexPipeline:
         }
         return all_elements, summary
 
+    @staticmethod
+    def _build_repair_frontier_task(
+        *,
+        snapshot_id: str,
+        repo_name: str,
+        source: str,
+        changed_paths: list[str],
+        modified_count: int,
+    ) -> dict[str, Any] | None:
+        if not changed_paths:
+            return None
+        return {
+            "task_type": "semantic_repair_frontier",
+            "payload": {
+                "snapshot_id": snapshot_id,
+                "repo_name": repo_name,
+                "source": source,
+                "changed_paths": changed_paths,
+                "reason": "api_or_edge_surface_changed",
+                "modified_count": modified_count,
+            },
+        }
+
     # ------------------------------------------------------------------
     # The big one: run_index_pipeline
     # ------------------------------------------------------------------
@@ -1746,6 +1769,25 @@ class IndexPipeline:
                 }
             if incremental_plan is not None:
                 result["incremental_prefilter"] = dict(incremental_plan)
+            repair_task = self._build_repair_frontier_task(
+                snapshot_id=snapshot_id,
+                repo_name=repo_name,
+                source=source,
+                changed_paths=sorted(target_paths),
+                modified_count=(
+                    incremental_plan["modified"] if incremental_plan is not None else 0
+                ),
+            )
+            if repair_task is not None:
+                task_id = self.snapshot_store.enqueue_redo_task(
+                    task_type=str(repair_task["task_type"]),
+                    payload=cast(dict[str, Any], repair_task["payload"]),
+                )
+                result["repair_queue"] = {
+                    "pending": 1,
+                    "task_ids": [task_id],
+                    "task_type": repair_task["task_type"],
+                }
             return result
         except Exception as e:
             self.index_run_store.mark_failed(run_id, str(e))

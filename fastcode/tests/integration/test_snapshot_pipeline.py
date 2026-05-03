@@ -1220,6 +1220,8 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "reindexed_elements": 1,
             "reused_changed_embeddings": 0,
         }
+        assert result["repair_queue"]["pending"] == 1
+        assert result["repair_queue"]["task_type"] == "semantic_repair_frontier"
 
 
 def test_pipeline_incremental_prefilter_falls_back_on_compatibility_mismatch() -> None:

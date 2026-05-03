@@ -322,6 +322,26 @@ class TestIsSafePathTraversal:
         evil = str(tmp_path / "subdir" / ".." / ".." / "etc" / "shadow")
         assert not utils.is_safe_path(evil)
 
+    def test_rejects_sibling_prefix_escape_absolute(
+        self, utils: PathUtils, tmp_path: Path
+    ) -> None:
+        evil_dir = tmp_path.parent / f"{tmp_path.name}_evil"
+        evil_dir.mkdir()
+        evil_file = evil_dir / "x.py"
+        evil_file.touch()
+
+        assert not utils.is_safe_path(str(evil_file))
+
+    def test_rejects_sibling_prefix_escape_relative(
+        self, utils: PathUtils, tmp_path: Path
+    ) -> None:
+        evil_dir = tmp_path.parent / f"{tmp_path.name}_evil"
+        evil_dir.mkdir()
+        evil_file = evil_dir / "x.py"
+        evil_file.touch()
+
+        assert not utils.is_safe_path(f"../{evil_dir.name}/x.py")
+
     def test_accepts_path_inside_repo(self, utils: PathUtils, tmp_path: Path) -> None:
         safe = str(tmp_path / "src" / "main.py")
         (tmp_path / "src").mkdir()

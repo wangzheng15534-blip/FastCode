@@ -47,7 +47,7 @@ from ..store.manifest import ManifestStore
 from ..store.pg_retrieval import PgRetrievalStore
 from ..store.snapshot import SnapshotStore
 from ..store.vector import VectorStore
-from ..utils import compute_file_hash, ensure_dir
+from ..utils import compute_file_hash, ensure_dir, normalize_path
 from .doc_ingester import KeyDocIngester
 from .embedder import CodeEmbedder
 from .global_builder import GlobalIndexBuilder
@@ -59,6 +59,21 @@ from .terminus import TerminusPublisher
 
 class IndexPipeline:
     """Encapsulates the full snapshot-oriented indexing pipeline."""
+
+    _PACKAGE_SCOPE_MARKERS = (
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "package.json",
+        "tsconfig.json",
+        "go.mod",
+        "Cargo.toml",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "composer.json",
+        "Project.toml",
+    )
 
     def __init__(
         self,
@@ -881,6 +896,64 @@ class IndexPipeline:
                     return True
         return False
 
+    def _api_frontier_changed_paths(
+        self,
+        *,
+        new_elements: list[CodeElement],
+        existing_by_stable_unit_id: dict[str, dict[str, Any]],
+    ) -> list[str]:
+        changed_paths: set[str] = set()
+        for elem in new_elements:
+            rel_path = elem.relative_path or elem.file_path
+            stable_unit_id = (elem.metadata or {}).get("stable_unit_id")
+            if not rel_path:
+                continue
+            if not stable_unit_id:
+                changed_paths.add(rel_path)
+                continue
+            existing = existing_by_stable_unit_id.get(str(stable_unit_id))
+            if not existing:
+                changed_paths.add(rel_path)
+                continue
+            existing_meta = dict(
+                cast(dict[str, Any], existing.get("metadata", {}) or {})
+            )
+            current_meta = dict(elem.metadata or {})
+            if current_meta.get("api_surface_hash") != existing_meta.get(
+                "api_surface_hash"
+            ):
+                changed_paths.add(rel_path)
+        return sorted(changed_paths)
+
+    def _package_scope_root(self, repo_root: str, rel_path: str) -> str:
+        repo_root_abs = os.path.abspath(repo_root or ".")
+        current_dir = os.path.dirname(os.path.join(repo_root_abs, rel_path))
+        last_match = ""
+        while current_dir.startswith(repo_root_abs):
+            for marker in self._PACKAGE_SCOPE_MARKERS:
+                if os.path.exists(os.path.join(current_dir, marker)):
+                    rel_dir = os.path.relpath(current_dir, repo_root_abs)
+                    return "." if rel_dir == "." else normalize_path(rel_dir)
+            if current_dir == repo_root_abs:
+                break
+            last_match = current_dir
+            current_dir = os.path.dirname(current_dir)
+            if current_dir == last_match:
+                break
+        rel_dir = os.path.dirname(rel_path)
+        return normalize_path(rel_dir) if rel_dir else "."
+
+    def _package_scope_roots(
+        self, repo_root: str, changed_paths: list[str]
+    ) -> list[str]:
+        return sorted(
+            {
+                self._package_scope_root(repo_root, rel_path)
+                for rel_path in changed_paths
+                if rel_path
+            }
+        )
+
     def _reconstruct_code_element(
         self,
         meta: dict[str, Any],
@@ -927,7 +1000,7 @@ class IndexPipeline:
         snapshot_id: str,
         snapshot_ref: dict[str, Any],
         ref: str | None,
-    ) -> tuple[list[CodeElement] | None, dict[str, int] | None]:
+    ) -> tuple[list[CodeElement] | None, dict[str, Any] | None]:
         ref_name = snapshot_ref.get("branch") or ref or "HEAD"
         previous_manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
         if not previous_manifest:
@@ -1010,6 +1083,14 @@ class IndexPipeline:
             new_elements=new_elements,
             existing_by_stable_unit_id=existing_by_stable_unit_id,
         )
+        api_frontier_changed_paths = self._api_frontier_changed_paths(
+            new_elements=new_elements,
+            existing_by_stable_unit_id=existing_by_stable_unit_id,
+        )
+        package_scope_roots = self._package_scope_roots(
+            self.loader.repo_path or "",
+            api_frontier_changed_paths,
+        )
         all_elements = unchanged_elements + new_elements
         summary = {
             "added": len(added),
@@ -1020,6 +1101,9 @@ class IndexPipeline:
             "reindexed_elements": len(new_elements),
             "reused_changed_embeddings": reused_changed_embeddings,
             "semantic_frontier_widened": int(semantic_frontier_widened),
+            "api_frontier_changed": int(bool(api_frontier_changed_paths)),
+            "api_frontier_changed_paths": api_frontier_changed_paths,
+            "package_scope_roots": package_scope_roots,
         }
         return all_elements, summary
 
@@ -1032,6 +1116,8 @@ class IndexPipeline:
         changed_paths: list[str],
         modified_count: int,
         widened: bool,
+        scope_kind: str,
+        scope_roots: list[str],
     ) -> dict[str, Any] | None:
         if not changed_paths or not widened:
             return None
@@ -1045,6 +1131,8 @@ class IndexPipeline:
                 "reason": "api_or_edge_surface_changed",
                 "modified_count": modified_count,
                 "widened": widened,
+                "scope_kind": scope_kind,
+                "scope_roots": scope_roots,
             },
         }
 
@@ -1815,6 +1903,17 @@ class IndexPipeline:
                     incremental_plan["modified"] if incremental_plan is not None else 0
                 ),
                 widened=widened_repair_needed,
+                scope_kind=(
+                    "package"
+                    if incremental_plan is not None
+                    and incremental_plan.get("api_frontier_changed", 0) > 0
+                    else "path"
+                ),
+                scope_roots=(
+                    cast(list[str], incremental_plan.get("package_scope_roots", []))
+                    if incremental_plan is not None
+                    else []
+                ),
             )
             if repair_task is not None:
                 task_id = self.snapshot_store.enqueue_redo_task(
@@ -1825,6 +1924,8 @@ class IndexPipeline:
                     "pending": 1,
                     "task_ids": [task_id],
                     "task_type": repair_task["task_type"],
+                    "scope_kind": repair_task["payload"]["scope_kind"],
+                    "scope_roots": repair_task["payload"]["scope_roots"],
                 }
             else:
                 result["repair_queue"] = {"pending": 0}

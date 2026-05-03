@@ -1220,9 +1220,14 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "reindexed_elements": 1,
             "reused_changed_embeddings": 0,
             "semantic_frontier_widened": 1,
+            "api_frontier_changed": 1,
+            "api_frontier_changed_paths": ["b.py"],
+            "package_scope_roots": ["."],
         }
         assert result["repair_queue"]["pending"] == 1
         assert result["repair_queue"]["task_type"] == "semantic_repair_frontier"
+        assert result["repair_queue"]["scope_kind"] == "package"
+        assert result["repair_queue"]["scope_roots"] == ["."]
 
 
 def test_pipeline_incremental_prefilter_falls_back_on_compatibility_mismatch() -> None:
@@ -1470,6 +1475,8 @@ def test_plan_incremental_elements_reuses_changed_unit_embedding_when_text_hash_
         assert plan is not None
         assert plan["reused_changed_embeddings"] == 1
         assert plan["semantic_frontier_widened"] == 0
+        assert plan["api_frontier_changed"] == 0
+        assert plan["api_frontier_changed_paths"] == []
         assert planned_elements[0].metadata["embedding"] == pytest.approx(
             [0.9, 0.8, 0.7]
         )
@@ -1482,8 +1489,145 @@ def test_plan_incremental_elements_reuses_changed_unit_embedding_when_text_hash_
             changed_paths=["b.py"],
             modified_count=1,
             widened=False,
+            scope_kind="path",
+            scope_roots=[],
         )
         assert repair_task is None
+
+
+def test_plan_incremental_elements_marks_package_scope_when_api_surface_changes() -> (
+    None
+):
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_incremental_") as tmp:
+        package_dir = os.path.join(tmp, "pkg")
+        os.makedirs(package_dir, exist_ok=True)
+        pyproject = os.path.join(tmp, "pyproject.toml")
+        with open(pyproject, "w", encoding="utf-8") as handle:
+            handle.write("[project]\nname='repo'\n")
+        changed_path = os.path.join(package_dir, "b.py")
+        with open(changed_path, "w", encoding="utf-8") as handle:
+            handle.write("print('new')\n")
+
+        pipeline = _make_minimal_pipeline(tmp)
+        previous_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:prev",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+        )
+        previous_record = pipeline.snapshot_store.save_snapshot(
+            previous_snapshot, metadata={}
+        )
+        pipeline.manifest_store.publish(
+            repo_name="repo",
+            ref_name="main",
+            snapshot_id="snap:repo:prev",
+            index_run_id="run_prev",
+            status="published",
+        )
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_metadata.pkl"),
+            "wb",
+        ) as handle:
+            pickle.dump(
+                {
+                    "metadata": [
+                        {
+                            "id": "changed:1",
+                            "type": "function",
+                            "name": "foo",
+                            "file_path": changed_path,
+                            "relative_path": "pkg/b.py",
+                            "language": "python",
+                            "start_line": 1,
+                            "end_line": 1,
+                            "code": "return 1",
+                            "signature": "def foo()",
+                            "docstring": None,
+                            "summary": None,
+                            "metadata": {
+                                "stable_unit_id": "unit:function:stable",
+                                "api_surface_hash": "old-hash",
+                                "signature_hash": "old-sig",
+                                "edge_surface_hash": "old-edge",
+                                "embedding_text_hash": "old-embed",
+                            },
+                            "repo_name": "repo",
+                            "repo_url": tmp,
+                        }
+                    ]
+                },
+                handle,
+            )
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_manifest.json"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            changed_fingerprint = pipeline._file_fingerprint(changed_path)
+            assert changed_fingerprint is not None
+            json.dump(
+                {
+                    "schema_version": 2,
+                    "compatibility": pipeline._incremental_compatibility_payload(),
+                    "compatibility_hash": pipeline._incremental_compatibility_hash(),
+                    "files": {
+                        "pkg/b.py": {
+                            "mtime": changed_fingerprint["mtime"] - 10,
+                            "size": changed_fingerprint["size"] + 1,
+                            "content_hash": "stale-content-hash",
+                            "element_ids": ["changed:1"],
+                        }
+                    },
+                },
+                handle,
+            )
+        changed_element = SimpleNamespace(
+            id="changed:2",
+            type="function",
+            name="foo",
+            file_path=changed_path,
+            relative_path="pkg/b.py",
+            language="python",
+            start_line=1,
+            end_line=1,
+            code="return 1",
+            signature="def foo()",
+            docstring=None,
+            summary=None,
+            metadata={
+                "stable_unit_id": "unit:function:stable",
+                "api_surface_hash": "new-hash",
+                "signature_hash": "new-sig",
+                "edge_surface_hash": "new-edge",
+                "embedding_text_hash": "new-embed",
+            },
+            repo_name="repo",
+            repo_url=tmp,
+        )
+        pipeline.loader.scan_files = lambda: [
+            {
+                "path": changed_path,
+                "relative_path": "pkg/b.py",
+                "size": os.path.getsize(changed_path),
+                "extension": ".py",
+            }
+        ]
+        pipeline.indexer.index_files = Mock(return_value=[changed_element])
+
+        _, plan = pipeline._plan_incremental_elements(
+            repo_name="repo",
+            repo_url=tmp,
+            snapshot_id="snap:repo:current",
+            snapshot_ref={"branch": "main", "snapshot_id": "snap:repo:current"},
+            ref=None,
+        )
+
+        assert plan is not None
+        assert plan["api_frontier_changed"] == 1
+        assert plan["api_frontier_changed_paths"] == ["pkg/b.py"]
+        assert plan["package_scope_roots"] == ["."]
 
 
 def test_resolve_snapshot_ref_uses_dirty_worktree_hash_for_local_changes() -> None:

@@ -1,4 +1,5 @@
 """Concurrency regression tests for shared-state safety."""
+
 from __future__ import annotations
 
 import threading

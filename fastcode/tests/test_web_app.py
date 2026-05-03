@@ -146,3 +146,69 @@ def test_query_endpoint_offloads_blocking_query(
             },
         )
     ]
+
+
+def test_upload_zip_endpoint_offloads_blocking_zip_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeFastCode()
+    offloaded: list[Any] = []
+
+    async def record_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        offloaded.append(func)
+        return func(*args, **kwargs)
+
+    def fake_upload_sync(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "message": "uploaded",
+            "repo_info": {"name": "repo"},
+            "repo_path": "/tmp/repo",
+        }
+
+    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
+    monkeypatch.setattr(web_app, "_upload_repository_zip_sync", fake_upload_sync)
+
+    client = TestClient(web_app.app)
+    response = client.post(
+        "/api/upload-zip",
+        files={"file": ("repo.zip", b"zip-data", "application/zip")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["repo_path"] == "/tmp/repo"
+    assert offloaded == [fake_upload_sync]
+
+
+def test_upload_and_index_endpoint_offloads_upload_and_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeFastCode()
+    offloaded: list[Any] = []
+
+    async def record_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        offloaded.append(func)
+        return func(*args, **kwargs)
+
+    def fake_upload_sync(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "message": "uploaded",
+            "repo_info": {"name": "repo"},
+            "repo_path": "/tmp/repo",
+        }
+
+    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
+    monkeypatch.setattr(web_app, "_upload_repository_zip_sync", fake_upload_sync)
+
+    client = TestClient(web_app.app)
+    response = client.post(
+        "/api/upload-and-index?force=true",
+        files={"file": ("repo.zip", b"zip-data", "application/zip")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["summary"] == "summary"
+    assert offloaded == [fake_upload_sync, fake.index_repository]

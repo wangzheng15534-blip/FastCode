@@ -872,7 +872,11 @@ class IndexPipeline:
                 cast(dict[str, Any], existing.get("metadata", {}) or {})
             )
             current_meta = dict(elem.metadata or {})
-            for field_name in ("signature_hash", "edge_surface_hash", "api_surface_hash"):
+            for field_name in (
+                "signature_hash",
+                "edge_surface_hash",
+                "api_surface_hash",
+            ):
                 if current_meta.get(field_name) != existing_meta.get(field_name):
                     return True
         return False

@@ -9,8 +9,8 @@ and embeddings while replacing changed-file content with fresh extraction.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import hashlib
+from dataclasses import dataclass, field
 
 from ..ir.types import (
     IRCodeUnit,
@@ -187,7 +187,7 @@ def _merge_relations(
                         f"{relation.src_unit_id}\0"
                         f"{replacement_dst}\0"
                         f"{relation.relation_id}"
-                    ).encode("utf-8")
+                    ).encode()
                 ).hexdigest()[:24]
                 merged.append(
                     IRRelation(

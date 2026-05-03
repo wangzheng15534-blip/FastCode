@@ -358,7 +358,9 @@ class TestApplyIncrementalUpdate:
         old_rel_ids = {r.relation_id for r in result.relations}
         assert "rel:call:unit:sym:a.py:caller->unit:sym:b.py:callee" not in old_rel_ids
 
-    def test_cross_file_relation_relinked_when_changed_target_keeps_stable_identity(self) -> None:
+    def test_cross_file_relation_relinked_when_changed_target_keeps_stable_identity(
+        self,
+    ) -> None:
         old_callee = _make_symbol_unit(
             "b.py",
             "callee",
@@ -399,7 +401,9 @@ class TestApplyIncrementalUpdate:
             for relation in result.relations
         )
 
-    def test_file_import_relation_relinked_when_changed_file_unit_replaced(self) -> None:
+    def test_file_import_relation_relinked_when_changed_file_unit_replaced(
+        self,
+    ) -> None:
         old = _build_simple_snapshot(
             {"a.py": "h1", "b.py": "h2"},
             relations=[

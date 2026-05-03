@@ -1,10 +1,11 @@
 import json
 import os
+import pickle
 import tempfile
 from contextlib import ExitStack
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
@@ -866,6 +867,320 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
         assert "experimental_scip_languages: zig" in result["warnings"]
         assert layer2["metrics"]["experimental_scip_languages"] == ["zig"]
         assert layer2["metrics"]["experimental_language_count"] == 1
+
+
+def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_incremental_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+
+        unchanged_path = os.path.join(tmp, "a.py")
+        changed_path = os.path.join(tmp, "b.py")
+        with open(unchanged_path, "w", encoding="utf-8") as handle:
+            handle.write("print('a')\n")
+        with open(changed_path, "w", encoding="utf-8") as handle:
+            handle.write("print('new')\n")
+
+        unchanged_stat = os.stat(unchanged_path)
+        changed_stat = os.stat(changed_path)
+
+        previous_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:prev",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+        )
+        previous_record = pipeline.snapshot_store.save_snapshot(
+            previous_snapshot, metadata={}
+        )
+        pipeline.manifest_store.publish(
+            repo_name="repo",
+            ref_name="main",
+            snapshot_id="snap:repo:prev",
+            index_run_id="run_prev",
+            status="published",
+        )
+
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_metadata.pkl"),
+            "wb",
+        ) as handle:
+            pickle.dump(
+                {
+                    "metadata": [
+                        {
+                            "id": "unchanged:1",
+                            "type": "file",
+                            "name": "a.py",
+                            "file_path": unchanged_path,
+                            "relative_path": "a.py",
+                            "language": "python",
+                            "start_line": 1,
+                            "end_line": 1,
+                            "code": "print('a')\n",
+                            "signature": None,
+                            "docstring": None,
+                            "summary": None,
+                            "metadata": {
+                                "embedding": np.array([0.1, 0.2, 0.3]),
+                                "embedding_text": "a",
+                            },
+                            "repo_name": "repo",
+                            "repo_url": tmp,
+                        }
+                    ]
+                },
+                handle,
+            )
+
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_manifest.json"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            json.dump(
+                {
+                    "files": {
+                        "a.py": {
+                            "mtime": unchanged_stat.st_mtime,
+                            "size": unchanged_stat.st_size,
+                            "element_ids": ["unchanged:1"],
+                        },
+                        "b.py": {
+                            "mtime": changed_stat.st_mtime - 10,
+                            "size": changed_stat.st_size + 1,
+                            "element_ids": ["stale:2"],
+                        },
+                    }
+                },
+                handle,
+            )
+
+        changed_element = SimpleNamespace(
+            id="changed:2",
+            type="file",
+            name="b.py",
+            file_path=changed_path,
+            relative_path="b.py",
+            language="python",
+            start_line=1,
+            end_line=1,
+            code="print('new')\n",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={"embedding": np.array([0.4, 0.5, 0.6])},
+            repo_name="repo",
+            repo_url=tmp,
+            to_dict=lambda: {
+                "id": "changed:2",
+                "type": "file",
+                "name": "b.py",
+                "file_path": changed_path,
+                "relative_path": "b.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "code": "print('new')\n",
+                "signature": None,
+                "docstring": None,
+                "summary": None,
+                "metadata": {"embedding": np.array([0.4, 0.5, 0.6])},
+                "repo_name": "repo",
+                "repo_url": tmp,
+            },
+        )
+        ast_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:current",
+            branch="main",
+            commit_id="c2",
+            tree_id="t2",
+            units=[
+                IRCodeUnit(
+                    unit_id="doc:snap:repo:current:a.py",
+                    kind="file",
+                    path="a.py",
+                    language="python",
+                    display_name="a.py",
+                    source_set={"fc_structure"},
+                    metadata={"source": "fc_structure"},
+                ),
+                IRCodeUnit(
+                    unit_id="doc:snap:repo:current:b.py",
+                    kind="file",
+                    path="b.py",
+                    language="python",
+                    display_name="b.py",
+                    source_set={"fc_structure"},
+                    metadata={"source": "fc_structure"},
+                ),
+            ],
+        )
+
+        temp_store_metadata: list[dict[str, Any]] = []
+        temp_store = SimpleNamespace(
+            metadata=temp_store_metadata,
+            initialize=lambda dim: None,
+            add_vectors=lambda vectors, metadata: temp_store_metadata.extend(metadata),
+            save=lambda artifact_key: None,
+        )
+        temp_graph = SimpleNamespace(
+            dependency_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            inheritance_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            call_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            build_graphs=lambda elements, module_resolver, symbol_resolver: None,
+            save=lambda artifact_key: None,
+        )
+        temp_retriever = SimpleNamespace(
+            index_for_bm25=lambda elements: None,
+            build_repo_overview_bm25=lambda: None,
+            save_bm25=lambda artifact_key: None,
+        )
+
+        pipeline.loader.scan_files = lambda: [
+            {
+                "path": unchanged_path,
+                "relative_path": "a.py",
+                "size": unchanged_stat.st_size,
+                "extension": ".py",
+            },
+            {
+                "path": changed_path,
+                "relative_path": "b.py",
+                "size": changed_stat.st_size,
+                "extension": ".py",
+            },
+        ]
+
+        extract_mock = Mock(
+            side_effect=AssertionError("extract_elements should not run")
+        )
+        index_files_mock = Mock(return_value=[changed_element])
+        pipeline.indexer.extract_elements = extract_mock
+        pipeline.indexer.index_files = index_files_mock
+
+        seen_ast_element_ids: list[str] = []
+
+        def _capture_ast(**kwargs: Any) -> IRSnapshot:
+            seen_ast_element_ids.extend(elem.id for elem in kwargs["elements"])
+            return ast_snapshot
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    pipeline,
+                    "_resolve_snapshot_ref",
+                    return_value={
+                        "repo_name": "repo",
+                        "branch": "main",
+                        "commit_id": "c2",
+                        "tree_id": "t2",
+                        "snapshot_id": "snap:repo:current",
+                    },
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline, "_build_git_meta", return_value={})
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.VectorStore", return_value=temp_store)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.CodeGraphBuilder", return_value=temp_graph)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.HybridRetriever", return_value=temp_retriever)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.build_ir_from_ast", side_effect=_capture_ast)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.merge_ir", return_value=ast_snapshot)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.validate_snapshot", return_value=[])
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline,
+                    "_apply_semantic_resolvers",
+                    side_effect=lambda **kwargs: kwargs["snapshot"],
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "stage_snapshot", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "save_relational_facts", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "save_ir_graphs", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "import_git_backbone", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store,
+                    "update_snapshot_metadata",
+                    return_value=None,
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline.snapshot_store, "release_lock", return_value=None)
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store,
+                    "validate_fencing_token",
+                    return_value=True,
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline, "_load_artifacts_by_key", return_value=True)
+            )
+
+            result = pipeline.run_index_pipeline(
+                source=tmp,
+                is_url=False,
+                enable_scip=False,
+                publish=False,
+            )
+
+        extract_mock.assert_not_called()
+        index_files_mock.assert_called_once()
+        changed_file_infos = index_files_mock.call_args.args[0]
+        assert [file_info["relative_path"] for file_info in changed_file_infos] == [
+            "b.py"
+        ]
+        assert set(seen_ast_element_ids) == {"unchanged:1", "changed:2"}
+        assert {row["id"] for row in temp_store_metadata} == {
+            "unchanged:1",
+            "changed:2",
+        }
+        assert result["incremental_prefilter"] == {
+            "added": 0,
+            "modified": 1,
+            "removed": 0,
+            "unchanged": 1,
+            "reused_elements": 1,
+            "reindexed_elements": 1,
+        }
 
 
 # ---------------------------------------------------------------------------

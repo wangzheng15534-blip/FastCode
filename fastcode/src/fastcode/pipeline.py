@@ -10,10 +10,12 @@ extraction, IR merge, semantic resolution, and artifact persistence.
 import hashlib
 import json
 import os
+import pickle
 import re
 import tempfile
 import threading
 from collections.abc import Callable
+from datetime import datetime
 from time import perf_counter
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -577,6 +579,306 @@ class IndexPipeline:
         return upgraded
 
     # ------------------------------------------------------------------
+    # Incremental extraction planning
+    # ------------------------------------------------------------------
+
+    def _manifest_path_for_artifact(self, artifact_key: str) -> str:
+        return os.path.join(
+            self.vector_store.persist_dir, f"{artifact_key}_manifest.json"
+        )
+
+    def _metadata_path_for_artifact(self, artifact_key: str) -> str:
+        return os.path.join(
+            self.vector_store.persist_dir, f"{artifact_key}_metadata.pkl"
+        )
+
+    def _file_fingerprint(self, abs_path: str) -> dict[str, Any] | None:
+        try:
+            stat = os.stat(abs_path)
+        except OSError:
+            return None
+        content_hash = None
+        try:
+            content_hash = compute_file_hash(abs_path)
+        except Exception as e:
+            self.logger.warning(f"Failed to hash file for incremental manifest: {e}")
+        return {
+            "mtime": stat.st_mtime,
+            "size": stat.st_size,
+            "content_hash": content_hash,
+        }
+
+    def _build_file_manifest(
+        self, elements: list[CodeElement], repo_root: str
+    ) -> dict[str, Any]:
+        manifest: dict[str, Any] = {
+            "created_at": datetime.now().isoformat(),
+            "files": {},
+        }
+
+        for elem in elements:
+            rel_path = elem.relative_path or elem.file_path
+            if not rel_path:
+                continue
+            if rel_path not in manifest["files"]:
+                abs_path = os.path.join(repo_root, rel_path)
+                fingerprint = self._file_fingerprint(abs_path)
+                if fingerprint is None:
+                    manifest["files"][rel_path] = {
+                        "mtime": 0.0,
+                        "size": 0,
+                        "content_hash": None,
+                        "element_ids": [],
+                    }
+                else:
+                    manifest["files"][rel_path] = {
+                        **fingerprint,
+                        "element_ids": [],
+                    }
+            manifest["files"][rel_path]["element_ids"].append(elem.id)
+
+        return manifest
+
+    def _save_file_manifest(self, artifact_key: str, manifest: dict[str, Any]) -> None:
+        with open(
+            self._manifest_path_for_artifact(artifact_key), "w", encoding="utf-8"
+        ) as f:
+            json.dump(manifest, f, indent=2)
+
+    def _load_file_manifest(self, artifact_key: str) -> dict[str, Any] | None:
+        manifest_path = self._manifest_path_for_artifact(artifact_key)
+        if not os.path.exists(manifest_path):
+            return None
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                return cast(dict[str, Any], json.load(f))
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to load incremental manifest for '{artifact_key}': {e}"
+            )
+            return None
+
+    def _load_existing_metadata(self, artifact_key: str) -> list[dict[str, Any]]:
+        metadata_path = self._metadata_path_for_artifact(artifact_key)
+        if not os.path.exists(metadata_path):
+            return []
+        try:
+            with open(metadata_path, "rb") as f:
+                data = pickle.load(f)  # noqa: S301 - FastCode-owned vector artifact.
+            metadata = data.get("metadata", [])
+            if isinstance(metadata, list):
+                return cast(list[dict[str, Any]], metadata)
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to load incremental metadata for '{artifact_key}': {e}"
+            )
+        return []
+
+    def _detect_file_changes(
+        self,
+        manifest: dict[str, Any],
+        current_files: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        manifest_files = cast(dict[str, dict[str, Any]], manifest.get("files", {}))
+        current_lookup: dict[str, dict[str, Any]] = {}
+
+        for file_info in current_files:
+            rel_path = str(file_info.get("relative_path") or "")
+            abs_path = str(file_info.get("path") or "")
+            if not rel_path or not abs_path:
+                continue
+            fingerprint = self._file_fingerprint(abs_path)
+            if fingerprint is None:
+                continue
+            current_lookup[rel_path] = {
+                **fingerprint,
+                "file_info": file_info,
+            }
+
+        added: list[str] = []
+        modified: list[str] = []
+        deleted: list[str] = []
+        unchanged: list[str] = []
+
+        for rel_path, info in current_lookup.items():
+            saved = manifest_files.get(rel_path)
+            if saved is None:
+                added.append(rel_path)
+                continue
+            saved_hash = saved.get("content_hash")
+            current_hash = info.get("content_hash")
+            if saved_hash and current_hash:
+                changed = current_hash != saved_hash
+            else:
+                changed = info["mtime"] != saved.get("mtime") or info[
+                    "size"
+                ] != saved.get("size")
+            if changed:
+                modified.append(rel_path)
+            else:
+                unchanged.append(rel_path)
+
+        for rel_path in manifest_files:
+            if rel_path not in current_lookup:
+                deleted.append(rel_path)
+
+        return {
+            "added": added,
+            "modified": modified,
+            "deleted": deleted,
+            "unchanged": unchanged,
+            "current_lookup": current_lookup,
+        }
+
+    def _collect_unchanged_metadata(
+        self,
+        manifest: dict[str, Any],
+        unchanged_files: list[str],
+        existing_metadata: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], set[str]]:
+        unchanged_element_ids: set[str] = set()
+        manifest_files = cast(dict[str, dict[str, Any]], manifest.get("files", {}))
+        for rel_path in unchanged_files:
+            file_entry = manifest_files.get(rel_path, {})
+            for elem_id in cast(list[str], file_entry.get("element_ids", [])):
+                unchanged_element_ids.add(elem_id)
+        return (
+            [
+                meta
+                for meta in existing_metadata
+                if str(meta.get("id")) in unchanged_element_ids
+            ],
+            unchanged_element_ids,
+        )
+
+    def _reconstruct_code_element(
+        self,
+        meta: dict[str, Any],
+        *,
+        file_info: dict[str, Any] | None = None,
+        repo_name: str | None = None,
+        repo_url: str | None = None,
+    ) -> CodeElement | None:
+        metadata = dict(cast(dict[str, Any], meta.get("metadata", {}) or {}))
+        for stale_key in ("snapshot_id", "source_priority", "ir_symbol_id"):
+            metadata.pop(stale_key, None)
+        file_path = str(meta.get("file_path", ""))
+        relative_path = str(meta.get("relative_path", ""))
+        if file_info is not None:
+            file_path = str(file_info.get("path") or file_path)
+            relative_path = str(file_info.get("relative_path") or relative_path)
+        try:
+            return CodeElement(
+                id=str(meta.get("id", "")),
+                type=str(meta.get("type", "")),
+                name=str(meta.get("name", "")),
+                file_path=file_path,
+                relative_path=relative_path,
+                language=str(meta.get("language", "")),
+                start_line=int(meta.get("start_line", 0) or 0),
+                end_line=int(meta.get("end_line", 0) or 0),
+                code=str(meta.get("code", "")),
+                signature=cast(str | None, meta.get("signature")),
+                docstring=cast(str | None, meta.get("docstring")),
+                summary=cast(str | None, meta.get("summary")),
+                metadata=metadata,
+                repo_name=repo_name or cast(str | None, meta.get("repo_name")),
+                repo_url=repo_url or cast(str | None, meta.get("repo_url")),
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to reconstruct cached code element: {e}")
+            return None
+
+    def _plan_incremental_elements(
+        self,
+        *,
+        repo_name: str,
+        repo_url: str,
+        snapshot_id: str,
+        snapshot_ref: dict[str, Any],
+        ref: str | None,
+    ) -> tuple[list[CodeElement] | None, dict[str, int] | None]:
+        ref_name = snapshot_ref.get("branch") or ref or "HEAD"
+        previous_manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
+        if not previous_manifest:
+            return None, None
+
+        previous_snapshot_id = previous_manifest.get("snapshot_id")
+        if not previous_snapshot_id or previous_snapshot_id == snapshot_id:
+            return None, None
+
+        previous_snapshot = self.snapshot_store.get_snapshot_record(
+            previous_snapshot_id
+        )
+        if not previous_snapshot:
+            return None, None
+
+        previous_artifact_key = previous_snapshot.artifact_key
+        manifest = self._load_file_manifest(previous_artifact_key)
+        if manifest is None:
+            return None, None
+
+        existing_metadata = self._load_existing_metadata(previous_artifact_key)
+        if not existing_metadata:
+            return None, None
+
+        current_files = self.loader.scan_files()
+        changes = self._detect_file_changes(manifest, current_files)
+        added = cast(list[str], changes["added"])
+        modified = cast(list[str], changes["modified"])
+        deleted = cast(list[str], changes["deleted"])
+        unchanged = cast(list[str], changes["unchanged"])
+
+        unchanged_metadata, expected_unchanged_ids = self._collect_unchanged_metadata(
+            manifest, unchanged, existing_metadata
+        )
+        found_unchanged_ids = {str(meta.get("id")) for meta in unchanged_metadata}
+        if expected_unchanged_ids - found_unchanged_ids:
+            self.logger.warning(
+                "incremental prefilter fallback: missing cached metadata for "
+                "%d unchanged elements",
+                len(expected_unchanged_ids - found_unchanged_ids),
+            )
+            return None, None
+        current_lookup = cast(dict[str, dict[str, Any]], changes["current_lookup"])
+        unchanged_elements: list[CodeElement] = []
+        for meta in unchanged_metadata:
+            rel_path = str(meta.get("relative_path") or meta.get("file_path") or "")
+            lookup = current_lookup.get(rel_path, {})
+            file_info = lookup.get("file_info")
+            elem = self._reconstruct_code_element(
+                meta,
+                file_info=file_info if isinstance(file_info, dict) else None,
+                repo_name=repo_name,
+                repo_url=repo_url,
+            )
+            if elem is not None:
+                unchanged_elements.append(elem)
+
+        changed_file_infos: list[dict[str, Any]] = []
+        for rel_path in added + modified:
+            lookup = current_lookup.get(rel_path)
+            file_info = lookup.get("file_info") if lookup else None
+            if isinstance(file_info, dict):
+                changed_file_infos.append(file_info)
+
+        new_elements = (
+            self.indexer.index_files(changed_file_infos, repo_name, repo_url)
+            if changed_file_infos
+            else []
+        )
+        all_elements = unchanged_elements + new_elements
+        summary = {
+            "added": len(added),
+            "modified": len(modified),
+            "removed": len(deleted),
+            "unchanged": len(unchanged),
+            "reused_elements": len(unchanged_elements),
+            "reindexed_elements": len(new_elements),
+        }
+        return all_elements, summary
+
+    # ------------------------------------------------------------------
     # The big one: run_index_pipeline
     # ------------------------------------------------------------------
 
@@ -688,11 +990,32 @@ class IndexPipeline:
 
         try:
             self.index_run_store.mark_status(run_id, "extracting")
-            elements: list[CodeElement] = self.indexer.extract_elements(
-                repo_name=repo_name, repo_url=repo_url
-            )
-
             artifact_key = self.snapshot_store.artifact_key_for_snapshot(snapshot_id)
+            incremental_plan: dict[str, int] | None = None
+            planned_elements, incremental_plan = self._plan_incremental_elements(
+                repo_name=repo_name,
+                repo_url=repo_url,
+                snapshot_id=snapshot_id,
+                snapshot_ref=snapshot_ref,
+                ref=ref,
+            )
+            if planned_elements is None:
+                elements = self.indexer.extract_elements(
+                    repo_name=repo_name, repo_url=repo_url
+                )
+            else:
+                elements = planned_elements
+                if incremental_plan is None:
+                    raise RuntimeError("incremental prefilter returned no plan")
+                self.logger.info(
+                    "incremental prefilter: +%d ~%d -%d =%d, reused=%d, reindexed=%d",
+                    incremental_plan["added"],
+                    incremental_plan["modified"],
+                    incremental_plan["removed"],
+                    incremental_plan["unchanged"],
+                    incremental_plan["reused_elements"],
+                    incremental_plan["reindexed_elements"],
+                )
 
             self.index_run_store.mark_status(run_id, "materializing")
             temp_store = VectorStore(self.config)
@@ -1149,6 +1472,10 @@ class IndexPipeline:
             temp_store.save(artifact_key)
             temp_retriever.save_bm25(artifact_key)
             temp_graph.save(artifact_key)
+            self._save_file_manifest(
+                artifact_key,
+                self._build_file_manifest(elements, self.loader.repo_path or ""),
+            )
 
             self.snapshot_store.save_snapshot(
                 merged_snapshot,
@@ -1303,6 +1630,8 @@ class IndexPipeline:
                     "removed": len(incremental_change_set.removed),
                     "unchanged": len(incremental_change_set.unchanged),
                 }
+            if incremental_plan is not None:
+                result["incremental_prefilter"] = dict(incremental_plan)
             return result
         except Exception as e:
             self.index_run_store.mark_failed(run_id, str(e))

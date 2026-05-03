@@ -6,12 +6,18 @@ content and context (e.g., adjacent .cpp files, C++ keywords in source).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from fastcode.indexer import CodeElement
+from fastcode.parser import CodeParser
 from fastcode.semantic_ir import IRCodeUnit, IRSnapshot
 from fastcode.semantic_resolvers.c_family import CppSemanticResolver, CSemanticResolver
-from fastcode.utils.paths import get_language_from_extension
+from fastcode.utils.paths import (
+    get_language_from_extension,
+    infer_language_from_file_context,
+)
 
 
 class TestHeaderClassification:
@@ -53,8 +59,6 @@ class TestHeaderClassification:
         """
         # This test exercises the same path as test_c_resolver_emits_relative_include_relation
         # but from the header classification perspective
-        from fastcode.indexer import CodeElement
-        from fastcode.semantic_ir import IRCodeUnit, IRSnapshot
 
         file_main = IRCodeUnit(
             unit_id="doc:snap:1:src/main.c",
@@ -183,12 +187,8 @@ class TestHeaderResolverDispatch:
         )
 
     @pytest.mark.regression
-    def test_cpp_resolver_not_applicable_when_dot_h_element_has_language_c(self) -> None:
-        """CppSemanticResolver must NOT match a .h element tagged as language='c'.
-
-        This exposes the core classification gap: since .h always maps to
-        'c', the C++ resolver never runs on .h files even in C++ projects.
-        """
+    def test_cpp_resolver_not_applicable_for_plain_c_style_dot_h(self) -> None:
+        """CppSemanticResolver must stay off plain C-style `.h` headers."""
         resolver = CppSemanticResolver()
         file_unit = IRCodeUnit(
             unit_id="doc:snap:1:include/util.h",
@@ -215,7 +215,7 @@ class TestHeaderResolverDispatch:
             language="c",
             start_line=1,
             end_line=10,
-            code="#ifndef UTIL_H\n#define UTIL_H\nclass Util {};\n#endif",
+            code="#ifndef UTIL_H\n#define UTIL_H\nvoid util(void);\n#endif",
             signature=None,
             docstring=None,
             summary=None,
@@ -286,6 +286,137 @@ class TestCppIncludeOfDotHResolution:
         assert len(patch.relations) == 1
         assert patch.relations[0].dst_unit_id == file_header.unit_id
         assert patch.relations[0].relation_type == "import"
+
+
+class TestHeaderAmbiguityContract:
+    """Context-aware .h classification must promote C++ headers when warranted."""
+
+    def test_dot_h_with_adjacent_cpp_classified_as_cpp(self) -> None:
+        """When a .h file has adjacent .cpp files in the same directory,
+        get_language_from_extension (or a context-aware successor) must
+        classify it as C++.
+        """
+        # Snapshot with src/main.cpp alongside src/util.h — util.h should be cpp
+        file_cpp = IRCodeUnit(
+            unit_id="doc:snap:1:src/main.cpp",
+            kind="file",
+            path="src/main.cpp",
+            language="cpp",
+            display_name="src/main.cpp",
+            source_set={"fc_structure"},
+            metadata={"source": "fc_structure"},
+        )
+        file_header = IRCodeUnit(
+            unit_id="doc:snap:1:src/util.h",
+            kind="file",
+            path="src/util.h",
+            language="c",
+            display_name="src/util.h",
+            source_set={"fc_structure"},
+            metadata={"source": "fc_structure"},
+        )
+        snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:1",
+            units=[file_cpp, file_header],
+            supports=[],
+            relations=[],
+        )
+        resolver = CppSemanticResolver()
+        element = CodeElement(
+            id="file:util_h",
+            type="file",
+            name="src/util.h",
+            file_path="src/util.h",
+            relative_path="src/util.h",
+            language="c",
+            start_line=1,
+            end_line=10,
+            code="#ifndef UTIL_H\n#define UTIL_H\nvoid util();\n#endif",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={},
+        )
+        assert resolver.applicable(
+            snapshot=snapshot,
+            elements=[element],
+            target_paths={"src/util.h"},
+        )
+
+    def test_dot_h_with_cpp_keywords_classified_as_cpp(self) -> None:
+        """When a .h file contains C++ keywords (class, namespace, template),
+        it must be classified as C++ regardless of adjacent files.
+        """
+        resolver = CppSemanticResolver()
+        file_header = IRCodeUnit(
+            unit_id="doc:snap:1:include/widget.h",
+            kind="file",
+            path="include/widget.h",
+            language="c",
+            display_name="include/widget.h",
+            source_set={"fc_structure"},
+            metadata={"source": "fc_structure"},
+        )
+        snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:1",
+            units=[file_header],
+            supports=[],
+            relations=[],
+        )
+        element = CodeElement(
+            id="file:widget_h",
+            type="file",
+            name="include/widget.h",
+            file_path="include/widget.h",
+            relative_path="include/widget.h",
+            language="c",
+            start_line=1,
+            end_line=10,
+            code="#ifndef WIDGET_H\n#define WIDGET_H\nclass Widget {\npublic:\n    virtual void run() = 0;\n};\n#endif",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={},
+        )
+        assert resolver.applicable(
+            snapshot=snapshot,
+            elements=[element],
+            target_paths={"include/widget.h"},
+        )
+
+
+class TestHeaderParserClassification:
+    """Header classification must apply before indexing emits element language."""
+
+    def test_infer_language_from_file_context_uses_adjacent_cpp(
+        self, tmp_path: Path
+    ) -> None:
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        header_path = src_dir / "util.h"
+        header_path.write_text("#ifndef UTIL_H\n#define UTIL_H\nvoid util();\n#endif")
+        (src_dir / "main.cpp").write_text('#include "util.h"\n')
+
+        assert infer_language_from_file_context(str(header_path)) == "cpp"
+
+    def test_parser_classifies_dot_h_with_cpp_keywords_as_cpp(
+        self, tmp_path: Path
+    ) -> None:
+        include_dir = tmp_path / "include"
+        include_dir.mkdir()
+        header_path = include_dir / "widget.h"
+        header_path.write_text(
+            "#ifndef WIDGET_H\n#define WIDGET_H\n"
+            "class Widget {\npublic:\n    virtual void run() = 0;\n};\n#endif"
+        )
+
+        parser = CodeParser(config={})
+        parsed = parser.parse_file(str(header_path), header_path.read_text())
+
+        assert parsed is not None
+        assert parsed.language == "cpp"
 
 
 class TestDuplicateExtensionMaps:

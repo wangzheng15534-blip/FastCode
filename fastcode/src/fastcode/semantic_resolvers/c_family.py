@@ -11,6 +11,7 @@ from typing import Any
 
 from ..indexer import CodeElement
 from ..semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
+from ..utils.paths import infer_language_from_file_context
 from ._utils import _hash_id, _normalize_path
 from .base import ResolutionPatch, SemanticResolver, ToolDiagnostic
 
@@ -40,6 +41,24 @@ class CFamilySemanticResolver(SemanticResolver):
     cost_class = "low"
     frontend_kind = "clang_structural_fallback"
     required_tools = ("clang",)
+
+    def applicable(
+        self,
+        *,
+        snapshot: IRSnapshot,
+        elements: list[CodeElement],
+        target_paths: set[str],
+    ) -> bool:
+        snapshot_file_paths = self._snapshot_file_paths(snapshot)
+        return any(
+            self._effective_element_language(
+                element=elem,
+                snapshot_file_paths=snapshot_file_paths,
+            )
+            == self.language
+            and (elem.relative_path or elem.file_path) in target_paths
+            for elem in elements
+        )
 
     def resolve(
         self,
@@ -88,13 +107,18 @@ class CFamilySemanticResolver(SemanticResolver):
         include_targets_by_path: dict[str, set[str]] = defaultdict(set)
         counts = {"import": 0, "inherit": 0}
         warnings: list[str] = []
+        snapshot_file_paths = self._snapshot_file_paths(snapshot)
 
         class_units_by_name = self._build_class_unit_index(snapshot)
         file_elements = [
             elem
             for elem in elements
             if elem.type == "file"
-            and elem.language == self.language
+            and self._effective_element_language(
+                element=elem,
+                snapshot_file_paths=snapshot_file_paths,
+            )
+            == self.language
             and (elem.relative_path or elem.file_path) in target_paths
         ]
 
@@ -139,7 +163,11 @@ class CFamilySemanticResolver(SemanticResolver):
             source_path = elem.relative_path or elem.file_path
             if (
                 elem.type != "class"
-                or elem.language != self.language
+                or self._effective_element_language(
+                    element=elem,
+                    snapshot_file_paths=snapshot_file_paths,
+                )
+                != self.language
                 or source_path not in target_paths
             ):
                 continue
@@ -194,6 +222,22 @@ class CFamilySemanticResolver(SemanticResolver):
         )
         patch.metadata_updates["semantic_resolver_runs"][0]["stats"] = patch.stats
         return patch
+
+    def _snapshot_file_paths(self, snapshot: IRSnapshot) -> set[str]:
+        return {unit.path for unit in snapshot.units if unit.kind == "file"}
+
+    def _effective_element_language(
+        self,
+        *,
+        element: CodeElement,
+        snapshot_file_paths: set[str],
+    ) -> str:
+        source_path = element.relative_path or element.file_path
+        return infer_language_from_file_context(
+            source_path,
+            element.code,
+            sibling_paths=snapshot_file_paths,
+        )
 
     def _resolve_include_target(
         self,

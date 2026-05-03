@@ -10,6 +10,7 @@ and embeddings while replacing changed-file content with fresh extraction.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 
 from ..ir.types import (
     IRCodeUnit,
@@ -80,6 +81,34 @@ def _index_units_by_path(
     return by_path, ids_by_path
 
 
+def _unit_identity_key(unit: IRCodeUnit) -> str:
+    stable_unit_id = (unit.metadata or {}).get("stable_unit_id")
+    if stable_unit_id:
+        return f"stable:{stable_unit_id}"
+    if unit.kind == "file":
+        return f"file:{unit.path}"
+    return f"unit:{unit.unit_id}"
+
+
+def _replacement_map(
+    change_set: FileChangeSet,
+    old_units_by_path: dict[str, list[IRCodeUnit]],
+    new_units_by_path: dict[str, list[IRCodeUnit]],
+) -> dict[str, str]:
+    new_by_identity: dict[str, str] = {}
+    for path in change_set.added + change_set.modified:
+        for unit in new_units_by_path.get(path, []):
+            new_by_identity[_unit_identity_key(unit)] = unit.unit_id
+
+    replacements: dict[str, str] = {}
+    for path in change_set.modified + change_set.removed:
+        for unit in old_units_by_path.get(path, []):
+            replacement = new_by_identity.get(_unit_identity_key(unit))
+            if replacement:
+                replacements[unit.unit_id] = replacement
+    return replacements
+
+
 def _merge_units(
     change_set: FileChangeSet,
     old_units_by_path: dict[str, list[IRCodeUnit]],
@@ -128,14 +157,52 @@ def _merge_relations(
     new_relations: list[IRRelation],
     tombstoned_ids: set[str],
     new_unit_ids: set[str],
+    replacement_map: dict[str, str],
 ) -> list[IRRelation]:
-    """Merge relations: drop tombstoned, add new from changed files, dedup."""
+    """Merge relations with source ownership and stable-destination relinking.
+
+    Rules:
+    - relations owned by changed sources are dropped and must come from fresh extraction
+    - relations from unchanged sources are preserved
+    - if an unchanged-source relation points at a changed destination that was
+      re-extracted as the same logical unit, rewrite it to the replacement target
+    - new relations from changed sources are added back from fresh extraction
+    """
     merged: list[IRRelation] = []
     for relation in old_relations:
-        if relation.src_unit_id in tombstoned_ids:
+        src_tombstoned = relation.src_unit_id in tombstoned_ids
+        dst_tombstoned = relation.dst_unit_id in tombstoned_ids
+        if src_tombstoned:
             continue
-        if relation.dst_unit_id in tombstoned_ids:
-            continue
+        if dst_tombstoned:
+            replacement_dst = replacement_map.get(relation.dst_unit_id)
+            if replacement_dst is None:
+                continue
+            if replacement_dst != relation.dst_unit_id:
+                metadata = dict(relation.metadata or {})
+                metadata["relinked_from_unit_id"] = relation.dst_unit_id
+                digest = hashlib.sha256(
+                    (
+                        f"{relation.relation_type}\0"
+                        f"{relation.src_unit_id}\0"
+                        f"{replacement_dst}\0"
+                        f"{relation.relation_id}"
+                    ).encode("utf-8")
+                ).hexdigest()[:24]
+                merged.append(
+                    IRRelation(
+                        relation_id=f"relink:{digest}",
+                        src_unit_id=relation.src_unit_id,
+                        dst_unit_id=replacement_dst,
+                        relation_type=relation.relation_type,
+                        resolution_state=relation.resolution_state,
+                        support_sources=set(relation.support_sources),
+                        support_ids=list(relation.support_ids),
+                        pending_capabilities=set(relation.pending_capabilities),
+                        metadata=metadata,
+                    )
+                )
+                continue
         merged.append(relation)
 
     for relation in new_relations:
@@ -236,7 +303,11 @@ def apply_incremental_update(
         old_snapshot.supports, new_extraction.supports, tombstoned_ids
     )
     merged_relations = _merge_relations(
-        old_snapshot.relations, new_extraction.relations, tombstoned_ids, new_unit_ids
+        old_snapshot.relations,
+        new_extraction.relations,
+        tombstoned_ids,
+        new_unit_ids,
+        _replacement_map(change_set, old_units_by_path, new_units_by_path),
     )
     merged_embeddings = _merge_embeddings(
         old_snapshot.embeddings, new_extraction.embeddings, tombstoned_ids

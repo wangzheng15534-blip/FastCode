@@ -50,6 +50,7 @@ def _make_symbol_unit(
         display_name=name,
         qualified_name=f"{path}:{name}",
         source_set={"fc_structure"},
+        metadata={"stable_unit_id": f"stable:{path}:{kind}:{name}"},
     )
 
 
@@ -356,6 +357,69 @@ class TestApplyIncrementalUpdate:
         # Old relation a:caller -> b:callee should be dropped (dst tombstoned)
         old_rel_ids = {r.relation_id for r in result.relations}
         assert "rel:call:unit:sym:a.py:caller->unit:sym:b.py:callee" not in old_rel_ids
+
+    def test_cross_file_relation_relinked_when_changed_target_keeps_stable_identity(self) -> None:
+        old_callee = _make_symbol_unit(
+            "b.py",
+            "callee",
+            unit_id="unit:sym:b.py:callee:old",
+        )
+        new_callee = _make_symbol_unit(
+            "b.py",
+            "callee",
+            unit_id="unit:sym:b.py:callee:new",
+        )
+        old = _build_simple_snapshot(
+            {"a.py": "h1", "b.py": "h2"},
+            extra_units=[
+                _make_symbol_unit("a.py", "caller"),
+                old_callee,
+            ],
+            relations=[
+                _make_relation(
+                    "unit:sym:a.py:caller",
+                    "unit:sym:b.py:callee:old",
+                    "call",
+                ),
+            ],
+        )
+        new = _build_simple_snapshot(
+            {"a.py": "h1", "b.py": "h2_new"},
+            extra_units=[new_callee],
+            snapshot_id="snap:test:new",
+            commit_id="new123",
+        )
+        cs = FileChangeSet(modified=["b.py"], unchanged=["a.py"])
+        result = apply_incremental_update(old, new, cs)
+
+        assert any(
+            relation.src_unit_id == "unit:sym:a.py:caller"
+            and relation.dst_unit_id == "unit:sym:b.py:callee:new"
+            and relation.relation_type == "call"
+            for relation in result.relations
+        )
+
+    def test_file_import_relation_relinked_when_changed_file_unit_replaced(self) -> None:
+        old = _build_simple_snapshot(
+            {"a.py": "h1", "b.py": "h2"},
+            relations=[
+                _make_relation("unit:file:a.py", "unit:file:b.py", "import"),
+            ],
+        )
+        new = _build_simple_snapshot(
+            {"a.py": "h1", "b.py": "h2_new"},
+            snapshot_id="snap:test:new",
+            commit_id="new123",
+        )
+        cs = FileChangeSet(modified=["b.py"], unchanged=["a.py"])
+        result = apply_incremental_update(old, new, cs)
+
+        assert any(
+            relation.src_unit_id == "unit:file:a.py"
+            and relation.dst_unit_id == "unit:file:b.py"
+            and relation.relation_type == "import"
+            for relation in result.relations
+        )
 
     def test_relation_dedup_by_tuple_key(self) -> None:
         """If old and new both have the same (src, dst, type) relation, only one survives."""

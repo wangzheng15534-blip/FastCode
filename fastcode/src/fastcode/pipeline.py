@@ -26,7 +26,7 @@ from .adapters.scip_to_ir import build_ir_from_scip
 from .doc_ingester import KeyDocIngester
 from .embedder import CodeEmbedder
 from .global_index_builder import GlobalIndexBuilder
-from .graph_builder import CodeGraphBuilder
+from .graph.build import CodeGraphBuilder
 from .incremental_update import apply_incremental_update, diff_changed_files
 from .index_run import IndexRunStore
 from .indexer import CodeIndexer

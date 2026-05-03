@@ -11,12 +11,12 @@ from typing import Any, cast
 import networkx as nx
 import tqdm
 
-from .call_extractor import CallExtractor
-from .ir.element import CodeElement
-from .module_resolver import ModuleResolver
-from .path_utils import file_path_to_module_path
-from .symbol_resolver import SymbolResolver
-from .utils import ensure_dir
+from ..call_extractor import CallExtractor
+from ..ir.element import CodeElement
+from ..module_resolver import ModuleResolver
+from ..path_utils import file_path_to_module_path
+from ..symbol_resolver import SymbolResolver
+from ..utils import ensure_dir
 
 
 class CodeGraphBuilder:
@@ -646,7 +646,7 @@ class CodeGraphBuilder:
                     stats[name]["avg_degree"] = (
                         sum(d for _, d in graph.degree()) / graph.number_of_nodes()
                     )
-                except:
+                except Exception:  # noqa: BLE001
                     stats[name]["avg_degree"] = 0
 
         return stats
@@ -703,7 +703,7 @@ class CodeGraphBuilder:
 
         try:
             with open(graph_path, "rb") as f:
-                data = pickle.load(f)
+                data = pickle.load(f)  # noqa: S301
 
                 # --- DEBUG LOGS: Check for data loss due to name collisions ---
                 saved_by_name = len(data.get("element_by_name", {}))
@@ -726,7 +726,7 @@ class CodeGraphBuilder:
                 self.imports_by_file = data["imports_by_file"]
 
                 # Reconstruct indices with CodeElement objects
-                from .ir.element import CodeElement
+                from ..ir.element import CodeElement
 
                 self.element_by_name = {}
                 self.element_by_id = {}
@@ -782,7 +782,7 @@ class CodeGraphBuilder:
 
         try:
             with open(graph_path, "rb") as f:
-                data = pickle.load(f)
+                data = pickle.load(f)  # noqa: S301
                 other_call_graph = cast(nx.DiGraph[str], data["call_graph"])
                 other_dependency_graph = cast(nx.DiGraph[str], data["dependency_graph"])
                 other_inheritance_graph = cast(
@@ -815,7 +815,7 @@ class CodeGraphBuilder:
             )
 
             # Merge elements from source file
-            from .ir.element import CodeElement
+            from ..ir.element import CodeElement
 
             for v in other_elements.values():
                 elem = CodeElement(**v)

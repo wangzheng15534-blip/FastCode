@@ -21,7 +21,7 @@ from .core import snapshot as _snapshot
 from .doc_ingester import KeyDocIngester
 from .embedder import CodeEmbedder
 from .global_index_builder import GlobalIndexBuilder
-from .graph_builder import CodeGraphBuilder
+from .graph.build import CodeGraphBuilder
 from .graph_runtime import LadybugGraphRuntime
 from .index_run import IndexRunStore
 from .indexer import CodeIndexer

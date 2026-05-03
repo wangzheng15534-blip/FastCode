@@ -21,7 +21,7 @@ from .core import filtering as _filtering
 from .core import fusion as _fusion
 from .core import scoring as _scoring
 from .embedder import CodeEmbedder
-from .graph_builder import CodeGraphBuilder
+from .graph.build import CodeGraphBuilder
 from .ir.element import CodeElement, CodeElementMeta
 from .ir.graph import IRGraphs
 from .iterative_agent import IterativeAgent

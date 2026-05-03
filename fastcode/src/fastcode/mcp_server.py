@@ -32,7 +32,7 @@ import uuid
 from mcp.server.fastmcp import FastMCP
 
 from fastcode import FastCode
-from fastcode.graph_builder import CodeGraphBuilder
+from fastcode.graph.build import CodeGraphBuilder
 from fastcode.mcp_graph_tools import (
     compute_directed_path,
     compute_find_callers,

@@ -26,7 +26,7 @@ import pytest
 
 from fastcode.doc_ingester import KeyDocIngester
 from fastcode.embedder import CodeEmbedder
-from fastcode.graph_builder import CodeGraphBuilder
+from fastcode.graph.build import CodeGraphBuilder
 from fastcode.graph_runtime import LadybugGraphRuntime
 from fastcode.index_run import IndexRunStore
 from fastcode.indexer import CodeIndexer

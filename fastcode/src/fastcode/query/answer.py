@@ -3,13 +3,11 @@ Answer Generator - Generate answers using LLM with retrieved context
 """
 
 import logging
-import os
 import re
 from collections.abc import Callable, Generator
 from typing import Any, cast
 
 from anthropic import Anthropic
-from dotenv import load_dotenv
 from openai import OpenAI
 
 from ..llm_utils import openai_chat_completion
@@ -27,6 +25,10 @@ class AnswerGenerator:
         self.logger = logging.getLogger(__name__)
 
         self.provider = self.gen_config.get("provider", "openai")
+        self.model = self.gen_config.get("model")
+        self.base_url = self.gen_config.get("base_url")
+        self.api_key = self.gen_config.get("openai_api_key")
+        self.anthropic_api_key = self.gen_config.get("anthropic_api_key")
         # self.model = self.gen_config.get("model", "openai/gpt-oss-120b")
         # self.base_url = self.gen_config.get("base_url", "https://openrouter.ai/api/v1")
         self.temperature = self.gen_config.get("temperature", 0.4)
@@ -43,14 +45,7 @@ class AnswerGenerator:
         self.include_line_numbers = self.gen_config.get("include_line_numbers", True)
         self.include_related_code = self.gen_config.get("include_related_code", True)
 
-        # Load environment variables from .env file
-        load_dotenv()
-
         # Initialize LLM client
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-        self.base_url = os.getenv("BASE_URL")
-        self.model = os.getenv("MODEL")
         self.client: OpenAI | Anthropic | None = self._initialize_client()
 
     def _initialize_client(self) -> Any:

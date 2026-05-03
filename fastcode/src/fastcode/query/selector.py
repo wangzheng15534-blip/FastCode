@@ -4,12 +4,10 @@ Repository Selector - LLM-based repository and file selection for multi-repo sce
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 import logging
-import os
 import re
 from typing import Any
 
 from anthropic import Anthropic
-from dotenv import load_dotenv
 from openai import OpenAI
 
 from ..llm_utils import openai_chat_completion
@@ -23,15 +21,12 @@ class RepositorySelector:
         self.gen_config = config.get("generation", {})
         self.logger = logging.getLogger(__name__)
 
-        # Load environment variables
-        load_dotenv()
-
         # LLM settings
         self.provider = self.gen_config.get("provider", "openai")
-        self.model = os.getenv("MODEL")
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-        self.base_url = os.getenv("BASE_URL")
+        self.model = self.gen_config.get("model")
+        self.api_key = self.gen_config.get("openai_api_key")
+        self.anthropic_api_key = self.gen_config.get("anthropic_api_key")
+        self.base_url = self.gen_config.get("base_url")
 
         self.temperature = 0.2  # Low temperature for precise selection
         self.max_tokens = 2000

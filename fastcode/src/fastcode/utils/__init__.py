@@ -32,11 +32,14 @@ if TYPE_CHECKING:
     from fastcode.utils._compat import (
         calculate_code_complexity,
         clean_docstring,
+        config_to_legacy_dict,
         count_tokens,
         extract_code_snippet,
         format_code_block,
         load_config,
+        load_runtime_config,
         merge_dicts,
+        prepare_runtime_config_mapping,
         resolve_config_paths,
         safe_get,
         setup_logging,
@@ -47,11 +50,14 @@ if TYPE_CHECKING:
 _COMPAT_EXPORTS = {
     "calculate_code_complexity",
     "clean_docstring",
+    "config_to_legacy_dict",
     "count_tokens",
     "extract_code_snippet",
     "format_code_block",
     "load_config",
+    "load_runtime_config",
     "merge_dicts",
+    "prepare_runtime_config_mapping",
     "resolve_config_paths",
     "safe_get",
     "setup_logging",
@@ -124,12 +130,11 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    # From _compat (legacy re-exports)
     "calculate_code_complexity",
     "clean_docstring",
     "compute_file_hash",
+    "config_to_legacy_dict",
     "count_tokens",
-    # From utils sub-modules (new canonical locations)
     "deterministic_event_id",
     "ensure_dir",
     "extract_code_snippet",
@@ -142,8 +147,10 @@ __all__ = [
     "is_supported_file",
     "is_text_file",
     "load_config",
+    "load_runtime_config",
     "merge_dicts",
     "normalize_path",
+    "prepare_runtime_config_mapping",
     "projection_params_hash",
     "projection_scope_key",
     "remove_json_comments",

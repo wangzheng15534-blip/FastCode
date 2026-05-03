@@ -15,7 +15,6 @@ from anthropic import Anthropic
 
 if TYPE_CHECKING:
     from ..ir.element import CodeElement
-from dotenv import load_dotenv
 from openai import OpenAI
 
 from ..llm_utils import openai_chat_completion
@@ -92,12 +91,13 @@ class IterativeAgent:
         self.adaptive_line_budget: int = self.max_total_lines
 
         # LLM settings
-        load_dotenv()
         self.provider: str = self.gen_config.get("provider", "openai")
-        self.api_key: str | None = os.getenv("OPENAI_API_KEY")
-        self.anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY")
-        self.base_url: str | None = os.getenv("BASE_URL")
-        self.model: str | None = os.getenv("MODEL")
+        self.api_key: str | None = self.gen_config.get("openai_api_key")
+        self.anthropic_api_key: str | None = self.gen_config.get(
+            "anthropic_api_key"
+        )
+        self.base_url: str | None = self.gen_config.get("base_url")
+        self.model: str | None = self.gen_config.get("model")
 
         # Initialize LLM client
         self.client: OpenAI | Anthropic | None = self._initialize_client()

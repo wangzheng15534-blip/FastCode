@@ -7,7 +7,6 @@ import os
 from typing import Any
 
 from anthropic import Anthropic
-from dotenv import load_dotenv
 from openai import OpenAI
 
 from ..llm_utils import openai_chat_completion
@@ -23,15 +22,12 @@ class RepositoryOverviewGenerator:
         self.gen_config = config.get("generation", {})
         self.logger = logging.getLogger(__name__)
 
-        # Load environment variables
-        load_dotenv()
-
         # LLM settings for overview generation
         self.provider: str = self.gen_config.get("provider", "openai")
-        self.model: str | None = os.getenv("MODEL")
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-        self.base_url = os.getenv("BASE_URL")
+        self.model: str | None = self.gen_config.get("model")
+        self.api_key = self.gen_config.get("openai_api_key")
+        self.anthropic_api_key = self.gen_config.get("anthropic_api_key")
+        self.base_url = self.gen_config.get("base_url")
 
         self.temperature = 0.3  # Lower temperature for factual summaries
         self.max_tokens = 1000  # Longer for overview generation

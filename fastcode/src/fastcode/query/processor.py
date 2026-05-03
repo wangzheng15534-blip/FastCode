@@ -3,13 +3,11 @@ Query Processor - Process and enhance user queries with LLM-based understanding
 """
 
 import logging
-import os
 import re
 from dataclasses import dataclass
 from typing import Any
 
 from anthropic import Anthropic
-from dotenv import load_dotenv
 from openai import OpenAI
 
 from ..llm_utils import openai_chat_completion
@@ -73,17 +71,16 @@ class QueryProcessor:
         self.max_summary_words = self.query_config.get("max_summary_words", 250)
 
         # LLM settings
-        load_dotenv()
         self.provider = self.gen_config.get("provider", "openai")
-        self.model = os.getenv("MODEL")
+        self.model = self.gen_config.get("model")
+        self.api_key = self.gen_config.get("openai_api_key")
+        self.anthropic_api_key = self.gen_config.get("anthropic_api_key")
+        self.base_url = self.gen_config.get("base_url")
         self.temperature = 0.3  # Slightly higher for creative query expansion
         self.max_tokens = 2000  # Shorter responses for query processing
 
         # Initialize LLM client
         if self.use_llm_enhancement:
-            self.api_key = os.getenv("OPENAI_API_KEY")
-            self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-            self.base_url = os.getenv("BASE_URL")
             self.llm_client = self._initialize_llm_client()
         else:
             self.llm_client = None

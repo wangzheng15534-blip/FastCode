@@ -65,10 +65,11 @@ class ProjectionTransformer:
         self.llm_timeout_seconds = int(proj_cfg.get("llm_timeout_seconds", 8))
         self.llm_max_tokens = int(proj_cfg.get("llm_max_tokens", 180))
         self.llm_temperature = float(proj_cfg.get("llm_temperature", 0.2))
+        gen_cfg = config.get("generation", {})
         self._llm_client = None
-        self._llm_model = os.getenv("MODEL")
-        self._llm_base_url = os.getenv("BASE_URL")
-        self._llm_api_key = os.getenv("OPENAI_API_KEY")
+        self._llm_model = gen_cfg.get("model")
+        self._llm_base_url = gen_cfg.get("base_url")
+        self._llm_api_key = gen_cfg.get("openai_api_key")
         if self.llm_enabled and OpenAI is not None and self._llm_model:
             try:
                 self._llm_client = OpenAI(

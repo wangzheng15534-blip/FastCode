@@ -38,6 +38,7 @@ from ..query.handler import QueryPipeline
 from ..query.processor import QueryProcessor
 from ..retrieval.core import snapshot as _snapshot
 from ..retrieval.hybrid import HybridRetriever
+from ..schemas.config import FastCodeConfig, config_from_mapping
 from ..scip.symbol_resolver import SymbolResolver
 from ..semantic import build_default_semantic_resolver_registry
 from ..semantic.symbol_index import SnapshotSymbolIndex
@@ -49,9 +50,10 @@ from ..store.projection import ProjectionStore
 from ..store.snapshot import SnapshotStore
 from ..store.vector import VectorStore
 from ..utils import (
+    config_to_legacy_dict,
     ensure_dir,
-    load_config,
-    resolve_config_paths,
+    load_runtime_config,
+    prepare_runtime_config_mapping,
     setup_logging,
 )
 
@@ -85,11 +87,17 @@ class FastCode:
                     break
 
         if config_path and os.path.exists(config_path):
-            self.config = load_config(config_path)
+            self.runtime_config = load_runtime_config(config_path)
         else:
             # Use default configuration
-            self.config = self._get_default_config()
-            self.config = resolve_config_paths(self.config, project_root)
+            raw_default_config = self._get_default_config()
+            resolved_default_config = prepare_runtime_config_mapping(
+                raw_default_config,
+                project_root=project_root,
+            )
+            self.runtime_config = config_from_mapping(resolved_default_config)
+
+        self.config = config_to_legacy_dict(self.runtime_config)
 
         # Evaluation-specific overrides (keep core system decoupled)
         self.eval_config = self.config.get("evaluation", {})
@@ -98,12 +106,18 @@ class FastCode:
 
         # Ensure in-memory mode disables disk-based caches/persistence
         if self.in_memory_index:
-            self.config.setdefault("vector_store", {})["in_memory"] = True
-            self.config.setdefault("cache", {})["enabled"] = False
+            self._set_runtime_config(
+                self.runtime_config.with_runtime_overrides(
+                    in_memory_index=True,
+                    cache_enabled=False,
+                )
+            )
 
         # Allow explicit cache disable via evaluation config
         if self.eval_config.get("disable_cache", False):
-            self.config.setdefault("cache", {})["enabled"] = False
+            self._set_runtime_config(
+                self.runtime_config.with_runtime_overrides(cache_enabled=False)
+            )
 
         # Setup logging
         self.logger = setup_logging(self.config)
@@ -246,6 +260,37 @@ class FastCode:
             str, dict[str, Any]
         ] = {}  # {repo_name: repo_info}
 
+    def _set_runtime_config(self, config: FastCodeConfig) -> None:
+        """Replace canonical runtime config and refresh dict compatibility view."""
+        self.runtime_config = config
+        self.config = config_to_legacy_dict(config)
+        self.eval_config = self.config.get("evaluation", {})
+        self.eval_mode = self.eval_config.get("enabled", False)
+        self.in_memory_index = self.eval_config.get("in_memory_index", False)
+
+    def _set_repo_root(self, repo_root: str) -> None:
+        """Explicit runtime mutation point for repository-root binding."""
+        self._set_runtime_config(
+            self.runtime_config.with_runtime_overrides(repo_root=repo_root)
+        )
+
+    def apply_repository_runtime_overrides(
+        self,
+        *,
+        ignore_patterns: tuple[str, ...] | None = None,
+        exclude_site_packages: bool | None = None,
+    ) -> None:
+        """Apply repository-scanning policy overrides and refresh loader state."""
+        self._set_runtime_config(
+            self.runtime_config.with_runtime_overrides(
+                repository_ignore_patterns=ignore_patterns,
+                repository_exclude_site_packages=exclude_site_packages,
+            )
+        )
+        repository_cfg = self.config.get("repository", {})
+        self.loader.repo_config = repository_cfg
+        self.loader.ignore_patterns = repository_cfg.get("ignore_patterns", [])
+
     @staticmethod
     def _infer_is_url(source: str) -> bool:
         return IndexPipeline._infer_is_url(source)
@@ -286,7 +331,7 @@ class FastCode:
             # CRITICAL: Update config with the actual repo path.
             # This ensures path_utils can correctly normalize paths relative to the root.
             if self.loader.repo_path:
-                self.config["repo_root"] = self.loader.repo_path
+                self._set_repo_root(self.loader.repo_path)
                 self.logger.info(f"Set repo_root to: {self.loader.repo_path}")
 
                 # Initialize retriever agents if agency mode is enabled
@@ -362,7 +407,7 @@ class FastCode:
                 repo_root = self.config.get("repo_root")
                 if not repo_root and self.loader.repo_path:
                     repo_root = self.loader.repo_path
-                    self.config["repo_root"] = repo_root
+                    self._set_repo_root(repo_root)
 
                 # 1. Create GlobalIndexBuilder
                 self.global_index_builder = GlobalIndexBuilder(self.config)
@@ -1059,6 +1104,7 @@ class FastCode:
                 "clone_depth": 1,  # [INTERNAL] git shallow clone depth
                 "max_file_size_mb": 5,  # [TUNABLE]  skip files larger than this
                 "backup_directory": "./repo_backup",  # [TUNABLE] backup location
+                "exclude_site_packages": False,  # [TUNABLE] ignore vendored site-packages
                 "ignore_patterns": [
                     "*.pyc",
                     "__pycache__",
@@ -1148,6 +1194,8 @@ class FastCode:
                 "backend": "disk",  # [ESSENTIAL] "disk" or "redis"
                 "cache_directory": "./data/cache",  # [TUNABLE]
                 "cache_queries": False,  # [INTERNAL]
+                "redis_host": "localhost",  # [ESSENTIAL] Redis cache host
+                "redis_port": 6379,  # [ESSENTIAL] Redis cache port
             },
             # ── logging ──────────────────────────────────────────────
             "logging": {
@@ -1221,7 +1269,7 @@ class FastCode:
 
                 # Update config with repo_root for each repo (Critical for graph building)
                 if self.loader.repo_path:
-                    self.config["repo_root"] = self.loader.repo_path
+                    self._set_repo_root(self.loader.repo_path)
 
                 # Store repository info
                 self.loaded_repositories[repo_name] = repo_info
@@ -1749,7 +1797,7 @@ class FastCode:
             return {"status": "path_not_found", "changes": 0}
 
         self.loader.load_from_path(repo_path)
-        self.config["repo_root"] = repo_path
+        self._set_repo_root(repo_path)
 
         # 3. Scan current files and detect changes
         current_files = self.loader.scan_files()

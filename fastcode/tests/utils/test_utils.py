@@ -7,6 +7,7 @@ import tempfile
 from typing import Any
 
 import pytest
+from _pytest.monkeypatch import MonkeyPatch
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -24,6 +25,7 @@ from fastcode.utils import (
     is_text_file,
     merge_dicts,
     normalize_path,
+    prepare_runtime_config_mapping,
     resolve_config_paths,
     safe_get,
     safe_jsonable,
@@ -460,6 +462,39 @@ class TestResolveConfigPathsEdge:
         cfg = {"repo_root": ""}
         result = resolve_config_paths(cfg, "/project")
         assert result["repo_root"] in ("", None)
+
+
+class TestPrepareRuntimeConfigMapping:
+    @pytest.mark.edge
+    def test_env_overrides_generation_runtime_settings_property(
+        self, monkeypatch: MonkeyPatch
+    ):
+        monkeypatch.setenv("FASTCODE_STORAGE_BACKEND", "postgres")
+        monkeypatch.setenv("FASTCODE_POSTGRES_DSN", "postgresql://storage")
+        monkeypatch.setenv(
+            "FASTCODE_PROJECTION_POSTGRES_DSN", "postgresql://projection"
+        )
+        monkeypatch.setenv("FASTCODE_EXCLUDE_SITE_PACKAGES", "true")
+        monkeypatch.setenv("MODEL", "env-model")
+        monkeypatch.setenv("BASE_URL", "https://env.example/api")
+        monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+        monkeypatch.setenv("REDIS_HOST", "redis.env")
+        monkeypatch.setenv("REDIS_PORT", "6381")
+
+        cfg = {"generation": {"provider": "openai", "model": "config-model"}}
+        result = prepare_runtime_config_mapping(cfg, project_root="/project")
+
+        assert result["storage"]["backend"] == "postgres"
+        assert result["storage"]["postgres_dsn"] == "postgresql://storage"
+        assert result["projection"]["postgres_dsn"] == "postgresql://projection"
+        assert result["repository"]["exclude_site_packages"] is True
+        assert result["generation"]["model"] == "env-model"
+        assert result["generation"]["base_url"] == "https://env.example/api"
+        assert result["generation"]["openai_api_key"] == "openai-secret"
+        assert result["generation"]["anthropic_api_key"] == "anthropic-secret"
+        assert result["cache"]["redis_host"] == "redis.env"
+        assert result["cache"]["redis_port"] == "6381"
 
 
 class TestCalculateCodeComplexityEdge:

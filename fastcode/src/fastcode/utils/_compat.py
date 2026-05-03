@@ -6,15 +6,19 @@ import builtins
 import hashlib
 import logging
 import os
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 import yaml
+from dotenv import load_dotenv
 from pathspec import PathSpec  # type: ignore[import-untyped]
 from pathspec.patterns.gitwildmatch import (
     GitWildMatchPattern,  # type: ignore[import-untyped]
 )
+
+from fastcode.schemas.config import FastCodeConfig, config_from_mapping
 
 from .paths import get_language_from_extension as _canonical_get_language_from_extension
 
@@ -58,7 +62,7 @@ def setup_logging(config: dict[str, Any]) -> logging.Logger:
 def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
     """Load configuration from YAML file"""
     with open(config_path) as f:
-        config = yaml.safe_load(f)
+        config = yaml.safe_load(f) or {}
 
     # Resolve relative paths against FastCode project root inferred from config path.
     config_file = Path(config_path).resolve()
@@ -67,7 +71,87 @@ def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
     else:
         project_root = config_file.parent
 
-    return resolve_config_paths(config, str(project_root))
+    resolved = prepare_runtime_config_mapping(
+        config,
+        project_root=str(project_root),
+        config_dir=str(config_file.parent),
+    )
+    return config_to_legacy_dict(config_from_mapping(resolved))
+
+
+def load_runtime_config(config_path: str = "config/config.yaml") -> FastCodeConfig:
+    """Load configuration from YAML into the canonical frozen runtime config."""
+    with open(config_path) as f:
+        config = yaml.safe_load(f) or {}
+
+    config_file = Path(config_path).resolve()
+    if config_file.parent.name == "config":
+        project_root = config_file.parent.parent
+    else:
+        project_root = config_file.parent
+
+    resolved = prepare_runtime_config_mapping(
+        config,
+        project_root=str(project_root),
+        config_dir=str(config_file.parent),
+    )
+    return config_from_mapping(resolved)
+
+
+def config_to_legacy_dict(config: FastCodeConfig) -> dict[str, Any]:
+    """Convert frozen runtime config into the existing dict compatibility view."""
+    return asdict(config)
+
+
+def prepare_runtime_config_mapping(
+    config: dict[str, Any],
+    *,
+    project_root: str,
+    config_dir: str | None = None,
+) -> dict[str, Any]:
+    """Resolve paths and env-backed runtime overrides for a raw config mapping."""
+    if config_dir:
+        load_dotenv(Path(config_dir) / ".env")
+    load_dotenv(Path(project_root) / ".env")
+    resolved = resolve_config_paths(config, project_root)
+    _apply_runtime_env_overrides(resolved)
+    return resolved
+
+
+def _apply_runtime_env_overrides(config: dict[str, Any]) -> None:
+    """Overlay runtime env-backed shell settings onto the config mapping."""
+    storage_cfg = cast(dict[str, Any], config.setdefault("storage", {}))
+    generation_cfg = cast(dict[str, Any], config.setdefault("generation", {}))
+    cache_cfg = cast(dict[str, Any], config.setdefault("cache", {}))
+    repository_cfg = cast(dict[str, Any], config.setdefault("repository", {}))
+    projection_cfg = cast(dict[str, Any], config.setdefault("projection", {}))
+
+    generation_env_overrides = {
+        "model": os.getenv("MODEL"),
+        "base_url": os.getenv("BASE_URL"),
+        "openai_api_key": os.getenv("OPENAI_API_KEY"),
+        "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY"),
+    }
+    for key, env_value in generation_env_overrides.items():
+        if env_value:
+            generation_cfg[key] = env_value
+
+    if backend := os.getenv("FASTCODE_STORAGE_BACKEND"):
+        storage_cfg["backend"] = backend
+    if dsn := os.getenv("FASTCODE_POSTGRES_DSN"):
+        storage_cfg["postgres_dsn"] = dsn
+    if projection_dsn := os.getenv("FASTCODE_PROJECTION_POSTGRES_DSN"):
+        projection_cfg["postgres_dsn"] = projection_dsn
+    if redis_host := os.getenv("REDIS_HOST"):
+        cache_cfg["redis_host"] = redis_host
+    if redis_port := os.getenv("REDIS_PORT"):
+        cache_cfg["redis_port"] = redis_port
+    if exclude_site_packages := os.getenv("FASTCODE_EXCLUDE_SITE_PACKAGES"):
+        repository_cfg["exclude_site_packages"] = exclude_site_packages.lower() in {
+            "1",
+            "true",
+            "yes",
+        }
 
 
 def resolve_config_paths(config: dict[str, Any], project_root: str) -> dict[str, Any]:

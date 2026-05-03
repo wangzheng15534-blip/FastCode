@@ -414,7 +414,6 @@ class TestSnapshotSaveLoadProperties:
         result = store.resolve_snapshot_for_ref_record("repo", "main")
 
         assert isinstance(result, SnapshotRefRecord)
-        assert result is not None
         assert result.snapshot_id == "snap:repo:typed"
         with pytest.raises(AttributeError):
             result.snapshot_id = "snap:repo:other"  # type: ignore[misc]
@@ -431,18 +430,6 @@ class TestSnapshotSaveLoadProperties:
         assert record is not None
         assert isinstance(record, SnapshotRecord)
         assert record.metadata_json is not None
-
-    @given(snap=snapshot_st())
-    @settings(max_examples=10)
-    def test_get_snapshot_record_returns_typed_record(self, snap: IRSnapshot):
-        from fastcode.store_records import SnapshotRecord
-
-        store = _make_store()
-        store.save_snapshot(snap)
-        record = store.get_snapshot_record(snap.snapshot_id)
-        assert isinstance(record, SnapshotRecord)
-        assert record.snapshot_id == snap.snapshot_id
-        assert record.artifact_key != ""
 
 
 # --- TestSnapshotStoreQueries ---

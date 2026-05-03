@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from ..ir.types import (
+from ...ir.types import (
     IRCodeUnit,
     IRRelation,
     IRSnapshot,
@@ -12,7 +12,7 @@ from ..ir.types import (
     IRUnitSupport,
     resolution_rank,
 )
-from ..utils import safe_jsonable
+from ...utils import safe_jsonable
 from .base import ResolutionPatch, ResolutionTier
 
 

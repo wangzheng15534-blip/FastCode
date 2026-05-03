@@ -24,7 +24,7 @@ class JavaScriptSemanticResolver(GraphBackedSemanticResolver):
     )
     cost_class = "medium"
     source_name = "javascript_resolver"
-    extractor_name = "fastcode.semantic_resolvers.javascript"
+    extractor_name = "fastcode.semantic.resolvers.javascript"
     frontend_kind = "typescript_compiler_api_fallback"
     required_tools = ("node",)
 
@@ -41,7 +41,7 @@ class TypeScriptSemanticResolver(GraphBackedSemanticResolver):
     )
     cost_class = "medium"
     source_name = "typescript_resolver"
-    extractor_name = "fastcode.semantic_resolvers.typescript"
+    extractor_name = "fastcode.semantic.resolvers.typescript"
     frontend_kind = "typescript_compiler_api_fallback"
     required_tools = ("node", "tsc")
 
@@ -58,7 +58,7 @@ class JavaSemanticResolver(GraphBackedSemanticResolver):
     )
     cost_class = "high"
     source_name = "java_resolver"
-    extractor_name = "fastcode.semantic_resolvers.java"
+    extractor_name = "fastcode.semantic.resolvers.java"
     frontend_kind = "jdt_fallback"
     required_tools = ("java",)
 
@@ -75,7 +75,7 @@ class GoSemanticResolver(GraphBackedSemanticResolver):
     )
     cost_class = "medium"
     source_name = "go_resolver"
-    extractor_name = "fastcode.semantic_resolvers.go"
+    extractor_name = "fastcode.semantic.resolvers.go"
     frontend_kind = "go_packages_fallback"
     required_tools = ("go",)
 
@@ -93,7 +93,7 @@ class RustSemanticResolver(GraphBackedSemanticResolver):
     )
     cost_class = "high"
     source_name = "rust_resolver"
-    extractor_name = "fastcode.semantic_resolvers.rust"
+    extractor_name = "fastcode.semantic.resolvers.rust"
     frontend_kind = "rust_analyzer_fallback"
     required_tools = ("rust-analyzer",)
 
@@ -110,7 +110,7 @@ class CSharpSemanticResolver(GraphBackedSemanticResolver):
     )
     cost_class = "high"
     source_name = "csharp_resolver"
-    extractor_name = "fastcode.semantic_resolvers.csharp"
+    extractor_name = "fastcode.semantic.resolvers.csharp"
     frontend_kind = "roslyn_fallback"
     required_tools = ("dotnet",)
 
@@ -127,7 +127,7 @@ class ZigSemanticResolver(GraphBackedSemanticResolver):
     )
     cost_class = "high"
     source_name = "zig_resolver"
-    extractor_name = "fastcode.semantic_resolvers.zig"
+    extractor_name = "fastcode.semantic.resolvers.zig"
     frontend_kind = "zls_fallback"
     required_tools = ("zig", "zls")
 
@@ -144,7 +144,7 @@ class FortranSemanticResolver(GraphBackedSemanticResolver):
     )
     cost_class = "high"
     source_name = "fortran_resolver"
-    extractor_name = "fastcode.semantic_resolvers.fortran"
+    extractor_name = "fastcode.semantic.resolvers.fortran"
     frontend_kind = "fortls_fallback"
     required_tools = ("fortls",)
 
@@ -161,6 +161,6 @@ class JuliaSemanticResolver(GraphBackedSemanticResolver):
     )
     cost_class = "high"
     source_name = "julia_resolver"
-    extractor_name = "fastcode.semantic_resolvers.julia"
+    extractor_name = "fastcode.semantic.resolvers.julia"
     frontend_kind = "julia_language_server_fallback"
     required_tools = ("julia",)

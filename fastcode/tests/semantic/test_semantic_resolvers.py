@@ -16,7 +16,7 @@ from fastcode.ir.element import CodeElement
 from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
 from fastcode.main import FastCode
 from fastcode.pipeline import IndexPipeline
-from fastcode.semantic_resolvers import (
+from fastcode.semantic.resolvers import (
     PYTHON_RESOLVER_EXTRACTOR,
     PYTHON_RESOLVER_SOURCE,
     CppSemanticResolver,
@@ -35,13 +35,13 @@ from fastcode.semantic_resolvers import (
     apply_resolution_patch,
     build_default_semantic_resolver_registry,
 )
-from fastcode.semantic_resolvers._utils import (
+from fastcode.semantic.resolvers._utils import (
     _hash_id,
     _normalize_path,
     validate_helper_paths,
 )
-from fastcode.semantic_resolvers.helper_backed import HelperBackedSemanticResolver
-from fastcode.semantic_resolvers.patching import _source_preference
+from fastcode.semantic.resolvers.helper_backed import HelperBackedSemanticResolver
+from fastcode.semantic.resolvers.patching import _source_preference
 
 
 def _file_unit(path: str, *, language: str = "python") -> IRCodeUnit:
@@ -537,7 +537,7 @@ def test_graph_backed_language_resolver_records_missing_tool_diagnostics():
     ]
 
     with patch(
-        "fastcode.semantic_resolvers.graph_backed.shutil.which", return_value=None
+        "fastcode.semantic.resolvers.graph_backed.shutil.which", return_value=None
     ):
         patch_result = resolver.resolve(
             snapshot=snapshot,
@@ -835,7 +835,7 @@ def test_resolver_failure_gracefully_degrades():
         ) -> NoReturn:
             raise RuntimeError("resolver crashed")
 
-    from fastcode.semantic_resolvers import SemanticResolverRegistry
+    from fastcode.semantic.resolvers import SemanticResolverRegistry
 
     fc.semantic_resolver_registry = SemanticResolverRegistry([BrokenResolver()])
     fc.pipeline.semantic_resolver_registry = fc.semantic_resolver_registry
@@ -861,7 +861,7 @@ def test_resolver_failure_gracefully_degrades():
 
 def test_semantic_capability_constants_are_strings():
     """SemanticCapability constants must be plain strings."""
-    from fastcode.semantic_resolvers.base import SemanticCapability
+    from fastcode.semantic.resolvers.base import SemanticCapability
 
     caps = [
         SemanticCapability.RESOLVE_CALLS,
@@ -880,7 +880,7 @@ def test_semantic_capability_constants_are_strings():
 
 def test_resolution_tier_constants():
     """ResolutionTier constants must be plain strings."""
-    from fastcode.semantic_resolvers.base import ResolutionTier
+    from fastcode.semantic.resolvers.base import ResolutionTier
 
     assert ResolutionTier.STRUCTURAL_FALLBACK == "structural_fallback"
     assert ResolutionTier.COMPILER_CONFIRMED == "compiler_confirmed"
@@ -889,7 +889,7 @@ def test_resolution_tier_constants():
 
 def test_semantic_resolution_request_is_frozen():
     """SemanticResolutionRequest must be an immutable dataclass."""
-    from fastcode.semantic_resolvers.base import SemanticResolutionRequest
+    from fastcode.semantic.resolvers.base import SemanticResolutionRequest
 
     req = SemanticResolutionRequest(
         snapshot_id="snap:1",
@@ -905,7 +905,7 @@ def test_semantic_resolution_request_is_frozen():
 
 def test_resolution_patch_has_resolution_tier_default():
     """ResolutionPatch must default to structural_fallback tier."""
-    from fastcode.semantic_resolvers.base import ResolutionTier
+    from fastcode.semantic.resolvers.base import ResolutionTier
 
     patch = ResolutionPatch()
     assert patch.resolution_tier == ResolutionTier.STRUCTURAL_FALLBACK
@@ -927,7 +927,7 @@ def test_resolution_patch_defaults_are_independent_per_instance():
 
 def test_semantic_resolution_request_tool_context_defaults_are_independent():
     """Mutable request tool_context must not be shared across instances."""
-    from fastcode.semantic_resolvers.base import SemanticResolutionRequest
+    from fastcode.semantic.resolvers.base import SemanticResolutionRequest
 
     request_a = SemanticResolutionRequest(
         snapshot_id="snap:1",
@@ -1068,7 +1068,7 @@ def test_graph_backed_relations_carry_resolution_tier_metadata():
     """Relations emitted by graph-backed resolvers must carry
     resolution_tier: structural_fallback in metadata.
     """
-    from fastcode.semantic_resolvers.base import ResolutionTier
+    from fastcode.semantic.resolvers.base import ResolutionTier
 
     resolver = build_default_semantic_resolver_registry().all()[1]
     # Should be JS compiler resolver wrapping graph-backed
@@ -1107,10 +1107,10 @@ def test_graph_backed_relations_carry_resolution_tier_metadata():
 
     with (
         patch(
-            "fastcode.semantic_resolvers.helper_backed.shutil.which", return_value=None
+            "fastcode.semantic.resolvers.helper_backed.shutil.which", return_value=None
         ),
         patch(
-            "fastcode.semantic_resolvers.graph_backed.shutil.which", return_value=None
+            "fastcode.semantic.resolvers.graph_backed.shutil.which", return_value=None
         ),
     ):
         result = resolver.resolve(
@@ -1168,10 +1168,10 @@ def test_graph_backed_relations_carry_pending_capabilities_when_tools_missing():
 
     with (
         patch(
-            "fastcode.semantic_resolvers.helper_backed.shutil.which", return_value=None
+            "fastcode.semantic.resolvers.helper_backed.shutil.which", return_value=None
         ),
         patch(
-            "fastcode.semantic_resolvers.graph_backed.shutil.which", return_value=None
+            "fastcode.semantic.resolvers.graph_backed.shutil.which", return_value=None
         ),
     ):
         result = resolver.resolve(
@@ -1216,15 +1216,15 @@ def test_compiler_resolver_emits_diagnostics_when_tools_missing(
 
     # Map resolver class names to their modules
     module_map = {
-        "JavaScriptCompilerResolver": "fastcode.semantic_resolvers.js_ts",
-        "TypeScriptCompilerResolver": "fastcode.semantic_resolvers.js_ts",
-        "JavaCompilerResolver": "fastcode.semantic_resolvers.java",
-        "GoCompilerResolver": "fastcode.semantic_resolvers.go",
-        "RustCompilerResolver": "fastcode.semantic_resolvers.rust",
-        "CSharpCompilerResolver": "fastcode.semantic_resolvers.csharp",
-        "ZigCompilerResolver": "fastcode.semantic_resolvers.zig",
-        "FortranCompilerResolver": "fastcode.semantic_resolvers.fortran",
-        "JuliaCompilerResolver": "fastcode.semantic_resolvers.julia",
+        "JavaScriptCompilerResolver": "fastcode.semantic.resolvers.js_ts",
+        "TypeScriptCompilerResolver": "fastcode.semantic.resolvers.js_ts",
+        "JavaCompilerResolver": "fastcode.semantic.resolvers.java",
+        "GoCompilerResolver": "fastcode.semantic.resolvers.go",
+        "RustCompilerResolver": "fastcode.semantic.resolvers.rust",
+        "CSharpCompilerResolver": "fastcode.semantic.resolvers.csharp",
+        "ZigCompilerResolver": "fastcode.semantic.resolvers.zig",
+        "FortranCompilerResolver": "fastcode.semantic.resolvers.fortran",
+        "JuliaCompilerResolver": "fastcode.semantic.resolvers.julia",
     }
     mod = importlib.import_module(module_map[resolver_cls])
     cls = getattr(mod, resolver_cls)
@@ -1246,7 +1246,7 @@ def test_compiler_resolver_emits_diagnostics_when_tools_missing(
     # _has_tools lives in HelperBackedSemanticResolver (helper_backed.py),
     # so patch shutil.which there.
     with patch(
-        "fastcode.semantic_resolvers.helper_backed.shutil.which", return_value=None
+        "fastcode.semantic.resolvers.helper_backed.shutil.which", return_value=None
     ):
         result = resolver.resolve(
             snapshot=snapshot,
@@ -1285,15 +1285,15 @@ def test_compiler_resolver_spec_matches_language(resolver_cls: str, language: st
     import importlib
 
     module_map = {
-        "JavaScriptCompilerResolver": "fastcode.semantic_resolvers.js_ts",
-        "TypeScriptCompilerResolver": "fastcode.semantic_resolvers.js_ts",
-        "JavaCompilerResolver": "fastcode.semantic_resolvers.java",
-        "GoCompilerResolver": "fastcode.semantic_resolvers.go",
-        "RustCompilerResolver": "fastcode.semantic_resolvers.rust",
-        "CSharpCompilerResolver": "fastcode.semantic_resolvers.csharp",
-        "ZigCompilerResolver": "fastcode.semantic_resolvers.zig",
-        "FortranCompilerResolver": "fastcode.semantic_resolvers.fortran",
-        "JuliaCompilerResolver": "fastcode.semantic_resolvers.julia",
+        "JavaScriptCompilerResolver": "fastcode.semantic.resolvers.js_ts",
+        "TypeScriptCompilerResolver": "fastcode.semantic.resolvers.js_ts",
+        "JavaCompilerResolver": "fastcode.semantic.resolvers.java",
+        "GoCompilerResolver": "fastcode.semantic.resolvers.go",
+        "RustCompilerResolver": "fastcode.semantic.resolvers.rust",
+        "CSharpCompilerResolver": "fastcode.semantic.resolvers.csharp",
+        "ZigCompilerResolver": "fastcode.semantic.resolvers.zig",
+        "FortranCompilerResolver": "fastcode.semantic.resolvers.fortran",
+        "JuliaCompilerResolver": "fastcode.semantic.resolvers.julia",
     }
     mod = importlib.import_module(module_map[resolver_cls])
     cls = getattr(mod, resolver_cls)
@@ -1884,7 +1884,7 @@ def test_helper_backed_resolver_skips_ambiguous_import_target_matches() -> None:
 def test_helper_backed_resolver_records_helper_json_failure() -> None:
     resolver = _DummyHelperResolver()
     patch_result = ResolutionPatch()
-    with patch("fastcode.semantic_resolvers.helper_backed.subprocess.run") as run_mock:
+    with patch("fastcode.semantic.resolvers.helper_backed.subprocess.run") as run_mock:
         run_mock.return_value = SimpleNamespace(returncode=0, stdout="{", stderr="")
         payload = resolver._run_semantic_helper(
             ["/tmp/a.py"], patch_result, repo_root="/tmp"
@@ -1919,10 +1919,10 @@ def test_helper_backed_resolver_falls_back_on_helper_nonzero_exit(
     with (
         patch.object(resolver, "_has_tools", return_value=True),
         patch(
-            "fastcode.semantic_resolvers.helper_backed.os.getcwd",
+            "fastcode.semantic.resolvers.helper_backed.os.getcwd",
             return_value=str(tmp_path),
         ),
-        patch("fastcode.semantic_resolvers.helper_backed.subprocess.run") as run_mock,
+        patch("fastcode.semantic.resolvers.helper_backed.subprocess.run") as run_mock,
     ):
         run_mock.return_value = SimpleNamespace(returncode=7, stdout="", stderr="boom")
         patch_result = resolver.resolve(
@@ -1968,11 +1968,11 @@ def test_helper_backed_resolver_falls_back_on_helper_timeout(tmp_path: Path) -> 
     with (
         patch.object(resolver, "_has_tools", return_value=True),
         patch(
-            "fastcode.semantic_resolvers.helper_backed.os.getcwd",
+            "fastcode.semantic.resolvers.helper_backed.os.getcwd",
             return_value=str(tmp_path),
         ),
         patch(
-            "fastcode.semantic_resolvers.helper_backed.subprocess.run",
+            "fastcode.semantic.resolvers.helper_backed.subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd=["dummy"], timeout=1),
         ),
     ):
@@ -2005,11 +2005,11 @@ def test_helper_backed_resolver_keeps_compiler_tier_on_valid_empty_payload(
     with (
         patch.object(resolver, "_has_tools", return_value=True),
         patch(
-            "fastcode.semantic_resolvers.helper_backed.os.getcwd",
+            "fastcode.semantic.resolvers.helper_backed.os.getcwd",
             return_value=str(tmp_path),
         ),
         patch(
-            "fastcode.semantic_resolvers.helper_backed.subprocess.run",
+            "fastcode.semantic.resolvers.helper_backed.subprocess.run",
             return_value=SimpleNamespace(returncode=0, stdout="{}", stderr=""),
         ),
     ):
@@ -2104,10 +2104,10 @@ def test_helper_backed_resolver_uses_snapshot_repo_root_for_helper_execution(
     with (
         patch.object(resolver, "_has_tools", return_value=True),
         patch(
-            "fastcode.semantic_resolvers.helper_backed.os.getcwd",
+            "fastcode.semantic.resolvers.helper_backed.os.getcwd",
             return_value=str(foreign_cwd),
         ),
-        patch("fastcode.semantic_resolvers.helper_backed.subprocess.run") as run_mock,
+        patch("fastcode.semantic.resolvers.helper_backed.subprocess.run") as run_mock,
     ):
         run_mock.return_value = SimpleNamespace(returncode=0, stdout="{}", stderr="")
         patch_result = resolver.resolve(
@@ -2235,43 +2235,43 @@ class TestSharedUtils:
 _HELPER_RESOLVER_SPECS: list[tuple[str, str, str]] = [
     (
         "TypeScriptCompilerResolver",
-        "fastcode.semantic_resolvers.js_ts",
+        "fastcode.semantic.resolvers.js_ts",
         "ts_semantic_helper.js",
     ),
     (
         "JavaScriptCompilerResolver",
-        "fastcode.semantic_resolvers.js_ts",
+        "fastcode.semantic.resolvers.js_ts",
         "ts_semantic_helper.js",
     ),
-    ("GoCompilerResolver", "fastcode.semantic_resolvers.go", "go_semantic_helper.go"),
+    ("GoCompilerResolver", "fastcode.semantic.resolvers.go", "go_semantic_helper.go"),
     (
         "JavaCompilerResolver",
-        "fastcode.semantic_resolvers.java",
+        "fastcode.semantic.resolvers.java",
         "java_semantic_helper.py",
     ),
     (
         "RustCompilerResolver",
-        "fastcode.semantic_resolvers.rust",
+        "fastcode.semantic.resolvers.rust",
         "rust_semantic_helper.py",
     ),
     (
         "CSharpCompilerResolver",
-        "fastcode.semantic_resolvers.csharp",
+        "fastcode.semantic.resolvers.csharp",
         "csharp_semantic_helper.py",
     ),
     (
         "ZigCompilerResolver",
-        "fastcode.semantic_resolvers.zig",
+        "fastcode.semantic.resolvers.zig",
         "zig_semantic_helper.py",
     ),
     (
         "FortranCompilerResolver",
-        "fastcode.semantic_resolvers.fortran",
+        "fastcode.semantic.resolvers.fortran",
         "fortran_semantic_helper.py",
     ),
     (
         "JuliaCompilerResolver",
-        "fastcode.semantic_resolvers.julia",
+        "fastcode.semantic.resolvers.julia",
         "julia_semantic_helper.py",
     ),
 ]
@@ -2312,7 +2312,7 @@ def test_helper_path_returns_existing_file_for_each_resolver(
 @pytest.mark.regression
 def test_helper_command_includes_existing_helper_path() -> None:
     """_helper_command() must build a command whose helper path exists."""
-    from fastcode.semantic_resolvers.js_ts import TypeScriptCompilerResolver
+    from fastcode.semantic.resolvers.js_ts import TypeScriptCompilerResolver
 
     resolver = TypeScriptCompilerResolver()
     command = resolver._helper_command(["/tmp/app.ts"])
@@ -2360,7 +2360,7 @@ def test_helper_backed_resolver_degrades_gracefully_when_helper_file_missing(
     with (
         patch.object(resolver, "_has_tools", return_value=True),
         patch(
-            "fastcode.semantic_resolvers.helper_backed.os.getcwd",
+            "fastcode.semantic.resolvers.helper_backed.os.getcwd",
             return_value=str(tmp_path),
         ),
     ):
@@ -2384,8 +2384,8 @@ def test_helper_path_co_located_with_resolver_module() -> None:
     module.  _helper_path() uses Path(__file__).with_name(), so the helper
     must be co-located.
     """
-    import fastcode.semantic_resolvers.helper_backed as _hb_mod
-    from fastcode.semantic_resolvers.java import JavaCompilerResolver
+    import fastcode.semantic.resolvers.helper_backed as _hb_mod
+    from fastcode.semantic.resolvers.java import JavaCompilerResolver
 
     module_dir = Path(_hb_mod.__file__).parent
     resolver = JavaCompilerResolver()

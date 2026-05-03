@@ -14,7 +14,7 @@ from .answer_generator import AnswerGenerator
 from .query_processor import QueryProcessor
 from .retrieval.core import snapshot as _snapshot
 from .retrieval.hybrid import HybridRetriever
-from .snapshot_symbol_index import SnapshotSymbolIndex
+from .semantic.symbol_index import SnapshotSymbolIndex
 from .store.cache import CacheManager
 from .store.manifest import ManifestStore
 from .store.snapshot import SnapshotStore

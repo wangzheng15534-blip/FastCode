@@ -5,7 +5,7 @@ from __future__ import annotations
 from .graph_backed import GraphBackedSemanticResolver
 
 PYTHON_RESOLVER_SOURCE = "python_resolver"
-PYTHON_RESOLVER_EXTRACTOR = "fastcode.semantic_resolvers.python"
+PYTHON_RESOLVER_EXTRACTOR = "fastcode.semantic.resolvers.python"
 
 
 class PythonSemanticResolver(GraphBackedSemanticResolver):

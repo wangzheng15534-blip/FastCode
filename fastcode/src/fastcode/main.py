@@ -38,10 +38,8 @@ from .redo_worker import RedoWorker
 from .retrieval.core import snapshot as _snapshot
 from .retrieval.hybrid import HybridRetriever
 from .scip.symbol_resolver import SymbolResolver
-from .semantic_resolvers import (
-    build_default_semantic_resolver_registry,
-)
-from .snapshot_symbol_index import SnapshotSymbolIndex
+from .semantic import build_default_semantic_resolver_registry
+from .semantic.symbol_index import SnapshotSymbolIndex
 from .store.cache import CacheManager
 from .store.index_run import IndexRunStore
 from .store.manifest import ManifestStore

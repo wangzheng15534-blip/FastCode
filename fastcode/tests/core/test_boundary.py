@@ -290,10 +290,10 @@ class TestArchitectureBoundaries:
         )
 
     def test_semantic_resolvers_do_not_import_infrastructure(self) -> None:
-        """semantic_resolvers/ must not import from infrastructure/."""
-        resolvers_dir = CORE_DIR.parent / "semantic_resolvers"
+        """semantic/resolvers/ must not import from infrastructure/."""
+        resolvers_dir = CORE_DIR.parent / "semantic" / "resolvers"
         if not resolvers_dir.exists():
-            pytest.skip("semantic_resolvers/ not yet created")
+            pytest.skip("semantic/resolvers/ not yet created")
 
         violations: list[str] = []
         for py_file in sorted(resolvers_dir.rglob("*.py")):
@@ -311,6 +311,6 @@ class TestArchitectureBoundaries:
                     )
 
         assert violations == [], (
-            "semantic_resolvers/ imports from infrastructure/:\n"
+            "semantic/resolvers/ imports from infrastructure/:\n"
             + "\n".join(violations)
         )

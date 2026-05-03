@@ -9,9 +9,9 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from ..ir.element import CodeElement
-from ..ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
-from ..utils.paths import infer_language_from_file_context
+from ...ir.element import CodeElement
+from ...ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
+from ...utils.paths import infer_language_from_file_context
 from ._utils import _hash_id, _normalize_path
 from .base import ResolutionPatch, SemanticResolver, ToolDiagnostic
 
@@ -438,12 +438,12 @@ class CFamilySemanticResolver(SemanticResolver):
 class CSemanticResolver(CFamilySemanticResolver):
     language = "c"
     source_name = "c_resolver"
-    extractor_name = "fastcode.semantic_resolvers.c"
+    extractor_name = "fastcode.semantic.resolvers.c"
     required_tools = ("clang",)
 
 
 class CppSemanticResolver(CFamilySemanticResolver):
     language = "cpp"
     source_name = "cpp_resolver"
-    extractor_name = "fastcode.semantic_resolvers.cpp"
+    extractor_name = "fastcode.semantic.resolvers.cpp"
     required_tools = ("clang++",)

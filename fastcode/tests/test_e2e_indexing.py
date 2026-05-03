@@ -35,8 +35,8 @@ from fastcode.loader import RepositoryLoader
 from fastcode.main import FastCode
 from fastcode.parser import CodeParser
 from fastcode.pipeline import IndexPipeline
-from fastcode.semantic_resolvers import build_default_semantic_resolver_registry
-from fastcode.snapshot_symbol_index import SnapshotSymbolIndex
+from fastcode.semantic import build_default_semantic_resolver_registry
+from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.store.index_run import IndexRunStore
 from fastcode.store.manifest import ManifestStore
 from fastcode.store.pg_retrieval import PgRetrievalStore

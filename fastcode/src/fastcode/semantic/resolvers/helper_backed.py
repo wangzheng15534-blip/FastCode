@@ -24,8 +24,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, cast
 
-from ..ir.element import CodeElement
-from ..ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
+from ...ir.element import CodeElement
+from ...ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
 from ._utils import _hash_id, _normalize_path, validate_helper_paths
 from .base import (
     ResolutionPatch,
@@ -264,7 +264,7 @@ class HelperBackedSemanticResolver(SemanticResolver):
         command = self._helper_command(helper_files)
         patch.stats["helper_command"] = command
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # noqa: S603
                 command,
                 capture_output=True,
                 text=True,

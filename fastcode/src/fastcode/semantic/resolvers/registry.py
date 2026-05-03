@@ -10,8 +10,8 @@ resolvers as internal fallbacks.  The registry provides:
 
 from __future__ import annotations
 
-from ..ir.element import CodeElement
-from ..ir.types import IRSnapshot
+from ...ir.element import CodeElement
+from ...ir.types import IRSnapshot
 from .base import SemanticResolver
 from .c_family import CppSemanticResolver, CSemanticResolver
 from .csharp import CSharpCompilerResolver

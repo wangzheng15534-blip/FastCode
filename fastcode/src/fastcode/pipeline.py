@@ -44,11 +44,8 @@ from .scip.indexers import (
 from .scip.loader import load_scip_artifact, run_scip_python_index
 from .scip.scip_adapter import build_ir_from_scip
 from .scip.symbol_resolver import SymbolResolver
-from .semantic_resolvers import (
-    apply_resolution_patch,
-    build_default_semantic_resolver_registry,
-)
-from .snapshot_symbol_index import SnapshotSymbolIndex
+from .semantic import apply_resolution_patch, build_default_semantic_resolver_registry
+from .semantic.symbol_index import SnapshotSymbolIndex
 from .store.index_run import IndexRunStore
 from .store.manifest import ManifestStore
 from .store.pg_retrieval import PgRetrievalStore

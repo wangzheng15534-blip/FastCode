@@ -5,8 +5,8 @@ from __future__ import annotations
 import shutil
 from typing import Any
 
-from ..ir.element import CodeElement
-from ..ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
+from ...ir.element import CodeElement
+from ...ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
 from ._utils import _hash_id
 from .base import ResolutionPatch, ResolutionTier, SemanticResolver, ToolDiagnostic
 

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 from unittest.mock import patch
 
 import networkx as nx
@@ -1431,7 +1432,7 @@ def test_typescript_target_files_use_repo_root_for_absolute_paths(
     target.parent.mkdir(parents=True)
     target.write_text("export const x = 1;", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    result = resolver._target_files({str(target), "src/missing.ts"})
+    result = resolver._target_files({str(target), "src/missing.ts"}, repo_root=str(tmp_path))
     assert str(target) in result
 
 
@@ -1549,7 +1550,7 @@ def test_go_target_files_use_repo_root_for_absolute_paths(
     target.parent.mkdir(parents=True)
     target.write_text("package main", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    result = resolver._target_files({str(target)})
+    result = resolver._target_files({str(target)}, repo_root=str(tmp_path))
     assert result == [str(target)]
 
 
@@ -1671,7 +1672,7 @@ def test_java_target_files_use_repo_root_for_absolute_paths(
     target.parent.mkdir(parents=True)
     target.write_text("class App {}", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    result = resolver._target_files({str(target)})
+    result = resolver._target_files({str(target)}, repo_root=str(tmp_path))
     assert result == [str(target)]
 
 
@@ -1883,7 +1884,7 @@ def test_helper_backed_resolver_records_helper_json_failure() -> None:
     patch_result = ResolutionPatch()
     with patch("fastcode.semantic_resolvers.helper_backed.subprocess.run") as run_mock:
         run_mock.return_value = SimpleNamespace(returncode=0, stdout="{", stderr="")
-        payload = resolver._run_semantic_helper(["/tmp/a.py"], patch_result)
+        payload = resolver._run_semantic_helper(["/tmp/a.py"], patch_result, repo_root="/tmp")
 
     assert payload == {}
     assert any(d.code == "invalid_helper_json" for d in patch_result.diagnostics)
@@ -2388,4 +2389,85 @@ def test_helper_path_co_located_with_resolver_module() -> None:
     assert helper_path.parent == module_dir, (
         f"Helper {helper_path} is not co-located with helper_backed.py "
         f"(expected parent {module_dir})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Concurrency regression: repo_root must not race across concurrent resolve()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.regression
+def test_concurrent_resolve_uses_correct_repo_root_per_call(tmp_path: Path) -> None:
+    """Two concurrent resolve() calls on the same resolver instance must each
+    use its own repo_root from snapshot metadata — not the other thread's.
+    """
+    import threading
+
+    repo_a = tmp_path / "repo_a"
+    repo_b = tmp_path / "repo_b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    (repo_a / "a.py").write_text("pass", encoding="utf-8")
+    (repo_b / "a.py").write_text("pass", encoding="utf-8")
+
+    captured_cwds: dict[str, str] = {}
+    barrier = threading.Barrier(2, timeout=5)
+
+    class _CapturingResolver(HelperBackedSemanticResolver):
+        language = "python"
+        capabilities = frozenset({"resolve_calls"})
+        cost_class = "low"
+        source_name = "capturing"
+        extractor_name = "capturing_ext"
+        frontend_kind = "test"
+        required_tools = ()
+        helper_filename = "nonexistent_helper.py"
+        file_extensions = (".py",)
+
+        def _run_semantic_helper(self, helper_files, patch, *, repo_root):
+            # Wait for both threads to be inside resolve() simultaneously.
+            barrier.wait()
+            captured_cwds[threading.current_thread().name] = repo_root
+            return {}
+
+    resolver = _CapturingResolver()
+    snap_a = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:a",
+        metadata={"repo_root": str(repo_a)},
+        units=[_file_unit("a.py")],
+    )
+    snap_b = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:b",
+        metadata={"repo_root": str(repo_b)},
+        units=[_file_unit("a.py")],
+    )
+    elements = [_element(element_id="file:a", element_type="file", name="a.py", path="a.py")]
+
+    results: dict[str, Any] = {}
+
+    def _run_thread(label: str, snapshot: IRSnapshot) -> None:
+        root = cast(dict[str, Any], snapshot.metadata or {}).get("repo_root", "")
+        with patch.object(resolver, "_has_tools", return_value=True):
+            results[label] = resolver.resolve(
+                snapshot=snapshot,
+                elements=elements,
+                target_paths={os.path.join(root, "a.py")},
+                legacy_graph_builder=None,
+            )
+
+    t_a = threading.Thread(target=_run_thread, args=("a", snap_a), name="thread_a")
+    t_b = threading.Thread(target=_run_thread, args=("b", snap_b), name="thread_b")
+    t_a.start()
+    t_b.start()
+    t_a.join(timeout=10)
+    t_b.join(timeout=10)
+
+    assert captured_cwds.get("thread_a") == str(repo_a), (
+        f"Thread A used wrong repo_root: {captured_cwds.get('thread_a')}"
+    )
+    assert captured_cwds.get("thread_b") == str(repo_b), (
+        f"Thread B used wrong repo_root: {captured_cwds.get('thread_b')}"
     )

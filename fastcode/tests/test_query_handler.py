@@ -126,6 +126,36 @@ def test_agency_mode_uses_detected_intent_for_local_escalation() -> None:
     assert result["semantic_escalation"]["budget"] == "local"
 
 
+def test_streaming_agency_mode_uses_detected_intent() -> None:
+    processed_intents: list[str] = []
+    pipeline = _query_pipeline()
+    pipeline.retriever.enable_agency_mode = True
+    pipeline.retriever.iterative_agent = object()
+    pipeline.query_processor._detect_intent.side_effect = lambda question: "where"
+    pipeline.answer_generator.generate_stream.return_value = [
+        ("ok", None),
+        (None, {"sources": []}),
+    ]
+
+    def retrieve_with_intent_capture(
+        processed_query: ProcessedQuery, *args: Any, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        processed_intents.append(processed_query.intent)
+        return [{"element": {"relative_path": "src/config.py"}, "total_score": 1.0}]
+
+    pipeline.retriever.retrieve.side_effect = retrieve_with_intent_capture
+
+    chunks = list(
+        pipeline.query_stream(
+            "Where is the config loaded?",
+            filters={"snapshot_id": "snap:1"},
+        )
+    )
+
+    assert processed_intents == ["where"]
+    assert chunks[-1][1]["status"] == "complete"
+
+
 def test_query_pipeline_reruns_retrieval_after_semantic_escalation() -> None:
     processed_query = _processed_query(
         question="How does auth reach the token store?",

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from .utils import safe_jsonable
+from ..utils import safe_jsonable
 
 _T = dict[str, Any]
 

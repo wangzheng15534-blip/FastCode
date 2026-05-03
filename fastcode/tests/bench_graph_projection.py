@@ -6,10 +6,10 @@ Run: pytest tests/bench_graph_projection.py -v --benchmark-only
 
 import pytest
 
-from fastcode.ir_graph_builder import IRGraphBuilder
-from fastcode.projection_models import ProjectionScope
+from fastcode.ir.graph import IRGraphBuilder
+from fastcode.ir.projection import ProjectionScope
+from fastcode.ir.types import IRDocument, IREdge, IRSnapshot, IRSymbol
 from fastcode.projection_transform import ProjectionTransformer
-from fastcode.semantic_ir import IRDocument, IREdge, IRSnapshot, IRSymbol
 
 pytestmark = [pytest.mark.perf]
 

@@ -6,8 +6,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.ir_merge import merge_ir
-from fastcode.semantic_ir import (
+from fastcode.ir.merge import merge_ir
+from fastcode.ir.types import (
     IRAttachment,
     IRCodeUnit,
     IRDocument,
@@ -924,7 +924,7 @@ class TestMergeIrProperties:
 def test_upsert_relation_merges_pending_capabilities_via_intersection():
     """pending_capabilities uses intersection: a capability is only still
     pending if *both* sources consider it pending."""
-    from fastcode.ir_merge import _upsert_relation
+    from fastcode.ir.merge import _upsert_relation
 
     merged: dict[tuple[str, str, str], IRRelation] = {}
     r1 = IRRelation(
@@ -952,7 +952,7 @@ def test_upsert_relation_merges_pending_capabilities_via_intersection():
 
 
 def test_upsert_relation_empty_intersection_removes_all_pending():
-    from fastcode.ir_merge import _upsert_relation
+    from fastcode.ir.merge import _upsert_relation
 
     merged: dict[tuple[str, str, str], IRRelation] = {}
     r1 = IRRelation(

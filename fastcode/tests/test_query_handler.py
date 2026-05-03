@@ -8,13 +8,13 @@ from unittest.mock import MagicMock
 import networkx as nx
 import pytest
 
-from fastcode.indexer import CodeElement
-from fastcode.ir_graph_builder import IRGraphs
+from fastcode.ir.element import CodeElement
+from fastcode.ir.graph import IRGraphs
+from fastcode.ir.types import IRSnapshot
 from fastcode.main import FastCode
 from fastcode.query_handler import QueryPipeline
 from fastcode.query_processor import ProcessedQuery
 from fastcode.retriever import HybridRetriever
-from fastcode.semantic_ir import IRSnapshot
 
 
 def _processed_query(

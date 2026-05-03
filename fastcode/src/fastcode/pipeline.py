@@ -29,10 +29,12 @@ from .global_index_builder import GlobalIndexBuilder
 from .graph_builder import CodeGraphBuilder
 from .incremental_update import apply_incremental_update, diff_changed_files
 from .index_run import IndexRunStore
-from .indexer import CodeElement, CodeElementMeta, CodeIndexer
-from .ir_graph_builder import IRGraphBuilder
-from .ir_merge import merge_ir
-from .ir_validators import validate_snapshot
+from .indexer import CodeIndexer
+from .ir.element import CodeElement, CodeElementMeta
+from .ir.graph import IRGraphBuilder
+from .ir.merge import merge_ir
+from .ir.types import IRSnapshot
+from .ir.validate import validate_snapshot
 from .loader import RepositoryLoader
 from .manifest_store import ManifestStore
 from .module_resolver import ModuleResolver
@@ -44,7 +46,6 @@ from .scip_indexers import (
     run_scip_for_language,
 )
 from .scip_loader import load_scip_artifact, run_scip_python_index
-from .semantic_ir import IRSnapshot
 from .semantic_resolvers import (
     apply_resolution_patch,
     build_default_semantic_resolver_registry,

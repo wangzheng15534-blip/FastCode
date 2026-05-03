@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from fastcode.indexer import CodeElement
+from fastcode.ir.element import CodeElement
+from fastcode.ir.types import IRCodeUnit, IRSnapshot
 from fastcode.parser import CodeParser
-from fastcode.semantic_ir import IRCodeUnit, IRSnapshot
 from fastcode.semantic_resolvers.c_family import CppSemanticResolver, CSemanticResolver
 from fastcode.utils.paths import (
     get_language_from_extension,

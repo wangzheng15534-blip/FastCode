@@ -9,8 +9,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from ..indexer import CodeElement
-from ..semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
+from ..ir.element import CodeElement
+from ..ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
 from ..utils.paths import infer_language_from_file_context
 from ._utils import _hash_id, _normalize_path
 from .base import ResolutionPatch, SemanticResolver, ToolDiagnostic

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from anthropic import Anthropic
 
 if TYPE_CHECKING:
-    from .indexer import CodeElement
+    from .ir.element import CodeElement
 from dotenv import load_dotenv
 from openai import OpenAI
 

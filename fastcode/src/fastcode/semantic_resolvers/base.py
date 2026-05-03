@@ -6,8 +6,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..indexer import CodeElement
-from ..semantic_ir import IRRelation, IRSnapshot, IRUnitSupport
+from ..ir.element import CodeElement
+from ..ir.types import IRRelation, IRSnapshot, IRUnitSupport
 
 
 def _empty_tool_context() -> dict[str, Any]:

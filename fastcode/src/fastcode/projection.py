@@ -10,8 +10,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from .ir.projection import ProjectionScope
     from .manifest_store import ManifestStore
-    from .projection_models import ProjectionScope
     from .projection_store import ProjectionStore
     from .projection_transform import ProjectionTransformer
     from .snapshot_store import SnapshotStore
@@ -112,7 +112,7 @@ class ProjectionService:
         filters: dict[str, Any] | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
-        from .projection_models import ProjectionScope
+        from .ir.projection import ProjectionScope
 
         if scope_kind not in {"snapshot", "query", "entity"}:
             raise RuntimeError("scope_kind must be one of: snapshot, query, entity")

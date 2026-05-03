@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastcode.projection_models import (
+from fastcode.ir.projection import (
     ProjectionBuildResult,
     ProjectionScope,
     utc_now_iso,

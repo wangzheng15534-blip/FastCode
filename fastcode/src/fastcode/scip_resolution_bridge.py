@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from .semantic_ir import IRSnapshot
+from .ir.types import IRSnapshot
 
 logger = logging.getLogger(__name__)
 

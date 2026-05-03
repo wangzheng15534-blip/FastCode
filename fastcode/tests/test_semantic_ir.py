@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.semantic_ir import (
+from fastcode.ir.types import (
     IRCodeUnit,
     IRDocument,
     IRRelation,

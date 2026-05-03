@@ -22,8 +22,8 @@ from .core import fusion as _fusion
 from .core import scoring as _scoring
 from .embedder import CodeEmbedder
 from .graph_builder import CodeGraphBuilder
-from .indexer import CodeElement, CodeElementMeta
-from .ir_graph_builder import IRGraphs
+from .ir.element import CodeElement, CodeElementMeta
+from .ir.graph import IRGraphs
 from .iterative_agent import IterativeAgent
 from .pg_retrieval import PgRetrievalStore
 from .query_processor import ProcessedQuery

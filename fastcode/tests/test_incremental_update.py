@@ -11,7 +11,7 @@ from fastcode.incremental_update import (
     apply_incremental_update,
     diff_changed_files,
 )
-from fastcode.semantic_ir import (
+from fastcode.ir.types import (
     IRCodeUnit,
     IRRelation,
     IRSnapshot,

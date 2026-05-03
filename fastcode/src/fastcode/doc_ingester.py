@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from .embedder import CodeEmbedder
-from .semantic_ir import IRSnapshot
+from .ir.types import IRSnapshot
 
 logger = logging.getLogger(__name__)
 

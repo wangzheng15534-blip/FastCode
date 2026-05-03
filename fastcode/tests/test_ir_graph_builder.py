@@ -6,8 +6,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.ir_graph_builder import IRGraphBuilder, IRGraphs
-from fastcode.semantic_ir import IREdge, IRSnapshot
+from fastcode.ir.graph import IRGraphBuilder, IRGraphs
+from fastcode.ir.types import IREdge, IRSnapshot
 
 # --- Helpers ---
 

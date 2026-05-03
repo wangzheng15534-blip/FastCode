@@ -10,10 +10,10 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fastcode.adapters.scip_to_ir import build_ir_from_scip
-from fastcode.ir_graph_builder import IRGraphs
-from fastcode.projection_models import ProjectionBuildResult, ProjectionScope
+from fastcode.ir.graph import IRGraphs
+from fastcode.ir.projection import ProjectionBuildResult, ProjectionScope
+from fastcode.ir.types import IRDocument, IREdge, IRSnapshot, IRSymbol
 from fastcode.projection_transform import ProjectionTransformer
-from fastcode.semantic_ir import IRDocument, IREdge, IRSnapshot, IRSymbol
 
 # --- Helpers ---
 

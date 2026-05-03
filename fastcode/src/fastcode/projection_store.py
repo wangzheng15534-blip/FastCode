@@ -10,7 +10,7 @@ import logging
 import os
 from typing import Any
 
-from .projection_models import ProjectionBuildResult, ProjectionScope
+from .ir.projection import ProjectionBuildResult, ProjectionScope
 from .utils import utc_now
 
 try:

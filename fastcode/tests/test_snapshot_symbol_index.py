@@ -8,7 +8,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.semantic_ir import IRSnapshot, IRSymbol
+from fastcode.ir.types import IRSnapshot, IRSymbol
 from fastcode.snapshot_symbol_index import SnapshotSymbolIndex, SnapshotSymbolMaps
 
 # --- Strategies ---

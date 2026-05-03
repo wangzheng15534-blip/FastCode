@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import hashlib
 
-from ..indexer import CodeElement
-from ..semantic_ir import (
+from ..ir.element import CodeElement
+from ..ir.types import (
     IRCodeUnit,
     IRRelation,
     IRSnapshot,

@@ -10,8 +10,8 @@ import pytest
 
 from fastcode.adapters.ast_to_ir import build_ir_from_ast
 from fastcode.adapters.scip_to_ir import build_ir_from_scip
-from fastcode.indexer import CodeElement
-from fastcode.ir_merge import merge_ir
+from fastcode.ir.element import CodeElement
+from fastcode.ir.merge import merge_ir
 
 pytestmark = [pytest.mark.perf]
 

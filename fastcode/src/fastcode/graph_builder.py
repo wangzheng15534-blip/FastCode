@@ -12,7 +12,7 @@ import networkx as nx
 import tqdm
 
 from .call_extractor import CallExtractor
-from .indexer import CodeElement
+from .ir.element import CodeElement
 from .module_resolver import ModuleResolver
 from .path_utils import file_path_to_module_path
 from .symbol_resolver import SymbolResolver
@@ -726,7 +726,7 @@ class CodeGraphBuilder:
                 self.imports_by_file = data["imports_by_file"]
 
                 # Reconstruct indices with CodeElement objects
-                from .indexer import CodeElement
+                from .ir.element import CodeElement
 
                 self.element_by_name = {}
                 self.element_by_id = {}
@@ -815,7 +815,7 @@ class CodeGraphBuilder:
             )
 
             # Merge elements from source file
-            from .indexer import CodeElement
+            from .ir.element import CodeElement
 
             for v in other_elements.values():
                 elem = CodeElement(**v)

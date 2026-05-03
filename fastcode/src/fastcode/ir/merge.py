@@ -9,7 +9,7 @@ from collections import defaultdict
 
 import networkx as nx
 
-from .semantic_ir import (
+from .types import (
     IRCodeUnit,
     IRRelation,
     IRSnapshot,

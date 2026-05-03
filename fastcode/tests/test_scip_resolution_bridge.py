@@ -7,11 +7,11 @@ from typing import Any, Never
 
 import pytest
 
+from fastcode.ir.types import IRCodeUnit, IRSnapshot
 from fastcode.scip_resolution_bridge import (
     SCIPResolutionBridge,
     _cosine_similarity,
 )
-from fastcode.semantic_ir import IRCodeUnit, IRSnapshot
 
 # ---------------------------------------------------------------------------
 # Helpers

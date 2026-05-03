@@ -12,10 +12,10 @@ from unittest.mock import patch
 import networkx as nx
 import pytest
 
-from fastcode.indexer import CodeElement
+from fastcode.ir.element import CodeElement
+from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
 from fastcode.main import FastCode
 from fastcode.pipeline import IndexPipeline
-from fastcode.semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
 from fastcode.semantic_resolvers import (
     PYTHON_RESOLVER_EXTRACTOR,
     PYTHON_RESOLVER_SOURCE,
@@ -1432,7 +1432,9 @@ def test_typescript_target_files_use_repo_root_for_absolute_paths(
     target.parent.mkdir(parents=True)
     target.write_text("export const x = 1;", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    result = resolver._target_files({str(target), "src/missing.ts"}, repo_root=str(tmp_path))
+    result = resolver._target_files(
+        {str(target), "src/missing.ts"}, repo_root=str(tmp_path)
+    )
     assert str(target) in result
 
 
@@ -1884,7 +1886,9 @@ def test_helper_backed_resolver_records_helper_json_failure() -> None:
     patch_result = ResolutionPatch()
     with patch("fastcode.semantic_resolvers.helper_backed.subprocess.run") as run_mock:
         run_mock.return_value = SimpleNamespace(returncode=0, stdout="{", stderr="")
-        payload = resolver._run_semantic_helper(["/tmp/a.py"], patch_result, repo_root="/tmp")
+        payload = resolver._run_semantic_helper(
+            ["/tmp/a.py"], patch_result, repo_root="/tmp"
+        )
 
     assert payload == {}
     assert any(d.code == "invalid_helper_json" for d in patch_result.diagnostics)
@@ -2425,7 +2429,9 @@ def test_concurrent_resolve_uses_correct_repo_root_per_call(tmp_path: Path) -> N
         helper_filename = "nonexistent_helper.py"
         file_extensions = (".py",)
 
-        def _run_semantic_helper(self, helper_files, patch, *, repo_root):
+        def _run_semantic_helper(  # type: ignore[override]
+            self, helper_files: list[str], patch: Any, *, repo_root: str
+        ) -> dict[str, Any]:
             # Wait for both threads to be inside resolve() simultaneously.
             barrier.wait()
             captured_cwds[threading.current_thread().name] = repo_root
@@ -2444,7 +2450,9 @@ def test_concurrent_resolve_uses_correct_repo_root_per_call(tmp_path: Path) -> N
         metadata={"repo_root": str(repo_b)},
         units=[_file_unit("a.py")],
     )
-    elements = [_element(element_id="file:a", element_type="file", name="a.py", path="a.py")]
+    elements = [
+        _element(element_id="file:a", element_type="file", name="a.py", path="a.py")
+    ]
 
     results: dict[str, Any] = {}
 

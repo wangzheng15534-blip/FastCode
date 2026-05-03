@@ -10,7 +10,7 @@ import logging
 import os
 from typing import Any
 
-from .indexer import CodeElement
+from .ir.element import CodeElement
 from .path_utils import file_path_to_module_path, normalize_repo_root
 
 

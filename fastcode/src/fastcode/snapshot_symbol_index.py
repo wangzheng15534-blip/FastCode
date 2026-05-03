@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .semantic_ir import IRSnapshot
+from .ir.types import IRSnapshot
 
 
 @dataclass

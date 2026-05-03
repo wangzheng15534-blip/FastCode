@@ -6,8 +6,8 @@ Run: pytest tests/bench_validation.py -v --benchmark-only
 
 import pytest
 
-from fastcode.ir_validators import validate_snapshot
-from fastcode.semantic_ir import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
+from fastcode.ir.types import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
+from fastcode.ir.validate import validate_snapshot
 
 pytestmark = [pytest.mark.perf]
 

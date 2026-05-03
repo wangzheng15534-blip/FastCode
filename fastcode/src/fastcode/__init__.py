@@ -15,14 +15,7 @@ if platform.system() == "Darwin":
 from .agent_tools import AgentTools
 from .answer_generator import AnswerGenerator
 from .indexer import CodeIndexer
-from .iterative_agent import IterativeAgent
-from .loader import RepositoryLoader
-from .main import FastCode
-from .parser import CodeParser
-from .repo_overview import RepositoryOverviewGenerator
-from .repo_selector import RepositorySelector
-from .retriever import HybridRetriever
-from .semantic_ir import (
+from .ir.types import (
     IRCodeUnit,
     IRDocument,
     IREdge,
@@ -33,6 +26,13 @@ from .semantic_ir import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
+from .iterative_agent import IterativeAgent
+from .loader import RepositoryLoader
+from .main import FastCode
+from .parser import CodeParser
+from .repo_overview import RepositoryOverviewGenerator
+from .repo_selector import RepositorySelector
+from .retriever import HybridRetriever
 
 __version__ = "2.0.0"
 

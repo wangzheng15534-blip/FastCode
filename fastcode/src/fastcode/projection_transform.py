@@ -15,9 +15,9 @@ from typing import Any, cast
 
 import networkx as nx
 
-from .ir_graph_builder import IRGraphs
-from .projection_models import ProjectionBuildResult, ProjectionScope
-from .semantic_ir import IRSnapshot
+from .ir.graph import IRGraphs
+from .ir.projection import ProjectionBuildResult, ProjectionScope
+from .ir.types import IRSnapshot
 from .utils import utc_now
 
 try:

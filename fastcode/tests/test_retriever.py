@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastcode.indexer import CodeElement
+from fastcode.ir.element import CodeElement
 from fastcode.retriever import HybridRetriever
 
 

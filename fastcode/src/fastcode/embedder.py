@@ -12,7 +12,7 @@ import urllib.request
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from .indexer import CodeElementMeta
+    from .ir.element import CodeElementMeta
 
 import numpy as np
 import torch

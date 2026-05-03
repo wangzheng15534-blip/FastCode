@@ -16,8 +16,8 @@ import pytest
 from fastapi import HTTPException
 
 from fastcode import api
+from fastcode.ir.types import IRSnapshot
 from fastcode.manifest_store import ManifestStore
-from fastcode.semantic_ir import IRSnapshot
 from fastcode.snapshot_store import SnapshotStore
 
 # ---------------------------------------------------------------------------

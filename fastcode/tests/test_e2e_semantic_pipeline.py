@@ -30,7 +30,7 @@ from fastcode.graph_builder import CodeGraphBuilder
 from fastcode.graph_runtime import LadybugGraphRuntime
 from fastcode.index_run import IndexRunStore
 from fastcode.indexer import CodeIndexer
-from fastcode.ir_graph_builder import IRGraphBuilder
+from fastcode.ir.graph import IRGraphBuilder
 from fastcode.loader import RepositoryLoader
 from fastcode.main import FastCode
 from fastcode.manifest_store import ManifestStore

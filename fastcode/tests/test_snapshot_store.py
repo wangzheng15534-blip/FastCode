@@ -9,8 +9,8 @@ import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-from fastcode.ir_graph_builder import IRGraphBuilder, IRGraphs
-from fastcode.semantic_ir import (
+from fastcode.ir.graph import IRGraphBuilder, IRGraphs
+from fastcode.ir.types import (
     IRAttachment,
     IRCodeUnit,
     IRDocument,

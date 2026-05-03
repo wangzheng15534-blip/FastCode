@@ -16,8 +16,8 @@ from typing import Any, cast
 
 import networkx as nx
 
-from .ir_graph_builder import IRGraphBuilder
-from .semantic_ir import IRSnapshot
+from .ir.graph import IRGraphBuilder
+from .ir.types import IRSnapshot
 
 # ---------------------------------------------------------------------------
 # Type aliases for networkx functions with unknown **kwargs in stubs.
@@ -358,7 +358,7 @@ def compute_leiden_clusters(
     projection_transformer = getattr(fc, "projection_transformer", None)
 
     if projection_store is not None and projection_store.enabled:
-        from .projection_models import ProjectionScope
+        from .ir.projection import ProjectionScope
 
         scope = ProjectionScope(
             scope_kind="full",
@@ -374,7 +374,7 @@ def compute_leiden_clusters(
     # No cached projection; try to build one
     if projection_transformer is not None:
         try:
-            from .projection_models import ProjectionScope
+            from .ir.projection import ProjectionScope
 
             scope = ProjectionScope(
                 scope_kind="full",

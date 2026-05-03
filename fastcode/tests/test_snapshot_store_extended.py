@@ -11,7 +11,7 @@ from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, rule
 
-from fastcode.semantic_ir import (
+from fastcode.ir.types import (
     IRDocument,
     IREdge,
     IROccurrence,

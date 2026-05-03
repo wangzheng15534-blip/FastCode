@@ -4,7 +4,8 @@ Tests the pure compute functions from fastcode.mcp_graph_tools, which are
 the production code extracted from mcp_server.py.
 """
 
-from fastcode.ir_graph_builder import IRGraphBuilder
+from fastcode.ir.graph import IRGraphBuilder
+from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot
 from fastcode.mcp_graph_tools import (
     compute_directed_path,
     compute_find_callers,
@@ -14,7 +15,6 @@ from fastcode.mcp_graph_tools import (
     format_path_node,
     resolve_unit_id,
 )
-from fastcode.semantic_ir import IRCodeUnit, IRRelation, IRSnapshot
 
 # ---------------------------------------------------------------------------
 # Factories

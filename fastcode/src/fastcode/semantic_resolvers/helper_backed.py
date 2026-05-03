@@ -24,8 +24,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, cast
 
-from ..indexer import CodeElement
-from ..semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
+from ..ir.element import CodeElement
+from ..ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
 from ._utils import _hash_id, _normalize_path, validate_helper_paths
 from .base import (
     ResolutionPatch,

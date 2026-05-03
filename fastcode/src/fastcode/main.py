@@ -24,8 +24,10 @@ from .global_index_builder import GlobalIndexBuilder
 from .graph_builder import CodeGraphBuilder
 from .graph_runtime import LadybugGraphRuntime
 from .index_run import IndexRunStore
-from .indexer import CodeElement, CodeElementMeta, CodeIndexer
-from .ir_graph_builder import IRGraphBuilder
+from .indexer import CodeIndexer
+from .ir.element import CodeElement, CodeElementMeta
+from .ir.graph import IRGraphBuilder
+from .ir.types import IRSnapshot
 from .loader import RepositoryLoader
 from .manifest_store import ManifestStore
 from .module_resolver import ModuleResolver
@@ -40,7 +42,6 @@ from .query_handler import QueryPipeline
 from .query_processor import QueryProcessor
 from .redo_worker import RedoWorker
 from .retriever import HybridRetriever
-from .semantic_ir import IRSnapshot
 from .semantic_resolvers import (
     build_default_semantic_resolver_registry,
 )

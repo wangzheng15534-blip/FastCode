@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import networkx as nx
 
-from .semantic_ir import IRSnapshot
+from .types import IRSnapshot
 
 
 @dataclass

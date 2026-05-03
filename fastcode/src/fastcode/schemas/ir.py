@@ -240,7 +240,7 @@ class IRSnapshot:
         # Import canonical types from semantic_ir to avoid circular dependency.
         # IRCodeUnit, IRUnitSupport, IRRelation, IRUnitEmbedding remain in
         # fastcode.semantic_ir and are imported here at call time.
-        from fastcode.semantic_ir import (
+        from fastcode.ir.types import (
             IRCodeUnit,
             IRRelation,
             IRUnitEmbedding,
@@ -395,7 +395,7 @@ class IRSnapshot:
     @property
     def documents(self) -> list[IRDocument]:
         # Import canonical types from semantic_ir to avoid circular dependency.
-        from fastcode.semantic_ir import IRCodeUnit
+        from fastcode.ir.types import IRCodeUnit
 
         docs: list[IRDocument] = []
         for unit in self.units:
@@ -418,7 +418,7 @@ class IRSnapshot:
     @property
     def symbols(self) -> list[IRSymbol]:
         # Import canonical types from semantic_ir to avoid circular dependency.
-        from fastcode.semantic_ir import IRCodeUnit
+        from fastcode.ir.types import IRCodeUnit
 
         symbols: list[IRSymbol] = []
         for unit in self.units:
@@ -458,7 +458,7 @@ class IRSnapshot:
     @property
     def occurrences(self) -> list[IROccurrence]:
         # Import canonical types from semantic_ir to avoid circular dependency.
-        from fastcode.semantic_ir import IRCodeUnit, IRUnitSupport
+        from fastcode.ir.types import IRCodeUnit, IRUnitSupport
 
         file_units = {
             unit.path: unit.unit_id
@@ -519,7 +519,7 @@ class IRSnapshot:
     @property
     def edges(self) -> list[IREdge]:
         # Import canonical types from semantic_ir to avoid circular dependency.
-        from fastcode.semantic_ir import IRRelation
+        from fastcode.ir.types import IRRelation
 
         edges: list[IREdge] = []
         for relation in self.relations:
@@ -542,7 +542,7 @@ class IRSnapshot:
     @property
     def attachments(self) -> list[IRAttachment]:
         # Import canonical types from semantic_ir to avoid circular dependency.
-        from fastcode.semantic_ir import IRCodeUnit, IRUnitEmbedding
+        from fastcode.ir.types import IRCodeUnit, IRUnitEmbedding
 
         attachments: list[IRAttachment] = []
         for unit in self.units:
@@ -603,7 +603,7 @@ class IRSnapshot:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IRSnapshot:
         # Import canonical types from semantic_ir to avoid circular dependency.
-        from fastcode.semantic_ir import (
+        from fastcode.ir.types import (
             IRCodeUnit,
             IRRelation,
             IRUnitEmbedding,

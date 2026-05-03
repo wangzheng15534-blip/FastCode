@@ -7,8 +7,8 @@ from __future__ import annotations
 import hashlib
 from typing import Any, cast
 
+from ..ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
 from ..scip_models import SCIPIndex
-from ..semantic_ir import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
 
 SCIP_SOURCE = "scip"
 

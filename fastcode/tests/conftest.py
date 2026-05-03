@@ -20,9 +20,9 @@ if os.getenv("MUTANT_UNDER_TEST"):
     settings.load_profile("mutmut")
 
 from fastcode.db_runtime import DBRuntime
-from fastcode.indexer import CodeElement
+from fastcode.ir.element import CodeElement
+from fastcode.ir.types import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
 from fastcode.scip_models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
-from fastcode.semantic_ir import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
 
 # --- Primitive strategies ---
 

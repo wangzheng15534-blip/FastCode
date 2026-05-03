@@ -4,7 +4,7 @@ Validation rules for canonical unit-grounded IR snapshots.
 
 from __future__ import annotations
 
-from .semantic_ir import IRSnapshot
+from .types import IRSnapshot
 
 
 def validate_snapshot(snapshot: IRSnapshot) -> list[str]:

@@ -8,8 +8,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.ir_validators import validate_snapshot
-from fastcode.semantic_ir import (
+from fastcode.ir.types import (
     IRCodeUnit,
     IRDocument,
     IREdge,
@@ -20,6 +19,7 @@ from fastcode.semantic_ir import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
+from fastcode.ir.validate import validate_snapshot
 
 # --- Local strategies (reused from conftest patterns) ---
 

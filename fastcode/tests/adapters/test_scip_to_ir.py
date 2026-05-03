@@ -9,8 +9,8 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fastcode.adapters.scip_to_ir import build_ir_from_scip
+from fastcode.ir.types import IRSnapshot
 from fastcode.scip_models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
-from fastcode.semantic_ir import IRSnapshot
 
 # ---------------------------------------------------------------------------
 # Strategies (mirrored from tests/conftest.py)

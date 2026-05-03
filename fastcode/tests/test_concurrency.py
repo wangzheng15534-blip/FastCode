@@ -11,24 +11,21 @@ from fastcode.query_handler import QueryPipeline
 from fastcode.store_records import SnapshotRecord
 
 
-def _make_pipeline_with_artifact_tracking(
-    snapshot_id: str, artifact_key: str
-) -> tuple[QueryPipeline, dict[str, str]]:
-    shared: dict[str, str] = {"loaded_key": ""}
+class _NoOpContext:
+    """Context manager that does nothing — used to disable the lock."""
 
-    def fake_load(artifact_key: str) -> bool:
-        shared["loaded_key"] = artifact_key
-        return True
+    def __enter__(self) -> _NoOpContext:
+        return self
 
-    def fake_query(**kwargs: Any) -> dict[str, Any]:
-        return {
-            "answer": "ok",
-            "query": kwargs.get("question", ""),
-            "context_elements": 1,
-            "sources": [],
-            "_loaded_key": shared["loaded_key"],
-        }
+    def __exit__(self, *_args: object) -> None:
+        pass
 
+
+def _build_shared_pipeline(
+    fake_load: Any,
+    fake_query: Any,
+) -> QueryPipeline:
+    """Build a single QueryPipeline with injectable load/query callbacks."""
     p = QueryPipeline.__new__(QueryPipeline)
     p.config = {"generation": {"enable_multi_turn": False}}
     p.logger = MagicMock()
@@ -50,65 +47,59 @@ def _make_pipeline_with_artifact_tracking(
     p.load_artifacts_by_key = fake_load
     p.query = fake_query
     p.semantic_escalation_cb = None
-    # Initialize the lock like __init__ does
-    import threading
-
     p._snapshot_query_lock = threading.Lock()
+    return p
 
-    record = SnapshotRecord(
-        snapshot_id=snapshot_id,
+
+def _snapshot_record_for(sid: str) -> SnapshotRecord:
+    return SnapshotRecord(
+        snapshot_id=sid,
         repo_name="repo",
         branch="main",
-        commit_id="c1",
+        commit_id=sid,
         tree_id="t1",
-        artifact_key=artifact_key,
-        ir_path="/tmp/ir.json",
+        artifact_key=f"art_{sid}",
+        ir_path=f"/tmp/{sid}/ir.json",
         ir_graphs_path=None,
         created_at="2026-01-01",
         metadata_json=None,
     )
-    p.snapshot_store.get_snapshot_record.return_value = record
-    return p, shared
+
+
+def _make_shared_tracking() -> tuple[dict[str, str], Any, Any]:
+    """Create shared state + fake callbacks for artifact-load tracking."""
+    shared: dict[str, str] = {"loaded_key": ""}
+
+    def fake_load(artifact_key: str) -> bool:
+        shared["loaded_key"] = artifact_key
+        return True
+
+    def fake_query(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "answer": "ok",
+            "query": kwargs.get("question", ""),
+            "context_elements": 1,
+            "sources": [],
+            "_loaded_key": shared["loaded_key"],
+        }
+
+    return shared, fake_load, fake_query
 
 
 @pytest.mark.regression
-def test_two_concurrent_query_snapshot_calls_isolate_artifacts():
-    """Two concurrent query_snapshot calls with different snapshots
-    must not return each other's loaded artifacts."""
-    barrier = threading.Barrier(2, timeout=5)
+@pytest.mark.parametrize("n_threads", [2, 3])
+def test_concurrent_queries_isolate_artifacts_with_shared_lock(n_threads: int) -> None:
+    """N concurrent query_snapshot calls on a SINGLE pipeline must each
+    see their own loaded artifacts when the lock serializes load+query."""
+    _, fake_load, fake_query = _make_shared_tracking()
     results: dict[str, dict[str, Any]] = {}
     errors: list[Exception] = []
+    barrier = threading.Barrier(n_threads, timeout=5)
 
-    def run_query(sid: str, akey: str) -> None:
-        p, _ = _make_pipeline_with_artifact_tracking(sid, akey)
-        try:
-            barrier.wait(timeout=5)
-            r = p.query_snapshot(question="test", snapshot_id=sid)
-            results[sid] = r
-        except Exception as e:
-            errors.append(e)
+    p = _build_shared_pipeline(fake_load, fake_query)
+    p.snapshot_store.get_snapshot_record.side_effect = _snapshot_record_for
 
-    t1 = threading.Thread(target=run_query, args=("snap:A", "art_A"))
-    t2 = threading.Thread(target=run_query, args=("snap:B", "art_B"))
-    t1.start()
-    t2.start()
-    t1.join(timeout=10)
-    t2.join(timeout=10)
-
-    assert not errors, f"threads raised: {errors}"
-    assert results.get("snap:A", {}).get("_loaded_key") == "art_A"
-    assert results.get("snap:B", {}).get("_loaded_key") == "art_B"
-
-
-@pytest.mark.regression
-def test_three_concurrent_query_snapshot_calls_isolate_artifacts():
-    """Three concurrent query_snapshot calls must each see their own artifacts."""
-    barrier = threading.Barrier(3, timeout=5)
-    results: dict[str, dict[str, Any]] = {}
-    errors: list[Exception] = []
-
-    def run_query(sid: str, akey: str) -> None:
-        p, _ = _make_pipeline_with_artifact_tracking(sid, akey)
+    def run_query(sid: str) -> None:
         try:
             barrier.wait(timeout=5)
             r = p.query_snapshot(question="test", snapshot_id=sid)
@@ -117,8 +108,8 @@ def test_three_concurrent_query_snapshot_calls_isolate_artifacts():
             errors.append(e)
 
     threads = [
-        threading.Thread(target=run_query, args=(f"snap:{i}", f"art_{i}"))
-        for i in range(3)
+        threading.Thread(target=run_query, args=(f"snap_{i}",))
+        for i in range(n_threads)
     ]
     for t in threads:
         t.start()
@@ -126,6 +117,67 @@ def test_three_concurrent_query_snapshot_calls_isolate_artifacts():
         t.join(timeout=10)
 
     assert not errors, f"threads raised: {errors}"
-    for i in range(3):
-        key = results.get(f"snap:{i}", {}).get("_loaded_key")
-        assert key == f"art_{i}", f"snap:{i} got wrong artifacts: {key}"
+    for i in range(n_threads):
+        key = results[f"snap_{i}"]["_loaded_key"]
+        assert key == f"art_snap_{i}", f"snap_{i} got wrong artifacts: {key}"
+
+
+@pytest.mark.regression
+def test_forced_interleaving_without_lock_causes_cross_contamination() -> None:
+    """Negative control: without the serialization lock, forced interleaving
+    causes Thread A to observe Thread B's loaded artifacts.
+
+    Event ordering (deterministic regardless of which thread starts first):
+      1. A loads art_snap_A  -> shared = art_snap_A, signal a_loaded
+      2. B waits for a_loaded, then loads art_snap_B  -> shared = art_snap_B
+      3. A waits for b_loaded, then both query -> both see art_snap_B
+    """
+    shared: dict[str, str] = {"loaded_key": ""}
+    a_loaded = threading.Event()
+    b_loaded = threading.Event()
+    results: dict[str, dict[str, Any]] = {}
+    errors: list[Exception] = []
+
+    def fake_load(artifact_key: str) -> bool:
+        shared["loaded_key"] = artifact_key
+        if "snap_A" in artifact_key:
+            a_loaded.set()
+            b_loaded.wait(timeout=5)
+        else:
+            a_loaded.wait(timeout=5)
+            b_loaded.set()
+        return True
+
+    def fake_query(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "answer": "ok",
+            "query": kwargs.get("question", ""),
+            "context_elements": 1,
+            "sources": [],
+            "_loaded_key": shared["loaded_key"],
+        }
+
+    p = _build_shared_pipeline(fake_load, fake_query)
+    p.snapshot_store.get_snapshot_record.side_effect = _snapshot_record_for
+    # Disable serialization lock
+    p._snapshot_query_lock = _NoOpContext()
+
+    def run_query(sid: str) -> None:
+        try:
+            r = p.query_snapshot(question="test", snapshot_id=sid)
+            results[sid] = r
+        except Exception as e:
+            errors.append(e)
+
+    t1 = threading.Thread(target=run_query, args=("snap_A",))
+    t2 = threading.Thread(target=run_query, args=("snap_B",))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert not errors, f"threads raised: {errors}"
+    # A loaded first, but B overwrote shared state before A queried.
+    # A sees B's artifact — proving the race the lock prevents.
+    assert results["snap_A"]["_loaded_key"] == "art_snap_B"
+    assert results["snap_B"]["_loaded_key"] == "art_snap_B"

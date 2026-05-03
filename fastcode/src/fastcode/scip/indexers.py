@@ -200,3 +200,18 @@ def run_scip_for_language(
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
         logger.warning("SCIP indexer for %s unavailable: %s", language, exc)
         return None
+
+
+def detect_scip_languages_in_paths(
+    repo_path: str,
+    relative_paths: list[str],
+) -> list[str]:
+    seen: set[str] = set()
+    for rel_path in relative_paths:
+        _, ext = os.path.splitext(rel_path)
+        lang = _EXTENSION_MAP.get(ext)
+        if lang:
+            seen.add(lang)
+    if not seen:
+        return detect_scip_languages(repo_path)
+    return sorted(seen)

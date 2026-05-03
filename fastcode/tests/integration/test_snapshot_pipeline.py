@@ -1728,6 +1728,7 @@ def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
             "pkg/a.py",
             "pkg/sub/b.py",
         ]
+        assert result["repair_frontier"]["tool_rerun_languages"] == ["python"]
         kwargs = pipeline._apply_semantic_resolvers.call_args.kwargs
         assert kwargs["budget"] == "repair_frontier"
         assert kwargs["target_paths"] == {"pkg/a.py", "pkg/sub/b.py"}

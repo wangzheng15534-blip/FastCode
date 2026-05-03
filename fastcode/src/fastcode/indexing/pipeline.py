@@ -34,6 +34,7 @@ from ..retrieval.hybrid import HybridRetriever
 from ..scip.ast_adapter import build_ir_from_ast
 from ..scip.indexers import (
     detect_scip_languages,
+    detect_scip_languages_in_paths,
     get_scip_indexer_profile,
     run_scip_for_language,
 )
@@ -1200,6 +1201,7 @@ class IndexPipeline:
             scope_roots=scope_roots,
         )
         warnings: list[str] = []
+        scoped_tool_languages: list[str] = []
         if not target_paths:
             return {
                 "status": "skipped",
@@ -1211,8 +1213,18 @@ class IndexPipeline:
                     "scope_roots": scope_roots,
                     "changed_paths": changed_paths,
                     "target_paths": [],
+                    "tool_rerun_languages": scoped_tool_languages,
                 },
             }
+
+        if scope_kind == "package" and (self.loader.repo_path or ""):
+            try:
+                scoped_tool_languages = detect_scip_languages_in_paths(
+                    self.loader.repo_path or "",
+                    sorted(target_paths),
+                )
+            except Exception as exc:
+                warnings.append(f"scoped_tool_language_detection_failed: {exc}")
 
         repaired_snapshot = self._apply_semantic_resolvers(
             snapshot=snapshot,
@@ -1245,6 +1257,7 @@ class IndexPipeline:
                 "scope_roots": scope_roots,
                 "changed_paths": changed_paths,
                 "target_paths": sorted(target_paths),
+                "tool_rerun_languages": scoped_tool_languages,
             },
         }
 

@@ -23,6 +23,8 @@ FastCode is currently in a hardened pre-release state, not a real stable release
 The core algorithmic path is much stronger than the original prototype: snapshot indexing, IR/SCIP merge, semantic resolver fallback, query-time escalation, artifact isolation, and async endpoint offloading all have regression coverage and green smoke gates.
 
 The remaining gap to a stable release is no longer mainly "does the core pipeline work?" The gap is production evidence and operational hardening:
+- true incremental source/index/update caching at the pipeline core
+- true embedding/model cache reuse keyed by content and model fingerprint
 - install/package reproducibility from a clean environment
 - real external-tool integration evidence across supported languages
 - real PostgreSQL/backend semantics beyond local fakes
@@ -129,7 +131,109 @@ These are release blockers. Do not tag a stable release while any P0 item is ope
 - `pip install dist/*.whl` in a fresh virtualenv can run CLI, API import, helper path checks, and a tiny index/query smoke.
 - Release docs list exact install commands for local-only and production/PostgreSQL modes.
 
-### P0.2 Real external-tool integration matrix
+### P0.2 True incremental source/index caching
+
+**Gap:** The current release path is not actually incremental. Snapshot publish still pays full repository scan, full parse, full embedding, full AST IR build, and optional full-repo SCIP cost before `apply_incremental_update()` trims the final snapshot.
+
+**Why this is core-level:** This is the largest remaining architecture gap between a hardened prototype and a stable release. On medium and large repos, “incremental” behavior still scales like full reindex.
+
+**Current failure modes:**
+- `run_index_pipeline()` performs full extraction before diffing changed files.
+- `diff_changed_files()` depends on file fingerprints that are not yet mandatory/populated end to end.
+- repository traversal is repeated across repo info, indexing, non-git identity, and SCIP language detection
+- unchanged files are reused too late, after the expensive work already happened
+
+**Required work:**
+- Add a manifest-first planner before extraction:
+  - inventory repository once
+  - compute file fingerprints once
+  - diff against prior snapshot before parse/embed/SCIP
+- Make file fingerprints first-class and mandatory:
+  - prefer git `blob_oid` when available
+  - otherwise persist `content_hash`
+  - fall back to size/mtime only as an explicit degraded mode
+- Add a `FileArtifactStore` keyed by `(repo, rel_path, blob_oid/content_hash)` for:
+  - parsed file output
+  - file-level AST/IR shards
+  - per-file semantic facts
+  - per-file embedding payloads or embedding references
+- Refactor the pipeline into:
+  - `plan_changes`
+  - `extract_changed`
+  - `merge_snapshot`
+  - `persist`
+- Promote existing `CodeIndexer.index_files()` and file-manifest logic into the snapshot pipeline instead of keeping them as side paths.
+- Reuse unchanged per-file artifacts before embedding and before SCIP where supported.
+- Treat “missing file fingerprints” as a reason to disable incremental mode, not to silently claim success.
+
+**Exit criteria:**
+- A one-file edit does not trigger full-repo parsing or full-repo embedding.
+- Incremental publish reports correct `added/modified/removed/unchanged` counts for both git and non-git repos.
+- There is an integration test proving unchanged files are not reparsed or re-embedded.
+- There is a benchmark/regression test showing one-file update cost is materially below full reindex.
+
+### P0.3 Embedding/model cache correctness and reuse
+
+**Gap:** There is no real content-addressed embedding cache in the active indexing path, and artifact reuse is not guarded by a complete embedding/model fingerprint.
+
+**Why this is core-level:** Stable release users will judge the system by repeated indexing/update cost. Without a correct embedding cache, model inference dominates runtime and cost even when source changes are small.
+
+**Current failure modes:**
+- `CodeEmbedder` always computes embeddings in active index flows.
+- `CacheManager.get_embedding/set_embedding` exists but is not wired into repository indexing.
+- cache/artifact reuse does not validate provider/model/normalization/prepare-text schema, so stale vectors can be silently reused across model changes.
+- Ollama embedding path is effectively serial, ignoring batch-level reuse opportunities.
+- model startup is eager, so read-only operations can pay unnecessary model initialization overhead.
+
+**Required work:**
+- Introduce an `EmbeddingService` or equivalent core boundary with:
+  - `prepare_text(element)`
+  - `fingerprint()`
+  - `embed_many(texts)`
+  - cache-aware `embed_elements(elements, reuse_index)`
+- Define and persist an `embedding_fingerprint` including:
+  - provider
+  - model name/version identity
+  - normalization flag
+  - max sequence length
+  - embedding text preparation schema version
+  - embedding dimension
+- Key embedding cache entries by:
+  - prepared text hash
+  - embedding fingerprint
+- Store fingerprint on:
+  - snapshot metadata
+  - vector-store artifacts
+  - repo overviews
+  - query/embedding cache keys
+  - any PG/vector persistence rows that serve embeddings
+- Refuse artifact reuse or force rebuild when embedding fingerprint mismatches.
+- Batch cache hits/misses correctly: fetch cached vectors first, embed only misses, then write misses.
+- Make embedder/model initialization lazy for non-embedding code paths.
+- Remove avoidable quadratic work in batch embedding assignment.
+
+**Exit criteria:**
+- Repeated indexing of unchanged files makes zero provider/model calls.
+- Switching embedding model or preparation schema invalidates old vectors deterministically.
+- There is a test proving two identical embedding texts trigger one provider computation.
+- There is a test proving same-dimension model changes do not silently reuse stale vectors.
+
+### P0.4 Snapshot artifact handle caching for query serving
+
+**Gap:** Snapshot artifacts are cached only as disk bundles. Query-time loads still mutate global singleton state and serialize all snapshot queries through one critical section.
+
+**Required work:**
+- Introduce immutable `LoadedSnapshotArtifacts` handles.
+- Add in-process LRU caching by `artifact_key`.
+- Make query paths consume request-local handles instead of swapping singleton `vector_store` / `retriever` / `graph_builder` state.
+- Separate serving-time artifact load from repair/rebuild behavior.
+
+**Exit criteria:**
+- Repeated queries against the same snapshot avoid disk reload.
+- Concurrent snapshot queries on different snapshots do not cross-contaminate results.
+- Eviction behavior is bounded and tested.
+
+### P0.5 Real external-tool integration matrix
 
 **Gap:** Resolver and SCIP contracts are represented in metadata and unit tests, but several languages still rely on helper heuristics or experimental tooling. Stable release claims must match real command behavior.
 
@@ -144,7 +248,7 @@ These are release blockers. Do not tag a stable release while any P0 item is ope
 - Stable language list has real command smoke coverage or is downgraded in docs to structural/experimental support.
 - Experimental languages never appear as stable in API metadata, docs, or release notes.
 
-### P0.3 Production storage semantics
+### P0.6 Production storage semantics
 
 **Gap:** SQLite local mode is well covered, and Postgres-oriented code exists, but stable production semantics require real backend tests for locks, migrations, outbox, redo, and relational fact persistence.
 
@@ -159,7 +263,7 @@ These are release blockers. Do not tag a stable release while any P0 item is ope
 - Postgres integration tests are part of the release gate or explicitly required before tagging.
 - SQLite limitations are documented in user-facing release docs.
 
-### P0.4 API and file-upload security hardening
+### P0.7 API and file-upload security hardening
 
 **Gap:** Blocking upload/index work is now offloaded, but upload extraction is still not release-grade security.
 
@@ -175,7 +279,7 @@ These are release blockers. Do not tag a stable release while any P0 item is ope
 - Upload path traversal and zip-bomb regressions are tested.
 - Production deployment docs include CORS/auth guidance.
 
-### P0.5 Service-wide state isolation under concurrent traffic
+### P0.8 Service-wide state isolation under concurrent traffic
 
 **Gap:** `query_snapshot` now serializes artifact load+query, but other global-state mutations can still race with query and load flows on the singleton service instance.
 
@@ -189,7 +293,7 @@ These are release blockers. Do not tag a stable release while any P0 item is ope
 - Concurrent mutation/query behavior is either serialized by design or explicitly rejected with clear errors.
 - No query can observe half-loaded artifacts or deleted repository state.
 
-### P0.6 Release gate and compatibility policy
+### P0.9 Release gate and compatibility policy
 
 **Gap:** Smoke tests are green, but stable release gates need a documented contract beyond "current tests pass."
 
@@ -236,7 +340,14 @@ These currently emit useful structured facts, but they are still narrower than f
   - support induced-subgraph upgrades for path queries
   - add ranking tests proving graph-expanded results improve answer context, not only appear in retrieved rows
 
-### P1.4 Continue store-boundary typing
+### P1.4 Repository inventory and parse-cache efficiency
+
+- Unify repository inventory across loader, repo info, indexing, non-git identity, and SCIP language detection.
+- Add per-content-hash parse cache keyed by `(rel_path, content_hash, parser_version)`.
+- Make loader ignore rules and SCIP visible-file selection share one canonical inventory.
+- Add explicit degraded-mode metrics when parse cache is bypassed or invalidated.
+
+### P1.5 Continue store-boundary typing
 
 Typed records now exist for manifests, snapshot refs, and snapshot records.
 
@@ -246,10 +357,16 @@ Still raw-dict-heavy at boundaries:
 - SCIP artifact record payloads
 - projection/cache session payloads
 
-### P1.5 Observability and debuggability
+### P1.6 Observability and debuggability
 
 - Promote pipeline layer metrics and resolver diagnostics into stable API fields.
 - Add structured logs for artifact swaps, semantic escalation, resolver fallback, and lock acquisition/release.
+- Add stable cache/update metrics:
+  - repository inventory reuse hit/miss
+  - parse cache hit/miss
+  - embedding cache hit/miss
+  - artifact-handle cache hit/miss
+  - incremental planner changed-file counts
 - Add a documented diagnostic bundle for support: config summary, storage backend, dependency availability, latest run metadata.
 
 ### P2: Post-Stable Quality Improvements

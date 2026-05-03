@@ -48,6 +48,7 @@ from ..store.manifest import ManifestStore
 from ..store.pg_retrieval import PgRetrievalStore
 from ..store.projection import ProjectionStore
 from ..store.snapshot import SnapshotStore
+from ..store.unit_artifacts import UnitArtifactStore
 from ..store.vector import VectorStore
 from ..utils import (
     config_to_legacy_dict,
@@ -161,6 +162,7 @@ class FastCode:
         self.snapshot_store = SnapshotStore(persist_dir, storage_cfg=storage_cfg)
         self.manifest_store = ManifestStore(self.snapshot_store.db_runtime)
         self.index_run_store = IndexRunStore(self.snapshot_store.db_runtime)
+        self.unit_artifact_store = UnitArtifactStore(self.snapshot_store.db_runtime)
         self.terminus_publisher = TerminusPublisher(self.config)
         self.projection_transformer = ProjectionTransformer(self.config)
         self.projection_store = ProjectionStore(self.config)
@@ -200,6 +202,7 @@ class FastCode:
             snapshot_store=self.snapshot_store,
             manifest_store=self.manifest_store,
             index_run_store=self.index_run_store,
+            unit_artifact_store=self.unit_artifact_store,
             snapshot_symbol_index=self.snapshot_symbol_index,
             vector_store=self.vector_store,
             embedder=self.embedder,

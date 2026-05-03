@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import os
 import pathlib
+from types import SimpleNamespace
 import subprocess
 from typing import Any
 from unittest.mock import MagicMock
@@ -364,6 +365,10 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
         snapshot_store=fc.snapshot_store,
         manifest_store=fc.manifest_store,
         index_run_store=fc.index_run_store,
+        unit_artifact_store=SimpleNamespace(
+            replace_snapshot_units=lambda **kwargs: None,
+            list_snapshot_units=lambda snapshot_id: [],
+        ),
         snapshot_symbol_index=fc.snapshot_symbol_index,
         vector_store=fc.vector_store,
         embedder=fc.embedder,

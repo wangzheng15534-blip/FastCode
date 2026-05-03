@@ -46,6 +46,7 @@ from ..store.index_run import IndexRunStore
 from ..store.manifest import ManifestStore
 from ..store.pg_retrieval import PgRetrievalStore
 from ..store.snapshot import SnapshotStore
+from ..store.unit_artifacts import UnitArtifactStore
 from ..store.vector import VectorStore
 from ..utils import compute_file_hash, ensure_dir, normalize_path
 from .doc_ingester import KeyDocIngester
@@ -84,6 +85,7 @@ class IndexPipeline:
         snapshot_store: SnapshotStore,
         manifest_store: ManifestStore,
         index_run_store: IndexRunStore,
+        unit_artifact_store: UnitArtifactStore,
         snapshot_symbol_index: SnapshotSymbolIndex,
         vector_store: VectorStore,
         embedder: CodeEmbedder,
@@ -106,6 +108,7 @@ class IndexPipeline:
         self.snapshot_store = snapshot_store
         self.manifest_store = manifest_store
         self.index_run_store = index_run_store
+        self.unit_artifact_store = unit_artifact_store
         self.snapshot_symbol_index = snapshot_symbol_index
         self.vector_store = vector_store
         self.embedder = embedder
@@ -343,6 +346,10 @@ class IndexPipeline:
             " (excluding repository_overview)"
         )
         return elements
+
+    @staticmethod
+    def _unit_artifact_rows(elements: list[CodeElement]) -> list[dict[str, Any]]:
+        return [cast(dict[str, Any], elem.to_dict()) for elem in elements]
 
     def _has_active_doc_persistence(self, graph_runtime: Any) -> bool:
         """Return True when doc ingestion has at least one active sink."""
@@ -1216,11 +1223,13 @@ class IndexPipeline:
             budget="repair_frontier",
         )
         metadata = (
-            json.loads(record.metadata_json)
-            if record.metadata_json is not None
-            else {}
+            json.loads(record.metadata_json) if record.metadata_json is not None else {}
         )
         self.snapshot_store.save_snapshot(repaired_snapshot, metadata=metadata)
+        self.unit_artifact_store.replace_snapshot_units(
+            snapshot_id=snapshot_id,
+            elements=self._unit_artifact_rows(elements),
+        )
         self.snapshot_symbol_index.register_snapshot(repaired_snapshot)
         self.snapshot_store.save_relational_facts(repaired_snapshot)
         repaired_ir_graphs = self.ir_graph_builder.build_graphs(repaired_snapshot)
@@ -1852,6 +1861,10 @@ class IndexPipeline:
                     ),
                     "fencing_token": lock_token,
                 },
+            )
+            self.unit_artifact_store.replace_snapshot_units(
+                snapshot_id=snapshot_id,
+                elements=self._unit_artifact_rows(elements),
             )
             self.snapshot_store.import_git_backbone(merged_snapshot, git_meta=git_meta)
             self.snapshot_store.save_relational_facts(merged_snapshot)

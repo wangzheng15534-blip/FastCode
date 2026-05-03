@@ -17,6 +17,7 @@ from fastcode.scip.models import SCIPIndex
 from fastcode.store.index_run import IndexRunStore
 from fastcode.store.manifest import ManifestStore
 from fastcode.store.snapshot import SnapshotStore
+from fastcode.store.unit_artifacts import UnitArtifactStore
 
 
 def test_snapshot_store_persists_and_loads_snapshot():
@@ -333,6 +334,7 @@ def _make_minimal_pipeline(tmp: str) -> IndexPipeline:
         snapshot_store=store,
         manifest_store=ManifestStore(store.db_runtime),
         index_run_store=IndexRunStore(store.db_runtime),
+        unit_artifact_store=UnitArtifactStore(store.db_runtime),
         snapshot_symbol_index=SimpleNamespace(register_snapshot=lambda snapshot: None),
         vector_store=SimpleNamespace(persist_dir=tmp, load=lambda artifact_key: True),
         embedder=SimpleNamespace(embedding_dim=3),
@@ -1679,9 +1681,36 @@ def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
         pipeline._load_artifacts_by_key = Mock(return_value=True)
         pipeline._reconstruct_elements_from_metadata = Mock(
             return_value=[
-                SimpleNamespace(relative_path="pkg/a.py", file_path="pkg/a.py"),
-                SimpleNamespace(relative_path="pkg/sub/b.py", file_path="pkg/sub/b.py"),
-                SimpleNamespace(relative_path="other/c.py", file_path="other/c.py"),
+                SimpleNamespace(
+                    relative_path="pkg/a.py",
+                    file_path="pkg/a.py",
+                    to_dict=lambda: {
+                        "id": "elem:a",
+                        "type": "function",
+                        "relative_path": "pkg/a.py",
+                        "metadata": {"stable_unit_id": "unit:function:a"},
+                    },
+                ),
+                SimpleNamespace(
+                    relative_path="pkg/sub/b.py",
+                    file_path="pkg/sub/b.py",
+                    to_dict=lambda: {
+                        "id": "elem:b",
+                        "type": "function",
+                        "relative_path": "pkg/sub/b.py",
+                        "metadata": {"stable_unit_id": "unit:function:b"},
+                    },
+                ),
+                SimpleNamespace(
+                    relative_path="other/c.py",
+                    file_path="other/c.py",
+                    to_dict=lambda: {
+                        "id": "elem:c",
+                        "type": "function",
+                        "relative_path": "other/c.py",
+                        "metadata": {"stable_unit_id": "unit:function:c"},
+                    },
+                ),
             ]
         )
         pipeline._apply_semantic_resolvers = Mock(return_value=snapshot)
@@ -1702,6 +1731,14 @@ def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
         kwargs = pipeline._apply_semantic_resolvers.call_args.kwargs
         assert kwargs["budget"] == "repair_frontier"
         assert kwargs["target_paths"] == {"pkg/a.py", "pkg/sub/b.py"}
+        stored_units = pipeline.unit_artifact_store.list_snapshot_units(
+            "snap:repo:repair"
+        )
+        assert {row["relative_path"] for row in stored_units} == {
+            "pkg/a.py",
+            "pkg/sub/b.py",
+            "other/c.py",
+        }
 
 
 # ---------------------------------------------------------------------------

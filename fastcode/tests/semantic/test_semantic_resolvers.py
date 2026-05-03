@@ -140,6 +140,10 @@ def _wire_pipeline(fc: Any) -> None:
         snapshot_store=SimpleNamespace(),
         manifest_store=SimpleNamespace(),
         index_run_store=SimpleNamespace(),
+        unit_artifact_store=SimpleNamespace(
+            replace_snapshot_units=lambda **kwargs: None,
+            list_snapshot_units=lambda snapshot_id: [],
+        ),
         snapshot_symbol_index=SimpleNamespace(),
         vector_store=SimpleNamespace(metadata=[]),
         embedder=SimpleNamespace(),

@@ -1,1 +1,1 @@
-"""Persistence layer: snapshot, manifest, vector, projection, cache, and retrieval stores."""
+"""Persistence layer: snapshot, manifest, vector, projection, cache, retrieval, and unit artifact stores."""

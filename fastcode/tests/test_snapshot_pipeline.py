@@ -3,6 +3,7 @@ import os
 import tempfile
 from contextlib import ExitStack
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import numpy as np
@@ -210,6 +211,85 @@ def test_sqlite_lock_release_does_not_raise():
         store.release_lock("index:snap:repo:1", owner_id="run1")
         # validate on nonexistent lock also returns True (SQLite no-op)
         assert store.validate_fencing_token("nonexistent:lock", expected_token=1)
+
+
+class _FakeCursor:
+    def __init__(self, row: dict[str, Any] | None) -> None:
+        self._row = row
+
+    def fetchone(self) -> dict[str, Any] | None:
+        return self._row
+
+
+class _FakePostgresLockRuntime:
+    backend = "postgres"
+
+    def __init__(self) -> None:
+        self.locks: dict[str, dict[str, Any]] = {}
+
+    def connect(self) -> Any:
+        return self
+
+    def __enter__(self) -> Any:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def commit(self) -> None:
+        return None
+
+    def execute(
+        self, _conn: object, sql: str, params: tuple[Any, ...] = ()
+    ) -> _FakeCursor:
+        if "INSERT INTO resource_locks" in sql:
+            lock_name, owner_id, expires_at, updated_at = params[:4]
+            current = self.locks.get(str(lock_name))
+            if current is None:
+                token = 1
+            elif current["owner_id"] == owner_id:
+                token = (
+                    current["fencing_token"]
+                    if "CASE" in sql
+                    else current["fencing_token"] + 1
+                )
+            else:
+                return _FakeCursor(None)
+            self.locks[str(lock_name)] = {
+                "owner_id": owner_id,
+                "expires_at": expires_at,
+                "updated_at": updated_at,
+                "fencing_token": token,
+            }
+            return _FakeCursor({"fencing_token": token})
+
+        if "SELECT fencing_token FROM resource_locks" in sql:
+            current = self.locks.get(str(params[0]))
+            if current is None:
+                return _FakeCursor(None)
+            return _FakeCursor({"fencing_token": current["fencing_token"]})
+
+        if "DELETE FROM resource_locks" in sql:
+            lock_name, owner_id = params
+            current = self.locks.get(str(lock_name))
+            if current and current["owner_id"] == owner_id:
+                del self.locks[str(lock_name)]
+            return _FakeCursor(None)
+
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+
+def test_postgres_lock_reacquire_by_same_owner_preserves_fencing_token():
+    """Same-owner lock refresh must not invalidate in-flight work."""
+    store = SnapshotStore.__new__(SnapshotStore)
+    store.db_runtime = _FakePostgresLockRuntime()
+
+    token1 = store.acquire_lock("index:snap:repo:1", owner_id="run1", ttl_seconds=60)
+    token2 = store.acquire_lock("index:snap:repo:1", owner_id="run1", ttl_seconds=60)
+
+    assert token1 == 1
+    assert token2 == 1
+    assert store.validate_fencing_token("index:snap:repo:1", token1)
 
 
 def test_enqueue_redo_task_returns_id():

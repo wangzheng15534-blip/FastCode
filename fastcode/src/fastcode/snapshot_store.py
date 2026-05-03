@@ -1092,7 +1092,11 @@ class SnapshotStore:
                     owner_id=excluded.owner_id,
                     expires_at=excluded.expires_at,
                     updated_at=excluded.updated_at,
-                    fencing_token=resource_locks.fencing_token + 1
+                    fencing_token=CASE
+                        WHEN resource_locks.owner_id = excluded.owner_id
+                        THEN resource_locks.fencing_token
+                        ELSE resource_locks.fencing_token + 1
+                    END
                 WHERE resource_locks.expires_at < ? OR resource_locks.owner_id = ?
                 RETURNING fencing_token
                 """,

@@ -5,12 +5,15 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import networkx as nx
 import pytest
 
 from fastcode.indexer import CodeElement
+from fastcode.ir_graph_builder import IRGraphs
 from fastcode.main import FastCode
 from fastcode.query_handler import QueryPipeline
 from fastcode.query_processor import ProcessedQuery
+from fastcode.retriever import HybridRetriever
 from fastcode.semantic_ir import IRSnapshot
 
 
@@ -285,6 +288,73 @@ def test_semantic_escalation_changes_retrieval_results_end_to_end() -> None:
     paths = [r["element"]["relative_path"] for r in generated_retrieved]
     assert "src/token_store.py" in paths
     assert "src/middleware.py" in paths
+
+
+@pytest.mark.regression
+def test_semantic_escalation_enables_real_ir_graph_expansion() -> None:
+    auth = _element("src/auth.py", element_id="file:auth")
+    token_store = _element("src/token_store.py", element_id="file:token_store")
+    auth.metadata["ir_symbol_id"] = "unit:auth"
+    token_store.metadata["ir_symbol_id"] = "unit:token_store"
+
+    real_retriever = HybridRetriever.__new__(HybridRetriever)
+    real_retriever.graph_backend = "ir"
+    real_retriever.ir_graphs = None
+    real_retriever.ir_snapshot_id = None
+    real_retriever.allow_legacy_graph_fallback = False
+    real_retriever.graph_weight = 1.0
+    real_retriever.logger = MagicMock()
+    real_retriever.graph_builder = SimpleNamespace(
+        element_by_id={auth.id: auth, token_store.id: token_store},
+        get_related_elements=lambda *args, **kwargs: set(),
+    )
+
+    def retrieve_from_real_graph(
+        processed_query: ProcessedQuery, *args: Any, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        seed_results = [
+            {
+                "element": auth.to_dict(),
+                "semantic_score": 1.0,
+                "keyword_score": 0.0,
+                "graph_score": 0.0,
+                "total_score": 1.0,
+            }
+        ]
+        return real_retriever._expand_with_graph(seed_results, max_hops=1)
+
+    def install_call_graph(**kwargs: Any) -> dict[str, Any]:
+        call_graph: nx.DiGraph[str] = nx.DiGraph()
+        call_graph.add_edge("unit:auth", "unit:token_store")
+        empty: nx.DiGraph[str] = nx.DiGraph()
+        real_retriever.set_ir_graphs(
+            IRGraphs(
+                dependency_graph=empty.copy(),
+                call_graph=call_graph,
+                inheritance_graph=empty.copy(),
+                reference_graph=empty.copy(),
+                containment_graph=empty.copy(),
+            ),
+            snapshot_id=kwargs["snapshot_id"],
+        )
+        return {"status": "applied", "budget": "path-critical", "rerun_retrieval": True}
+
+    pipeline = _query_pipeline(semantic_escalation_cb=install_call_graph)
+    pipeline.retriever.retrieve.side_effect = retrieve_from_real_graph
+    pipeline.query_processor.process.return_value = _processed_query(
+        question="How does auth reach the token store?",
+        filters={"snapshot_id": "snap:1"},
+    )
+
+    result = pipeline.query(
+        "How does auth reach the token store?",
+        filters={"snapshot_id": "snap:1"},
+    )
+
+    generated_retrieved = pipeline.answer_generator.generate.call_args[0][1]
+    paths = [row["element"]["relative_path"] for row in generated_retrieved]
+    assert result["semantic_escalation"]["status"] == "applied"
+    assert paths == ["src/auth.py", "src/token_store.py"]
 
 
 @pytest.mark.regression

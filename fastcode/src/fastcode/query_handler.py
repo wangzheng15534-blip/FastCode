@@ -5,6 +5,7 @@ QueryPipeline — query, query_stream, and query_snapshot extracted from FastCod
 from __future__ import annotations
 
 import logging
+import threading
 import traceback
 from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Any
@@ -57,6 +58,7 @@ class QueryPipeline:
         self.is_repo_indexed = is_repo_indexed
         self.load_artifacts_by_key = load_artifacts_by_key
         self.semantic_escalation_cb = semantic_escalation_cb
+        self._snapshot_query_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public query methods
@@ -148,25 +150,29 @@ class QueryPipeline:
         if not snapshot_record:
             raise RuntimeError(f"snapshot not found: {snapshot_id}")
 
-        if not self.load_artifacts_by_key(snapshot_record.artifact_key):
-            raise RuntimeError(f"failed to load artifacts for snapshot: {snapshot_id}")
-        if not self.snapshot_symbol_index.has_snapshot(snapshot_id):
-            loaded_snapshot = self.snapshot_store.load_snapshot(snapshot_id)
-            if loaded_snapshot:
-                self.snapshot_symbol_index.register_snapshot(loaded_snapshot)
+        artifact_key = snapshot_record.artifact_key
+        with self._snapshot_query_lock:
+            if not self.load_artifacts_by_key(artifact_key):
+                raise RuntimeError(
+                    f"failed to load artifacts for snapshot: {snapshot_id}"
+                )
+            if not self.snapshot_symbol_index.has_snapshot(snapshot_id):
+                loaded_snapshot = self.snapshot_store.load_snapshot(snapshot_id)
+                if loaded_snapshot:
+                    self.snapshot_symbol_index.register_snapshot(loaded_snapshot)
 
-        merged_filters = dict(filters or {})
-        merged_filters["snapshot_id"] = snapshot_id
+            merged_filters = dict(filters or {})
+            merged_filters["snapshot_id"] = snapshot_id
 
-        result = self.query(
-            question=question,
-            filters=merged_filters,
-            repo_filter=None,
-            session_id=session_id,
-            enable_multi_turn=enable_multi_turn,
-        )
+            result = self.query(
+                question=question,
+                filters=merged_filters,
+                repo_filter=None,
+                session_id=session_id,
+                enable_multi_turn=enable_multi_turn,
+            )
         result["snapshot_id"] = snapshot_id
-        result["artifact_key"] = snapshot_record.artifact_key
+        result["artifact_key"] = artifact_key
         return result
 
     def query(

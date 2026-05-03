@@ -105,6 +105,77 @@ def _ensure_fastcode_initialized():
     return fastcode_instance
 
 
+def _upload_repository_zip_sync(
+    fastcode: FastCode,
+    file: UploadFile,
+    filename: str,
+) -> dict[str, Any]:
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+
+    max_size = 100 * 1024 * 1024  # 100MB
+    if file_size > max_size:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size is {max_size / (1024 * 1024)}MB",
+        )
+
+    repo_name = filename.rsplit(".", 1)[0]
+    for suffix in ["-main", "-master", "_main", "_master"]:
+        if repo_name.endswith(suffix):
+            repo_name = repo_name[: -len(suffix)]
+            break
+
+    repo_workspace = getattr(fastcode.loader, "safe_repo_root", "./repos")
+    repos_dir = Path(repo_workspace)
+    repos_dir.mkdir(parents=True, exist_ok=True)
+    repo_path = repos_dir / repo_name
+
+    if repo_path.exists():
+        fastcode.loader._backup_existing_repo(str(repo_path))
+
+    temp_dir = tempfile.mkdtemp(prefix="fastcode_upload_")
+    try:
+        zip_path = Path(temp_dir) / filename
+
+        logger.info(f"Saving uploaded ZIP file: {filename} ({file_size} bytes)")
+        with open(zip_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        extract_dir = Path(temp_dir) / "extracted"
+        extract_dir.mkdir(exist_ok=True)
+
+        logger.info(f"Extracting ZIP file to temporary directory: {extract_dir}")
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(extract_dir)
+
+        extracted_items = list(extract_dir.iterdir())
+        if len(extracted_items) == 1 and extracted_items[0].is_dir():
+            source_repo_path = extracted_items[0]
+        else:
+            source_repo_path = extract_dir
+
+        logger.info(f"Moving repository to: {repo_path}")
+        shutil.move(str(source_repo_path), str(repo_path))
+
+        logger.info(f"Loading repository from: {repo_path}")
+        fastcode.load_repository(str(repo_path), is_url=False)
+
+        return {
+            "status": "success",
+            "message": f"ZIP file '{file.filename}' uploaded and extracted to repos/{repo_name}",
+            "repo_info": fastcode.repo_info,
+            "repo_path": str(repo_path),
+        }
+    finally:
+        try:
+            shutil.rmtree(temp_dir)
+            logger.info(f"Cleaned up temporary directory: {temp_dir}")
+        except Exception as cleanup_error:
+            logger.warning(f"Failed to clean up temp directory: {cleanup_error}")
+
+
 @app.get("/")
 async def root():
     """Root endpoint"""
@@ -202,7 +273,9 @@ async def load_repository(request: LoadRepositoryRequest):
 
     try:
         logger.info(f"Loading repository: {request.source}")
-        fastcode.load_repository(request.source, request.is_url)
+        await asyncio.to_thread(
+            fastcode.load_repository, request.source, request.is_url
+        )
 
         return {
             "status": "success",
@@ -225,7 +298,7 @@ async def index_repository(force: bool = False):
 
     try:
         logger.info("Indexing repository")
-        fastcode.index_repository(force=force)
+        await asyncio.to_thread(fastcode.index_repository, force=force)
 
         fastcode.vector_store.invalidate_scan_cache()
 
@@ -348,7 +421,9 @@ async def load_repositories(request: LoadRepositoriesRequest):
 
     try:
         logger.info(f"Loading repositories from cache: {request.repo_names}")
-        success = fastcode._load_multi_repo_cache(repo_names=request.repo_names)
+        success = await asyncio.to_thread(
+            fastcode._load_multi_repo_cache, repo_names=request.repo_names
+        )
 
         if not success:
             raise HTTPException(
@@ -377,14 +452,15 @@ async def index_multiple(request: IndexMultipleRequest):
 
     try:
         logger.info(f"Indexing {len(request.sources)} repositories")
-        fastcode.load_multiple_repositories(
+        await asyncio.to_thread(
+            fastcode.load_multiple_repositories,
             [
                 {
                     "source": source.source,
                     "is_url": source.is_url,
                 }
                 for source in request.sources
-            ]
+            ],
         )
 
         fastcode.vector_store.invalidate_scan_cache()
@@ -408,72 +484,12 @@ async def upload_repository_zip(file: UploadFile = File(...)):
     if not filename or not filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only ZIP files are supported")
 
-    file.file.seek(0, 2)
-    file_size = file.file.tell()
-    file.file.seek(0)
-
-    max_size = 100 * 1024 * 1024  # 100MB
-    if file_size > max_size:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File too large. Maximum size is {max_size / (1024 * 1024)}MB",
-        )
-
     try:
-        repo_name = filename.rsplit(".", 1)[0]
-        for suffix in ["-main", "-master", "_main", "_master"]:
-            if repo_name.endswith(suffix):
-                repo_name = repo_name[: -len(suffix)]
-                break
-
-        repo_workspace = getattr(fastcode.loader, "safe_repo_root", "./repos")
-        repos_dir = Path(repo_workspace)
-        repos_dir.mkdir(parents=True, exist_ok=True)
-        repo_path = repos_dir / repo_name
-
-        if repo_path.exists():
-            fastcode.loader._backup_existing_repo(str(repo_path))
-
-        temp_dir = tempfile.mkdtemp(prefix="fastcode_upload_")
-        zip_path = Path(temp_dir) / filename
-
-        logger.info(f"Saving uploaded ZIP file: {filename} ({file_size} bytes)")
-
-        with open(zip_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        extract_dir = Path(temp_dir) / "extracted"
-        extract_dir.mkdir(exist_ok=True)
-
-        logger.info(f"Extracting ZIP file to temporary directory: {extract_dir}")
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(extract_dir)
-
-        extracted_items = list(extract_dir.iterdir())
-        if len(extracted_items) == 1 and extracted_items[0].is_dir():
-            source_repo_path = extracted_items[0]
-        else:
-            source_repo_path = extract_dir
-
-        logger.info(f"Moving repository to: {repo_path}")
-        shutil.move(str(source_repo_path), str(repo_path))
-
-        try:
-            shutil.rmtree(temp_dir)
-            logger.info(f"Cleaned up temporary directory: {temp_dir}")
-        except Exception as cleanup_error:
-            logger.warning(f"Failed to clean up temp directory: {cleanup_error}")
-
-        logger.info(f"Loading repository from: {repo_path}")
-        fastcode.load_repository(str(repo_path), is_url=False)
-
-        return {
-            "status": "success",
-            "message": f"ZIP file '{file.filename}' uploaded and extracted to repos/{repo_name}",
-            "repo_info": fastcode.repo_info,
-            "repo_path": str(repo_path),
-        }
-
+        return await asyncio.to_thread(
+            _upload_repository_zip_sync, fastcode, file, filename
+        )
+    except HTTPException:
+        raise
     except zipfile.BadZipFile:
         logger.error("Invalid ZIP file")
         raise HTTPException(status_code=400, detail="Invalid ZIP file")
@@ -494,7 +510,7 @@ async def upload_and_index(file: UploadFile = File(...), force: bool = False):
 
     try:
         logger.info("Indexing uploaded repository")
-        fastcode.index_repository(force=force)
+        await asyncio.to_thread(fastcode.index_repository, force=force)
 
         fastcode.vector_store.invalidate_scan_cache()
 

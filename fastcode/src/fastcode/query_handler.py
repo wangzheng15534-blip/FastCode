@@ -466,11 +466,15 @@ class QueryPipeline:
             if use_iterative_enhancement:
                 from .query_processor import ProcessedQuery
 
+                intent = "unknown"
+                detect_intent = getattr(self.query_processor, "_detect_intent", None)
+                if callable(detect_intent):
+                    intent = detect_intent(question)
                 processed_query = ProcessedQuery(
                     original=question,
                     expanded=question,
                     keywords=[],
-                    intent="unknown",
+                    intent=str(intent or "unknown"),
                     subqueries=[],
                     filters=filters or {},
                     rewritten_query=None,

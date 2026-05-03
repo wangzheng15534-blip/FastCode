@@ -348,3 +348,57 @@ class TestIndexMultiple:
         )
         fake_fastcode.vector_store.invalidate_scan_cache.assert_called_once_with()
         assert result["status"] == "success"
+
+
+class TestBlockingEndpointOffloads:
+    """Blocking repository operations must stay off the event loop."""
+
+    def test_repository_mutation_endpoints_use_to_thread(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        offloaded: list[Any] = []
+
+        async def record_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+            offloaded.append(func)
+            return func(*args, **kwargs)
+
+        fake_fastcode = MagicMock()
+        fake_fastcode.repo_loaded = True
+        fake_fastcode._load_multi_repo_cache.return_value = True
+        fake_fastcode.list_repositories.return_value = [{"repo_name": "repo"}]
+        fake_fastcode.get_repository_stats.return_value = {"repo_count": 1}
+        fake_fastcode.get_repository_summary.return_value = "summary"
+        monkeypatch.setattr(api.asyncio, "to_thread", record_to_thread)
+
+        with patch(
+            "fastcode.api._ensure_fastcode_initialized", return_value=fake_fastcode
+        ):
+            asyncio.run(
+                api.load_repository(
+                    api.LoadRepositoryRequest(source="/tmp/repo", is_url=False)
+                )
+            )
+            asyncio.run(api.index_repository(force=True))
+            asyncio.run(
+                api.load_repositories(
+                    api.LoadRepositoriesRequest(repo_names=["repo"])
+                )
+            )
+            asyncio.run(
+                api.index_multiple(
+                    api.IndexMultipleRequest(
+                        sources=[
+                            api.LoadRepositoryRequest(
+                                source="/tmp/repo", is_url=False
+                            )
+                        ]
+                    )
+                )
+            )
+
+        assert offloaded == [
+            fake_fastcode.load_repository,
+            fake_fastcode.index_repository,
+            fake_fastcode._load_multi_repo_cache,
+            fake_fastcode.load_multiple_repositories,
+        ]

@@ -501,15 +501,16 @@ def merge_ir(ast_snapshot: IRSnapshot, scip_snapshot: IRSnapshot | None) -> IRSn
         target = merged_units_by_id.get(unit_id)
         if target is None:
             continue
+        occurrence_path = support.path or target.path
         source_unit_id = _find_enclosing_unit_id(
-            target.path, support.start_line, support.end_line, merged_units
+            occurrence_path, support.start_line, support.end_line, merged_units
         )
         if not source_unit_id:
-            source_unit_id = ast_file_by_path.get(target.path) or next(
+            source_unit_id = ast_file_by_path.get(occurrence_path) or next(
                 (
                     unit.unit_id
                     for unit in merged_units
-                    if unit.kind == "file" and unit.path == target.path
+                    if unit.kind == "file" and unit.path == occurrence_path
                 ),
                 "",
             )

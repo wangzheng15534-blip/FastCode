@@ -324,6 +324,107 @@ def test_scip_occurrence_retargets_ref_to_enclosing_unit():
     )
 
 
+def test_scip_occurrence_retargets_cross_file_ref_to_occurrence_path():
+    ast = IRSnapshot(
+        repo_name="r",
+        snapshot_id="snap:1",
+        units=[
+            _file(),
+            IRCodeUnit(
+                unit_id="doc:snap:1:b.py",
+                kind="file",
+                path="b.py",
+                language="python",
+                display_name="b.py",
+                source_set={"fc_structure"},
+            ),
+            _method("ast:method:caller", "caller", "doc:snap:1:a.py", 1, 20),
+            IRCodeUnit(
+                unit_id="ast:method:callee",
+                kind="method",
+                path="b.py",
+                language="python",
+                display_name="callee",
+                qualified_name="callee",
+                start_line=30,
+                end_line=40,
+                parent_unit_id="doc:snap:1:b.py",
+                source_set={"fc_structure"},
+            ),
+        ],
+    )
+    scip_callee = IRCodeUnit(
+        unit_id="scip:callee",
+        kind="method",
+        path="b.py",
+        language="python",
+        display_name="callee",
+        qualified_name="pkg/callee",
+        start_line=30,
+        end_line=40,
+        parent_unit_id="doc:snap:1:b.py",
+        primary_anchor_symbol_id="pkg/callee",
+        anchor_symbol_ids=["pkg/callee"],
+        anchor_coverage=1.0,
+        source_set={"scip"},
+    )
+    scip_anchor = IRUnitSupport(
+        support_id="support:scip:callee",
+        unit_id="scip:callee",
+        source="scip",
+        support_kind="anchor",
+        external_id="pkg/callee",
+        display_name="callee",
+        path="b.py",
+        start_line=30,
+        end_line=40,
+    )
+    scip_occ = IRUnitSupport(
+        support_id="support:occ:cross-file",
+        unit_id="scip:callee",
+        source="scip",
+        support_kind="occurrence",
+        external_id="pkg/callee",
+        role="reference",
+        path="a.py",
+        start_line=10,
+        end_line=10,
+        metadata={"doc_id": "doc:snap:1:a.py"},
+    )
+    scip = IRSnapshot(
+        repo_name="r",
+        snapshot_id="snap:1",
+        units=[
+            IRCodeUnit(
+                unit_id="doc:snap:1:b.py",
+                kind="file",
+                path="b.py",
+                language="python",
+                display_name="b.py",
+                source_set={"scip"},
+            ),
+            scip_callee,
+        ],
+        supports=[scip_anchor, scip_occ],
+    )
+
+    merged = merge_ir(ast, scip)
+    ref_relations = [
+        relation for relation in merged.relations if relation.relation_type == "ref"
+    ]
+
+    assert any(
+        relation.src_unit_id == "ast:method:caller"
+        and relation.dst_unit_id == "ast:method:callee"
+        for relation in ref_relations
+    )
+    assert not any(
+        relation.src_unit_id == "doc:snap:1:b.py"
+        and relation.dst_unit_id == "ast:method:callee"
+        for relation in ref_relations
+    )
+
+
 # --- Property tests ---
 
 

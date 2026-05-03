@@ -7,6 +7,14 @@ import logging
 import os
 
 
+def _is_within_root(candidate_path: str, root_path: str) -> bool:
+    """Return True when candidate_path resolves inside root_path."""
+    try:
+        return os.path.commonpath([candidate_path, root_path]) == root_path
+    except ValueError:
+        return False
+
+
 def file_path_to_module_path(file_path: str, repo_root: str) -> str | None:
     """
     Convert a file system path to a logical dotted module path for RAG indexing
@@ -265,9 +273,9 @@ class PathUtils:
             if resolved is None:
                 # Also check if the joined path would be safe (even if doesn't exist yet)
                 abs_path = os.path.realpath(os.path.join(self.repo_root, path))
-                return abs_path.startswith(self.repo_root)
+                return _is_within_root(abs_path, self.repo_root)
             # Use realpath to resolve symlinks before containment check
-            return os.path.realpath(resolved).startswith(self.repo_root)
+            return _is_within_root(os.path.realpath(resolved), self.repo_root)
         except Exception as e:
             self.logger.warning(f"Path security check failed for {path}: {e}")
             return False

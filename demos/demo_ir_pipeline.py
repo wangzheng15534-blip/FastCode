@@ -18,42 +18,60 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastcode.indexer import CodeElement
-from fastcode.adapters.ast_to_ir import build_ir_from_ast
-from fastcode.adapters.scip_to_ir import build_ir_from_scip
-from fastcode.ir_merge import merge_ir
-from fastcode.ir_validators import validate_snapshot
-from fastcode.ir_graph_builder import IRGraphBuilder
+from fastcode.ir.element import CodeElement
+from fastcode.ir.graph import IRGraphBuilder
+from fastcode.ir.merge import merge_ir
+from fastcode.ir.validate import validate_snapshot
+from fastcode.scip.ast_adapter import build_ir_from_ast
+from fastcode.scip.scip_adapter import build_ir_from_scip
 import networkx as nx
-from fastcode.scip_models import SCIPIndex, SCIPDocument, SCIPSymbol, SCIPOccurrence
+from fastcode.scip.models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
 
 
 def main():
     # --- 1. AST elements ---
     elements = [
         CodeElement(
-            id="el_1", name="AuthService", type="class",
-            file_path="/repo/app/auth.py", relative_path="app/auth.py",
-            language="python", start_line=10, end_line=50,
-            code="class AuthService: ...", summary="Authentication service",
+            id="el_1",
+            name="AuthService",
+            type="class",
+            file_path="/repo/app/auth.py",
+            relative_path="app/auth.py",
+            language="python",
+            start_line=10,
+            end_line=50,
+            code="class AuthService: ...",
+            summary="Authentication service",
             signature="class AuthService",
             docstring=None,
             metadata={"imports": [{"module": "db"}], "bases": ["BaseService"]},
         ),
         CodeElement(
-            id="el_2", name="login", type="function",
-            file_path="/repo/app/auth.py", relative_path="app/auth.py",
-            language="python", start_line=20, end_line=35,
-            code="def login(): ...", summary="Login handler",
+            id="el_2",
+            name="login",
+            type="function",
+            file_path="/repo/app/auth.py",
+            relative_path="app/auth.py",
+            language="python",
+            start_line=20,
+            end_line=35,
+            code="def login(): ...",
+            summary="Login handler",
             signature="login()",
             docstring=None,
             metadata={"class_name": "AuthService"},
         ),
         CodeElement(
-            id="el_3", name="BaseService", type="class",
-            file_path="/repo/app/base.py", relative_path="app/base.py",
-            language="python", start_line=1, end_line=20,
-            code="class BaseService: ...", summary="Base service class",
+            id="el_3",
+            name="BaseService",
+            type="class",
+            file_path="/repo/app/base.py",
+            relative_path="app/base.py",
+            language="python",
+            start_line=1,
+            end_line=20,
+            code="class BaseService: ...",
+            summary="Base service class",
             signature="class BaseService",
             docstring=None,
             metadata={},
@@ -67,13 +85,17 @@ def main():
         elements=elements,
         repo_root="/repo",
     )
-    print(f"AST IR: {len(ast_snapshot.documents)} docs, {len(ast_snapshot.symbols)} symbols, "
-          f"{len(ast_snapshot.occurrences)} occurrences, {len(ast_snapshot.edges)} edges")
+    print(
+        f"AST IR: {len(ast_snapshot.documents)} docs, {len(ast_snapshot.symbols)} symbols, "
+        f"{len(ast_snapshot.occurrences)} occurrences, {len(ast_snapshot.edges)} edges"
+    )
     for s in ast_snapshot.symbols:
         print(f"  AST symbol: {s.symbol_id} ({s.source_priority})")
     for e in ast_snapshot.edges:
-        print(f"  AST edge: {e.edge_type} {e.src_id[:30]}... -> {e.dst_id[:30]}... "
-              f"[{e.source}/{e.confidence}]")
+        print(
+            f"  AST edge: {e.edge_type} {e.src_id[:30]}... -> {e.dst_id[:30]}... "
+            f"[{e.source}/{e.confidence}]"
+        )
 
     # --- 3. Build SCIP IR (typed model) ---
     scip_index = SCIPIndex(
@@ -84,16 +106,30 @@ def main():
                 path="app/auth.py",
                 language="python",
                 symbols=[
-                    SCIPSymbol(symbol="pkg app/auth.py AuthService.", name="AuthService",
-                               kind="class", range=[10, 0, 50, 0]),
-                    SCIPSymbol(symbol="pkg app/auth.py AuthService.login().", name="login",
-                               kind="method", range=[20, 4, 35, 0]),
+                    SCIPSymbol(
+                        symbol="pkg app/auth.py AuthService.",
+                        name="AuthService",
+                        kind="class",
+                        range=[10, 0, 50, 0],
+                    ),
+                    SCIPSymbol(
+                        symbol="pkg app/auth.py AuthService.login().",
+                        name="login",
+                        kind="method",
+                        range=[20, 4, 35, 0],
+                    ),
                 ],
                 occurrences=[
-                    SCIPOccurrence(symbol="pkg app/auth.py AuthService.login().",
-                                   role="definition", range=[20, 4, 35, 0]),
-                    SCIPOccurrence(symbol="pkg app/auth.py AuthService.login().",
-                                   role="reference", range=[100, 0, 100, 5]),
+                    SCIPOccurrence(
+                        symbol="pkg app/auth.py AuthService.login().",
+                        role="definition",
+                        range=[20, 4, 35, 0],
+                    ),
+                    SCIPOccurrence(
+                        symbol="pkg app/auth.py AuthService.login().",
+                        role="reference",
+                        range=[100, 0, 100, 5],
+                    ),
                 ],
             )
         ],
@@ -103,15 +139,19 @@ def main():
         snapshot_id="snap:demo:abc123",
         scip_index=scip_index,
     )
-    print(f"\nSCIP IR (typed model): {len(scip_snapshot.documents)} docs, {len(scip_snapshot.symbols)} symbols, "
-          f"{len(scip_snapshot.occurrences)} occurrences, {len(scip_snapshot.edges)} edges")
+    print(
+        f"\nSCIP IR (typed model): {len(scip_snapshot.documents)} docs, {len(scip_snapshot.symbols)} symbols, "
+        f"{len(scip_snapshot.occurrences)} occurrences, {len(scip_snapshot.edges)} edges"
+    )
     for s in scip_snapshot.symbols:
         print(f"  SCIP symbol: {s.symbol_id} ({s.source_priority})")
 
     # --- 4. Merge ---
     merged = merge_ir(ast_snapshot, scip_snapshot)
-    print(f"\nMerged IR: {len(merged.documents)} docs, {len(merged.symbols)} symbols, "
-          f"{len(merged.occurrences)} occurrences, {len(merged.edges)} edges")
+    print(
+        f"\nMerged IR: {len(merged.documents)} docs, {len(merged.symbols)} symbols, "
+        f"{len(merged.occurrences)} occurrences, {len(merged.edges)} edges"
+    )
     for s in merged.symbols:
         aliases = s.metadata.get("aliases", [])
         alias_str = f" (aliases: {aliases})" if aliases else ""
@@ -131,8 +171,11 @@ def main():
     graphs = builder.build_graphs(merged)
     print(f"\nGraphs built:")
     for name in [
-        "dependency_graph", "call_graph", "inheritance_graph",
-        "reference_graph", "containment_graph",
+        "dependency_graph",
+        "call_graph",
+        "inheritance_graph",
+        "reference_graph",
+        "containment_graph",
     ]:
         g = getattr(graphs, name)
         print(f"  {name}: {g.number_of_nodes()} nodes, {g.number_of_edges()} edges")
@@ -140,7 +183,9 @@ def main():
     # Demonstrate call graph traversal (NetworkX shortest path)
     if graphs.call_graph.number_of_nodes() > 0:
         start_node = list(graphs.call_graph.nodes)[0]
-        dist = nx.single_source_shortest_path_length(graphs.call_graph, start_node, cutoff=2)
+        dist = nx.single_source_shortest_path_length(
+            graphs.call_graph, start_node, cutoff=2
+        )
         print(f"\nCall graph from '{start_node[:40]}...' (max 2 hops):")
         for node, d in dist.items():
             if node != start_node:

@@ -1,0 +1,21 @@
+extend = "../../../pyproject.toml"
+
+[lint]
+extend-select = ["TID"]
+
+[lint.flake8-tidy-imports.banned-api]
+"pydantic".msg = "The IR layer must stay dataclass-based and Pydantic-free."
+"sqlite3".msg = "The IR layer must stay independent of database I/O."
+"subprocess".msg = "The IR layer must stay independent of process execution."
+"urllib".msg = "The IR layer must stay independent of network I/O."
+"fastcode.api".msg = "The IR layer must not depend on entrypoint shells."
+"fastcode.graph".msg = "Graph construction depends on IR, not vice versa."
+"fastcode.indexing".msg = "Indexing orchestrates IR usage; IR must stay independent."
+"fastcode.main".msg = "The IR layer must not depend on the composition root."
+"fastcode.mcp".msg = "The IR layer must not depend on transport shells."
+"fastcode.query".msg = "Query orchestration depends on IR, not vice versa."
+"fastcode.retrieval".msg = "Retrieval orchestration depends on IR, not vice versa."
+"fastcode.schemas".msg = "IR is canonical; schema compatibility types may re-export IR, not the reverse."
+"fastcode.scip".msg = "SCIP adapters depend on IR, not vice versa."
+"fastcode.semantic".msg = "Semantic adapters depend on IR, not vice versa."
+"fastcode.store".msg = "Storage depends on IR types, not vice versa."

@@ -371,7 +371,7 @@ class TestFastCodeSearchSymbolTool:
 
         def handler(request: httpx.Request) -> httpx.Response:
             params = dict(request.url.params)
-            assert params["path"] == "fastcode/retriever.py"
+            assert params["path"] == "fastcode/retrieval/hybrid.py"
             assert "name" not in params
             return _json_response(
                 body={
@@ -380,8 +380,8 @@ class TestFastCodeSearchSymbolTool:
                         "symbol_id": "sym_002",
                         "display_name": "HybridRetriever",
                         "kind": "class",
-                        "qualified_name": "fastcode.retriever.HybridRetriever",
-                        "doc_path": "fastcode/retriever.py",
+                        "qualified_name": "fastcode.retrieval.hybrid.HybridRetriever",
+                        "doc_path": "fastcode/retrieval/hybrid.py",
                     },
                 }
             )
@@ -391,7 +391,7 @@ class TestFastCodeSearchSymbolTool:
             with _patch_client(client):
                 result = await tool.execute(
                     snapshot_id="snap:myrepo:abc123",
-                    path="fastcode/retriever.py",
+                    path="fastcode/retrieval/hybrid.py",
                 )
 
         assert "HybridRetriever" in result

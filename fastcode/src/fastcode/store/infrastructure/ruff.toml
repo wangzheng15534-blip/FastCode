@@ -1,0 +1,17 @@
+extend = "../../../../pyproject.toml"
+
+[lint]
+extend-select = ["TID"]
+
+[lint.flake8-tidy-imports.banned-api]
+"pydantic".msg = "store.infrastructure should operate on frozen dataclasses and primitives."
+"fastcode.api".msg = "store.infrastructure must stay independent of entrypoint shells."
+"fastcode.graph".msg = "store.infrastructure must stay independent of graph orchestration."
+"fastcode.indexing".msg = "store.infrastructure must stay independent of indexing orchestration."
+"fastcode.main".msg = "store.infrastructure must stay independent of the composition root."
+"fastcode.mcp".msg = "store.infrastructure must stay independent of transport shells."
+"fastcode.query".msg = "store.infrastructure must stay independent of query orchestration."
+"fastcode.retrieval".msg = "store.infrastructure must stay independent of retrieval orchestration."
+"fastcode.schemas.api".msg = "store.infrastructure may use frozen schemas.core_types, not Pydantic API schemas."
+"fastcode.scip".msg = "store.infrastructure must stay independent of SCIP adapters."
+"fastcode.semantic".msg = "store.infrastructure must stay independent of semantic adapters."

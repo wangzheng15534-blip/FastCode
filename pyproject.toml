@@ -99,3 +99,40 @@ parametrize-names-type = "tuple"
     "ANN201",  # design: test functions are named by convention, return type adds noise
     "ANN003",  # design: test factory **kwargs are intentionally untyped for flexibility
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "fastcode/tests"]
+addopts = "-p no:schemathesis"
+norecursedirs = [
+    ".git",
+    ".hg",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".hypothesis",
+    "__pycache__",
+    "dist",
+    "build",
+    "repo_backup",
+    "repos",
+    "_bmad",
+    "_bmad-output",
+]
+pythonpath = [".", "fastcode/src", "nanobot"]
+asyncio_mode = "auto"
+markers = [
+    "edge: boundary values, empty inputs, off-by-one",
+    "negative: invalid input, expected failures",
+    "test_double: mocks, fakes, stubs, patches",
+    "integration: tests requiring real database or external service",
+    "e2e: end-to-end user flow",
+    "regression: guards against previously-identified bugs",
+    "property: property-based or fuzz-style test coverage",
+    "hypothesis: hypothesis property-based tests",
+    "parametrize: pytest parametrized tests",
+    "benchmark: benchmark tests",
+    "snapshot: snapshot-style regression checks",
+]
+filterwarnings = [
+    "ignore:Benchmarks are automatically disabled because xdist plugin is active:pytest_benchmark.logger.PytestBenchmarkWarning",
+]

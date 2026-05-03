@@ -1,14 +1,14 @@
-from fastcode.adapters.scip_to_ir import build_ir_from_scip
-from fastcode.ir_graph_builder import IRGraphBuilder
-from fastcode.ir_merge import merge_ir
-from fastcode.ir_validators import validate_snapshot
-from fastcode.semantic_ir import (
+from fastcode.ir.graph import IRGraphBuilder
+from fastcode.ir.merge import merge_ir
+from fastcode.ir.types import (
     IRCodeUnit,
     IRRelation,
     IRSnapshot,
     IRUnitEmbedding,
     IRUnitSupport,
 )
+from fastcode.ir.validate import validate_snapshot
+from fastcode.scip.scip_adapter import build_ir_from_scip
 
 
 def _file(

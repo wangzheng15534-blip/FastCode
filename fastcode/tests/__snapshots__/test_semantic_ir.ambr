@@ -40,7 +40,7 @@
     'edge_id': 'edge:abc123',
     'edge_type': 'contain',
     'metadata': dict({
-      'extractor': 'fastcode.adapters.scip_to_ir',
+      'extractor': 'fastcode.scip.scip_adapter',
     }),
     'source': 'scip',
     'src_id': 'doc:abc123',

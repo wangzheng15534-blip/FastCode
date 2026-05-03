@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-import tiktoken
 import yaml
 from pathspec import PathSpec  # type: ignore[import-untyped]
 from pathspec.patterns.gitwildmatch import (
@@ -18,6 +17,11 @@ from pathspec.patterns.gitwildmatch import (
 )
 
 from .paths import get_language_from_extension as _canonical_get_language_from_extension
+
+try:
+    import tiktoken
+except ModuleNotFoundError:
+    tiktoken = None  # type: ignore[assignment]
 
 
 def utc_now() -> str:
@@ -155,6 +159,8 @@ def should_ignore_path(path: str, ignore_patterns: list[str]) -> bool:
 
 def count_tokens(text: str, model: str = "gpt-4") -> int:
     """Count tokens in text"""
+    if tiktoken is None:
+        return max(1, len(text) // 4)
     try:
         encoding = tiktoken.encoding_for_model(model)
     except KeyError:
@@ -168,6 +174,8 @@ def count_tokens(text: str, model: str = "gpt-4") -> int:
 
 def truncate_to_tokens(text: str, max_tokens: int, model: str = "gpt-4") -> str:
     """Truncate text to fit within token limit"""
+    if tiktoken is None:
+        return text[: max_tokens * 4]
     try:
         encoding = tiktoken.encoding_for_model(model)
     except KeyError:

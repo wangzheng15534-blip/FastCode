@@ -1,0 +1,16 @@
+extend = "../../../pyproject.toml"
+
+[lint]
+extend-select = ["TID"]
+
+[lint.flake8-tidy-imports.banned-api]
+"fastcode.api".msg = "Schema types must stay independent of API route implementations."
+"fastcode.graph".msg = "Schema types must stay independent of graph construction."
+"fastcode.indexing".msg = "Schema types must stay independent of indexing orchestration."
+"fastcode.main".msg = "Schema types must stay independent of the composition root."
+"fastcode.mcp".msg = "Schema types must stay independent of transport shells."
+"fastcode.query".msg = "Schema types must stay independent of query orchestration."
+"fastcode.retrieval".msg = "Schema types must stay independent of retrieval orchestration."
+"fastcode.scip".msg = "Schema types must stay independent of SCIP adapters."
+"fastcode.semantic".msg = "Schema types must stay independent of semantic adapters."
+"fastcode.store".msg = "Schema types must stay independent of storage orchestration."

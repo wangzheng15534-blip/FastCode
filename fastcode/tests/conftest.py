@@ -20,9 +20,9 @@ if os.getenv("MUTANT_UNDER_TEST"):
     settings.load_profile("mutmut")
 
 from fastcode.db_runtime import DBRuntime
-from fastcode.indexer import CodeElement
-from fastcode.scip_models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
-from fastcode.semantic_ir import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
+from fastcode.ir.element import CodeElement
+from fastcode.ir.types import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
+from fastcode.scip.models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
 
 # --- Primitive strategies ---
 
@@ -406,7 +406,7 @@ def connected_snapshot_st(
 @pytest.fixture
 def snapshot_store(tmp_path: pathlib.Path):
     """Create a SnapshotStore backed by a temp directory."""
-    from fastcode.snapshot_store import SnapshotStore
+    from fastcode.store.snapshot import SnapshotStore
 
     return SnapshotStore(str(tmp_path))
 

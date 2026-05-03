@@ -20,27 +20,45 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastcode.semantic_ir import IRDocument, IREdge, IRSymbol, IRSnapshot
-from fastcode.snapshot_store import SnapshotStore
-from fastcode.manifest_store import ManifestStore
-from fastcode.index_run import IndexRunStore
-from fastcode.ir_graph_builder import IRGraphBuilder
+from fastcode.ir.graph import IRGraphBuilder
+from fastcode.ir.types import IRDocument, IREdge, IRSnapshot, IRSymbol
+from fastcode.store.index_run import IndexRunStore
+from fastcode.store.manifest import ManifestStore
+from fastcode.store.snapshot import SnapshotStore
 
 
 def _make_snapshot(repo: str, snap_id: str, commit: str, branch: str) -> IRSnapshot:
-    doc = IRDocument(doc_id="doc:1", path="main.py", language="python", source_set={"ast"})
+    doc = IRDocument(
+        doc_id="doc:1", path="main.py", language="python", source_set={"ast"}
+    )
     sym = IRSymbol(
-        symbol_id=f"sym:{snap_id}:main", external_symbol_id=None, path="main.py",
-        display_name="main", kind="function", language="python",
-        start_line=1, source_priority=10, source_set={"ast"}, metadata={"source": "ast"},
+        symbol_id=f"sym:{snap_id}:main",
+        external_symbol_id=None,
+        path="main.py",
+        display_name="main",
+        kind="function",
+        language="python",
+        start_line=1,
+        source_priority=10,
+        source_set={"ast"},
+        metadata={"source": "ast"},
     )
     edge = IREdge(
-        edge_id=f"e:contain:{snap_id}", src_id="doc:1", dst_id=sym.symbol_id,
-        edge_type="contain", source="ast", confidence="resolved",
+        edge_id=f"e:contain:{snap_id}",
+        src_id="doc:1",
+        dst_id=sym.symbol_id,
+        edge_type="contain",
+        source="ast",
+        confidence="resolved",
     )
     return IRSnapshot(
-        repo_name=repo, snapshot_id=snap_id, branch=branch, commit_id=commit,
-        documents=[doc], symbols=[sym], edges=[edge],
+        repo_name=repo,
+        snapshot_id=snap_id,
+        branch=branch,
+        commit_id=commit,
+        documents=[doc],
+        symbols=[sym],
+        edges=[edge],
         metadata={"source_modes": ["ast"]},
     )
 
@@ -61,7 +79,9 @@ def main():
         # 2. Load it back
         loaded1 = store.load_snapshot("snap:my-repo:aaa")
         assert loaded1 is not None
-        print(f"Loaded snapshot 1: {loaded1.snapshot_id}, {len(loaded1.symbols)} symbols")
+        print(
+            f"Loaded snapshot 1: {loaded1.snapshot_id}, {len(loaded1.symbols)} symbols"
+        )
 
         # 3. Publish manifest for snapshot 1
         run1 = run_store.create_run("my-repo", "snap:my-repo:aaa", "main", "aaa")
@@ -80,23 +100,35 @@ def main():
         assert head is not None
         assert head["snapshot_id"] == "snap:my-repo:bbb"
         assert head["previous_manifest_id"] == m1["manifest_id"]
-        print(f"Branch head: {head['snapshot_id']} (previous: {head['previous_manifest_id']})")
+        print(
+            f"Branch head: {head['snapshot_id']} (previous: {head['previous_manifest_id']})"
+        )
 
         # 6. Test idempotent run creation
-        run3 = run_store.create_run("my-repo", "snap:my-repo:bbb", "main", "bbb", idempotency_key="key1")
-        run4 = run_store.create_run("my-repo", "snap:my-repo:bbb", "main", "bbb", idempotency_key="key1")
+        run3 = run_store.create_run(
+            "my-repo", "snap:my-repo:bbb", "main", "bbb", idempotency_key="key1"
+        )
+        run4 = run_store.create_run(
+            "my-repo", "snap:my-repo:bbb", "main", "bbb", idempotency_key="key1"
+        )
         assert run3 == run4
         print(f"Idempotent run: {run3} == {run4}")
 
         # 7. Load IR graphs
         loaded_graphs = store.load_ir_graphs("snap:my-repo:aaa")
         assert loaded_graphs is not None
-        print(f"Loaded IR graphs: containment has {loaded_graphs.containment_graph.number_of_edges()} edges")
+        print(
+            f"Loaded IR graphs: containment has {loaded_graphs.containment_graph.number_of_edges()} edges"
+        )
 
         # 8. Fencing token on lock
-        token = store.acquire_lock("index:snap:my-repo:aaa", owner_id=run1, ttl_seconds=60)
+        token = store.acquire_lock(
+            "index:snap:my-repo:aaa", owner_id=run1, ttl_seconds=60
+        )
         print(f"Fencing token for snap:my-repo:aaa: {token}")
-        print(f"Token valid: {store.validate_fencing_token('index:snap:my-repo:aaa', token)}")
+        print(
+            f"Token valid: {store.validate_fencing_token('index:snap:my-repo:aaa', token)}"
+        )
 
         # 9. Enqueue redo task (SQLite returns ID without persisting)
         redo_id = store.enqueue_redo_task(

@@ -128,7 +128,7 @@ class ProjectionService:
         if not snapshot_record:
             raise RuntimeError(f"snapshot not found: {resolved_snapshot_id}")
 
-        if not self._load_artifacts_by_key(snapshot_record["artifact_key"]):
+        if not self._load_artifacts_by_key(snapshot_record.artifact_key):
             raise RuntimeError(
                 f"failed to load artifacts for snapshot: {resolved_snapshot_id}"
             )

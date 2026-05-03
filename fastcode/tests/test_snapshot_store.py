@@ -21,7 +21,7 @@ from fastcode.semantic_ir import (
     IRSymbol,
 )
 from fastcode.snapshot_store import SnapshotStore
-from fastcode.store_records import SnapshotRefRecord
+from fastcode.store_records import SnapshotRecord, SnapshotRefRecord
 
 # --- Strategies ---
 
@@ -308,13 +308,12 @@ class TestSnapshotSaveLoadProperties:
     @given(snap=snapshot_st())
     @settings(max_examples=20)
     def test_save_returns_artifact_key_property(self, snap: IRSnapshot):
-        """HAPPY: save_snapshot returns dict with artifact_key and snapshot_id."""
+        """HAPPY: save_snapshot returns SnapshotRecord with artifact_key and snapshot_id."""
         store = _make_store()
         result = store.save_snapshot(snap)
-        assert "artifact_key" in result
-        assert "snapshot_id" in result
-        assert result["snapshot_id"] == snap.snapshot_id
-        assert result["artifact_key"].startswith("snap_")
+        assert isinstance(result, SnapshotRecord)
+        assert result.snapshot_id == snap.snapshot_id
+        assert result.artifact_key.startswith("snap_")
 
     @given(snap=snapshot_st())
     @settings(max_examples=20)
@@ -323,22 +322,23 @@ class TestSnapshotSaveLoadProperties:
         store = _make_store()
         r1 = store.save_snapshot(snap)
         r2 = store.save_snapshot(snap)
-        assert r1["snapshot_id"] == r2["snapshot_id"]
-        assert r1["artifact_key"] == r2["artifact_key"]
+        assert r1.snapshot_id == r2.snapshot_id
+        assert r1.artifact_key == r2.artifact_key
 
     @given(snap=snapshot_st())
     @settings(max_examples=20)
     def test_get_snapshot_record_after_save_property(self, snap: IRSnapshot):
-        """HAPPY: get_snapshot_record returns dict with all DB columns."""
+        """HAPPY: get_snapshot_record returns SnapshotRecord with all DB columns."""
         store = _make_store()
         store.save_snapshot(snap)
         record = store.get_snapshot_record(snap.snapshot_id)
         assert record is not None
-        assert record["snapshot_id"] == snap.snapshot_id
-        assert record["repo_name"] == snap.repo_name
-        assert record["artifact_key"] is not None
-        assert record["ir_path"] is not None
-        assert record["created_at"] is not None
+        assert isinstance(record, SnapshotRecord)
+        assert record.snapshot_id == snap.snapshot_id
+        assert record.repo_name == snap.repo_name
+        assert record.artifact_key is not None
+        assert record.ir_path is not None
+        assert record.created_at is not None
 
     @given(snap=snapshot_st())
     @settings(max_examples=20)
@@ -429,7 +429,20 @@ class TestSnapshotSaveLoadProperties:
         store.save_snapshot(snap, metadata=metadata)
         record = store.get_snapshot_record(snap.snapshot_id)
         assert record is not None
-        assert record["metadata_json"] is not None
+        assert isinstance(record, SnapshotRecord)
+        assert record.metadata_json is not None
+
+    @given(snap=snapshot_st())
+    @settings(max_examples=10)
+    def test_get_snapshot_record_returns_typed_record(self, snap: IRSnapshot):
+        from fastcode.store_records import SnapshotRecord
+
+        store = _make_store()
+        store.save_snapshot(snap)
+        record = store.get_snapshot_record(snap.snapshot_id)
+        assert isinstance(record, SnapshotRecord)
+        assert record.snapshot_id == snap.snapshot_id
+        assert record.artifact_key != ""
 
 
 # --- TestSnapshotStoreQueries ---
@@ -464,7 +477,7 @@ class TestSnapshotStoreQueries:
         """HAPPY: find_by_artifact_key returns record after save."""
         store = _make_store()
         result = store.save_snapshot(snap)
-        found = store.find_by_artifact_key(result["artifact_key"])
+        found = store.find_by_artifact_key(result.artifact_key)
         assert found is not None
         assert found["snapshot_id"] == snap.snapshot_id
 

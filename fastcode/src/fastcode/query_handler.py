@@ -148,7 +148,7 @@ class QueryPipeline:
         if not snapshot_record:
             raise RuntimeError(f"snapshot not found: {snapshot_id}")
 
-        if not self.load_artifacts_by_key(snapshot_record["artifact_key"]):
+        if not self.load_artifacts_by_key(snapshot_record.artifact_key):
             raise RuntimeError(f"failed to load artifacts for snapshot: {snapshot_id}")
         if not self.snapshot_symbol_index.has_snapshot(snapshot_id):
             loaded_snapshot = self.snapshot_store.load_snapshot(snapshot_id)
@@ -166,7 +166,7 @@ class QueryPipeline:
             enable_multi_turn=enable_multi_turn,
         )
         result["snapshot_id"] = snapshot_id
-        result["artifact_key"] = snapshot_record["artifact_key"]
+        result["artifact_key"] = snapshot_record.artifact_key
         return result
 
     def query(
@@ -262,7 +262,9 @@ class QueryPipeline:
                     from .query_processor import ProcessedQuery
 
                     intent = "unknown"
-                    detect_intent = getattr(self.query_processor, "_detect_intent", None)
+                    detect_intent = getattr(
+                        self.query_processor, "_detect_intent", None
+                    )
                     if callable(detect_intent):
                         intent = detect_intent(question)
                     processed_query = ProcessedQuery(

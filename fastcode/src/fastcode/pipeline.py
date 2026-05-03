@@ -406,9 +406,9 @@ class IndexPipeline:
     def _snapshot_layer_metadata(self, snapshot: IRSnapshot) -> dict[str, Any]:
         metadata = dict(snapshot.metadata or {})
         record = self.snapshot_store.get_snapshot_record(snapshot.snapshot_id)
-        if record and record.get("metadata_json"):
+        if record and record.metadata_json:
             try:
-                stored_metadata = json.loads(record["metadata_json"])
+                stored_metadata = json.loads(record.metadata_json)
             except (TypeError, json.JSONDecodeError):
                 stored_metadata = {}
             if isinstance(stored_metadata, dict):
@@ -625,7 +625,7 @@ class IndexPipeline:
 
         existing = self.snapshot_store.get_snapshot_record(snapshot_id)
         if existing and not force:
-            artifact_key = existing["artifact_key"]
+            artifact_key = existing.artifact_key
             loaded = self._load_artifacts_by_key(artifact_key)
             return self._backfill_result_layer_metadata(
                 snapshot_id=snapshot_id,
@@ -658,7 +658,7 @@ class IndexPipeline:
         ):
             existing_snapshot = self.snapshot_store.get_snapshot_record(snapshot_id)
             if existing_snapshot:
-                loaded = self._load_artifacts_by_key(existing_snapshot["artifact_key"])
+                loaded = self._load_artifacts_by_key(existing_snapshot.artifact_key)
                 return self._backfill_result_layer_metadata(
                     snapshot_id=snapshot_id,
                     enable_scip=enable_scip,
@@ -667,7 +667,7 @@ class IndexPipeline:
                         "run_id": run_id,
                         "repo_name": repo_name,
                         "snapshot_id": snapshot_id,
-                        "artifact_key": existing_snapshot["artifact_key"],
+                        "artifact_key": existing_snapshot.artifact_key,
                         "loaded": loaded,
                         "warnings": json.loads(
                             existing_run.get("warnings_json") or "[]"

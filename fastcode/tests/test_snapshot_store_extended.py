@@ -461,7 +461,7 @@ class TestLargeMetadataRoundtrip:
 
         record = store.get_snapshot_record(snap.snapshot_id)
         assert record is not None
-        stored_meta = json.loads(record.get("metadata_json", "{}"))
+        stored_meta = json.loads(record.metadata_json or "{}")
         assert len(stored_meta) == 50
         for k, v in large_meta.items():
             assert stored_meta[k] == v
@@ -488,7 +488,7 @@ class TestUnicodeMetadata:
 
         record = store.get_snapshot_record(snap.snapshot_id)
         assert record is not None
-        stored_meta = json.loads(record.get("metadata_json", "{}"))
+        stored_meta = json.loads(record.metadata_json or "{}")
         assert stored_meta.get(unicode_key) == unicode_val
 
 
@@ -569,7 +569,7 @@ class TestSnapshotWithNoneFields:
             metadata={"source_modes": ["ast"]},
         )
         result = store.save_snapshot(snap)
-        assert result["snapshot_id"] == "snap:repo:deadbeef"
+        assert result.snapshot_id == "snap:repo:deadbeef"
 
         loaded = store.load_snapshot("snap:repo:deadbeef")
         assert loaded is not None
@@ -586,7 +586,7 @@ class TestSnapshotWithNoneFields:
 
         record = store.get_snapshot_record(snap.snapshot_id)
         assert record is not None
-        stored_meta = json.loads(record.get("metadata_json", "{}"))
+        stored_meta = json.loads(record.metadata_json or "{}")
         assert stored_meta == {}
 
 
@@ -731,7 +731,7 @@ class TestFindbyArtifactKey:
         snap = _build_snapshot(repo, commit, branch)
         result = store.save_snapshot(snap)
 
-        found = store.find_by_artifact_key(result["artifact_key"])
+        found = store.find_by_artifact_key(result.artifact_key)
         assert found is not None
         assert found["snapshot_id"] == snap.snapshot_id
 
@@ -760,7 +760,7 @@ class TestSnapshotRecordFields:
 
         record = store.get_snapshot_record(snap.snapshot_id)
         assert record is not None
-        expected_keys = {
+        expected_fields = {
             "snapshot_id",
             "repo_name",
             "branch",
@@ -771,7 +771,10 @@ class TestSnapshotRecordFields:
             "created_at",
             "metadata_json",
         }
-        assert expected_keys.issubset(set(record.keys()))
+        import dataclasses
+
+        actual_fields = {f.name for f in dataclasses.fields(record)}
+        assert expected_fields.issubset(actual_fields)
 
     @given(
         repo=_repo_name_st,
@@ -790,7 +793,7 @@ class TestSnapshotRecordFields:
         store.save_snapshot(snap)
 
         record = store.get_snapshot_record(snap.snapshot_id)
-        assert os.path.isfile(record["ir_path"])
+        assert os.path.isfile(record.ir_path)
 
 
 class TestEdgeCases:
@@ -838,7 +841,7 @@ class TestEdgeCases:
         store.save_snapshot(snap, metadata=meta_val)
 
         record = store.get_snapshot_record(snap.snapshot_id)
-        stored = json.loads(record["metadata_json"])
+        stored = json.loads(record.metadata_json)
         assert stored == meta_val
 
 
@@ -858,7 +861,7 @@ class TestFullLifecycle:
         # Load and verify initial metadata
         record = store.get_snapshot_record(snap.snapshot_id)
         assert record is not None
-        stored = json.loads(record["metadata_json"])
+        stored = json.loads(record.metadata_json)
         assert stored == original_meta
 
         # Update metadata
@@ -867,7 +870,7 @@ class TestFullLifecycle:
 
         # Load again and verify update
         record2 = store.get_snapshot_record(snap.snapshot_id)
-        stored2 = json.loads(record2["metadata_json"])
+        stored2 = json.loads(record2.metadata_json)
         assert stored2 == updated_meta
         assert stored2["version"] == 2
 
@@ -932,8 +935,8 @@ class TestSnapshotIsolation:
 
         rec_a = store.get_snapshot_record(snap_a.snapshot_id)
         rec_b = store.get_snapshot_record(snap_b.snapshot_id)
-        assert json.loads(rec_a["metadata_json"])["owner"] == "a_updated"
-        assert json.loads(rec_b["metadata_json"])["owner"] == "b"
+        assert json.loads(rec_a.metadata_json)["owner"] == "a_updated"
+        assert json.loads(rec_b.metadata_json)["owner"] == "b"
 
 
 class TestConcurrentSaveSameSnapshotId:
@@ -973,7 +976,7 @@ class TestConcurrentSaveSameSnapshotId:
         store.save_snapshot(snap, metadata={"v": 2})
 
         record = store.get_snapshot_record(snap.snapshot_id)
-        stored = json.loads(record["metadata_json"])
+        stored = json.loads(record.metadata_json)
         assert stored["v"] == 2
 
 
@@ -1129,7 +1132,7 @@ class TestFullWorkflow:
         # Query record
         record = store.get_snapshot_record(snap.snapshot_id)
         assert record is not None
-        stored_meta = json.loads(record["metadata_json"])
+        stored_meta = json.loads(record.metadata_json)
         assert stored_meta["pipeline"] == "full"
 
         # Query scip ref
@@ -1212,8 +1215,8 @@ class TestMultipleSnapshotsSameRepoDifferentCommits:
 
         rec_a = store.get_snapshot_record(snap_a.snapshot_id)
         rec_b = store.get_snapshot_record(snap_b.snapshot_id)
-        assert json.loads(rec_a["metadata_json"])["tag"] == "alpha"
-        assert json.loads(rec_b["metadata_json"])["tag"] == "beta"
+        assert json.loads(rec_a.metadata_json)["tag"] == "alpha"
+        assert json.loads(rec_b.metadata_json)["tag"] == "beta"
 
 
 class TestMetadataVariants:
@@ -1224,7 +1227,7 @@ class TestMetadataVariants:
         store.save_snapshot(snap, metadata={})
 
         record = store.get_snapshot_record(snap.snapshot_id)
-        stored = json.loads(record["metadata_json"])
+        stored = json.loads(record.metadata_json)
         assert stored == {}
 
     def test_nested_dict_metadata_roundtrip_property(self):
@@ -1243,7 +1246,7 @@ class TestMetadataVariants:
         store.save_snapshot(snap, metadata=nested)
 
         record = store.get_snapshot_record(snap.snapshot_id)
-        stored = json.loads(record["metadata_json"])
+        stored = json.loads(record.metadata_json)
         assert stored == nested
 
     def test_large_dict_metadata_roundtrip_property(self):
@@ -1254,7 +1257,7 @@ class TestMetadataVariants:
         store.save_snapshot(snap, metadata=large_meta)
 
         record = store.get_snapshot_record(snap.snapshot_id)
-        stored = json.loads(record["metadata_json"])
+        stored = json.loads(record.metadata_json)
         assert len(stored) == 50
         for k, v in large_meta.items():
             assert stored[k] == v
@@ -1267,7 +1270,7 @@ class TestMetadataVariants:
         store.save_snapshot(snap, metadata=None)
 
         record = store.get_snapshot_record(snap.snapshot_id)
-        stored = json.loads(record["metadata_json"])
+        stored = json.loads(record.metadata_json)
         assert stored == {}
 
     @pytest.mark.edge
@@ -1280,7 +1283,7 @@ class TestMetadataVariants:
         store.update_snapshot_metadata(snap.snapshot_id, {})
 
         record = store.get_snapshot_record(snap.snapshot_id)
-        stored = json.loads(record["metadata_json"])
+        stored = json.loads(record.metadata_json)
         assert stored == {}
 
 
@@ -1315,7 +1318,7 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
         snap_id = f"snap:{repo}:{commit}"
         snapshot = _build_connected_snapshot(repo, snap_id, branch, commit)
         result = self.store.save_snapshot(snapshot)
-        assert result["snapshot_id"] == snap_id
+        assert result.snapshot_id == snap_id
         self.saved_snapshots[snap_id] = snapshot
         self.metadata_state[snap_id] = {}
 
@@ -1420,7 +1423,7 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
         for snap_id in self.saved_snapshots:
             record = self.store.get_snapshot_record(snap_id)
             assert record is not None, f"Missing record for {snap_id}"
-            assert record["snapshot_id"] == snap_id
+            assert record.snapshot_id == snap_id
 
 
 # --- Registration ---
@@ -1567,5 +1570,5 @@ class TestSnapshotStoreUpsert:
             assert record is not None
             import json
 
-            stored_meta = json.loads(record.get("metadata_json", "{}"))
+            stored_meta = json.loads(record.metadata_json or "{}")
             assert stored_meta.get(key) == value

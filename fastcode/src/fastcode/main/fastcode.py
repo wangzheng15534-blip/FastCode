@@ -583,13 +583,26 @@ class FastCode:
         self, payload: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         payload = payload or {}
-        return {
-            "status": "deferred",
+        source = payload.get("source")
+        if not source:
+            raise RuntimeError("semantic_repair_frontier payload missing source")
+        result = self.run_index_pipeline(
+            source=str(source),
+            is_url=bool(payload.get("is_url", False)),
+            ref=payload.get("ref"),
+            commit=payload.get("commit"),
+            force=True,
+            publish=bool(payload.get("publish", True)),
+            scip_artifact_path=payload.get("scip_artifact_path"),
+            enable_scip=bool(payload.get("enable_scip", True)),
+        )
+        result["repair_frontier"] = {
             "snapshot_id": payload.get("snapshot_id"),
             "repo_name": payload.get("repo_name"),
             "changed_paths": list(payload.get("changed_paths") or []),
             "reason": payload.get("reason") or "api_or_edge_surface_changed",
         }
+        return result
 
     def process_redo_tasks(self, limit: int = 10) -> dict[str, Any]:
         return self.publishing_service.process_redo_tasks(limit)

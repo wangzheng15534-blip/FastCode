@@ -136,12 +136,20 @@ def test_dispatch_task_raises_on_unsupported_type_double():
 
 def test_dispatch_semantic_repair_frontier_task_double():
     fc = _FakeFastCode()
-    fc.process_semantic_repair_frontier = MagicMock(return_value={"status": "deferred"})
+    fc.process_semantic_repair_frontier = MagicMock(
+        return_value={"status": "published"}
+    )
     worker = RedoWorker(fc)
     task = {
         "task_id": "redo_repair",
         "task_type": "semantic_repair_frontier",
-        "payload_json": json.dumps({"snapshot_id": "snap:1", "changed_paths": ["a.py"]}),
+        "payload_json": json.dumps(
+            {
+                "snapshot_id": "snap:1",
+                "changed_paths": ["a.py"],
+                "source": "/tmp/repo",
+            }
+        ),
     }
     worker._dispatch_task(task)
     fc.process_semantic_repair_frontier.assert_called_once()

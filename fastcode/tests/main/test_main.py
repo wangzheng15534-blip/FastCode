@@ -111,3 +111,28 @@ def test_apply_repository_runtime_overrides_refreshes_loader_and_runtime_config(
     assert fc.loader.repo_config["ignore_patterns"] == ("base", ".venv")
     assert fc.loader.repo_config["exclude_site_packages"] is True
     assert fc.loader.ignore_patterns == ("base", ".venv")
+
+
+def test_process_semantic_repair_frontier_replays_pipeline_with_payload():
+    fc = FastCode.__new__(FastCode)
+    fc.run_index_pipeline = lambda **kwargs: {
+        "status": "published",
+        "snapshot_id": "snap:2",
+        "kwargs": kwargs,
+    }
+
+    result = fc.process_semantic_repair_frontier(
+        {
+            "snapshot_id": "snap:1",
+            "repo_name": "repo",
+            "source": "/tmp/repo",
+            "changed_paths": ["a.py"],
+            "reason": "api_or_edge_surface_changed",
+        }
+    )
+
+    assert result["status"] == "published"
+    assert result["kwargs"]["source"] == "/tmp/repo"
+    assert result["kwargs"]["force"] is True
+    assert result["repair_frontier"]["snapshot_id"] == "snap:1"
+    assert result["repair_frontier"]["changed_paths"] == ["a.py"]

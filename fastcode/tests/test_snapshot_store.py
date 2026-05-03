@@ -894,7 +894,9 @@ class TestIRGraphsRoundtrip:
             loaded.dependency_graph.number_of_nodes()
             == graphs.dependency_graph.number_of_nodes()
         )
-        assert loaded.call_graph.number_of_edges() == graphs.call_graph.number_of_edges()
+        assert (
+            loaded.call_graph.number_of_edges() == graphs.call_graph.number_of_edges()
+        )
         assert (
             loaded.containment_graph.number_of_edges()
             == graphs.containment_graph.number_of_edges()

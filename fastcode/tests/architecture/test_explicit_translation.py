@@ -23,8 +23,7 @@ def _check_file_for_patterns(filepath: Path) -> list[str]:
                     f"{filepath.relative_to(PACKAGE_ROOT)}:{node.lineno}: **model_dump()"
                 )
             elif (
-                isinstance(node.value, ast.Attribute)
-                and node.value.attr == "__dict__"
+                isinstance(node.value, ast.Attribute) and node.value.attr == "__dict__"
             ):
                 violations.append(
                     f"{filepath.relative_to(PACKAGE_ROOT)}:{node.lineno}: **__dict__"

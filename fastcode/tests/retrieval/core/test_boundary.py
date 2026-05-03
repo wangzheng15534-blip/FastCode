@@ -25,7 +25,7 @@ from fastcode.retrieval.core.boundary import (
 from fastcode.schemas.core_types import Hit
 
 CORE_DIR = (
-    pathlib.Path(__file__).resolve().parent.parent.parent
+    pathlib.Path(__file__).resolve().parent.parent.parent.parent
     / "src"
     / "fastcode"
     / "retrieval"

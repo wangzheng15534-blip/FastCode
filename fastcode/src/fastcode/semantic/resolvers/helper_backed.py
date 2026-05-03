@@ -264,7 +264,7 @@ class HelperBackedSemanticResolver(SemanticResolver):
         command = self._helper_command(helper_files)
         patch.stats["helper_command"] = command
         try:
-            result = subprocess.run(  # noqa: S603
+            result = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,

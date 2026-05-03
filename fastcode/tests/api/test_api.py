@@ -336,7 +336,8 @@ class TestIndexMultiple:
         fake_fastcode.get_repository_stats.return_value = {"repos": 2}
 
         with patch(
-            "fastcode.api.routes._ensure_fastcode_initialized", return_value=fake_fastcode
+            "fastcode.api.routes._ensure_fastcode_initialized",
+            return_value=fake_fastcode,
         ):
             result = asyncio.run(api.index_multiple(request))
 
@@ -378,7 +379,8 @@ class TestBlockingEndpointOffloads:
         monkeypatch.setattr(api.asyncio, "to_thread", record_to_thread)
 
         with patch(
-            "fastcode.api.routes._ensure_fastcode_initialized", return_value=fake_fastcode
+            "fastcode.api.routes._ensure_fastcode_initialized",
+            return_value=fake_fastcode,
         ):
             asyncio.run(
                 api.load_repository(

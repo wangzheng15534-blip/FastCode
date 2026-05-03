@@ -472,13 +472,29 @@ class SnapshotStore:
             )
             conn.commit()
 
+    @staticmethod
+    def _ir_graph_items(ir_graphs: Any) -> dict[str, Any]:
+        from .ir_graph_builder import IRGraphs
+
+        if isinstance(ir_graphs, IRGraphs):
+            return {
+                "dependency_graph": ir_graphs.dependency_graph,
+                "call_graph": ir_graphs.call_graph,
+                "inheritance_graph": ir_graphs.inheritance_graph,
+                "reference_graph": ir_graphs.reference_graph,
+                "containment_graph": ir_graphs.containment_graph,
+            }
+        if isinstance(ir_graphs, dict):
+            return ir_graphs
+        return {}
+
     def save_ir_graphs(self, snapshot_id: str, ir_graphs: Any) -> str:
         snap_dir = self.snapshot_dir(snapshot_id)
         path = os.path.join(snap_dir, "ir_graphs.json")
         import networkx as nx
 
         serializable: dict[str, Any] = {}
-        for name, graph in (ir_graphs or {}).items():
+        for name, graph in self._ir_graph_items(ir_graphs).items():
             if isinstance(graph, nx.Graph):
                 serializable[name] = nx.node_link_data(graph)
             else:
@@ -517,7 +533,7 @@ class SnapshotStore:
             if (
                 isinstance(graph_data, dict)
                 and "nodes" in graph_data
-                and "links" in graph_data
+                and ("links" in graph_data or "edges" in graph_data)
                 and isinstance(graph_data["nodes"], list)
                 and (
                     not graph_data["nodes"] or isinstance(graph_data["nodes"][0], dict)
@@ -526,6 +542,25 @@ class SnapshotStore:
                 result[name] = nx.node_link_graph(graph_data, directed=True)
             else:
                 result[name] = graph_data
+        graph_names = {
+            "dependency_graph",
+            "call_graph",
+            "inheritance_graph",
+            "reference_graph",
+            "containment_graph",
+        }
+        if graph_names.issubset(result) and all(
+            isinstance(result[name], nx.Graph) for name in graph_names
+        ):
+            from .ir_graph_builder import IRGraphs
+
+            return IRGraphs(
+                dependency_graph=result["dependency_graph"],
+                call_graph=result["call_graph"],
+                inheritance_graph=result["inheritance_graph"],
+                reference_graph=result["reference_graph"],
+                containment_graph=result["containment_graph"],
+            )
         return result
 
     def load_snapshot(self, snapshot_id: str) -> IRSnapshot | None:

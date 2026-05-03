@@ -9,6 +9,7 @@ import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
+from fastcode.ir_graph_builder import IRGraphBuilder, IRGraphs
 from fastcode.semantic_ir import (
     IRAttachment,
     IRDocument,
@@ -876,6 +877,28 @@ class TestIRGraphsRoundtrip:
         store.save_snapshot(snap)
         path = store.save_ir_graphs(snap.snapshot_id, {"nodes": [1, 2, 3]})
         assert "ir_graphs.json" in path
+
+    @given(snap=snapshot_st())
+    @settings(max_examples=10)
+    def test_save_load_ir_graphs_dataclass_roundtrip_property(self, snap: IRSnapshot):
+        """REGRESSION: snapshot pipeline passes the IRGraphs dataclass directly."""
+        store = _make_store()
+        store.save_snapshot(snap)
+        graphs = IRGraphBuilder().build_graphs(snap)
+        store.save_ir_graphs(snap.snapshot_id, graphs)
+
+        loaded = store.load_ir_graphs(snap.snapshot_id)
+
+        assert isinstance(loaded, IRGraphs)
+        assert (
+            loaded.dependency_graph.number_of_nodes()
+            == graphs.dependency_graph.number_of_nodes()
+        )
+        assert loaded.call_graph.number_of_edges() == graphs.call_graph.number_of_edges()
+        assert (
+            loaded.containment_graph.number_of_edges()
+            == graphs.containment_graph.number_of_edges()
+        )
 
     @given(
         snap=snapshot_st(),

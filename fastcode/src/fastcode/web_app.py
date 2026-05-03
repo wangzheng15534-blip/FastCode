@@ -617,7 +617,7 @@ async def clear_cache():
     if fastcode_instance is None:
         raise HTTPException(status_code=500, detail="FastCode not initialized")
 
-    success = fastcode_instance.cache_manager.clear()
+    success = await asyncio.to_thread(fastcode_instance.cache_manager.clear)
 
     if success:
         return {"status": "success", "message": "Cache cleared"}
@@ -635,11 +635,11 @@ async def refresh_index_cache():
 
     try:
         # Invalidate cache first
-        fastcode_instance.vector_store.invalidate_scan_cache()
+        await asyncio.to_thread(fastcode_instance.vector_store.invalidate_scan_cache)
 
         # Perform fresh scan
-        available_repos = fastcode_instance.vector_store.scan_available_indexes(
-            use_cache=False
+        available_repos = await asyncio.to_thread(
+            fastcode_instance.vector_store.scan_available_indexes, use_cache=False
         )
 
         return {
@@ -765,8 +765,10 @@ async def delete_repositories(request: DeleteReposRequest):
     try:
         results = []
         for repo_name in request.repo_names:
-            result = fastcode_instance.remove_repository(
-                repo_name, delete_source=request.delete_source
+            result = await asyncio.to_thread(
+                fastcode_instance.remove_repository,
+                repo_name,
+                delete_source=request.delete_source,
             )
             results.append(result)
             logger.info(

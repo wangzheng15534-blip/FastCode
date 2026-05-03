@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -12,6 +13,9 @@ class _FakeVectorStore:
     def invalidate_scan_cache(self) -> None:
         return None
 
+    def scan_available_indexes(self, use_cache: bool = True) -> list[dict[str, Any]]:
+        return []
+
 
 class _FakeFastCode:
     def __init__(self) -> None:
@@ -19,6 +23,7 @@ class _FakeFastCode:
         self.repo_indexed = True
         self.repo_info = {"name": "repo"}
         self.vector_store = _FakeVectorStore()
+        self.cache_manager = SimpleNamespace(clear=lambda: True)
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
 
     def load_repository(self, source: str, is_url: bool | None) -> None:
@@ -42,6 +47,14 @@ class _FakeFastCode:
 
     def get_repository_summary(self) -> str:
         return "summary"
+
+    def remove_repository(
+        self, repo_name: str, *, delete_source: bool = False
+    ) -> dict[str, Any]:
+        self.calls.append(
+            ("remove_repository", (repo_name,), {"delete_source": delete_source})
+        )
+        return {"deleted_files": [], "freed_mb": 0.0}
 
     def query(
         self,
@@ -212,3 +225,35 @@ def test_upload_and_index_endpoint_offloads_upload_and_index(
     assert response.status_code == 200
     assert response.json()["summary"] == "summary"
     assert offloaded == [fake_upload_sync, fake.index_repository]
+
+
+def test_mutating_maintenance_endpoints_offload_blocking_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeFastCode()
+    offloaded: list[Any] = []
+
+    async def record_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        offloaded.append(func)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
+
+    client = TestClient(web_app.app)
+    delete_response = client.post(
+        "/api/delete-repos",
+        json={"repo_names": ["repo"], "delete_source": False},
+    )
+    clear_response = client.post("/api/clear-cache")
+    refresh_response = client.post("/api/refresh-index-cache")
+
+    assert delete_response.status_code == 200
+    assert clear_response.status_code == 200
+    assert refresh_response.status_code == 200
+    assert offloaded == [
+        fake.remove_repository,
+        fake.cache_manager.clear,
+        fake.vector_store.invalidate_scan_cache,
+        fake.vector_store.scan_available_indexes,
+    ]

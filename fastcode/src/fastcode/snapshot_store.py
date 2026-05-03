@@ -16,7 +16,7 @@ from typing import Any
 from .db_runtime import DBRuntime
 from .scip_models import SCIPArtifactRef
 from .semantic_ir import IRSnapshot
-from .store_records import SnapshotRefRecord
+from .store_records import SnapshotRecord, SnapshotRefRecord
 from .utils import ensure_dir, safe_jsonable, utc_now
 
 
@@ -395,7 +395,7 @@ class SnapshotStore:
 
     def save_snapshot(
         self, snapshot: IRSnapshot, metadata: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
+    ) -> SnapshotRecord:
         snap_dir = self.snapshot_dir(snapshot.snapshot_id)
         ir_path = os.path.join(snap_dir, "ir_snapshot.json")
         tmp_ir_path = f"{ir_path}.tmp"
@@ -454,12 +454,18 @@ class SnapshotStore:
             )
             conn.commit()
 
-        return {
-            "snapshot_id": snapshot.snapshot_id,
-            "artifact_key": artifact_key,
-            "ir_path": ir_path,
-            "dir": snap_dir,
-        }
+        return SnapshotRecord(
+            snapshot_id=snapshot.snapshot_id,
+            repo_name=snapshot.repo_name,
+            branch=snapshot.branch,
+            commit_id=snapshot.commit_id,
+            tree_id=snapshot.tree_id,
+            artifact_key=artifact_key,
+            ir_path=ir_path,
+            ir_graphs_path=None,
+            created_at=utc_now(),
+            metadata_json=json.dumps(metadata or {}, ensure_ascii=False),
+        )
 
     def update_snapshot_metadata(
         self, snapshot_id: str, metadata: dict[str, Any]
@@ -511,10 +517,10 @@ class SnapshotStore:
         return path
 
     def load_ir_graphs(self, snapshot_id: str) -> Any | None:
-        row = self.get_snapshot_record(snapshot_id)
-        if not row:
+        record = self.get_snapshot_record(snapshot_id)
+        if not record:
             return None
-        path = row.get("ir_graphs_path")
+        path = record.ir_graphs_path
         if not path or not os.path.exists(path):
             return None
         import networkx as nx
@@ -564,24 +570,24 @@ class SnapshotStore:
         return result
 
     def load_snapshot(self, snapshot_id: str) -> IRSnapshot | None:
-        row = self.get_snapshot_record(snapshot_id)
-        if not row:
+        record = self.get_snapshot_record(snapshot_id)
+        if not record:
             return None
-        ir_path = row.get("ir_path")
+        ir_path = record.ir_path
         if not ir_path or not os.path.exists(ir_path):
             return None
         with open(ir_path, encoding="utf-8") as f:
             data = json.load(f)
         return IRSnapshot.from_dict(data)
 
-    def get_snapshot_record(self, snapshot_id: str) -> dict[str, Any] | None:
+    def get_snapshot_record(self, snapshot_id: str) -> SnapshotRecord | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
                 "SELECT * FROM snapshots WHERE snapshot_id=?",
                 (snapshot_id,),
             ).fetchone()
-        return self.db_runtime.row_to_dict(row)
+        return self._row_to_snapshot_record(row)
 
     def find_by_repo_commit(
         self, repo_name: str, commit_id: str
@@ -826,6 +832,10 @@ class SnapshotStore:
             ).fetchone()
         primary = self.db_runtime.row_to_dict(row)
         return [primary] if primary else []
+
+    def _row_to_snapshot_record(self, row: Any) -> SnapshotRecord | None:
+        payload = self.db_runtime.row_to_dict(row)
+        return SnapshotRecord.from_dict(payload) if payload is not None else None
 
     def _row_to_snapshot_ref_record(self, row: Any) -> SnapshotRefRecord | None:
         payload = self.db_runtime.row_to_dict(row)

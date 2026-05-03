@@ -39,7 +39,7 @@ def test_snapshot_store_persists_and_loads_snapshot():
             ],
         )
         meta = store.save_snapshot(snap, metadata={"x": 1})
-        assert meta["artifact_key"].startswith("snap_")
+        assert meta.artifact_key.startswith("snap_")
 
         loaded = store.load_snapshot("snap:repo:abc")
         assert loaded is not None
@@ -574,7 +574,7 @@ def test_pipeline_backfill_persists_missing_layer_metadata_to_snapshot_store() -
 
         record = pipeline.snapshot_store.get_snapshot_record("snap:repo:legacy")
         assert record is not None
-        stored_metadata = json.loads(record["metadata_json"])
+        stored_metadata = json.loads(record.metadata_json)
         assert stored_metadata["pipeline_metrics"]["never_silent_fallback"] is True
         assert stored_metadata["pipeline_layers"][1]["status"] == "skipped"
         assert result["pipeline_metrics"]["never_silent_fallback"] is True
@@ -864,7 +864,8 @@ def test_stale_fencing_token_writes_no_artifact_files() -> None:
         with ExitStack() as stack:
             stack.enter_context(
                 patch.object(
-                    pipeline.indexer, "extract_elements",
+                    pipeline.indexer,
+                    "extract_elements",
                     return_value=[element],
                 )
             )
@@ -879,25 +880,23 @@ def test_stale_fencing_token_writes_no_artifact_files() -> None:
             )
             stack.enter_context(
                 patch.object(
-                    pipeline, "_apply_semantic_resolvers",
+                    pipeline,
+                    "_apply_semantic_resolvers",
                     side_effect=lambda **kwargs: kwargs["snapshot"],
                 )
             )
             stack.enter_context(
                 patch.object(
-                    pipeline.snapshot_store, "validate_fencing_token",
+                    pipeline.snapshot_store,
+                    "validate_fencing_token",
                     return_value=False,
                 )
             )
             stack.enter_context(
-                patch.object(
-                    pipeline.snapshot_store, "acquire_lock", return_value=1
-                )
+                patch.object(pipeline.snapshot_store, "acquire_lock", return_value=1)
             )
             stack.enter_context(
-                patch.object(
-                    pipeline.snapshot_store, "release_lock", return_value=None
-                )
+                patch.object(pipeline.snapshot_store, "release_lock", return_value=None)
             )
             stack.enter_context(
                 patch.object(
@@ -926,7 +925,9 @@ def test_stale_fencing_token_writes_no_artifact_files() -> None:
             )
             stack.enter_context(
                 patch.object(
-                    pipeline.snapshot_store, "update_snapshot_metadata", return_value=None
+                    pipeline.snapshot_store,
+                    "update_snapshot_metadata",
+                    return_value=None,
                 )
             )
             stack.enter_context(
@@ -941,7 +942,8 @@ def test_stale_fencing_token_writes_no_artifact_files() -> None:
             )
             stack.enter_context(
                 patch.object(
-                    pipeline, "pg_retrieval_store",
+                    pipeline,
+                    "pg_retrieval_store",
                     SimpleNamespace(upsert_elements=lambda **kw: None),
                 )
             )

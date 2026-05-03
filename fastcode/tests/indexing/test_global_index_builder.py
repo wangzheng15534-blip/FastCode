@@ -8,7 +8,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.global_index_builder import GlobalIndexBuilder
+from fastcode.indexing.global_builder import GlobalIndexBuilder
 
 # --- Helpers ---
 

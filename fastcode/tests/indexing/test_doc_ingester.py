@@ -12,7 +12,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.doc_ingester import KeyDocIngester
+from fastcode.indexing.doc_ingester import KeyDocIngester
 from fastcode.ir.types import IRSnapshot, IRSymbol
 
 # --- Helpers ---

@@ -524,7 +524,7 @@ def test_concurrent_query_snapshot_sequential_artifact_loading() -> None:
     import threading
     import time
 
-    from fastcode.pipeline import IndexPipeline
+    from fastcode.indexing.pipeline import IndexPipeline
 
     concurrent_count = 0
     max_concurrent = 0

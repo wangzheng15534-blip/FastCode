@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from ..ir.types import IRSnapshot
 from .embedder import CodeEmbedder
-from .ir.types import IRSnapshot
 
 logger = logging.getLogger(__name__)
 

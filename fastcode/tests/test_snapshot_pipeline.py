@@ -9,8 +9,8 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from fastcode.indexing.pipeline import IndexPipeline
 from fastcode.ir.types import IRAttachment, IRCodeUnit, IRSnapshot
-from fastcode.pipeline import IndexPipeline
 from fastcode.scip.models import SCIPIndex
 from fastcode.store.index_run import IndexRunStore
 from fastcode.store.manifest import ManifestStore
@@ -428,11 +428,19 @@ def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
             ),
             patch.object(pipeline, "_build_git_meta", return_value={}),
             patch.object(pipeline.indexer, "extract_elements", return_value=[element]),
-            patch("fastcode.pipeline.VectorStore", return_value=temp_store),
-            patch("fastcode.pipeline.CodeGraphBuilder", return_value=temp_graph),
-            patch("fastcode.pipeline.HybridRetriever", return_value=temp_retriever),
-            patch("fastcode.pipeline.build_ir_from_ast", return_value=ast_snapshot),
-            patch("fastcode.pipeline.validate_snapshot", return_value=[]),
+            patch("fastcode.indexing.pipeline.VectorStore", return_value=temp_store),
+            patch(
+                "fastcode.indexing.pipeline.CodeGraphBuilder", return_value=temp_graph
+            ),
+            patch(
+                "fastcode.indexing.pipeline.HybridRetriever",
+                return_value=temp_retriever,
+            ),
+            patch(
+                "fastcode.indexing.pipeline.build_ir_from_ast",
+                return_value=ast_snapshot,
+            ),
+            patch("fastcode.indexing.pipeline.validate_snapshot", return_value=[]),
             patch.object(
                 pipeline,
                 "_apply_semantic_resolvers",
@@ -760,36 +768,49 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
                 )
             )
             stack.enter_context(
-                patch("fastcode.pipeline.VectorStore", return_value=temp_store)
-            )
-            stack.enter_context(
-                patch("fastcode.pipeline.CodeGraphBuilder", return_value=temp_graph)
-            )
-            stack.enter_context(
-                patch("fastcode.pipeline.HybridRetriever", return_value=temp_retriever)
-            )
-            stack.enter_context(
-                patch("fastcode.pipeline.build_ir_from_ast", return_value=ast_snapshot)
-            )
-            stack.enter_context(
-                patch("fastcode.pipeline.detect_scip_languages", return_value=["zig"])
+                patch("fastcode.indexing.pipeline.VectorStore", return_value=temp_store)
             )
             stack.enter_context(
                 patch(
-                    "fastcode.pipeline.run_scip_for_language",
+                    "fastcode.indexing.pipeline.CodeGraphBuilder",
+                    return_value=temp_graph,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "fastcode.indexing.pipeline.HybridRetriever",
+                    return_value=temp_retriever,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "fastcode.indexing.pipeline.build_ir_from_ast",
+                    return_value=ast_snapshot,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "fastcode.indexing.pipeline.detect_scip_languages",
+                    return_value=["zig"],
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "fastcode.indexing.pipeline.run_scip_for_language",
                     side_effect=_fake_run_scip,
                 )
             )
             stack.enter_context(
                 patch(
-                    "fastcode.pipeline.build_ir_from_scip", return_value=scip_snapshot
+                    "fastcode.indexing.pipeline.build_ir_from_scip",
+                    return_value=scip_snapshot,
                 )
             )
             stack.enter_context(
-                patch("fastcode.pipeline.merge_ir", return_value=scip_snapshot)
+                patch("fastcode.indexing.pipeline.merge_ir", return_value=scip_snapshot)
             )
             stack.enter_context(
-                patch("fastcode.pipeline.validate_snapshot", return_value=[])
+                patch("fastcode.indexing.pipeline.validate_snapshot", return_value=[])
             )
             stack.enter_context(
                 patch.object(
@@ -950,13 +971,16 @@ def test_stale_fencing_token_writes_no_artifact_files() -> None:
                 )
             )
             stack.enter_context(
-                patch("fastcode.pipeline.build_ir_from_ast", return_value=ast_snapshot)
+                patch(
+                    "fastcode.indexing.pipeline.build_ir_from_ast",
+                    return_value=ast_snapshot,
+                )
             )
             stack.enter_context(
-                patch("fastcode.pipeline.merge_ir", return_value=ast_snapshot)
+                patch("fastcode.indexing.pipeline.merge_ir", return_value=ast_snapshot)
             )
             stack.enter_context(
-                patch("fastcode.pipeline.validate_snapshot", return_value=[])
+                patch("fastcode.indexing.pipeline.validate_snapshot", return_value=[])
             )
             stack.enter_context(
                 patch.object(
@@ -1031,13 +1055,19 @@ def test_stale_fencing_token_writes_no_artifact_files() -> None:
                 patch.object(pipeline, "_load_artifacts_by_key", return_value=True)
             )
             stack.enter_context(
-                patch("fastcode.pipeline.HybridRetriever", return_value=temp_retriever)
+                patch(
+                    "fastcode.indexing.pipeline.HybridRetriever",
+                    return_value=temp_retriever,
+                )
             )
             stack.enter_context(
-                patch("fastcode.pipeline.CodeGraphBuilder", return_value=temp_graph)
+                patch(
+                    "fastcode.indexing.pipeline.CodeGraphBuilder",
+                    return_value=temp_graph,
+                )
             )
             stack.enter_context(
-                patch("fastcode.pipeline.VectorStore", return_value=temp_store)
+                patch("fastcode.indexing.pipeline.VectorStore", return_value=temp_store)
             )
 
             with pytest.raises(RuntimeError, match="stale_lock_detected"):

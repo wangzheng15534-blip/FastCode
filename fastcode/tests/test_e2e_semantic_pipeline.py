@@ -24,16 +24,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fastcode.doc_ingester import KeyDocIngester
-from fastcode.embedder import CodeEmbedder
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.graph_runtime import LadybugGraphRuntime
-from fastcode.indexer import CodeIndexer
+from fastcode.indexing.doc_ingester import KeyDocIngester
+from fastcode.indexing.embedder import CodeEmbedder
+from fastcode.indexing.indexer import CodeIndexer
+from fastcode.indexing.loader import RepositoryLoader
+from fastcode.indexing.parser import CodeParser
+from fastcode.indexing.pipeline import IndexPipeline
+from fastcode.indexing.terminus import TerminusPublisher
 from fastcode.ir.graph import IRGraphBuilder
-from fastcode.loader import RepositoryLoader
 from fastcode.main import FastCode
-from fastcode.parser import CodeParser
-from fastcode.pipeline import IndexPipeline
 from fastcode.semantic import build_default_semantic_resolver_registry
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.store.index_run import IndexRunStore
@@ -41,7 +42,6 @@ from fastcode.store.manifest import ManifestStore
 from fastcode.store.pg_retrieval import PgRetrievalStore
 from fastcode.store.snapshot import SnapshotStore
 from fastcode.store.vector import VectorStore
-from fastcode.terminus_publisher import TerminusPublisher
 
 pytestmark = [pytest.mark.e2e]
 
@@ -358,7 +358,7 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
     fc.index_run_store = IndexRunStore(fc.snapshot_store.db_runtime)
     fc.terminus_publisher = TerminusPublisher(config)
 
-    from fastcode.projection_transform import ProjectionTransformer
+    from fastcode.indexing.projection_transform import ProjectionTransformer
     from fastcode.store.projection import ProjectionStore
 
     fc.projection_transformer = ProjectionTransformer(config)

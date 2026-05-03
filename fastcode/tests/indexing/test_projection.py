@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from fastcode.indexing.projection import ProjectionService
 from fastcode.main import FastCode
-from fastcode.projection import ProjectionService
 
 pytestmark = [pytest.mark.test_double]
 

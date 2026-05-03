@@ -12,10 +12,10 @@ from unittest.mock import patch
 import networkx as nx
 import pytest
 
+from fastcode.indexing.pipeline import IndexPipeline
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
 from fastcode.main import FastCode
-from fastcode.pipeline import IndexPipeline
 from fastcode.semantic.resolvers import (
     PYTHON_RESOLVER_EXTRACTOR,
     PYTHON_RESOLVER_SOURCE,

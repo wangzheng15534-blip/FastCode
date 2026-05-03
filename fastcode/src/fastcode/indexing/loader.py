@@ -13,7 +13,7 @@ from typing import Any
 
 from git import GitCommandError, Repo
 
-from .utils import (
+from ..utils import (
     ensure_dir,
     get_repo_name_from_url,
     is_supported_file,

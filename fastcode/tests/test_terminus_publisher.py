@@ -8,7 +8,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.terminus_publisher import TerminusPublisher
+from fastcode.indexing.terminus import TerminusPublisher
 
 # --- Helpers ---
 

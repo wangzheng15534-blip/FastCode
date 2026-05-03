@@ -21,38 +21,38 @@ from urllib.parse import urlparse
 import numpy as np
 from git import GitCommandError, Repo
 
-from .doc_ingester import KeyDocIngester
-from .embedder import CodeEmbedder
-from .global_index_builder import GlobalIndexBuilder
-from .graph.build import CodeGraphBuilder
-from .incremental_update import apply_incremental_update, diff_changed_files
-from .indexer import CodeIndexer
-from .ir.element import CodeElement, CodeElementMeta
-from .ir.graph import IRGraphBuilder
-from .ir.merge import merge_ir
-from .ir.types import IRSnapshot
-from .ir.validate import validate_snapshot
-from .loader import RepositoryLoader
-from .module_resolver import ModuleResolver
-from .retrieval.hybrid import HybridRetriever
-from .scip.ast_adapter import build_ir_from_ast
-from .scip.indexers import (
+from ..graph.build import CodeGraphBuilder
+from ..ir.element import CodeElement, CodeElementMeta
+from ..ir.graph import IRGraphBuilder
+from ..ir.merge import merge_ir
+from ..ir.types import IRSnapshot
+from ..ir.validate import validate_snapshot
+from ..module_resolver import ModuleResolver
+from ..retrieval.hybrid import HybridRetriever
+from ..scip.ast_adapter import build_ir_from_ast
+from ..scip.indexers import (
     detect_scip_languages,
     get_scip_indexer_profile,
     run_scip_for_language,
 )
-from .scip.loader import load_scip_artifact, run_scip_python_index
-from .scip.scip_adapter import build_ir_from_scip
-from .scip.symbol_resolver import SymbolResolver
-from .semantic import apply_resolution_patch, build_default_semantic_resolver_registry
-from .semantic.symbol_index import SnapshotSymbolIndex
-from .store.index_run import IndexRunStore
-from .store.manifest import ManifestStore
-from .store.pg_retrieval import PgRetrievalStore
-from .store.snapshot import SnapshotStore
-from .store.vector import VectorStore
-from .terminus_publisher import TerminusPublisher
-from .utils import compute_file_hash, ensure_dir
+from ..scip.loader import load_scip_artifact, run_scip_python_index
+from ..scip.scip_adapter import build_ir_from_scip
+from ..scip.symbol_resolver import SymbolResolver
+from ..semantic import apply_resolution_patch, build_default_semantic_resolver_registry
+from ..semantic.symbol_index import SnapshotSymbolIndex
+from ..store.index_run import IndexRunStore
+from ..store.manifest import ManifestStore
+from ..store.pg_retrieval import PgRetrievalStore
+from ..store.snapshot import SnapshotStore
+from ..store.vector import VectorStore
+from ..utils import compute_file_hash, ensure_dir
+from .doc_ingester import KeyDocIngester
+from .embedder import CodeEmbedder
+from .global_builder import GlobalIndexBuilder
+from .incremental import apply_incremental_update, diff_changed_files
+from .indexer import CodeIndexer
+from .loader import RepositoryLoader
+from .terminus import TerminusPublisher
 
 
 class IndexPipeline:

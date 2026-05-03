@@ -9,7 +9,7 @@ from typing import Any, cast
 import tree_sitter
 from tree_sitter import Query, QueryCursor
 
-from .tree_sitter_parser import TSParser
+from .tree_sitter import TSParser
 
 
 def _node_text(node: tree_sitter.Node | None) -> str:

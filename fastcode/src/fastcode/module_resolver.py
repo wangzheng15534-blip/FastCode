@@ -1,4 +1,4 @@
-from fastcode.global_index_builder import GlobalIndexBuilder
+from fastcode.indexing.global_builder import GlobalIndexBuilder
 
 
 class ModuleResolver:

@@ -9,11 +9,11 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from ..store.index_run import IndexRunStore
+    from ..store.manifest import ManifestStore
+    from ..store.snapshot import SnapshotStore
     from .redo_worker import RedoWorker
-    from .store.index_run import IndexRunStore
-    from .store.manifest import ManifestStore
-    from .store.snapshot import SnapshotStore
-    from .terminus_publisher import TerminusPublisher
+    from .terminus import TerminusPublisher
 
 
 class PublishingService:

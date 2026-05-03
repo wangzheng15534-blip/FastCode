@@ -13,7 +13,10 @@ if platform.system() == "Darwin":
     os.environ["MKL_NUM_THREADS"] = "1"
 
 from .answer_generator import AnswerGenerator
-from .indexer import CodeIndexer
+from .indexing.indexer import CodeIndexer
+from .indexing.loader import RepositoryLoader
+from .indexing.overview import RepositoryOverviewGenerator
+from .indexing.parser import CodeParser
 from .ir.types import (
     IRCodeUnit,
     IRDocument,
@@ -25,10 +28,7 @@ from .ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from .loader import RepositoryLoader
 from .main import FastCode
-from .parser import CodeParser
-from .repo_overview import RepositoryOverviewGenerator
 from .repo_selector import RepositorySelector
 from .retrieval.agent_tools import AgentTools
 from .retrieval.hybrid import HybridRetriever

@@ -10,8 +10,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from .retrieval.core import graph_build as _graph_build
-from .utils.hashing import deterministic_event_id
+from ..retrieval.core import graph_build as _graph_build
+from ..utils.hashing import deterministic_event_id
 
 
 class TerminusPublisher:

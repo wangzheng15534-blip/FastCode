@@ -11,9 +11,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fastcode.redo_worker import RedoWorker
+from fastcode.indexing.redo_worker import RedoWorker
+from fastcode.indexing.terminus import TerminusPublisher
 from fastcode.store.snapshot import SnapshotStore
-from fastcode.terminus_publisher import TerminusPublisher
 
 pytestmark = [pytest.mark.test_double]
 

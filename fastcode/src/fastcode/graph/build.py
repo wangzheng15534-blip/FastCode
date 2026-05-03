@@ -11,7 +11,7 @@ from typing import Any, cast
 import networkx as nx
 import tqdm
 
-from ..call_extractor import CallExtractor
+from ..indexing.call_extractor import CallExtractor
 from ..ir.element import CodeElement
 from ..module_resolver import ModuleResolver
 from ..path_utils import file_path_to_module_path

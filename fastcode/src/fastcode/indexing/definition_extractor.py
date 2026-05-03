@@ -11,7 +11,7 @@ from typing import Any
 
 from tree_sitter import Node, Query, QueryCursor
 
-from .tree_sitter_parser import TSParser
+from .tree_sitter import TSParser
 
 
 class DefinitionExtractor:

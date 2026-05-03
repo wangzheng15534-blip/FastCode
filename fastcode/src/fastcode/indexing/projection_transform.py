@@ -15,10 +15,10 @@ from typing import Any, cast
 
 import networkx as nx
 
-from .ir.graph import IRGraphs
-from .ir.projection import ProjectionBuildResult, ProjectionScope
-from .ir.types import IRSnapshot
-from .utils import utc_now
+from ..ir.graph import IRGraphs
+from ..ir.projection import ProjectionBuildResult, ProjectionScope
+from ..ir.types import IRSnapshot
+from ..utils import utc_now
 
 try:
     import igraph as ig  # type: ignore[import-untyped]

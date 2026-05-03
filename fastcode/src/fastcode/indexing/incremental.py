@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .ir.types import (
+from ..ir.types import (
     IRCodeUnit,
     IRRelation,
     IRSnapshot,

@@ -6,7 +6,7 @@ Each test is self-contained with its own factory functions.
 
 from __future__ import annotations
 
-from fastcode.incremental_update import (
+from fastcode.indexing.incremental import (
     FileChangeSet,
     apply_incremental_update,
     diff_changed_files,

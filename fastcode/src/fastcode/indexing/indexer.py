@@ -11,13 +11,13 @@ from typing import Any
 
 from tqdm import tqdm
 
+from ..ir.element import CodeElement
+from ..store.vector import VectorStore
+from ..utils import normalize_path
 from .embedder import CodeEmbedder
-from .ir.element import CodeElement
 from .loader import RepositoryLoader
+from .overview import RepositoryOverviewGenerator
 from .parser import CodeParser, FileParseResult
-from .repo_overview import RepositoryOverviewGenerator
-from .store.vector import VectorStore
-from .utils import normalize_path
 
 
 class CodeIndexer:

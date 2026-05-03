@@ -16,25 +16,26 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 
 from .answer_generator import AnswerGenerator
-from .doc_ingester import KeyDocIngester
-from .embedder import CodeEmbedder
-from .global_index_builder import GlobalIndexBuilder
 from .graph.build import CodeGraphBuilder
 from .graph_runtime import LadybugGraphRuntime
-from .indexer import CodeIndexer
+from .indexing.doc_ingester import KeyDocIngester
+from .indexing.embedder import CodeEmbedder
+from .indexing.global_builder import GlobalIndexBuilder
+from .indexing.indexer import CodeIndexer
+from .indexing.loader import RepositoryLoader
+from .indexing.parser import CodeParser
+from .indexing.pipeline import IndexPipeline
+from .indexing.projection import ProjectionService
+from .indexing.projection_transform import ProjectionTransformer
+from .indexing.publishing import PublishingService
+from .indexing.redo_worker import RedoWorker
+from .indexing.terminus import TerminusPublisher
 from .ir.element import CodeElement, CodeElementMeta
 from .ir.graph import IRGraphBuilder
 from .ir.types import IRSnapshot
-from .loader import RepositoryLoader
 from .module_resolver import ModuleResolver
-from .parser import CodeParser
-from .pipeline import IndexPipeline
-from .projection import ProjectionService
-from .projection_transform import ProjectionTransformer
-from .publishing import PublishingService
 from .query_handler import QueryPipeline
 from .query_processor import QueryProcessor
-from .redo_worker import RedoWorker
 from .retrieval.core import snapshot as _snapshot
 from .retrieval.hybrid import HybridRetriever
 from .scip.symbol_resolver import SymbolResolver
@@ -47,7 +48,6 @@ from .store.pg_retrieval import PgRetrievalStore
 from .store.projection import ProjectionStore
 from .store.snapshot import SnapshotStore
 from .store.vector import VectorStore
-from .terminus_publisher import TerminusPublisher
 from .utils import (
     ensure_dir,
     load_config,

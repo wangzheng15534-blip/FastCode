@@ -16,8 +16,8 @@ import networkx as nx
 import numpy as np
 from rank_bm25 import BM25Okapi
 
-from ..embedder import CodeEmbedder
 from ..graph.build import CodeGraphBuilder
+from ..indexing.embedder import CodeEmbedder
 from ..ir.element import CodeElement, CodeElementMeta
 from ..ir.graph import IRGraphs
 from ..query_processor import ProcessedQuery

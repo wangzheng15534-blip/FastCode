@@ -602,17 +602,67 @@ class IndexPipeline:
             content_hash = compute_file_hash(abs_path)
         except Exception as e:
             self.logger.warning(f"Failed to hash file for incremental manifest: {e}")
+        if not content_hash:
+            content_hash = None
         return {
             "mtime": stat.st_mtime,
             "size": stat.st_size,
             "content_hash": content_hash,
         }
 
+    def _incremental_compatibility_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": 2,
+            "embedding": {
+                "provider": getattr(self.embedder, "provider", None),
+                "model": getattr(self.embedder, "model_name", None),
+                "dimension": getattr(self.embedder, "embedding_dim", None),
+                "max_seq_length": getattr(self.embedder, "max_seq_length", None),
+                "normalize": getattr(self.embedder, "normalize", None),
+            },
+            "indexing": {
+                "levels": list(getattr(self.indexer, "levels", []) or []),
+                "include_imports": getattr(self.indexer, "include_imports", None),
+                "include_class_context": getattr(
+                    self.indexer, "include_class_context", None
+                ),
+                "generate_repo_overview": getattr(
+                    self.indexer, "generate_repo_overview", None
+                ),
+            },
+            "parser": self.config.get("parser", {}),
+        }
+
+    def _incremental_compatibility_hash(self) -> str:
+        payload = json.dumps(
+            self._incremental_compatibility_payload(),
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+    def _manifest_is_incrementally_compatible(
+        self, manifest: dict[str, Any], artifact_key: str
+    ) -> bool:
+        expected = self._incremental_compatibility_hash()
+        actual = manifest.get("compatibility_hash")
+        if actual == expected:
+            return True
+        self.logger.info(
+            "incremental prefilter disabled for %s: compatibility mismatch",
+            artifact_key,
+        )
+        return False
+
     def _build_file_manifest(
         self, elements: list[CodeElement], repo_root: str
     ) -> dict[str, Any]:
         manifest: dict[str, Any] = {
+            "schema_version": 2,
             "created_at": datetime.now().isoformat(),
+            "compatibility": self._incremental_compatibility_payload(),
+            "compatibility_hash": self._incremental_compatibility_hash(),
             "files": {},
         }
 
@@ -707,7 +757,7 @@ class IndexPipeline:
                 continue
             saved_hash = saved.get("content_hash")
             current_hash = info.get("content_hash")
-            if saved_hash and current_hash:
+            if saved_hash is not None or current_hash is not None:
                 changed = current_hash != saved_hash
             else:
                 changed = info["mtime"] != saved.get("mtime") or info[
@@ -816,6 +866,10 @@ class IndexPipeline:
         previous_artifact_key = previous_snapshot.artifact_key
         manifest = self._load_file_manifest(previous_artifact_key)
         if manifest is None:
+            return None, None
+        if not self._manifest_is_incrementally_compatible(
+            manifest, previous_artifact_key
+        ):
             return None, None
 
         existing_metadata = self._load_existing_metadata(previous_artifact_key)

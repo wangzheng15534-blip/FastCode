@@ -938,20 +938,27 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "w",
             encoding="utf-8",
         ) as handle:
+            unchanged_fingerprint = pipeline._file_fingerprint(unchanged_path)
+            changed_fingerprint = pipeline._file_fingerprint(changed_path)
+            assert unchanged_fingerprint is not None
+            assert changed_fingerprint is not None
             json.dump(
                 {
+                    "schema_version": 2,
+                    "compatibility": pipeline._incremental_compatibility_payload(),
+                    "compatibility_hash": pipeline._incremental_compatibility_hash(),
                     "files": {
                         "a.py": {
-                            "mtime": unchanged_stat.st_mtime,
-                            "size": unchanged_stat.st_size,
+                            **unchanged_fingerprint,
                             "element_ids": ["unchanged:1"],
                         },
                         "b.py": {
                             "mtime": changed_stat.st_mtime - 10,
                             "size": changed_stat.st_size + 1,
+                            "content_hash": "stale-content-hash",
                             "element_ids": ["stale:2"],
                         },
-                    }
+                    },
                 },
                 handle,
             )
@@ -1181,6 +1188,113 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "reused_elements": 1,
             "reindexed_elements": 1,
         }
+
+
+def test_pipeline_incremental_prefilter_falls_back_on_compatibility_mismatch() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_incremental_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+
+        unchanged_path = os.path.join(tmp, "a.py")
+        with open(unchanged_path, "w", encoding="utf-8") as handle:
+            handle.write("print('a')\n")
+        fingerprint = pipeline._file_fingerprint(unchanged_path)
+        assert fingerprint is not None
+
+        previous_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:prev",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+        )
+        previous_record = pipeline.snapshot_store.save_snapshot(
+            previous_snapshot, metadata={}
+        )
+        pipeline.manifest_store.publish(
+            repo_name="repo",
+            ref_name="main",
+            snapshot_id="snap:repo:prev",
+            index_run_id="run_prev",
+            status="published",
+        )
+
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_metadata.pkl"),
+            "wb",
+        ) as handle:
+            pickle.dump(
+                {
+                    "metadata": [
+                        {
+                            "id": "unchanged:1",
+                            "type": "file",
+                            "name": "a.py",
+                            "file_path": unchanged_path,
+                            "relative_path": "a.py",
+                            "language": "python",
+                            "start_line": 1,
+                            "end_line": 1,
+                            "code": "print('a')\n",
+                            "signature": None,
+                            "docstring": None,
+                            "summary": None,
+                            "metadata": {"embedding": np.array([0.1, 0.2, 0.3])},
+                            "repo_name": "repo",
+                            "repo_url": tmp,
+                        }
+                    ]
+                },
+                handle,
+            )
+
+        incompatible_payload = pipeline._incremental_compatibility_payload()
+        incompatible_payload["embedding"] = {
+            **incompatible_payload["embedding"],
+            "model": "previous-model",
+        }
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_manifest.json"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            json.dump(
+                {
+                    "schema_version": 2,
+                    "compatibility": incompatible_payload,
+                    "compatibility_hash": "previous-compatibility-hash",
+                    "files": {
+                        "a.py": {
+                            **fingerprint,
+                            "element_ids": ["unchanged:1"],
+                        }
+                    },
+                },
+                handle,
+            )
+
+        pipeline.loader.scan_files = lambda: [
+            {
+                "path": unchanged_path,
+                "relative_path": "a.py",
+                "size": os.path.getsize(unchanged_path),
+                "extension": ".py",
+            }
+        ]
+        pipeline.indexer.index_files = Mock(
+            side_effect=AssertionError("index_files should not run")
+        )
+
+        planned_elements, plan = pipeline._plan_incremental_elements(
+            repo_name="repo",
+            repo_url=tmp,
+            snapshot_id="snap:repo:current",
+            snapshot_ref={"branch": "main", "snapshot_id": "snap:repo:current"},
+            ref=None,
+        )
+
+        assert planned_elements is None
+        assert plan is None
+        pipeline.indexer.index_files.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

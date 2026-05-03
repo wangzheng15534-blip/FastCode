@@ -21,8 +21,6 @@ from urllib.parse import urlparse
 import numpy as np
 from git import GitCommandError, Repo
 
-from .adapters.ast_to_ir import build_ir_from_ast
-from .adapters.scip_to_ir import build_ir_from_scip
 from .doc_ingester import KeyDocIngester
 from .embedder import CodeEmbedder
 from .global_index_builder import GlobalIndexBuilder
@@ -37,12 +35,15 @@ from .ir.validate import validate_snapshot
 from .loader import RepositoryLoader
 from .module_resolver import ModuleResolver
 from .retrieval.hybrid import HybridRetriever
-from .scip_indexers import (
+from .scip.ast_adapter import build_ir_from_ast
+from .scip.indexers import (
     detect_scip_languages,
     get_scip_indexer_profile,
     run_scip_for_language,
 )
-from .scip_loader import load_scip_artifact, run_scip_python_index
+from .scip.loader import load_scip_artifact, run_scip_python_index
+from .scip.scip_adapter import build_ir_from_scip
+from .scip.symbol_resolver import SymbolResolver
 from .semantic_resolvers import (
     apply_resolution_patch,
     build_default_semantic_resolver_registry,
@@ -53,7 +54,6 @@ from .store.manifest import ManifestStore
 from .store.pg_retrieval import PgRetrievalStore
 from .store.snapshot import SnapshotStore
 from .store.vector import VectorStore
-from .symbol_resolver import SymbolResolver
 from .terminus_publisher import TerminusPublisher
 from .utils import compute_file_hash, ensure_dir
 

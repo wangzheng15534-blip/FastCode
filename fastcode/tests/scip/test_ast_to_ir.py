@@ -8,9 +8,9 @@ import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-from fastcode.adapters.ast_to_ir import build_ir_from_ast
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import IRSnapshot
+from fastcode.scip.ast_adapter import build_ir_from_ast
 
 # ---------------------------------------------------------------------------
 # Strategies (self-contained, no conftest import)
@@ -236,7 +236,7 @@ def test_symbol_metadata_contains_ast_fields():
     assert meta["ast_element_id"] == "elem_compute"
     assert meta["source"] == "fc_structure"
     assert meta["confidence"] == "resolved"
-    assert meta["extractor"] == "fastcode.adapters.ast_to_ir"
+    assert meta["extractor"] == "fastcode.scip.ast_adapter"
     assert meta["key1"] == "val1"
 
 
@@ -291,7 +291,7 @@ def test_contain_edge_metadata():
     snap = _build(elements)
     contain_edges = [e for e in snap.edges if e.edge_type == "contain"]
     assert len(contain_edges) == 1
-    assert contain_edges[0].metadata["extractor"] == "fastcode.adapters.ast_to_ir"
+    assert contain_edges[0].metadata["extractor"] == "fastcode.scip.ast_adapter"
     assert contain_edges[0].metadata["source"] == "fc_structure"
 
 

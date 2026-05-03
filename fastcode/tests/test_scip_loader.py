@@ -19,12 +19,12 @@ try:
 except ModuleNotFoundError:
     _has_protobuf = False
 
-from fastcode.scip_loader import (
+from fastcode.scip.loader import (
     _scip_kind_to_str,
     _symbol_role_to_str,
     load_scip_artifact,
 )
-from fastcode.scip_models import SCIPIndex
+from fastcode.scip.models import SCIPIndex
 
 requires_protobuf = pytest.mark.skipif(
     not _has_protobuf, reason="protobuf not installed"
@@ -360,7 +360,7 @@ class TestLoadScipArtifactJson:
 @requires_protobuf
 def test_scip_pb2_module_importable():
     """Protobuf bindings module must be importable."""
-    from fastcode.scip_pb2 import Index
+    from fastcode.scip.pb2 import Index
 
     idx = Index()
     assert idx.metadata.tool_info.name == ""
@@ -369,7 +369,7 @@ def test_scip_pb2_module_importable():
 @requires_protobuf
 def test_load_binary_scip_artifact(tmp_path: pathlib.Path):
     """Binary .scip files parse without external CLI."""
-    from fastcode.scip_pb2 import Index
+    from fastcode.scip.pb2 import Index
 
     # Build a minimal binary SCIP index
     idx = Index()
@@ -399,7 +399,7 @@ def test_load_binary_scip_artifact(tmp_path: pathlib.Path):
 @requires_protobuf
 def test_binary_scip_with_occurrences(tmp_path: pathlib.Path):
     """Binary SCIP with occurrences converts correctly."""
-    from fastcode.scip_pb2 import Index, SymbolInformation
+    from fastcode.scip.pb2 import Index, SymbolInformation
 
     idx = Index()
     idx.metadata.version = 0
@@ -452,7 +452,7 @@ def test_binary_scip_with_occurrences(tmp_path: pathlib.Path):
 @requires_protobuf
 def test_binary_scip_empty_index(tmp_path: pathlib.Path):
     """Empty SCIP index produces empty SCIPIndex."""
-    from fastcode.scip_pb2 import Index
+    from fastcode.scip.pb2 import Index
 
     idx = Index()
     idx.metadata.version = 0
@@ -469,8 +469,8 @@ def test_binary_scip_empty_index(tmp_path: pathlib.Path):
 @requires_protobuf
 def test_binary_scip_to_ir_round_trip(tmp_path: pathlib.Path):
     """Binary SCIP -> SCIPIndex -> IRSnapshot produces valid IR."""
-    from fastcode.adapters.scip_to_ir import build_ir_from_scip
-    from fastcode.scip_pb2 import Index, SymbolInformation
+    from fastcode.scip.pb2 import Index, SymbolInformation
+    from fastcode.scip.scip_adapter import build_ir_from_scip
 
     idx = Index()
     idx.metadata.version = 0
@@ -514,10 +514,10 @@ def test_binary_scip_to_ir_round_trip(tmp_path: pathlib.Path):
 
 def test_run_scip_python_index_delegates_to_scip_indexers(tmp_path: pathlib.Path):
     """run_scip_python_index delegates to scip_indexers.run_scip_indexer."""
-    from fastcode.scip_loader import run_scip_python_index
+    from fastcode.scip.loader import run_scip_python_index
 
     with patch(
-        "fastcode.scip_indexers.run_scip_indexer", return_value="/fake/output.scip"
+        "fastcode.scip.indexers.run_scip_indexer", return_value="/fake/output.scip"
     ) as mock_run:
         result = run_scip_python_index(str(tmp_path), "/fake/output.scip")
 

@@ -1,4 +1,3 @@
-from fastcode.adapters.scip_to_ir import build_ir_from_scip
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.merge import merge_ir
 from fastcode.ir.types import (
@@ -9,6 +8,7 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.ir.validate import validate_snapshot
+from fastcode.scip.scip_adapter import build_ir_from_scip
 
 
 def _file(

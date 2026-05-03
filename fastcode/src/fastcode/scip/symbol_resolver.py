@@ -8,8 +8,8 @@ Given a code symbol name, find its definition ID using local and imported resolu
 import logging
 from typing import Any
 
-from .global_index_builder import GlobalIndexBuilder
-from .module_resolver import ModuleResolver
+from ..global_index_builder import GlobalIndexBuilder
+from ..module_resolver import ModuleResolver
 
 
 class SymbolResolver:

@@ -13,7 +13,7 @@ from typing import Any, cast
 
 from fastcode.retrieval.core import scip_transform as _scip_transform
 
-from .scip_models import SCIPIndex
+from .models import SCIPIndex
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ def load_scip_artifact(path: str) -> SCIPIndex:
     if ext == ".scip":
         # Try protobuf parsing first (no external CLI needed)
         try:
-            from .scip_pb2 import Index as ProtobufIndex  # type: ignore[import-untyped]
+            from .pb2 import Index as ProtobufIndex  # type: ignore[import-untyped]
 
             with open(path, "rb") as f:
                 raw = f.read()
@@ -56,7 +56,7 @@ def load_scip_artifact(path: str) -> SCIPIndex:
             ]
             last_error = None
             for cmd in candidate_cmds:
-                proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
+                proc = subprocess.run(cmd, check=False, capture_output=True, text=True)  # noqa: S603
                 if proc.returncode == 0 and proc.stdout.strip():
                     return SCIPIndex.from_dict(json.loads(proc.stdout))
                 last_error = proc.stderr.strip() or proc.stdout.strip()
@@ -70,13 +70,13 @@ def load_scip_artifact(path: str) -> SCIPIndex:
 
 
 def run_scip_python_index(repo_path: str, output_path: str) -> str:
-    from .scip_indexers import run_scip_indexer
+    from .indexers import run_scip_indexer
 
     return run_scip_indexer("python", repo_path, output_path)
 
 
 def _protobuf_to_scip_index(pb_index: Any) -> SCIPIndex:
-    from .scip_models import SCIPDocument, SCIPOccurrence, SCIPSymbol
+    from .models import SCIPDocument, SCIPOccurrence, SCIPSymbol
 
     # Use a list as the empty range fallback (protobuf fields are unknown type)
     _empty_range: list[int] = [0, 0, 0, 0]

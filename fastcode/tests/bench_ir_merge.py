@@ -8,10 +8,10 @@ from typing import Any
 
 import pytest
 
-from fastcode.adapters.ast_to_ir import build_ir_from_ast
-from fastcode.adapters.scip_to_ir import build_ir_from_scip
 from fastcode.ir.element import CodeElement
 from fastcode.ir.merge import merge_ir
+from fastcode.scip.ast_adapter import build_ir_from_ast
+from fastcode.scip.scip_adapter import build_ir_from_scip
 
 pytestmark = [pytest.mark.perf]
 

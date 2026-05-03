@@ -9,7 +9,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fastcode.global_index_builder import GlobalIndexBuilder
-from fastcode.symbol_resolver import SymbolResolver
+from fastcode.scip.symbol_resolver import SymbolResolver
 
 # --- Helpers ---
 

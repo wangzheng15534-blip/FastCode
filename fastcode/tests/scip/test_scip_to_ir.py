@@ -8,9 +8,9 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.adapters.scip_to_ir import build_ir_from_scip
 from fastcode.ir.types import IRSnapshot
-from fastcode.scip_models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
+from fastcode.scip.models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
+from fastcode.scip.scip_adapter import build_ir_from_scip
 
 # ---------------------------------------------------------------------------
 # Strategies (mirrored from tests/conftest.py)
@@ -387,7 +387,7 @@ def test_contain_edge_metadata():
     snap = _build(payload)
     contain_edges = [e for e in snap.edges if e.edge_type == "contain"]
     assert len(contain_edges) == 1
-    assert contain_edges[0].metadata["extractor"] == "fastcode.adapters.scip_to_ir"
+    assert contain_edges[0].metadata["extractor"] == "fastcode.scip.scip_adapter"
 
 
 def test_dict_input_produces_snapshot():
@@ -1466,11 +1466,11 @@ class TestNormalizeKindEdge:
         ],
     )
     def test_known_mappings(self, kind: str, expected: str) -> None:
-        from fastcode.adapters.scip_to_ir import _normalize_kind
+        from fastcode.scip.scip_adapter import _normalize_kind
 
         assert _normalize_kind(kind) == expected
 
     def test_none_returns_default(self) -> None:
-        from fastcode.adapters.scip_to_ir import _normalize_kind
+        from fastcode.scip.scip_adapter import _normalize_kind
 
         assert _normalize_kind(None) == "symbol"

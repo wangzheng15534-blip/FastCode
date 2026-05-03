@@ -37,6 +37,7 @@ from .query_processor import QueryProcessor
 from .redo_worker import RedoWorker
 from .retrieval.core import snapshot as _snapshot
 from .retrieval.hybrid import HybridRetriever
+from .scip.symbol_resolver import SymbolResolver
 from .semantic_resolvers import (
     build_default_semantic_resolver_registry,
 )
@@ -48,7 +49,6 @@ from .store.pg_retrieval import PgRetrievalStore
 from .store.projection import ProjectionStore
 from .store.snapshot import SnapshotStore
 from .store.vector import VectorStore
-from .symbol_resolver import SymbolResolver
 from .terminus_publisher import TerminusPublisher
 from .utils import (
     ensure_dir,

@@ -20,7 +20,7 @@ from ..utils import safe_jsonable
 
 STRUCTURE_SOURCE = "fc_structure"
 STRUCTURE_PRIORITY = 50
-STRUCTURE_EXTRACTOR = "fastcode.adapters.ast_to_ir"
+STRUCTURE_EXTRACTOR = "fastcode.scip.ast_adapter"
 
 
 def _hash_id(prefix: str, value: str) -> str:

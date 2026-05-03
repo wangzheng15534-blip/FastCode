@@ -11,7 +11,7 @@ import pytest
 
 from fastcode.ir.types import IRAttachment, IRCodeUnit, IRSnapshot
 from fastcode.pipeline import IndexPipeline
-from fastcode.scip_models import SCIPIndex
+from fastcode.scip.models import SCIPIndex
 from fastcode.store.index_run import IndexRunStore
 from fastcode.store.manifest import ManifestStore
 from fastcode.store.snapshot import SnapshotStore

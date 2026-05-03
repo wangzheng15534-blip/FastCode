@@ -2130,27 +2130,27 @@ def test_helper_backed_resolver_uses_snapshot_repo_root_for_helper_execution(
 
 def test_is_scip_available_returns_false_for_unsupported_language():
     """is_scip_available must return False for unknown languages."""
-    from fastcode.scip_indexers import is_scip_available
+    from fastcode.scip.indexers import is_scip_available
 
     assert is_scip_available("brainfuck") is False
 
 
 def test_is_scip_available_checks_binary_presence():
     """is_scip_available must check PATH for the indexer binary."""
-    from fastcode.scip_indexers import is_scip_available
+    from fastcode.scip.indexers import is_scip_available
 
-    with patch("fastcode.scip_indexers.shutil.which", return_value=None):
+    with patch("fastcode.scip.indexers.shutil.which", return_value=None):
         assert is_scip_available("python") is False
 
     with patch(
-        "fastcode.scip_indexers.shutil.which", return_value="/usr/bin/scip-python"
+        "fastcode.scip.indexers.shutil.which", return_value="/usr/bin/scip-python"
     ):
         assert is_scip_available("python") is True
 
 
 def test_julia_scip_command_is_valid():
     """Julia SCIP command must not contain exit(1)."""
-    from fastcode.scip_indexers import get_indexer_command
+    from fastcode.scip.indexers import get_indexer_command
 
     cmd = get_indexer_command("julia", "/tmp/out.scip")
     assert cmd is not None
@@ -2160,7 +2160,7 @@ def test_julia_scip_command_is_valid():
 
 def test_experimental_scip_languages_set():
     """Experimental SCIP languages must include zig, fortran, julia."""
-    from fastcode.scip_indexers import _EXPERIMENTAL_SCIP_LANGUAGES
+    from fastcode.scip.indexers import _EXPERIMENTAL_SCIP_LANGUAGES
 
     assert frozenset({"zig", "fortran", "julia"}) == _EXPERIMENTAL_SCIP_LANGUAGES
 

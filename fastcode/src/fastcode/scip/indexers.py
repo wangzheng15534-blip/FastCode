@@ -13,7 +13,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-from .scip_models import SCIPIndex
+from .models import SCIPIndex
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def run_scip_indexer(
     cmd[0] = binary_path
     logger.info("Running SCIP indexer: %s", " ".join(cmd))
 
-    proc = subprocess.run(
+    proc = subprocess.run(  # noqa: S603
         cmd,
         cwd=repo_path,
         check=False,
@@ -191,7 +191,7 @@ def run_scip_for_language(
 
     Returns SCIPIndex on success, None if indexer not available.
     """
-    from .scip_loader import load_scip_artifact
+    from .loader import load_scip_artifact
 
     output_path = os.path.join(output_dir, f"{language}.scip")
     try:

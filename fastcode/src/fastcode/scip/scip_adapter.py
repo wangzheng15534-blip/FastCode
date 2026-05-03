@@ -8,7 +8,7 @@ import hashlib
 from typing import Any, cast
 
 from ..ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
-from ..scip_models import SCIPIndex
+from .models import SCIPIndex
 
 SCIP_SOURCE = "scip"
 
@@ -188,7 +188,7 @@ def build_ir_from_scip(
                     support_sources={SCIP_SOURCE},
                     metadata={
                         "source": SCIP_SOURCE,
-                        "extractor": "fastcode.adapters.scip_to_ir",
+                        "extractor": "fastcode.scip.scip_adapter",
                         "doc_id": file_unit.unit_id,
                     },
                 )
@@ -261,7 +261,7 @@ def build_ir_from_scip(
                         ],
                         metadata={
                             "source": SCIP_SOURCE,
-                            "extractor": "fastcode.adapters.scip_to_ir",
+                            "extractor": "fastcode.scip.scip_adapter",
                             "role": role,
                             "occurrence_id": _hid(
                                 "support",

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastcode.scip_models import (
+from fastcode.scip.models import (
     SCIPArtifactRef,
     SCIPDocument,
     SCIPIndex,

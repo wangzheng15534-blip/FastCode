@@ -15,7 +15,7 @@ from ..call_extractor import CallExtractor
 from ..ir.element import CodeElement
 from ..module_resolver import ModuleResolver
 from ..path_utils import file_path_to_module_path
-from ..symbol_resolver import SymbolResolver
+from ..scip.symbol_resolver import SymbolResolver
 from ..utils import ensure_dir
 
 
@@ -646,7 +646,7 @@ class CodeGraphBuilder:
                     stats[name]["avg_degree"] = (
                         sum(d for _, d in graph.degree()) / graph.number_of_nodes()
                     )
-                except Exception:  # noqa: BLE001
+                except Exception:
                     stats[name]["avg_degree"] = 0
 
         return stats

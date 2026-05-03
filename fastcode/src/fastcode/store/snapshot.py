@@ -15,7 +15,7 @@ from typing import Any
 
 from ..db_runtime import DBRuntime
 from ..ir.types import IRSnapshot
-from ..scip_models import SCIPArtifactRef
+from ..scip.models import SCIPArtifactRef
 from ..utils import ensure_dir, safe_jsonable, utc_now
 from .records import SnapshotRecord, SnapshotRefRecord
 
@@ -385,7 +385,7 @@ class SnapshotStore:
             conn.commit()
 
     def artifact_key_for_snapshot(self, snapshot_id: str) -> str:
-        return f"snap_{hashlib.md5(snapshot_id.encode('utf-8')).hexdigest()[:20]}"
+        return f"snap_{hashlib.md5(snapshot_id.encode('utf-8')).hexdigest()[:20]}"  # noqa: S324
 
     def snapshot_dir(self, snapshot_id: str) -> str:
         safe = self.artifact_key_for_snapshot(snapshot_id)

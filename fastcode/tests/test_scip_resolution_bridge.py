@@ -8,7 +8,7 @@ from typing import Any, Never
 import pytest
 
 from fastcode.ir.types import IRCodeUnit, IRSnapshot
-from fastcode.scip_resolution_bridge import (
+from fastcode.scip.resolution_bridge import (
     SCIPResolutionBridge,
     _cosine_similarity,
 )

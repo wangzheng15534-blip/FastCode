@@ -936,9 +936,10 @@ If confidence < 95:
         # Stage 5: Re-rank
         final_results = self.retriever._rerank(search_text, combined_results)
 
-        # # Stage 6: Apply filters
-        # if filters:
-        #     final_results = self.retriever._apply_filters(final_results, filters)
+        # Stage 6: Apply filters. Iterative mode bypasses retriever.retrieve(),
+        # so it must preserve the same scope guarantees here.
+        if filters:
+            final_results = self.retriever._apply_filters(final_results, filters)
 
         # Stage 7: Diversification
         final_results = self.retriever._diversify(final_results)

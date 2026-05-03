@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 
 from fastcode.index_run import IndexRunStore
 from fastcode.manifest_store import ManifestStore
@@ -785,3 +786,186 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
         assert "experimental_scip_languages: zig" in result["warnings"]
         assert layer2["metrics"]["experimental_scip_languages"] == ["zig"]
         assert layer2["metrics"]["experimental_language_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Regression: stale fencing token must not leave artifact files
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.regression
+def test_stale_fencing_token_writes_no_artifact_files() -> None:
+    """When validate_fencing_token returns False, the artifact save sequence
+    (temp_store.save, temp_retriever.save_bm25, temp_graph.save) must NOT
+    have been called.  Artifact persistence must happen AFTER fencing
+    validation, not before.
+    """
+    with tempfile.TemporaryDirectory(prefix="fc_fencing_") as tmp:
+        element = SimpleNamespace(
+            id="file:a",
+            type="file",
+            name="a.py",
+            file_path="a.py",
+            relative_path="a.py",
+            language="python",
+            start_line=1,
+            end_line=1,
+            signature=None,
+            metadata={"embedding": np.array([0.1, 0.2, 0.3])},
+            to_dict=lambda: {"id": "file:a", "relative_path": "a.py", "metadata": {}},
+        )
+        ast_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:fence-test",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+            units=[
+                IRCodeUnit(
+                    unit_id="doc:snap:repo:fence-test:a.py",
+                    kind="file",
+                    path="a.py",
+                    language="python",
+                    display_name="a.py",
+                    source_set={"fc_structure"},
+                    metadata={"source": "fc_structure"},
+                )
+            ],
+        )
+
+        artifact_save_calls: list[str] = []
+        temp_store = SimpleNamespace(
+            metadata=[],
+            initialize=lambda dim: None,
+            add_vectors=lambda vectors, metadata: None,
+            save=lambda key: artifact_save_calls.append(f"store:{key}"),
+        )
+        temp_graph = SimpleNamespace(
+            dependency_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            inheritance_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            call_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            build_graphs=lambda elements, module_resolver, symbol_resolver: None,
+            save=lambda key: artifact_save_calls.append(f"graph:{key}"),
+        )
+        temp_retriever = SimpleNamespace(
+            index_for_bm25=lambda elements: None,
+            build_repo_overview_bm25=lambda: None,
+            save_bm25=lambda key: artifact_save_calls.append(f"bm25:{key}"),
+        )
+
+        pipeline = _make_minimal_pipeline(tmp)
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    pipeline.indexer, "extract_elements",
+                    return_value=[element],
+                )
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.build_ir_from_ast", return_value=ast_snapshot)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.merge_ir", return_value=ast_snapshot)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.validate_snapshot", return_value=[])
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline, "_apply_semantic_resolvers",
+                    side_effect=lambda **kwargs: kwargs["snapshot"],
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "validate_fencing_token",
+                    return_value=False,
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "acquire_lock", return_value=1
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "release_lock", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "save_snapshot", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "stage_snapshot", return_value="stage_1"
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "save_ir_graphs", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "import_git_backbone", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "save_relational_facts", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "update_snapshot_metadata", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "save_design_documents", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "find_by_artifact_key", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline, "pg_retrieval_store",
+                    SimpleNamespace(upsert_elements=lambda **kw: None),
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline, "_load_artifacts_by_key", return_value=True)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.HybridRetriever", return_value=temp_retriever)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.CodeGraphBuilder", return_value=temp_graph)
+            )
+            stack.enter_context(
+                patch("fastcode.pipeline.VectorStore", return_value=temp_store)
+            )
+
+            with pytest.raises(RuntimeError, match="stale_lock_detected"):
+                pipeline.run_index_pipeline(
+                    source=tmp,
+                    is_url=False,
+                    enable_scip=False,
+                    publish=False,
+                )
+
+        assert artifact_save_calls == [], (
+            f"Artifact saves happened before/despite stale fencing: {artifact_save_calls}"
+        )

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import os
 import sqlite3
 from collections.abc import Iterator
 from typing import Any
@@ -82,10 +81,8 @@ class DBRuntime:
         cls, *, sqlite_path: str, storage_cfg: dict[str, Any] | None
     ) -> DBRuntime:
         cfg = storage_cfg or {}
-        backend = (
-            cfg.get("backend") or os.getenv("FASTCODE_STORAGE_BACKEND") or "sqlite"
-        ).lower()
-        dsn = cfg.get("postgres_dsn") or os.getenv("FASTCODE_POSTGRES_DSN")
+        backend = (cfg.get("backend") or "sqlite").lower()
+        dsn = cfg.get("postgres_dsn")
         pool_min = cfg.get("pool_min", 1)
         pool_max = cfg.get("pool_max", 8)
         return cls(

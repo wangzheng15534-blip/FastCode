@@ -244,10 +244,7 @@ class TestFromStorageConfig:
         assert rt.pool_min == 4
         assert rt.pool_max == 16
 
-    def test_env_backend_override_property(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("FASTCODE_STORAGE_BACKEND", "sqlite")
+    def test_empty_config_defaults_to_sqlite_property(self) -> None:
         rt = DBRuntime.from_storage_config(
             sqlite_path=":memory:",
             storage_cfg={},

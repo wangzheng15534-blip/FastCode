@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any
 
 from ..ir.projection import ProjectionBuildResult, ProjectionScope
@@ -32,8 +31,6 @@ class ProjectionStore:
         self.dsn = (
             proj_cfg.get("postgres_dsn")
             or storage_cfg.get("postgres_dsn")
-            or os.getenv("FASTCODE_PROJECTION_POSTGRES_DSN")
-            or os.getenv("FASTCODE_POSTGRES_DSN")
             or ""
         )
         self.enabled = bool(self.dsn)

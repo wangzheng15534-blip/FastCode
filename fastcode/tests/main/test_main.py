@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import is_dataclass
 from types import SimpleNamespace
 from typing import Any
 
 from fastcode.main import FastCode
+from fastcode.schemas.config import config_from_mapping
 
 # ---------------------------------------------------------------------------
 # Helpers (basic / doc pipeline tests)
@@ -77,3 +79,35 @@ def test_sync_doc_overlay_records_exceptions_as_warning():
     fc._sync_doc_overlay(chunks=[{"chunk_id": "c1"}], mentions=[], warnings=warnings)
 
     assert warnings == ["ladybug_doc_sync_failed: db offline"]
+
+
+def test_apply_repository_runtime_overrides_refreshes_loader_and_runtime_config():
+    fc = FastCode.__new__(FastCode)
+    fc.runtime_config = config_from_mapping(
+        {
+            "repository": {
+                "ignore_patterns": ["base"],
+                "exclude_site_packages": False,
+            }
+        }
+    )
+    fc.config = fc.runtime_config.to_dict()
+    fc.eval_config = fc.config.get("evaluation", {})
+    fc.eval_mode = False
+    fc.in_memory_index = False
+    fc.loader = SimpleNamespace(
+        repo_config=fc.config["repository"],
+        ignore_patterns=fc.config["repository"]["ignore_patterns"],
+    )
+
+    fc.apply_repository_runtime_overrides(
+        ignore_patterns=("base", ".venv"),
+        exclude_site_packages=True,
+    )
+
+    assert is_dataclass(fc.runtime_config)
+    assert fc.runtime_config.repository.ignore_patterns == ("base", ".venv")
+    assert fc.runtime_config.repository.exclude_site_packages is True
+    assert fc.loader.repo_config["ignore_patterns"] == ("base", ".venv")
+    assert fc.loader.repo_config["exclude_site_packages"] is True
+    assert fc.loader.ignore_patterns == ("base", ".venv")

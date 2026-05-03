@@ -94,9 +94,9 @@ def _apply_forced_env_excludes(fc: FastCode) -> None:
     Force-ignore environment-related paths before indexing.
 
     Always excludes virtual environment folders. Optionally excludes
-    site-packages when FASTCODE_EXCLUDE_SITE_PACKAGES=1.
+    site-packages when repository.exclude_site_packages is enabled.
     """
-    repo_cfg = fc.config.setdefault("repository", {})
+    repo_cfg = fc.config.get("repository", {})
     ignore_patterns = list(repo_cfg.get("ignore_patterns", []))
 
     forced_patterns = [
@@ -111,7 +111,7 @@ def _apply_forced_env_excludes(fc: FastCode) -> None:
     ]
 
     # Optional (opt-in): site-packages can be huge/noisy in some repos.
-    if os.getenv("FASTCODE_EXCLUDE_SITE_PACKAGES", "0").lower() in {"1", "true", "yes"}:
+    if repo_cfg.get("exclude_site_packages", False):
         forced_patterns.extend(
             [
                 "site-packages",
@@ -125,9 +125,8 @@ def _apply_forced_env_excludes(fc: FastCode) -> None:
             ignore_patterns.append(pattern)
             added.append(pattern)
 
-    repo_cfg["ignore_patterns"] = ignore_patterns
-    # Keep loader in sync when FastCode instance already exists.
-    fc.loader.ignore_patterns = ignore_patterns
+    if added:
+        fc.apply_repository_runtime_overrides(ignore_patterns=tuple(ignore_patterns))
 
     if added:
         logger.info(f"Added forced ignore patterns: {added}")

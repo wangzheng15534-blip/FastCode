@@ -4,6 +4,11 @@ Tests the pure compute functions from fastcode.mcp.graph_tools, which are
 the production code extracted from mcp.server.
 """
 
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot
 from fastcode.mcp.graph_tools import (
@@ -202,6 +207,30 @@ class TestImpactAnalysis:
         result = compute_impact_analysis("b", snap, graph_types=["call", "dependency"])
         assert result["total_count"] == 1
         assert sorted(result["affected"][0]["edge_types"]) == ["call", "dependency"]
+
+
+def test_apply_forced_env_excludes_uses_runtime_override_api():
+    from fastcode.mcp import server as mcp_mod
+
+    fc = SimpleNamespace(
+        config={
+            "repository": {
+                "ignore_patterns": ("base",),
+                "exclude_site_packages": True,
+            }
+        },
+        apply_repository_runtime_overrides=MagicMock(),
+    )
+
+    mcp_mod._apply_forced_env_excludes(fc)
+
+    fc.apply_repository_runtime_overrides.assert_called_once()
+    override_patterns = fc.apply_repository_runtime_overrides.call_args.kwargs[
+        "ignore_patterns"
+    ]
+    assert "base" in override_patterns
+    assert ".venv" in override_patterns
+    assert "**/site-packages/**" in override_patterns
 
 
 # ===========================================================================

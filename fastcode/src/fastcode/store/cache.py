@@ -4,7 +4,6 @@ Caching Module - Cache embeddings, queries, and results
 
 import hashlib
 import logging
-import os
 import pickle
 import time
 from pathlib import Path
@@ -53,8 +52,8 @@ class CacheManager:
                 import redis
 
                 self.cache = redis.Redis(
-                    host=os.getenv("REDIS_HOST", "localhost"),
-                    port=int(os.getenv("REDIS_PORT", "6379")),
+                    host=self.cache_config.get("redis_host", "localhost"),
+                    port=int(self.cache_config.get("redis_port", 6379)),
                     db=0,
                     decode_responses=False,
                 )

@@ -1219,6 +1219,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "reused_elements": 1,
             "reindexed_elements": 1,
             "reused_changed_embeddings": 0,
+            "semantic_frontier_widened": 1,
         }
         assert result["repair_queue"]["pending"] == 1
         assert result["repair_queue"]["task_type"] == "semantic_repair_frontier"
@@ -1468,6 +1469,7 @@ def test_plan_incremental_elements_reuses_changed_unit_embedding_when_text_hash_
         assert planned_elements is not None
         assert plan is not None
         assert plan["reused_changed_embeddings"] == 1
+        assert plan["semantic_frontier_widened"] == 0
         assert planned_elements[0].metadata["embedding"] == pytest.approx(
             [0.9, 0.8, 0.7]
         )

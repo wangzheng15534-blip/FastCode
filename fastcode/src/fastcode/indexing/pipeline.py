@@ -855,6 +855,28 @@ class IndexPipeline:
             reused += 1
         return reused
 
+    def _semantic_frontier_widened(
+        self,
+        *,
+        new_elements: list[CodeElement],
+        existing_by_stable_unit_id: dict[str, dict[str, Any]],
+    ) -> bool:
+        for elem in new_elements:
+            stable_unit_id = (elem.metadata or {}).get("stable_unit_id")
+            if not stable_unit_id:
+                return True
+            existing = existing_by_stable_unit_id.get(str(stable_unit_id))
+            if not existing:
+                return True
+            existing_meta = dict(
+                cast(dict[str, Any], existing.get("metadata", {}) or {})
+            )
+            current_meta = dict(elem.metadata or {})
+            for field_name in ("signature_hash", "edge_surface_hash", "api_surface_hash"):
+                if current_meta.get(field_name) != existing_meta.get(field_name):
+                    return True
+        return False
+
     def _reconstruct_code_element(
         self,
         meta: dict[str, Any],
@@ -980,6 +1002,10 @@ class IndexPipeline:
             new_elements=new_elements,
             existing_by_stable_unit_id=existing_by_stable_unit_id,
         )
+        semantic_frontier_widened = self._semantic_frontier_widened(
+            new_elements=new_elements,
+            existing_by_stable_unit_id=existing_by_stable_unit_id,
+        )
         all_elements = unchanged_elements + new_elements
         summary = {
             "added": len(added),
@@ -989,6 +1015,7 @@ class IndexPipeline:
             "reused_elements": len(unchanged_elements),
             "reindexed_elements": len(new_elements),
             "reused_changed_embeddings": reused_changed_embeddings,
+            "semantic_frontier_widened": int(semantic_frontier_widened),
         }
         return all_elements, summary
 
@@ -1773,9 +1800,7 @@ class IndexPipeline:
                 result["incremental_prefilter"] = dict(incremental_plan)
             widened_repair_needed = bool(
                 incremental_plan is None
-                or incremental_plan.get("modified", 0) > 0
-                and incremental_plan.get("reused_changed_embeddings", 0)
-                < incremental_plan.get("reindexed_elements", 0)
+                or incremental_plan.get("semantic_frontier_widened", 0) > 0
             )
             repair_task = self._build_repair_frontier_task(
                 snapshot_id=snapshot_id,

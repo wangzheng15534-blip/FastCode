@@ -65,7 +65,7 @@ dependencies = [
 nanobot-ai = { workspace = true }
 
 [project.scripts]
-fastcode = "fastcode.cli:cli"
+fastcode = "fastcode.main.cli:cli"
 fastcode-api = "fastcode.api.routes:main"
 fastcode-mcp = "fastcode.mcp.server:main"
 fastcode-web = "fastcode.api.web:main"
@@ -193,7 +193,7 @@ packages = ["src/fastcode"]                                               # pack
     "RET504",  # design: full_prompt assigned for debugging clarity before return in _build_prompt
     "UP028",   # design: yield over for loop preferred for explicit control in stream error handler
 ]
-"src/fastcode/main.py" = [
+"src/fastcode/main/fastcode.py" = [
     "ANN001",  # complexity: all function args need types (track: annotate all public methods)
     "ANN201",  # complexity: all public function return types (track: annotate all public methods)
     "ANN202",  # complexity: all private function return types (track: annotate all public methods)
@@ -283,7 +283,7 @@ packages = ["src/fastcode"]                                               # pack
     "S311",    # design: random module for non-crypto session ID generation
     "RUF013",  # design: implicit Optional in Pydantic model fields
 ]
-"src/fastcode/cli.py" = [
+"src/fastcode/main/cli.py" = [
     "ANN001",  # complexity: Click callback args need types (track: annotate all public methods)
     "ANN201",  # complexity: Click commands need return types (track: annotate all public methods)
     "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)

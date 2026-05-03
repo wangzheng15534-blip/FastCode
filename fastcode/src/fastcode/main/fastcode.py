@@ -15,40 +15,40 @@ import networkx as nx
 import numpy as np
 from rank_bm25 import BM25Okapi
 
-from .graph.build import CodeGraphBuilder
-from .graph_runtime import LadybugGraphRuntime
-from .indexing.doc_ingester import KeyDocIngester
-from .indexing.embedder import CodeEmbedder
-from .indexing.global_builder import GlobalIndexBuilder
-from .indexing.indexer import CodeIndexer
-from .indexing.loader import RepositoryLoader
-from .indexing.parser import CodeParser
-from .indexing.pipeline import IndexPipeline
-from .indexing.projection import ProjectionService
-from .indexing.projection_transform import ProjectionTransformer
-from .indexing.publishing import PublishingService
-from .indexing.redo_worker import RedoWorker
-from .indexing.terminus import TerminusPublisher
-from .ir.element import CodeElement, CodeElementMeta
-from .ir.graph import IRGraphBuilder
-from .ir.types import IRSnapshot
-from .module_resolver import ModuleResolver
-from .query.answer import AnswerGenerator
-from .query.handler import QueryPipeline
-from .query.processor import QueryProcessor
-from .retrieval.core import snapshot as _snapshot
-from .retrieval.hybrid import HybridRetriever
-from .scip.symbol_resolver import SymbolResolver
-from .semantic import build_default_semantic_resolver_registry
-from .semantic.symbol_index import SnapshotSymbolIndex
-from .store.cache import CacheManager
-from .store.index_run import IndexRunStore
-from .store.manifest import ManifestStore
-from .store.pg_retrieval import PgRetrievalStore
-from .store.projection import ProjectionStore
-from .store.snapshot import SnapshotStore
-from .store.vector import VectorStore
-from .utils import (
+from ..graph.build import CodeGraphBuilder
+from ..graph_runtime import LadybugGraphRuntime
+from ..indexing.doc_ingester import KeyDocIngester
+from ..indexing.embedder import CodeEmbedder
+from ..indexing.global_builder import GlobalIndexBuilder
+from ..indexing.indexer import CodeIndexer
+from ..indexing.loader import RepositoryLoader
+from ..indexing.parser import CodeParser
+from ..indexing.pipeline import IndexPipeline
+from ..indexing.projection import ProjectionService
+from ..indexing.projection_transform import ProjectionTransformer
+from ..indexing.publishing import PublishingService
+from ..indexing.redo_worker import RedoWorker
+from ..indexing.terminus import TerminusPublisher
+from ..ir.element import CodeElement, CodeElementMeta
+from ..ir.graph import IRGraphBuilder
+from ..ir.types import IRSnapshot
+from ..module_resolver import ModuleResolver
+from ..query.answer import AnswerGenerator
+from ..query.handler import QueryPipeline
+from ..query.processor import QueryProcessor
+from ..retrieval.core import snapshot as _snapshot
+from ..retrieval.hybrid import HybridRetriever
+from ..scip.symbol_resolver import SymbolResolver
+from ..semantic import build_default_semantic_resolver_registry
+from ..semantic.symbol_index import SnapshotSymbolIndex
+from ..store.cache import CacheManager
+from ..store.index_run import IndexRunStore
+from ..store.manifest import ManifestStore
+from ..store.pg_retrieval import PgRetrievalStore
+from ..store.projection import ProjectionStore
+from ..store.snapshot import SnapshotStore
+from ..store.vector import VectorStore
+from ..utils import (
     ensure_dir,
     load_config,
     resolve_config_paths,
@@ -68,7 +68,7 @@ class FastCode:
         """
         # Resolve FastCode project root from package location.
         project_root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..")
+            os.path.join(os.path.dirname(__file__), "..", "..", "..")
         )
 
         # Load configuration
@@ -77,7 +77,7 @@ class FastCode:
             possible_paths = [
                 "config/config.yaml",
                 "../config/config.yaml",
-                os.path.join(os.path.dirname(__file__), "../../config/config.yaml"),
+                os.path.join(os.path.dirname(__file__), "../../../config/config.yaml"),
             ]
             for path in possible_paths:
                 if os.path.exists(path):

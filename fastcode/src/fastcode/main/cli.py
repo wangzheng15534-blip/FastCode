@@ -18,7 +18,7 @@ import sys
 
 import click
 
-from fastcode import FastCode
+from .fastcode import FastCode
 
 
 @click.group()

@@ -27,7 +27,7 @@ from .ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from .main import FastCode
+from .main.fastcode import FastCode
 from .query.answer import AnswerGenerator
 from .query.selector import RepositorySelector
 from .retrieval.agent_tools import AgentTools

@@ -69,11 +69,20 @@ The pipeline now exposes explicit layer status, metrics, warnings, and non-silen
 - Snapshot query concurrency safety:
   - `query_snapshot` serializes load+query with a `threading.Lock`
   - Thread-barrier regression tests (2 and 3 concurrent callers) verify artifact isolation
+- Query/agency hardening:
+  - agency-mode `query()` and `query_stream()` preserve cheap detected intent
+  - iterative-agent standard retrieval applies caller filters after rerank
+  - regression test proves semantic escalation can enable real IR graph expansion, not just a mocked second retrieval
+- Async endpoint hardening:
+  - REST API repository load/index/cache-load/multi-index/upload paths offload blocking work with `asyncio.to_thread`
+  - web UI upload and upload+index paths offload ZIP extraction, repository load, and indexing
+- Lock fencing hardening:
+  - PostgreSQL same-owner lock refresh preserves the current fencing token instead of invalidating in-flight work
 
 ## Critical verification currently green
 
 - Full smoke gate:
-  - `1663 passed, 7 skipped`
+  - `1676 passed, 7 skipped`
 - Focused regression areas repeatedly verified:
   - `test_api`
   - `test_manifest_store`
@@ -113,7 +122,6 @@ These currently emit useful structured facts, but they are still narrower than f
 - Remaining work:
   - use better terminal selection than top retrieved file paths
   - support induced-subgraph upgrades for path queries
-  - add deeper query-time tests around real graph expansion effects
 
 ### 4. Keep experimental SCIP integrations honest
 
@@ -136,12 +144,13 @@ Still raw-dict-heavy at boundaries:
 
 **Status:** Test guards added.
 
-**Audit verdict:** FAIL (risk score 6/9 — P2×I3)
+**Audit verdict:** PASS after hardening.
 
-**Problem:** Existing tests verified mechanism (callback called, retrieve count) but not behavior (retrieval results actually change after IR graph expansion).
+**Problem fixed:** Earlier tests verified mechanism (callback called, retrieve count) but not behavior (retrieval results actually change after IR graph expansion).
 
 **Test coverage added** (`fastcode/tests/test_query_handler.py`):
 - `test_semantic_escalation_changes_retrieval_results_end_to_end` — verifies answer generator receives expanded second-retrieval results (3 files vs 1)
+- `test_semantic_escalation_enables_real_ir_graph_expansion` — uses real `HybridRetriever._expand_with_graph()` and an installed IR call graph to prove escalation changes retrieval behavior
 - `test_local_budget_triggers_escalation_for_find_intent` — budget="local" path with find intent
 - `test_escalate_query_semantics_returns_skipped_when_snapshot_not_found` — early return when snapshot missing
 - `test_escalate_query_semantics_returns_skipped_when_no_target_paths` — early return when no paths extractable

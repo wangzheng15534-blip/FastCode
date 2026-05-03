@@ -6,6 +6,7 @@ Code Indexer - Multi-level indexing of code repositories
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from typing import Any
 
@@ -281,6 +282,43 @@ class CodeIndexer:
         # Generate file summary
         summary = self._generate_file_summary(parse_result)
 
+        stable_unit_id = self._stable_unit_id("file", relative_path)
+        signature_hash = self._hash_payload(None)
+        edge_surface_hash = self._hash_payload(
+            {
+                "imports": [imp.to_dict() for imp in parse_result.imports]
+                if self.include_imports
+                else []
+            }
+        )
+        api_surface_hash = self._hash_payload(
+            {
+                "path": relative_path,
+                "imports": [imp.to_dict() for imp in parse_result.imports]
+                if self.include_imports
+                else [],
+                "language": parse_result.language,
+                "classes": [
+                    {
+                        "name": class_info.name,
+                        "bases": list(class_info.bases),
+                        "decorators": list(class_info.decorators),
+                    }
+                    for class_info in parse_result.classes
+                ],
+                "functions": [
+                    {
+                        "name": func_info.name,
+                        "parameters": list(func_info.parameters),
+                        "return_type": func_info.return_type,
+                        "decorators": list(func_info.decorators),
+                        "class_name": func_info.class_name,
+                    }
+                    for func_info in parse_result.functions
+                ],
+            }
+        )
+
         # Create element
         element = CodeElement(
             id=self._generate_id("file", relative_path),
@@ -304,6 +342,37 @@ class CodeIndexer:
                 "num_classes": len(parse_result.classes),
                 "num_functions": len(parse_result.functions),
                 "num_imports": len(parse_result.imports),
+                "stable_unit_id": stable_unit_id,
+                "content_hash": self._hash_payload(content),
+                "syntax_hash": self._hash_payload(
+                    {
+                        "classes": [
+                            {
+                                "name": class_info.name,
+                                "bases": list(class_info.bases),
+                                "decorators": list(class_info.decorators),
+                                "methods": [
+                                    method.name for method in class_info.methods
+                                ],
+                            }
+                            for class_info in parse_result.classes
+                        ],
+                        "functions": [
+                            {
+                                "name": func_info.name,
+                                "parameters": list(func_info.parameters),
+                                "return_type": func_info.return_type,
+                                "decorators": list(func_info.decorators),
+                                "class_name": func_info.class_name,
+                                "is_async": func_info.is_async,
+                            }
+                            for func_info in parse_result.functions
+                        ],
+                    }
+                ),
+                "signature_hash": signature_hash,
+                "edge_surface_hash": edge_surface_hash,
+                "api_surface_hash": api_surface_hash,
                 "imports": [imp.to_dict() for imp in parse_result.imports]
                 if self.include_imports
                 else [],
@@ -338,6 +407,21 @@ class CodeIndexer:
         if class_info.bases:
             summary += f", inherits from {', '.join(class_info.bases)}"
 
+        stable_unit_id = self._stable_unit_id("class", relative_path, class_info.name)
+        signature_hash = self._hash_payload(
+            {
+                "name": class_info.name,
+                "bases": list(class_info.bases),
+                "decorators": list(class_info.decorators),
+            }
+        )
+        edge_surface_hash = self._hash_payload(
+            {
+                "bases": list(class_info.bases),
+                "methods": [method.name for method in class_info.methods],
+            }
+        )
+
         element = CodeElement(
             id=self._generate_id("class", relative_path, class_info.name),
             type="class",
@@ -357,6 +441,27 @@ class CodeIndexer:
                 "methods": [m.name for m in class_info.methods],
                 "decorators": class_info.decorators,
                 "num_methods": len(class_info.methods),
+                "stable_unit_id": stable_unit_id,
+                "content_hash": self._hash_payload(class_code),
+                "syntax_hash": self._hash_payload(
+                    {
+                        "name": class_info.name,
+                        "bases": list(class_info.bases),
+                        "methods": [
+                            {
+                                "name": method.name,
+                                "parameters": list(method.parameters),
+                                "return_type": method.return_type,
+                                "decorators": list(method.decorators),
+                                "is_async": method.is_async,
+                            }
+                            for method in class_info.methods
+                        ],
+                    }
+                ),
+                "signature_hash": signature_hash,
+                "edge_surface_hash": edge_surface_hash,
+                "api_surface_hash": signature_hash,
             },
             repo_name=self.current_repo_name,
             repo_url=self.current_repo_url,
@@ -395,6 +500,17 @@ class CodeIndexer:
         id_parts.append(func_info.name)
 
         generated_id = self._generate_id("function", *id_parts)
+        stable_unit_id = self._stable_unit_id("function", *id_parts)
+        signature_hash = self._hash_payload(
+            {
+                "name": func_info.name,
+                "parameters": list(func_info.parameters),
+                "return_type": func_info.return_type,
+                "decorators": list(func_info.decorators),
+                "class_name": func_info.class_name,
+                "is_async": func_info.is_async,
+            }
+        )
 
         element = CodeElement(
             id=generated_id,
@@ -417,6 +533,27 @@ class CodeIndexer:
                 "class_name": func_info.class_name,
                 "decorators": func_info.decorators,
                 "complexity": func_info.complexity,
+                "stable_unit_id": stable_unit_id,
+                "content_hash": self._hash_payload(func_code),
+                "syntax_hash": self._hash_payload(
+                    {
+                        "name": func_info.name,
+                        "parameters": list(func_info.parameters),
+                        "return_type": func_info.return_type,
+                        "decorators": list(func_info.decorators),
+                        "class_name": func_info.class_name,
+                        "is_async": func_info.is_async,
+                        "complexity": func_info.complexity,
+                    }
+                ),
+                "signature_hash": signature_hash,
+                "edge_surface_hash": self._hash_payload(
+                    {
+                        "name": func_info.name,
+                        "class_name": func_info.class_name,
+                    }
+                ),
+                "api_surface_hash": signature_hash,
             },
             repo_name=self.current_repo_name,
             repo_url=self.current_repo_url,
@@ -428,6 +565,8 @@ class CodeIndexer:
         self, file_path: str, relative_path: str, parse_result: FileParseResult
     ) -> None:
         """Add documentation-level index element"""
+        stable_unit_id = self._stable_unit_id("doc", relative_path)
+        doc_content = parse_result.module_docstring or ""
         element = CodeElement(
             id=self._generate_id("doc", relative_path),
             type="documentation",
@@ -443,6 +582,12 @@ class CodeIndexer:
             summary=f"Module documentation for {relative_path}",
             metadata={
                 "is_module_doc": True,
+                "stable_unit_id": stable_unit_id,
+                "content_hash": self._hash_payload(doc_content),
+                "syntax_hash": self._hash_payload({"is_module_doc": True}),
+                "signature_hash": self._hash_payload(None),
+                "edge_surface_hash": self._hash_payload(None),
+                "api_surface_hash": self._hash_payload(None),
             },
             repo_name=self.current_repo_name,
             repo_url=self.current_repo_url,
@@ -538,6 +683,24 @@ class CodeIndexer:
         hash_suffix = hashlib.md5(unique_string.encode("utf-8")).hexdigest()[:16]
 
         return f"{repo_prefix}_{type_}_{hash_suffix}"
+
+    def _stable_unit_id(self, type_: str, *parts: str) -> str:
+        """Generate a cross-snapshot stable unit identifier."""
+        repo_prefix = (
+            normalize_path(self.current_repo_name)
+            if self.current_repo_name
+            else "default"
+        )
+        stable_string = f"{repo_prefix}/{type_}/{'/'.join(str(p) for p in parts)}"
+        digest = hashlib.sha256(stable_string.encode("utf-8")).hexdigest()[:24]
+        return f"unit:{type_}:{digest}"
+
+    @staticmethod
+    def _hash_payload(payload: Any) -> str:
+        serialized = json.dumps(
+            payload, sort_keys=True, ensure_ascii=False, default=str
+        )
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
     def get_elements_by_type(self, element_type: str) -> list[CodeElement]:
         """Get all elements of a specific type"""

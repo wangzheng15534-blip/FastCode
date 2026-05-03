@@ -32,6 +32,13 @@ class CodeElementMeta(TypedDict, total=True):
     embedding: NotRequired[Any]  # np.ndarray
     embedding_text: NotRequired[str]
     ir_symbol_id: NotRequired[str]  # added by main.py IR resolution
+    stable_unit_id: NotRequired[str]
+    content_hash: NotRequired[str]
+    syntax_hash: NotRequired[str]
+    signature_hash: NotRequired[str]
+    edge_surface_hash: NotRequired[str]
+    embedding_text_hash: NotRequired[str]
+    api_surface_hash: NotRequired[str]
 
 
 @dataclass

@@ -153,19 +153,20 @@ def _ensure_repos_ready(
 
         # Already indexed
         if _is_repo_indexed(name):
-            # Try incremental update for local repos
             if not resolved_is_url and allow_incremental:
                 abs_path = os.path.abspath(source)
                 if os.path.isdir(abs_path):
                     try:
-                        result = fc.incremental_reindex(name, repo_path=abs_path)
-                        if result and result.get("changes", 0) > 0:
-                            logger.info(f"Incremental update for '{name}': {result}")
-                            # Force reload since on-disk data changed
-                            fc.repo_indexed = False
-                            fc.loaded_repositories.clear()
+                        result = fc.run_index_pipeline(
+                            source=abs_path,
+                            is_url=False,
+                            publish=True,
+                            enable_scip=True,
+                        )
+                        if result and result.get("status") not in {"reused"}:
+                            logger.info(f"Graceful update for '{name}': {result}")
                     except Exception as e:
-                        logger.warning(f"Incremental reindex failed for '{name}': {e}")
+                        logger.warning(f"Graceful update failed for '{name}': {e}")
             logger.info(f"Repo '{name}' ready.")
             ready_names.append(name)
             continue

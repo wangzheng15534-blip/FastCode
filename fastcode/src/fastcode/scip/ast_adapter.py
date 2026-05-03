@@ -7,6 +7,7 @@ Adapter from FastCode AST/indexer output into canonical unit-grounded IR.
 from __future__ import annotations
 
 import hashlib
+import os
 
 from ..ir.element import CodeElement
 from ..ir.types import (
@@ -16,7 +17,7 @@ from ..ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from ..utils import safe_jsonable
+from ..utils import compute_file_hash, normalize_path, safe_jsonable
 
 STRUCTURE_SOURCE = "fc_structure"
 STRUCTURE_PRIORITY = 50
@@ -32,23 +33,6 @@ def _doc_id(snapshot_id: str, rel_path: str) -> str:
     return f"doc:{snapshot_id}:{rel_path}"
 
 
-def _ast_symbol_id(snapshot_id: str, elem: CodeElement) -> str:
-    qualified = (
-        (elem.metadata or {}).get("qualified_name")
-        or (
-            (elem.metadata or {}).get("class_name")
-            and f"{(elem.metadata or {}).get('class_name')}.{elem.name}"
-        )
-        or elem.name
-        or "unknown"
-    )
-    start_col = int((elem.metadata or {}).get("start_col") or 0)
-    return (
-        f"ast:{snapshot_id}:{elem.language or 'unknown'}:{elem.relative_path or ''}:"
-        f"{elem.type or 'unknown'}:{qualified}:{int(elem.start_line or 0)}:{start_col}"
-    )
-
-
 def _support_id(snapshot_id: str, elem_id: str, label: str) -> str:
     return _hash_id("support", f"{snapshot_id}:{elem_id}:{label}")
 
@@ -61,6 +45,16 @@ def _relation_id(
 
 def _embedding_id(snapshot_id: str, unit_id: str, source: str) -> str:
     return _hash_id("emb", f"{snapshot_id}:{unit_id}:{source}")
+
+
+def _stable_unit_id(elem: CodeElement) -> str:
+    stable = (elem.metadata or {}).get("stable_unit_id")
+    if stable:
+        return str(stable)
+    return _hash_id(
+        "unit",
+        f"{elem.type}:{normalize_path(elem.relative_path or elem.file_path)}:{elem.name}",
+    )
 
 
 def _normalize_embedding_value(value: object) -> object:
@@ -96,7 +90,6 @@ def build_ir_from_ast(
     commit_id: str | None = None,
     tree_id: str | None = None,
 ) -> IRSnapshot:
-    del repo_root
     file_units: dict[str, IRCodeUnit] = {}
     units: list[IRCodeUnit] = []
     supports: list[IRUnitSupport] = []
@@ -111,6 +104,8 @@ def build_ir_from_ast(
         if unit is not None:
             unit.source_set.add(STRUCTURE_SOURCE)
             return unit
+        abs_path = os.path.join(repo_root, rel_path) if repo_root else rel_path
+        content_hash = compute_file_hash(abs_path) or None
         unit = IRCodeUnit(
             unit_id=_doc_id(snapshot_id, rel_path),
             kind="file",
@@ -118,7 +113,12 @@ def build_ir_from_ast(
             language=language or "unknown",
             display_name=rel_path,
             source_set={STRUCTURE_SOURCE},
-            metadata={"source_priority": STRUCTURE_PRIORITY},
+            metadata={
+                "source_priority": STRUCTURE_PRIORITY,
+                "blob_oid": content_hash,
+                "content_hash": content_hash,
+                "stable_unit_id": _hash_id("file", rel_path),
+            },
         )
         file_units[rel_path] = unit
         units.append(unit)
@@ -144,7 +144,7 @@ def build_ir_from_ast(
             continue
 
         unit_id = (
-            _ast_symbol_id(snapshot_id, elem)
+            _stable_unit_id(elem)
             if unit_kind != "doc"
             else f"docunit:{snapshot_id}:{elem.id}"
         )
@@ -172,6 +172,7 @@ def build_ir_from_ast(
             source_set={STRUCTURE_SOURCE},
             metadata={
                 "ast_element_id": elem.id,
+                "stable_unit_id": _stable_unit_id(elem),
                 "source": STRUCTURE_SOURCE,
                 "confidence": "resolved",
                 "extractor": STRUCTURE_EXTRACTOR,

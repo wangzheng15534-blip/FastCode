@@ -169,7 +169,20 @@ class IndexPipeline:
                     branch = repo.active_branch.name
                 except Exception:
                     branch = None
-            snapshot_id = f"snap:{repo_name}:{commit_id}"
+            dirty_suffix = ""
+            try:
+                if repo.is_dirty(untracked_files=True):
+                    files = self.loader.scan_files()
+                    digest = hashlib.sha1()
+                    for f in sorted(files, key=lambda x: x["relative_path"]):
+                        digest.update(f["relative_path"].encode("utf-8"))
+                        digest.update(compute_file_hash(f["path"]).encode("utf-8"))
+                    working_tree_hash = digest.hexdigest()
+                    tree_id = f"{tree_id}:dirty:{working_tree_hash}"
+                    dirty_suffix = f":dirty:{working_tree_hash}"
+            except Exception:
+                dirty_suffix = ""
+            snapshot_id = f"snap:{repo_name}:{commit_id}{dirty_suffix}"
             return {
                 "repo_name": repo_name,
                 "branch": branch,
@@ -799,6 +812,49 @@ class IndexPipeline:
             unchanged_element_ids,
         )
 
+    @staticmethod
+    def _metadata_by_stable_unit_id(
+        metadata_rows: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        indexed: dict[str, dict[str, Any]] = {}
+        for row in metadata_rows:
+            meta = row.get("metadata", {}) or {}
+            stable_unit_id = meta.get("stable_unit_id") or row.get("stable_unit_id")
+            if stable_unit_id:
+                indexed[str(stable_unit_id)] = row
+        return indexed
+
+    def _reuse_changed_unit_embeddings(
+        self,
+        *,
+        new_elements: list[CodeElement],
+        existing_by_stable_unit_id: dict[str, dict[str, Any]],
+    ) -> int:
+        reused = 0
+        for elem in new_elements:
+            stable_unit_id = (elem.metadata or {}).get("stable_unit_id")
+            if not stable_unit_id:
+                continue
+            existing = existing_by_stable_unit_id.get(str(stable_unit_id))
+            if not existing:
+                continue
+            existing_meta = dict(
+                cast(dict[str, Any], existing.get("metadata", {}) or {})
+            )
+            existing_text_hash = existing_meta.get("embedding_text_hash")
+            current_text_hash = (elem.metadata or {}).get("embedding_text_hash")
+            if not existing_text_hash or existing_text_hash != current_text_hash:
+                continue
+            previous_embedding = existing_meta.get("embedding")
+            previous_text = existing_meta.get("embedding_text")
+            if previous_embedding is None or previous_text is None:
+                continue
+            elem.metadata["embedding"] = previous_embedding
+            elem.metadata["embedding_text"] = previous_text
+            elem.metadata["embedding_text_hash"] = existing_text_hash
+            reused += 1
+        return reused
+
     def _reconstruct_code_element(
         self,
         meta: dict[str, Any],
@@ -893,6 +949,7 @@ class IndexPipeline:
             )
             return None, None
         current_lookup = cast(dict[str, dict[str, Any]], changes["current_lookup"])
+        existing_by_stable_unit_id = self._metadata_by_stable_unit_id(existing_metadata)
         unchanged_elements: list[CodeElement] = []
         for meta in unchanged_metadata:
             rel_path = str(meta.get("relative_path") or meta.get("file_path") or "")
@@ -919,6 +976,10 @@ class IndexPipeline:
             if changed_file_infos
             else []
         )
+        reused_changed_embeddings = self._reuse_changed_unit_embeddings(
+            new_elements=new_elements,
+            existing_by_stable_unit_id=existing_by_stable_unit_id,
+        )
         all_elements = unchanged_elements + new_elements
         summary = {
             "added": len(added),
@@ -927,6 +988,7 @@ class IndexPipeline:
             "unchanged": len(unchanged),
             "reused_elements": len(unchanged_elements),
             "reindexed_elements": len(new_elements),
+            "reused_changed_embeddings": reused_changed_embeddings,
         }
         return all_elements, summary
 

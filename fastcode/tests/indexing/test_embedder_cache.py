@@ -74,7 +74,7 @@ def _element(name: str) -> dict[str, Any]:
         "signature": f"def {name}()",
         "docstring": None,
         "summary": None,
-        "metadata": {},
+        "metadata": {"stable_unit_id": f"unit:function:{name}"},
         "repo_name": "repo",
         "repo_url": None,
     }
@@ -144,3 +144,15 @@ def test_embedding_cache_disabled_uses_raw_embedding_each_time() -> None:
     embedder.embed_text("same text")
 
     assert embedder.raw_batches == [["same text"], ["same text"]]
+
+
+def test_embed_code_elements_persists_embedding_text_hash() -> None:
+    cache = _MemoryCache()
+    embedder = _CountingEmbedder(cache)
+    batch = [_element("same")]
+
+    embedder.embed_code_elements(batch)
+
+    metadata = batch[0]["metadata"]
+    assert "embedding_text_hash" in metadata
+    assert metadata["embedding_text_hash"]

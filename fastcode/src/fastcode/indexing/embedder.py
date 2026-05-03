@@ -288,6 +288,11 @@ class CodeEmbedder:
         for elem, text, embedding in zip(elements, texts, embeddings, strict=True):
             elem["embedding"] = embedding
             elem["embedding_text"] = text
+            metadata = dict(elem.get("metadata", {}) or {})
+            metadata["embedding_text_hash"] = hashlib.sha256(
+                text.encode("utf-8")
+            ).hexdigest()
+            elem["metadata"] = metadata
 
         return elements
 

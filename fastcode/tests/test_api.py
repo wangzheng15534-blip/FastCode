@@ -380,17 +380,13 @@ class TestBlockingEndpointOffloads:
             )
             asyncio.run(api.index_repository(force=True))
             asyncio.run(
-                api.load_repositories(
-                    api.LoadRepositoriesRequest(repo_names=["repo"])
-                )
+                api.load_repositories(api.LoadRepositoriesRequest(repo_names=["repo"]))
             )
             asyncio.run(
                 api.index_multiple(
                     api.IndexMultipleRequest(
                         sources=[
-                            api.LoadRepositoryRequest(
-                                source="/tmp/repo", is_url=False
-                            )
+                            api.LoadRepositoryRequest(source="/tmp/repo", is_url=False)
                         ]
                     )
                 )

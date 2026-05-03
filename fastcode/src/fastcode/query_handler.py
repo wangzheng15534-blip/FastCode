@@ -261,11 +261,15 @@ class QueryPipeline:
                     # Create minimal ProcessedQuery object
                     from .query_processor import ProcessedQuery
 
+                    intent = "unknown"
+                    detect_intent = getattr(self.query_processor, "_detect_intent", None)
+                    if callable(detect_intent):
+                        intent = detect_intent(question)
                     processed_query = ProcessedQuery(
                         original=question,
                         expanded=question,
                         keywords=[],
-                        intent="unknown",
+                        intent=intent,
                         subqueries=[],
                         filters=filters or {},
                         rewritten_query=None,

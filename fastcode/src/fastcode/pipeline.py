@@ -12,6 +12,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 from collections.abc import Callable
 from time import perf_counter
 from typing import Any, cast
@@ -104,6 +105,7 @@ class IndexPipeline:
         self._set_repo_indexed = set_repo_indexed
         self._set_repo_loaded = set_repo_loaded
         self._set_repo_info = set_repo_info
+        self._artifact_lock = threading.RLock()
 
     # ------------------------------------------------------------------
     # URL inference (pure static utility)
@@ -243,6 +245,10 @@ class IndexPipeline:
 
     def _load_artifacts_by_key(self, artifact_key: str) -> bool:
         """Load vector/BM25/graph artifacts for a snapshot artifact key."""
+        with self._artifact_lock:
+            return self._load_artifacts_by_key_locked(artifact_key)
+
+    def _load_artifacts_by_key_locked(self, artifact_key: str) -> bool:
         if not self.vector_store.load(artifact_key):
             return False
 
@@ -728,9 +734,6 @@ class IndexPipeline:
             temp_retriever.index_for_bm25(elements)
             temp_retriever.build_repo_overview_bm25()
 
-            temp_store.save(artifact_key)
-            temp_retriever.save_bm25(artifact_key)
-            temp_graph.save(artifact_key)
             layer1 = pipeline_layers[0]
             layer1["status"] = "succeeded"
             self._finalize_layer_metrics(
@@ -1137,11 +1140,16 @@ class IndexPipeline:
                 ir_symbol_id = ast_id_to_ir.get(str(elem.id))
                 if ir_symbol_id:
                     elem.metadata["ir_symbol_id"] = ir_symbol_id
-            temp_store.save(artifact_key)
 
             self.index_run_store.mark_status(run_id, "persisting")
             if not self.snapshot_store.validate_fencing_token(lock_name, lock_token):
                 raise RuntimeError(f"stale_lock_detected_for_snapshot:{snapshot_id}")
+
+            # Artifact persistence — only after fencing confirmed valid.
+            temp_store.save(artifact_key)
+            temp_retriever.save_bm25(artifact_key)
+            temp_graph.save(artifact_key)
+
             self.snapshot_store.save_snapshot(
                 merged_snapshot,
                 metadata={

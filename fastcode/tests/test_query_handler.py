@@ -84,6 +84,48 @@ def _query_pipeline(
     )
 
 
+def test_agency_mode_uses_detected_intent_for_local_escalation() -> None:
+    processed_intents: list[str] = []
+
+    pipeline = _query_pipeline(
+        semantic_escalation_cb=lambda **kwargs: {
+            "status": "applied",
+            "budget": kwargs["budget"],
+            "rerun_retrieval": True,
+        },
+        retrieve_side_effect=[
+            [{"element": {"relative_path": "src/config.py"}, "total_score": 1.0}],
+            [{"element": {"relative_path": "src/config.py"}, "total_score": 1.5}],
+        ],
+    )
+    pipeline.retriever.enable_agency_mode = True
+    pipeline.retriever.iterative_agent = object()
+    pipeline.query_processor._detect_intent.side_effect = lambda question: "where"
+    retrievals = iter(
+        [
+            [{"element": {"relative_path": "src/config.py"}, "total_score": 1.0}],
+            [{"element": {"relative_path": "src/config.py"}, "total_score": 1.5}],
+        ]
+    )
+
+    def retrieve_with_intent_capture(
+        processed_query: ProcessedQuery, *args: Any, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        processed_intents.append(processed_query.intent)
+        return next(retrievals)
+
+    pipeline.retriever.retrieve.side_effect = retrieve_with_intent_capture
+
+    result = pipeline.query(
+        "Where is the config loaded?",
+        filters={"snapshot_id": "snap:1"},
+    )
+
+    assert processed_intents == ["where", "where"]
+    assert pipeline.retriever.retrieve.call_count == 2
+    assert result["semantic_escalation"]["budget"] == "local"
+
+
 def test_query_pipeline_reruns_retrieval_after_semantic_escalation() -> None:
     processed_query = _processed_query(
         question="How does auth reach the token store?",
@@ -366,3 +408,79 @@ def test_escalation_does_not_rerun_when_callback_returns_none() -> None:
 
     assert pipeline.retriever.retrieve.call_count == 1
     assert "semantic_escalation" not in result
+
+
+# ---------------------------------------------------------------------------
+# Regression: concurrent query_snapshot must serialize artifact loading
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.regression
+def test_concurrent_query_snapshot_sequential_artifact_loading() -> None:
+    """Two concurrent _load_artifacts_by_key calls on the same IndexPipeline
+    must be serialized.  Without a lock, concurrent loads can overwrite
+    shared state on vector_store, retriever, and graph_builder.
+    """
+    import threading
+    import time
+
+    from fastcode.pipeline import IndexPipeline
+
+    concurrent_count = 0
+    max_concurrent = 0
+    count_lock = threading.Lock()
+    load_calls: list[str] = []
+    start_barrier = threading.Barrier(2, timeout=5)
+
+    slow_vector_store = MagicMock()
+
+    def _slow_load(artifact_key: str) -> bool:
+        nonlocal concurrent_count, max_concurrent
+        with count_lock:
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+            load_calls.append(artifact_key)
+        # Hold the critical section long enough to detect overlap.
+        time.sleep(0.05)
+        with count_lock:
+            concurrent_count -= 1
+        return True
+
+    slow_vector_store.load = _slow_load
+
+    pipeline = IndexPipeline.__new__(IndexPipeline)
+    pipeline._artifact_lock = threading.RLock()
+    pipeline.vector_store = slow_vector_store
+    pipeline.retriever = MagicMock()
+    pipeline.graph_builder = MagicMock()
+    pipeline.snapshot_store = MagicMock()
+    pipeline.snapshot_store.find_by_artifact_key.return_value = None
+    pipeline._set_repo_indexed = MagicMock()
+    pipeline._set_repo_loaded = MagicMock()
+
+    errors: list[Exception] = []
+
+    def _load(key: str) -> None:
+        # Ensure both threads are ready to call _load_artifacts_by_key
+        # at roughly the same time.
+        try:
+            start_barrier.wait(timeout=5)
+        except threading.BrokenBarrierError:
+            return
+        try:
+            pipeline._load_artifacts_by_key(key)
+        except Exception as exc:
+            errors.append(exc)
+
+    t_a = threading.Thread(target=_load, args=("key_alpha",))
+    t_b = threading.Thread(target=_load, args=("key_beta",))
+    t_a.start()
+    t_b.start()
+    t_a.join(timeout=10)
+    t_b.join(timeout=10)
+
+    assert not errors, f"Threads raised: {errors}"
+    assert max_concurrent <= 1, (
+        f"Artifact loading was not serialized (max concurrent: {max_concurrent})"
+    )
+    assert set(load_calls) == {"key_alpha", "key_beta"}

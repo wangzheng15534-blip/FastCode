@@ -6,10 +6,12 @@ import dataclasses
 
 import pytest
 
+from fastcode.store_records import ManifestRecord, SnapshotRecord, SnapshotRefRecord
+
+# --- SnapshotRecord ---
+
 
 def test_snapshot_record_roundtrip():
-    from fastcode.store_records import SnapshotRecord
-
     record = SnapshotRecord(
         snapshot_id="snap:repo:abc",
         repo_name="repo",
@@ -30,8 +32,6 @@ def test_snapshot_record_roundtrip():
 
 
 def test_snapshot_record_from_dict_handles_nulls():
-    from fastcode.store_records import SnapshotRecord
-
     record = SnapshotRecord.from_dict(
         {
             "snapshot_id": "snap:1",
@@ -49,8 +49,6 @@ def test_snapshot_record_from_dict_handles_nulls():
 
 
 def test_snapshot_record_is_frozen():
-    from fastcode.store_records import SnapshotRecord
-
     record = SnapshotRecord(
         snapshot_id="snap:1",
         repo_name="r",

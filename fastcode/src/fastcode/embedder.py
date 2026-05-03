@@ -5,6 +5,7 @@ Code Embedder - Generate embeddings for code snippets
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import platform
@@ -38,6 +39,8 @@ class CodeEmbedder:
         self.ollama_url = self.embedding_config.get(
             "ollama_url", "http://127.0.0.1:11434/api/embeddings"
         )
+        self._embedding_cache: Any | None = None
+        self._embedding_cache_enabled = False
 
         # Auto-detect best available device: CUDA > MPS > CPU
         if self.device != "cpu":
@@ -63,7 +66,28 @@ class CodeEmbedder:
             dim = self.model.get_embedding_dimension()
             self.embedding_dim = dim if dim is not None else 0
 
+        self._initialize_embedding_cache()
         self.logger.info(f"Embedding dimension: {self.embedding_dim}")
+
+    def _initialize_embedding_cache(self) -> None:
+        cache_config = self.config.get("cache", {})
+        evaluation_config = self.config.get("evaluation", {})
+        self._embedding_cache_enabled = bool(
+            cache_config.get("enabled", True)
+            and cache_config.get("cache_embeddings", True)
+            and not evaluation_config.get("disable_cache", False)
+        )
+        if not self._embedding_cache_enabled:
+            return
+
+        try:
+            from .cache import CacheManager
+
+            self._embedding_cache = CacheManager(self.config)
+        except Exception as e:
+            self._embedding_cache_enabled = False
+            self._embedding_cache = None
+            self.logger.warning(f"Embedding cache disabled: {e}")
 
     def _load_model(self) -> SentenceTransformer:
         """Load sentence transformer model"""
@@ -84,8 +108,12 @@ class CodeEmbedder:
         return self.embed_batch([text])[0]
 
     def embed_batch(self, texts: list[str]) -> np.ndarray:
+        """Generate embeddings for a batch of texts with cache reuse."""
+        return self._embed_texts_with_cache(texts)
+
+    def _embed_batch_uncached(self, texts: list[str]) -> np.ndarray:
         """
-        Generate embeddings for a batch of texts
+        Generate embeddings for a batch of texts without cache lookup.
 
         Args:
             texts: List of input texts
@@ -118,6 +146,100 @@ class CodeEmbedder:
             )
         raw: Any = self.model.encode(texts, **encode_kwargs)
         return cast(np.ndarray, raw)
+
+    def _embedding_cache_key(self, text: str) -> str:
+        identity = {
+            "version": 2,
+            "provider": self.provider,
+            "model": self.model_name,
+            "dimension": self.embedding_dim,
+            "max_seq_length": self.max_seq_length,
+            "normalize": self.normalize,
+            "ollama_url": self.ollama_url if self.provider == "ollama" else None,
+            "cache_version": self.embedding_config.get("cache_version"),
+        }
+        payload = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(f"{payload}\0{text}".encode()).hexdigest()
+        return f"embedding_v2_{digest}"
+
+    def _get_cached_embedding(self, key: str) -> np.ndarray | None:
+        if not self._embedding_cache_enabled or self._embedding_cache is None:
+            return None
+        cached = self._embedding_cache.get(key)
+        if cached is None:
+            return None
+        raw = cached.get("embedding") if isinstance(cached, dict) else cached
+        try:
+            embedding = np.asarray(raw, dtype=np.float32)
+        except (TypeError, ValueError):
+            return None
+        if embedding.ndim != 1:
+            return None
+        if self.embedding_dim and embedding.size != self.embedding_dim:
+            return None
+        return embedding
+
+    def _set_cached_embedding(self, key: str, text: str, embedding: np.ndarray) -> None:
+        if not self._embedding_cache_enabled or self._embedding_cache is None:
+            return
+        payload = {
+            "embedding": np.asarray(embedding, dtype=np.float32).tolist(),
+            "provider": self.provider,
+            "model": self.model_name,
+            "dimension": self.embedding_dim,
+            "max_seq_length": self.max_seq_length,
+            "normalize": self.normalize,
+            "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        }
+        self._embedding_cache.set(key, payload)
+
+    def _embed_texts_with_cache(self, texts: list[str]) -> np.ndarray:
+        if not texts:
+            return np.array([])
+        if not self._embedding_cache_enabled or self._embedding_cache is None:
+            return self._embed_batch_uncached(texts)
+
+        embeddings: list[np.ndarray | None] = [None] * len(texts)
+        misses: dict[str, tuple[str, list[int]]] = {}
+        hits = 0
+
+        for index, text in enumerate(texts):
+            key = self._embedding_cache_key(text)
+            cached_embedding = self._get_cached_embedding(key)
+            if cached_embedding is not None:
+                embeddings[index] = cached_embedding
+                hits += 1
+                continue
+            if key not in misses:
+                misses[key] = (text, [])
+            misses[key][1].append(index)
+
+        if misses:
+            miss_items = list(misses.items())
+            miss_texts = [text for _, (text, _) in miss_items]
+            miss_embeddings = np.asarray(
+                self._embed_batch_uncached(miss_texts), dtype=np.float32
+            )
+            for (key, (text, indexes)), embedding in zip(
+                miss_items, miss_embeddings, strict=True
+            ):
+                embedding_array = np.asarray(embedding, dtype=np.float32)
+                for index in indexes:
+                    embeddings[index] = embedding_array
+                self._set_cached_embedding(key, text, embedding_array)
+
+        if hits:
+            self.logger.debug("Embedding cache reused %d/%d vectors", hits, len(texts))
+
+        missing_indexes = [
+            i for i, embedding in enumerate(embeddings) if embedding is None
+        ]
+        if missing_indexes:
+            raise RuntimeError(
+                f"Embedding cache fill failed at indexes: {missing_indexes}"
+            )
+
+        return np.vstack(cast(list[np.ndarray], embeddings))
 
     def _embed_text_ollama(self, text: str) -> np.ndarray:
         # Truncate text to avoid Ollama context window overflow
@@ -157,15 +279,15 @@ class CodeEmbedder:
 
         # Generate embeddings
         self.logger.info(f"Generating embeddings for {len(texts)} code elements")
-        embeddings = self.embed_batch(texts)
+        embeddings = self._embed_texts_with_cache(texts)
         self.logger.info(
             f"✓ Successfully generated embeddings for {len(embeddings)} code elements"
         )
 
         # Add embeddings to elements
-        for elem, embedding in zip(elements, embeddings, strict=True):
+        for elem, text, embedding in zip(elements, texts, embeddings, strict=True):
             elem["embedding"] = embedding
-            elem["embedding_text"] = texts[elements.index(elem)]
+            elem["embedding_text"] = text
 
         return elements
 

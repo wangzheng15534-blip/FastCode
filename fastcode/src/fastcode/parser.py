@@ -10,8 +10,7 @@ from typing import Any
 
 from .utils import (
     clean_docstring,
-    get_file_extension,
-    get_language_from_extension,
+    infer_language_from_file_context,
 )
 
 
@@ -120,8 +119,7 @@ class CodeParser:
         Returns:
             FileParseResult or None if parsing failed
         """
-        ext = get_file_extension(file_path)
-        language = get_language_from_extension(ext)
+        language = infer_language_from_file_context(file_path, content)
 
         # Route to appropriate parser
         if language == "python":

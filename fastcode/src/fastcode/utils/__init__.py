@@ -32,7 +32,11 @@ from fastcode.utils.json import (
     safe_jsonable,
     sanitize_json_string,
 )
-from fastcode.utils.paths import get_language_from_extension, projection_scope_key
+from fastcode.utils.paths import (
+    get_language_from_extension,
+    infer_language_from_file_context,
+    projection_scope_key,
+)
 
 __all__ = [
     # From _compat (legacy re-exports)
@@ -49,6 +53,7 @@ __all__ = [
     "get_file_extension",
     "get_language_from_extension",
     "get_repo_name_from_url",
+    "infer_language_from_file_context",
     "is_supported_file",
     "is_text_file",
     "load_config",

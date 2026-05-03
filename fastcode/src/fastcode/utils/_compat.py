@@ -17,6 +17,8 @@ from pathspec.patterns.gitwildmatch import (
     GitWildMatchPattern,  # type: ignore[import-untyped]
 )
 
+from .paths import get_language_from_extension as _canonical_get_language_from_extension
+
 
 def utc_now() -> str:
     """Return current UTC time as ISO-8601 string."""
@@ -186,34 +188,7 @@ def normalize_path(path: str) -> str:
 
 def get_language_from_extension(ext: str) -> str:
     """Get programming language from file extension"""
-    language_map = {
-        ".py": "python",
-        ".js": "javascript",
-        ".ts": "typescript",
-        ".jsx": "javascript",
-        ".tsx": "typescript",
-        ".java": "java",
-        ".go": "go",
-        ".cpp": "cpp",
-        ".cc": "cpp",
-        ".c": "c",
-        ".h": "c",
-        ".hh": "cpp",
-        ".hpp": "cpp",
-        ".hxx": "cpp",
-        ".rs": "rust",
-        ".zig": "zig",
-        ".f": "fortran",
-        ".for": "fortran",
-        ".f77": "fortran",
-        ".f90": "fortran",
-        ".f95": "fortran",
-        ".f03": "fortran",
-        ".f08": "fortran",
-        ".jl": "julia",
-        ".rb": "ruby",
-        ".php": "php",
-        ".cs": "csharp",
+    fallback_map = {
         ".swift": "swift",
         ".kt": "kotlin",
         ".scala": "scala",
@@ -230,7 +205,10 @@ def get_language_from_extension(ext: str) -> str:
         ".toml": "toml",
         ".md": "markdown",
     }
-    return language_map.get(ext.lower(), "unknown")
+    canonical = _canonical_get_language_from_extension(ext)
+    if canonical != "unknown":
+        return canonical
+    return fallback_map.get(ext.lower(), "unknown")
 
 
 def extract_code_snippet(

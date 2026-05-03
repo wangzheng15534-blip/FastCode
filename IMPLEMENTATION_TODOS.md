@@ -59,6 +59,9 @@ The pipeline now exposes explicit layer status, metrics, warnings, and non-silen
   - TypeScript helper emits inheritance facts
   - Go helper emits embedded-relationship inheritance facts
   - Java helper emits `extends` / `implements` inheritance facts
+- Context-aware C/C++ header classification now upgrades ambiguous `.h` files:
+  - parser-time language detection uses C++ content markers and sibling-source layout
+  - C/C++ resolver dispatch applies the same heuristics during snapshot-scoped upgrades
 
 ## Critical verification currently green
 
@@ -122,25 +125,6 @@ Still raw-dict-heavy at boundaries:
 - parts of snapshot metadata payloads
 
 ### 6. Add a few remaining critical regressions
-
-### 6a. Header-language classification for `.h` as C vs C++
-
-**Status:** Test guards added. Production fix still needed.
-
-**Audit verdict:** CONCERNS (risk score 6/9 — P3×I2)
-
-**Problem:** `get_language_from_extension(".h")` always returns `"c"` (`paths.py:43`, `_compat.py:200`). No context-aware classification exists. C++ projects with `.h` headers get wrong resolver dispatch.
-
-**Test coverage added** (`fastcode/tests/test_header_classification.py`):
-- `TestHeaderExtensionMapping` — baselines: `.h`→c, `.hpp`→cpp, `.hh`→cpp, `.hxx`→cpp
-- `TestHeaderResolverDispatch` — C resolver `applicable()` for `.h` tagged as `c`; C++ resolver correctly rejects `.h` tagged as `c` (exposes the gap)
-- `TestCppIncludeOfDotHResolution` — C++ resolver resolves `#include "util.h"` from `main.cpp` to `.h` unit tagged as `c`
-- `TestDuplicateExtensionMaps` — `paths.py` and `_compat.py` agree on `.h`
-- `TestHeaderAmbiguityContract` — skip-marked TDD targets for future context-aware classification (adjacent `.cpp` detection, C++ keyword content analysis)
-
-**Remaining work:**
-- Implement context-aware `.h` classification (adjacent file detection, content analysis)
-- Unskip the `TestHeaderAmbiguityContract` tests once implemented
 
 ### 6b. Query-time semantic escalation changing IR graph expansion behavior end to end
 

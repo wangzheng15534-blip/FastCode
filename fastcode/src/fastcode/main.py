@@ -16,37 +16,38 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 
 from .answer_generator import AnswerGenerator
-from .cache import CacheManager
-from .core import snapshot as _snapshot
 from .doc_ingester import KeyDocIngester
 from .embedder import CodeEmbedder
 from .global_index_builder import GlobalIndexBuilder
 from .graph.build import CodeGraphBuilder
 from .graph_runtime import LadybugGraphRuntime
-from .index_run import IndexRunStore
 from .indexer import CodeIndexer
 from .ir.element import CodeElement, CodeElementMeta
 from .ir.graph import IRGraphBuilder
 from .ir.types import IRSnapshot
 from .loader import RepositoryLoader
-from .manifest_store import ManifestStore
 from .module_resolver import ModuleResolver
 from .parser import CodeParser
-from .pg_retrieval import PgRetrievalStore
 from .pipeline import IndexPipeline
 from .projection import ProjectionService
-from .projection_store import ProjectionStore
 from .projection_transform import ProjectionTransformer
 from .publishing import PublishingService
 from .query_handler import QueryPipeline
 from .query_processor import QueryProcessor
 from .redo_worker import RedoWorker
-from .retriever import HybridRetriever
+from .retrieval.core import snapshot as _snapshot
+from .retrieval.hybrid import HybridRetriever
 from .semantic_resolvers import (
     build_default_semantic_resolver_registry,
 )
-from .snapshot_store import SnapshotStore
 from .snapshot_symbol_index import SnapshotSymbolIndex
+from .store.cache import CacheManager
+from .store.index_run import IndexRunStore
+from .store.manifest import ManifestStore
+from .store.pg_retrieval import PgRetrievalStore
+from .store.projection import ProjectionStore
+from .store.snapshot import SnapshotStore
+from .store.vector import VectorStore
 from .symbol_resolver import SymbolResolver
 from .terminus_publisher import TerminusPublisher
 from .utils import (
@@ -55,7 +56,6 @@ from .utils import (
     resolve_config_paths,
     setup_logging,
 )
-from .vector_store import VectorStore
 
 
 class FastCode:

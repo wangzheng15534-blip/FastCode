@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from typing import Any, cast
 
-from fastcode.core import scip_transform as _scip_transform
+from fastcode.retrieval.core import scip_transform as _scip_transform
 
 from .scip_models import SCIPIndex
 

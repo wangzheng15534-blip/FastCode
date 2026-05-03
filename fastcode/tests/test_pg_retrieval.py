@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.pg_retrieval import PgRetrievalStore
+from fastcode.store.pg_retrieval import PgRetrievalStore
 
 pytestmark = [pytest.mark.test_double]
 

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fastcode.infrastructure.llm import chat_completion
+from fastcode.store.infrastructure.llm import chat_completion
 
 
 def _client_returning(content: str | None) -> MagicMock:

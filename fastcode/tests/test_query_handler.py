@@ -14,7 +14,7 @@ from fastcode.ir.types import IRSnapshot
 from fastcode.main import FastCode
 from fastcode.query_handler import QueryPipeline
 from fastcode.query_processor import ProcessedQuery
-from fastcode.retriever import HybridRetriever
+from fastcode.retrieval.hybrid import HybridRetriever
 
 
 def _processed_query(

@@ -20,8 +20,8 @@ from fastcode.ir.types import (
     IRSnapshot,
     IRSymbol,
 )
-from fastcode.snapshot_store import SnapshotStore
-from fastcode.store_records import SnapshotRecord, SnapshotRefRecord
+from fastcode.store.records import SnapshotRecord, SnapshotRefRecord
+from fastcode.store.snapshot import SnapshotStore
 
 # --- Strategies ---
 

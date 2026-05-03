@@ -3,7 +3,7 @@
 
 from typing import Any
 
-from fastcode.core.context import (
+from fastcode.retrieval.core.context import (
     parse_response_with_summary,
     prepare_context,
 )

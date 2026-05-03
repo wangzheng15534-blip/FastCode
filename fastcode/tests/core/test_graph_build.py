@@ -1,7 +1,7 @@
 # tests/test_core_graph_build.py
 """Tests for pure graph payload construction."""
 
-from fastcode.core.graph_build import build_code_graph_payload
+from fastcode.retrieval.core.graph_build import build_code_graph_payload
 from fastcode.utils.hashing import deterministic_event_id
 
 

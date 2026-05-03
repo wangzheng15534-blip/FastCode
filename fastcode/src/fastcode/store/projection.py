@@ -10,8 +10,8 @@ import logging
 import os
 from typing import Any
 
-from .ir.projection import ProjectionBuildResult, ProjectionScope
-from .utils import utc_now
+from ..ir.projection import ProjectionBuildResult, ProjectionScope
+from ..utils import utc_now
 
 try:
     import psycopg

@@ -12,7 +12,6 @@ if platform.system() == "Darwin":
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
     os.environ["MKL_NUM_THREADS"] = "1"
 
-from .agent_tools import AgentTools
 from .answer_generator import AnswerGenerator
 from .indexer import CodeIndexer
 from .ir.types import (
@@ -26,13 +25,14 @@ from .ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from .iterative_agent import IterativeAgent
 from .loader import RepositoryLoader
 from .main import FastCode
 from .parser import CodeParser
 from .repo_overview import RepositoryOverviewGenerator
 from .repo_selector import RepositorySelector
-from .retriever import HybridRetriever
+from .retrieval.agent_tools import AgentTools
+from .retrieval.hybrid import HybridRetriever
+from .retrieval.iterative import IterativeAgent
 
 __version__ = "2.0.0"
 

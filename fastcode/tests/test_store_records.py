@@ -6,7 +6,7 @@ import dataclasses
 
 import pytest
 
-from fastcode.store_records import ManifestRecord, SnapshotRecord, SnapshotRefRecord
+from fastcode.store.records import ManifestRecord, SnapshotRecord, SnapshotRefRecord
 
 # --- SnapshotRecord ---
 

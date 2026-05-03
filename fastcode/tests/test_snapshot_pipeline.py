@@ -9,12 +9,12 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from fastcode.index_run import IndexRunStore
 from fastcode.ir.types import IRAttachment, IRCodeUnit, IRSnapshot
-from fastcode.manifest_store import ManifestStore
 from fastcode.pipeline import IndexPipeline
 from fastcode.scip_models import SCIPIndex
-from fastcode.snapshot_store import SnapshotStore
+from fastcode.store.index_run import IndexRunStore
+from fastcode.store.manifest import ManifestStore
+from fastcode.store.snapshot import SnapshotStore
 
 
 def test_snapshot_store_persists_and_loads_snapshot():

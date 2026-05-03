@@ -1,7 +1,7 @@
 """Tests for I/O import guard and boundary conversion.
 
 Part A -- test_core_modules_have_no_io_imports:
-  Scans every .py in fastcode/core/ (except __init__.py) and asserts
+  Scans every .py in fastcode/retrieval/core/ (except __init__.py) and asserts
   that none import from forbidden I/O modules.
 
 Part B/C -- boundary conversion tests:
@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.core.boundary import (
+from fastcode.retrieval.core.boundary import (
     CoreQueryInput,
     hit_to_response,
     query_request_to_core,
@@ -25,7 +25,11 @@ from fastcode.core.boundary import (
 from fastcode.schemas.core_types import Hit
 
 CORE_DIR = (
-    pathlib.Path(__file__).resolve().parent.parent.parent / "src" / "fastcode" / "core"
+    pathlib.Path(__file__).resolve().parent.parent.parent
+    / "src"
+    / "fastcode"
+    / "retrieval"
+    / "core"
 )
 
 IO_MODULES = frozenset(
@@ -213,7 +217,7 @@ class TestBoundaryExplicitTranslation:
 
     def test_boundary_uses_explicit_translation(self) -> None:
         source = pathlib.Path(
-            __import__("fastcode.core.boundary", fromlist=[""]).__file__
+            __import__("fastcode.retrieval.core.boundary", fromlist=[""]).__file__
         ).read_text(encoding="utf-8")
 
         # Build the set of line numbers that are comments or docstrings

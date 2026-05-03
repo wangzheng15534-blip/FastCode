@@ -10,8 +10,8 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from .core import repo_analysis as _repo_analysis
 from .llm_utils import openai_chat_completion
+from .retrieval.core import repo_analysis as _repo_analysis
 from .utils._compat import get_language_from_extension
 
 

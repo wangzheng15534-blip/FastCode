@@ -18,7 +18,7 @@ from fastcode.ir.types import (
     IRSnapshot,
     IRSymbol,
 )
-from fastcode.snapshot_store import SnapshotStore
+from fastcode.store.snapshot import SnapshotStore
 
 # --- Strategies (self-contained) ---
 

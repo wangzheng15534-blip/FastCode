@@ -10,8 +10,8 @@ import pytest
 from hypothesis import strategies as st
 
 from fastcode.db_runtime import DBRuntime
-from fastcode.manifest_store import ManifestStore
-from fastcode.store_records import ManifestRecord
+from fastcode.store.manifest import ManifestStore
+from fastcode.store.records import ManifestRecord
 
 # --- Helpers ---
 

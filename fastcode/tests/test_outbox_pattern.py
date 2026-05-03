@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from fastcode.redo_worker import RedoWorker
-from fastcode.snapshot_store import SnapshotStore
+from fastcode.store.snapshot import SnapshotStore
 from fastcode.terminus_publisher import TerminusPublisher
 
 pytestmark = [pytest.mark.test_double]

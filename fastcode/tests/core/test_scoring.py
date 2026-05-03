@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.core.scoring import (
+from fastcode.retrieval.core.scoring import (
     clone_result_row,
     normalized_query_entropy,
     normalized_totals,

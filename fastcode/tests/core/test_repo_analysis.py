@@ -1,6 +1,6 @@
 """Tests for pure repo analysis functions."""
 
-from fastcode.core.repo_analysis import (
+from fastcode.retrieval.core.repo_analysis import (
     format_file_structure,
     generate_structure_based_overview,
     infer_project_type,

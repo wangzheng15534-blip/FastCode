@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .ir.projection import ProjectionScope
-    from .manifest_store import ManifestStore
-    from .projection_store import ProjectionStore
     from .projection_transform import ProjectionTransformer
-    from .snapshot_store import SnapshotStore
+    from .store.manifest import ManifestStore
+    from .store.projection import ProjectionStore
+    from .store.snapshot import SnapshotStore
 
 from .utils import ensure_dir, projection_params_hash, projection_scope_key
 

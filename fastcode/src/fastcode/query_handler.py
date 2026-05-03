@@ -11,13 +11,13 @@ from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Any
 
 from .answer_generator import AnswerGenerator
-from .cache import CacheManager
-from .core import snapshot as _snapshot
-from .manifest_store import ManifestStore
 from .query_processor import QueryProcessor
-from .retriever import HybridRetriever
-from .snapshot_store import SnapshotStore
+from .retrieval.core import snapshot as _snapshot
+from .retrieval.hybrid import HybridRetriever
 from .snapshot_symbol_index import SnapshotSymbolIndex
+from .store.cache import CacheManager
+from .store.manifest import ManifestStore
+from .store.snapshot import SnapshotStore
 from .utils import safe_jsonable
 
 if TYPE_CHECKING:

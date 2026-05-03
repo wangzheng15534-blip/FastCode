@@ -3,7 +3,7 @@
 
 from typing import Any
 
-from fastcode.core.summary import (
+from fastcode.retrieval.core.summary import (
     extract_sources,
     format_answer_with_sources,
     generate_fallback_summary,

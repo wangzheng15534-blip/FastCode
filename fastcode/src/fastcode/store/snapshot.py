@@ -13,11 +13,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .db_runtime import DBRuntime
-from .ir.types import IRSnapshot
-from .scip_models import SCIPArtifactRef
-from .store_records import SnapshotRecord, SnapshotRefRecord
-from .utils import ensure_dir, safe_jsonable, utc_now
+from ..db_runtime import DBRuntime
+from ..ir.types import IRSnapshot
+from ..scip_models import SCIPArtifactRef
+from ..utils import ensure_dir, safe_jsonable, utc_now
+from .records import SnapshotRecord, SnapshotRefRecord
 
 
 class SnapshotStore:
@@ -480,7 +480,7 @@ class SnapshotStore:
 
     @staticmethod
     def _ir_graph_items(ir_graphs: Any) -> dict[str, Any]:
-        from .ir.graph import IRGraphs
+        from ..ir.graph import IRGraphs
 
         if isinstance(ir_graphs, IRGraphs):
             return {
@@ -558,7 +558,7 @@ class SnapshotStore:
         if graph_names.issubset(result) and all(
             isinstance(result[name], nx.Graph) for name in graph_names
         ):
-            from .ir.graph import IRGraphs
+            from ..ir.graph import IRGraphs
 
             return IRGraphs(
                 dependency_graph=result["dependency_graph"],

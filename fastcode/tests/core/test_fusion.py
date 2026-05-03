@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.core.fusion import (
+from fastcode.retrieval.core.fusion import (
     adaptive_fuse_channels,
     apply_doc_projection_to_code,
     compute_adaptive_fusion_params,

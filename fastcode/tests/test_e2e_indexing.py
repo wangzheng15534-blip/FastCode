@@ -29,20 +29,20 @@ from fastcode.doc_ingester import KeyDocIngester
 from fastcode.embedder import CodeEmbedder
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.graph_runtime import LadybugGraphRuntime
-from fastcode.index_run import IndexRunStore
 from fastcode.indexer import CodeIndexer
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.loader import RepositoryLoader
 from fastcode.main import FastCode
-from fastcode.manifest_store import ManifestStore
 from fastcode.parser import CodeParser
-from fastcode.pg_retrieval import PgRetrievalStore
 from fastcode.pipeline import IndexPipeline
 from fastcode.semantic_resolvers import build_default_semantic_resolver_registry
-from fastcode.snapshot_store import SnapshotStore
 from fastcode.snapshot_symbol_index import SnapshotSymbolIndex
+from fastcode.store.index_run import IndexRunStore
+from fastcode.store.manifest import ManifestStore
+from fastcode.store.pg_retrieval import PgRetrievalStore
+from fastcode.store.snapshot import SnapshotStore
+from fastcode.store.vector import VectorStore
 from fastcode.terminus_publisher import TerminusPublisher
-from fastcode.vector_store import VectorStore
 
 pytestmark = [pytest.mark.e2e]
 
@@ -312,9 +312,9 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
 
     fc.indexer = CodeIndexer(config, fc.loader, fc.parser, fc.embedder, fc.vector_store)
 
-    from fastcode.cache import CacheManager
     from fastcode.query_processor import QueryProcessor
-    from fastcode.retriever import HybridRetriever
+    from fastcode.retrieval.hybrid import HybridRetriever
+    from fastcode.store.cache import CacheManager
 
     config_repo_root = config.get("repo_root", "./repos")
     fc.retriever = HybridRetriever(
@@ -336,8 +336,8 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
     fc.index_run_store = IndexRunStore(fc.snapshot_store.db_runtime)
     fc.terminus_publisher = TerminusPublisher(config)
 
-    from fastcode.projection_store import ProjectionStore
     from fastcode.projection_transform import ProjectionTransformer
+    from fastcode.store.projection import ProjectionStore
 
     fc.projection_transformer = ProjectionTransformer(config)
     fc.projection_store = ProjectionStore(config)

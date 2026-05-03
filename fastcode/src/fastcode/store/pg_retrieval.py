@@ -12,7 +12,7 @@ from typing import Any, cast
 
 import numpy as np
 
-from .db_runtime import DBRuntime
+from ..db_runtime import DBRuntime
 
 
 class PgRetrievalStore:

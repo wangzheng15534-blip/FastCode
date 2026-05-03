@@ -12,9 +12,9 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from .core import context as _context
-from .core import summary as _summary
 from .llm_utils import openai_chat_completion
+from .retrieval.core import context as _context
+from .retrieval.core import summary as _summary
 from .utils import count_tokens, truncate_to_tokens
 
 

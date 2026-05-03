@@ -406,7 +406,7 @@ def connected_snapshot_st(
 @pytest.fixture
 def snapshot_store(tmp_path: pathlib.Path):
     """Create a SnapshotStore backed by a temp directory."""
-    from fastcode.snapshot_store import SnapshotStore
+    from fastcode.store.snapshot import SnapshotStore
 
     return SnapshotStore(str(tmp_path))
 

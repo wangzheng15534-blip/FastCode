@@ -15,9 +15,9 @@ import faiss
 import numpy as np
 
 if TYPE_CHECKING:
-    from .ir.element import CodeElementMeta
+    from ..ir.element import CodeElementMeta
 
-from .utils import ensure_dir
+from ..utils import ensure_dir
 
 
 class VectorStore:

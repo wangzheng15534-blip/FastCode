@@ -8,8 +8,8 @@ import json
 import uuid
 from typing import Any
 
-from .db_runtime import DBRuntime
-from .utils import utc_now
+from ..db_runtime import DBRuntime
+from ..utils import utc_now
 
 
 class IndexRunStore:

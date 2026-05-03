@@ -20,12 +20,12 @@ from ..embedder import CodeEmbedder
 from ..graph.build import CodeGraphBuilder
 from ..ir.element import CodeElement, CodeElementMeta
 from ..ir.graph import IRGraphs
-from ..pg_retrieval import PgRetrievalStore
 from ..query_processor import ProcessedQuery
 from ..repo_selector import RepositorySelector
 from ..schemas.core_types import FusionConfig
+from ..store.pg_retrieval import PgRetrievalStore
+from ..store.vector import VectorStore
 from ..utils import ensure_dir
-from ..vector_store import VectorStore
 from .core import combination as _combination
 from .core import filtering as _filtering
 from .core import fusion as _fusion

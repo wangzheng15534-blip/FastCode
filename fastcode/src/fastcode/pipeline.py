@@ -28,7 +28,6 @@ from .embedder import CodeEmbedder
 from .global_index_builder import GlobalIndexBuilder
 from .graph.build import CodeGraphBuilder
 from .incremental_update import apply_incremental_update, diff_changed_files
-from .index_run import IndexRunStore
 from .indexer import CodeIndexer
 from .ir.element import CodeElement, CodeElementMeta
 from .ir.graph import IRGraphBuilder
@@ -36,10 +35,8 @@ from .ir.merge import merge_ir
 from .ir.types import IRSnapshot
 from .ir.validate import validate_snapshot
 from .loader import RepositoryLoader
-from .manifest_store import ManifestStore
 from .module_resolver import ModuleResolver
-from .pg_retrieval import PgRetrievalStore
-from .retriever import HybridRetriever
+from .retrieval.hybrid import HybridRetriever
 from .scip_indexers import (
     detect_scip_languages,
     get_scip_indexer_profile,
@@ -50,12 +47,15 @@ from .semantic_resolvers import (
     apply_resolution_patch,
     build_default_semantic_resolver_registry,
 )
-from .snapshot_store import SnapshotStore
 from .snapshot_symbol_index import SnapshotSymbolIndex
+from .store.index_run import IndexRunStore
+from .store.manifest import ManifestStore
+from .store.pg_retrieval import PgRetrievalStore
+from .store.snapshot import SnapshotStore
+from .store.vector import VectorStore
 from .symbol_resolver import SymbolResolver
 from .terminus_publisher import TerminusPublisher
 from .utils import compute_file_hash, ensure_dir
-from .vector_store import VectorStore
 
 
 class IndexPipeline:

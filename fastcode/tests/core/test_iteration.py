@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from fastcode.core.iteration import (
+from fastcode.retrieval.core.iteration import (
     calculate_recent_confidence_gain,
     calculate_recent_lines_added,
     calculate_repo_factor,

@@ -16,8 +16,8 @@ from .ir.element import CodeElement
 from .loader import RepositoryLoader
 from .parser import CodeParser, FileParseResult
 from .repo_overview import RepositoryOverviewGenerator
+from .store.vector import VectorStore
 from .utils import normalize_path
-from .vector_store import VectorStore
 
 
 class CodeIndexer:

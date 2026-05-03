@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastcode.ir.element import CodeElement
-from fastcode.retriever import HybridRetriever
+from fastcode.retrieval.hybrid import HybridRetriever
 
 
 def _mk_row(

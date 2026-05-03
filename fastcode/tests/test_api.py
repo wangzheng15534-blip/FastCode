@@ -17,8 +17,8 @@ from fastapi import HTTPException
 
 from fastcode import api
 from fastcode.ir.types import IRSnapshot
-from fastcode.manifest_store import ManifestStore
-from fastcode.snapshot_store import SnapshotStore
+from fastcode.store.manifest import ManifestStore
+from fastcode.store.snapshot import SnapshotStore
 
 # ---------------------------------------------------------------------------
 # Helpers

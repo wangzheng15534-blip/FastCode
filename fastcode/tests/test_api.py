@@ -368,6 +368,13 @@ class TestBlockingEndpointOffloads:
         fake_fastcode.list_repositories.return_value = [{"repo_name": "repo"}]
         fake_fastcode.get_repository_stats.return_value = {"repo_count": 1}
         fake_fastcode.get_repository_summary.return_value = "summary"
+        fake_fastcode.remove_repository.return_value = {
+            "deleted_files": [],
+            "freed_mb": 0.0,
+        }
+        fake_fastcode.cache_manager.clear.return_value = True
+        fake_fastcode.cache_manager.get_stats.return_value = {"entries": 0}
+        fake_fastcode.vector_store.scan_available_indexes.return_value = []
         monkeypatch.setattr(api.asyncio, "to_thread", record_to_thread)
 
         with patch(
@@ -391,10 +398,23 @@ class TestBlockingEndpointOffloads:
                     )
                 )
             )
+            asyncio.run(
+                api.delete_repositories(
+                    api.DeleteReposRequest(repo_names=["repo"], delete_source=False)
+                )
+            )
+            asyncio.run(api.clear_cache())
+            asyncio.run(api.get_cache_stats())
+            asyncio.run(api.refresh_index_cache())
 
         assert offloaded == [
             fake_fastcode.load_repository,
             fake_fastcode.index_repository,
             fake_fastcode._load_multi_repo_cache,
             fake_fastcode.load_multiple_repositories,
+            fake_fastcode.remove_repository,
+            fake_fastcode.cache_manager.clear,
+            fake_fastcode.cache_manager.get_stats,
+            fake_fastcode.vector_store.invalidate_scan_cache,
+            fake_fastcode.vector_store.scan_available_indexes,
         ]

@@ -933,8 +933,10 @@ async def delete_repositories(request: DeleteReposRequest):
     try:
         results = []
         for repo_name in request.repo_names:
-            result = fastcode.remove_repository(
-                repo_name, delete_source=request.delete_source
+            result = await asyncio.to_thread(
+                fastcode.remove_repository,
+                repo_name,
+                delete_source=request.delete_source,
             )
             results.append(result)
             logger.info(
@@ -958,7 +960,7 @@ async def clear_cache():
     """Clear cache"""
     fastcode = _ensure_fastcode_initialized()
 
-    success = fastcode.cache_manager.clear()
+    success = await asyncio.to_thread(fastcode.cache_manager.clear)
 
     if success:
         return {"status": "success", "message": "Cache cleared"}
@@ -973,7 +975,7 @@ async def get_cache_stats():
     """Get cache statistics"""
     fastcode = _ensure_fastcode_initialized()
 
-    stats = fastcode.cache_manager.get_stats()
+    stats = await asyncio.to_thread(fastcode.cache_manager.get_stats)
     return stats
 
 
@@ -983,8 +985,10 @@ async def refresh_index_cache():
     fastcode = _ensure_fastcode_initialized()
 
     try:
-        fastcode.vector_store.invalidate_scan_cache()
-        available_repos = fastcode.vector_store.scan_available_indexes(use_cache=False)
+        await asyncio.to_thread(fastcode.vector_store.invalidate_scan_cache)
+        available_repos = await asyncio.to_thread(
+            fastcode.vector_store.scan_available_indexes, use_cache=False
+        )
 
         return {
             "status": "success",
@@ -1002,7 +1006,7 @@ async def unload_repository():
     global fastcode_instance
 
     if fastcode_instance:
-        fastcode_instance.cleanup()
+        await asyncio.to_thread(fastcode_instance.cleanup)
         fastcode_instance = FastCode()
 
     return {"status": "success", "message": "Repository unloaded"}

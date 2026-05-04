@@ -85,12 +85,71 @@ class RedoWorker:
             self.fastcode.retry_index_run_recovery(run_id=str(run_id), payload=payload)
             return
         if task_type == "semantic_repair_frontier":
-            self.fastcode.process_semantic_repair_frontier(payload=payload)
+            result = self.fastcode.process_semantic_repair_frontier(payload=payload)
+            if self._projection_rebuild_enabled(payload):
+                self._rebuild_dirty_projections_after_repair(payload, result)
+            return
+        if task_type == "projection_dirty_rebuild":
+            snapshot_id = str(payload.get("snapshot_id") or "")
+            if not snapshot_id:
+                raise RuntimeError("projection_dirty_rebuild task missing snapshot_id")
+            self._rebuild_dirty_projections(snapshot_id)
             return
         if task_type == "publish_outbox_flush":
             self._flush_outbox()
             return
         raise RuntimeError(f"unsupported redo task type: {task_type}")
+
+    def _projection_rebuild_enabled(self, payload: dict[str, Any]) -> bool:
+        if "rebuild_dirty_projections" in payload:
+            return bool(payload.get("rebuild_dirty_projections"))
+        config = getattr(self.fastcode, "config", {}) or {}
+        projection_cfg: Any = {}
+        if isinstance(config, dict):
+            projection_cfg = config.get("projection", {})
+        else:
+            projection_cfg = getattr(config, "projection", {})
+        if isinstance(projection_cfg, dict):
+            return bool(projection_cfg.get("rebuild_dirty_after_redo", True))
+        return bool(getattr(projection_cfg, "rebuild_dirty_after_redo", True))
+
+    def _rebuild_dirty_projections_after_repair(
+        self, payload: dict[str, Any], result: Any
+    ) -> None:
+        if not isinstance(result, dict):
+            return
+        projection_dirty = result.get("projection_dirty")
+        if not isinstance(projection_dirty, dict) or not projection_dirty.get("marked"):
+            return
+        repair_frontier = result.get("repair_frontier", {})
+        if not isinstance(repair_frontier, dict):
+            repair_frontier = {}
+        snapshot_id = str(
+            projection_dirty.get("snapshot_id")
+            or repair_frontier.get("snapshot_id")
+            or payload.get("snapshot_id")
+            or ""
+        )
+        if snapshot_id:
+            self._rebuild_dirty_projections(snapshot_id)
+
+    def _rebuild_dirty_projections(self, snapshot_id: str) -> None:
+        projection_service = getattr(self.fastcode, "projection_service", None)
+        rebuild = getattr(projection_service, "rebuild_dirty_projections", None)
+        if not callable(rebuild):
+            self.logger.debug(
+                "projection service unavailable, skipping dirty rebuild for %s",
+                snapshot_id,
+            )
+            return
+        result = rebuild(snapshot_id)
+        rebuilt = result.get("rebuilt", 0) if isinstance(result, dict) else 0
+        if rebuilt:
+            self.logger.info(
+                "Rebuilt %s dirty projection(s) for snapshot %s",
+                rebuilt,
+                snapshot_id,
+            )
 
     def _flush_outbox(self) -> None:
         """Flush the TerminusDB publish outbox."""

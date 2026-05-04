@@ -155,6 +155,89 @@ def test_dispatch_semantic_repair_frontier_task_double():
     fc.process_semantic_repair_frontier.assert_called_once()
 
 
+def test_dispatch_semantic_repair_frontier_rebuilds_dirty_projections_double():
+    fc = _FakeFastCode()
+    fc.config = {"projection": {"rebuild_dirty_after_redo": True}}
+    fc.process_semantic_repair_frontier = MagicMock(
+        return_value={
+            "status": "repaired",
+            "repair_frontier": {"snapshot_id": "snap:1"},
+            "projection_dirty": {"marked": 1},
+        }
+    )
+    fc.projection_service = MagicMock()
+    fc.projection_service.rebuild_dirty_projections.return_value = {
+        "snapshot_id": "snap:1",
+        "rebuilt": 1,
+    }
+    worker = RedoWorker(fc)
+
+    worker._dispatch_task(
+        {
+            "task_id": "redo_repair",
+            "task_type": "semantic_repair_frontier",
+            "payload_json": json.dumps(
+                {
+                    "snapshot_id": "snap:1",
+                    "changed_paths": ["a.py"],
+                }
+            ),
+        }
+    )
+
+    fc.projection_service.rebuild_dirty_projections.assert_called_once_with("snap:1")
+
+
+def test_dispatch_semantic_repair_frontier_can_skip_projection_rebuild_double():
+    fc = _FakeFastCode()
+    fc.config = {"projection": {"rebuild_dirty_after_redo": True}}
+    fc.process_semantic_repair_frontier = MagicMock(
+        return_value={
+            "status": "repaired",
+            "repair_frontier": {"snapshot_id": "snap:1"},
+            "projection_dirty": {"marked": 1},
+        }
+    )
+    fc.projection_service = MagicMock()
+    worker = RedoWorker(fc)
+
+    worker._dispatch_task(
+        {
+            "task_id": "redo_repair",
+            "task_type": "semantic_repair_frontier",
+            "payload_json": json.dumps(
+                {
+                    "snapshot_id": "snap:1",
+                    "changed_paths": ["a.py"],
+                    "rebuild_dirty_projections": False,
+                }
+            ),
+        }
+    )
+
+    fc.projection_service.rebuild_dirty_projections.assert_not_called()
+
+
+def test_dispatch_projection_dirty_rebuild_task_double():
+    fc = _FakeFastCode()
+    fc.projection_service = MagicMock()
+    fc.projection_service.rebuild_dirty_projections.return_value = {
+        "snapshot_id": "snap:1",
+        "rebuilt": 2,
+    }
+    worker = RedoWorker(fc)
+
+    worker._dispatch_task(
+        {
+            "task_id": "redo_projection",
+            "task_type": "projection_dirty_rebuild",
+            "payload_json": json.dumps({"snapshot_id": "snap:1"}),
+        }
+    )
+
+    fc.projection_service.rebuild_dirty_projections.assert_called_once_with("snap:1")
+
+
 def test_stop_sets_event_and_joins_double():
     fc = _FakeFastCode()
     worker = RedoWorker(fc, poll_interval_seconds=1)

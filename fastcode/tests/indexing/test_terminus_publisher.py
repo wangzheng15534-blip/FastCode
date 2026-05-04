@@ -9,6 +9,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fastcode.indexing.terminus import TerminusPublisher
+from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot
 
 # --- Helpers ---
 
@@ -733,6 +734,79 @@ class TestCodeGraphInLineage:
         assert len(sym_ver_nodes) == 1
         # No new Symbol nodes (no units)
         assert not [n for n in payload["nodes"] if n["type"] == "Symbol"]
+
+
+class TestTypedSnapshotLineage:
+    def test_build_lineage_payload_for_snapshot_does_not_expand_full_ir(self):
+        """HAPPY: typed lineage publishing avoids IRSnapshot.to_dict()."""
+
+        class NoDictSnapshot(IRSnapshot):
+            def to_dict(self) -> dict[str, Any]:
+                raise AssertionError("typed lineage must not call IRSnapshot.to_dict()")
+
+        publisher = _make_publisher()
+        snapshot = NoDictSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:typed",
+            branch="main",
+            commit_id="abc",
+            units=[
+                IRCodeUnit(
+                    unit_id="file:a.py",
+                    kind="file",
+                    path="a.py",
+                    language="python",
+                    display_name="a.py",
+                    source_set={"fc_structure"},
+                ),
+                IRCodeUnit(
+                    unit_id="fn1",
+                    kind="function",
+                    path="a.py",
+                    language="python",
+                    display_name="foo",
+                    qualified_name="pkg.a.foo",
+                    primary_anchor_symbol_id="scip python pkg.a.foo",
+                    source_set={"fc_structure", "scip"},
+                ),
+                IRCodeUnit(
+                    unit_id="fn2",
+                    kind="function",
+                    path="a.py",
+                    language="python",
+                    display_name="bar",
+                    source_set={"fc_structure"},
+                ),
+            ],
+            relations=[
+                IRRelation(
+                    relation_id="rel1",
+                    src_unit_id="fn1",
+                    dst_unit_id="fn2",
+                    relation_type="call",
+                    resolution_state="anchored",
+                    support_sources={"scip"},
+                )
+            ],
+        )
+
+        payload = publisher.build_lineage_payload_for_snapshot(
+            snapshot=snapshot,
+            manifest=_minimal_manifest(),
+            git_meta={},
+        )
+
+        node_types = {node["type"] for node in payload["nodes"]}
+        edge_types = {edge["type"] for edge in payload["edges"]}
+        symbol_nodes = [node for node in payload["nodes"] if node["type"] == "Symbol"]
+        call_edges = [edge for edge in payload["edges"] if edge["type"] == "call"]
+
+        assert {"Repository", "Snapshot", "Manifest", "Symbol"} <= node_types
+        assert "repo_snapshot" in edge_types
+        assert len(symbol_nodes) == 2
+        assert symbol_nodes[0]["props"]["source_set"] == ["fc_structure", "scip"]
+        assert len(call_edges) == 1
+        assert call_edges[0]["confidence"] == "precise"
 
 
 # --- Graph query tests ---

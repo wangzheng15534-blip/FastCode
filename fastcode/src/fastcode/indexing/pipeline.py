@@ -2420,8 +2420,8 @@ class IndexPipeline:
                 )
                 if self.terminus_publisher.is_configured():
                     try:
-                        self.terminus_publisher.publish_snapshot_lineage(
-                            snapshot=merged_snapshot.to_dict(),
+                        self.terminus_publisher.publish_snapshot_lineage_for_snapshot(
+                            snapshot=merged_snapshot,
                             manifest=manifest,
                             git_meta=git_meta,
                             previous_snapshot_symbols=previous_snapshot_symbols,

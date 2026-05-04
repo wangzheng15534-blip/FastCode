@@ -80,9 +80,9 @@ class PublishingService:
                 previous_snapshot_symbols = self._previous_snapshot_symbol_versions(
                     run["repo_name"], branch_name, run["snapshot_id"]
                 )
-                self.terminus_publisher.publish_snapshot_lineage(
-                    snapshot=snapshot.to_dict(),
-                    manifest=manifest.to_dict(),
+                self.terminus_publisher.publish_snapshot_lineage_for_snapshot(
+                    snapshot=snapshot,
+                    manifest=manifest,
                     git_meta=git_meta,
                     previous_snapshot_symbols=previous_snapshot_symbols,
                     idempotency_key=f"lineage:{run_id}:{run['snapshot_id']}",
@@ -149,9 +149,9 @@ class PublishingService:
                 previous_snapshot_symbols = self._previous_snapshot_symbol_versions(
                     run["repo_name"], ref_name, run["snapshot_id"]
                 )
-                self.terminus_publisher.publish_snapshot_lineage(
-                    snapshot=snapshot.to_dict(),
-                    manifest=manifest.to_dict(),
+                self.terminus_publisher.publish_snapshot_lineage_for_snapshot(
+                    snapshot=snapshot,
+                    manifest=manifest,
                     git_meta=git_meta,
                     previous_snapshot_symbols=previous_snapshot_symbols,
                     idempotency_key=f"lineage:{run_id}:{run['snapshot_id']}",

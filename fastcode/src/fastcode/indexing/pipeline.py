@@ -1337,19 +1337,32 @@ class IndexPipeline:
         }
         return expanded_paths or scope_paths
 
-    def _drop_owned_semantic_evidence(
+    @staticmethod
+    def _evidence_source_owned(
+        source: str,
+        owned_sources: set[str] | None,
+    ) -> bool:
+        if owned_sources is None:
+            return source not in {"fc_structure", "scip"}
+        return source in owned_sources
+
+    def _drop_owned_evidence(
         self,
         *,
         snapshot: IRSnapshot,
         target_paths: set[str],
+        owned_sources: set[str] | None,
     ) -> IRSnapshot:
+        target_paths_norm = {normalize_path(path) for path in target_paths}
         owned_supports: list[IRUnitSupport] = []
         removed_support_ids: set[str] = set()
+        support_sources_by_id = {
+            support.support_id: support.source for support in snapshot.supports
+        }
         for support in snapshot.supports:
             support_path = normalize_path(support.path or "")
-            owned = (
-                support.source not in {"fc_structure", "scip"}
-                and support_path in target_paths
+            owned = support_path in target_paths_norm and self._evidence_source_owned(
+                support.source, owned_sources
             )
             if owned:
                 removed_support_ids.add(support.support_id)
@@ -1362,15 +1375,42 @@ class IndexPipeline:
         owned_relations: list[IRRelation] = []
         for relation in snapshot.relations:
             src_path = unit_paths.get(relation.src_unit_id, "")
-            resolver_owned = (
-                relation.source not in {"fc_structure", "scip"}
-                and src_path in target_paths
+            relation_sources = (
+                set(relation.support_sources)
+                if relation.support_sources
+                else {relation.source}
             )
-            if resolver_owned:
+            relation_owned = src_path in target_paths_norm and all(
+                self._evidence_source_owned(source, owned_sources)
+                for source in relation_sources
+                if source
+            )
+            if relation_owned:
                 continue
-            if any(
-                support_id in removed_support_ids for support_id in relation.support_ids
-            ):
+            removed_relation_support_ids = [
+                support_id
+                for support_id in relation.support_ids
+                if support_id in removed_support_ids
+            ]
+            if removed_relation_support_ids:
+                removed_sources = {
+                    support_sources_by_id.get(support_id, "")
+                    for support_id in removed_relation_support_ids
+                }
+                remaining_support_ids = [
+                    support_id
+                    for support_id in relation.support_ids
+                    if support_id not in removed_support_ids
+                ]
+                remaining_support_sources = set(relation.support_sources) - {
+                    source for source in removed_sources if source
+                }
+                if not remaining_support_ids and not remaining_support_sources:
+                    continue
+                relation_payload = relation.to_dict()
+                relation_payload["support_ids"] = remaining_support_ids
+                relation_payload["support_sources"] = sorted(remaining_support_sources)
+                owned_relations.append(IRRelation.from_dict(relation_payload))
                 continue
             owned_relations.append(relation)
 
@@ -1385,6 +1425,18 @@ class IndexPipeline:
             relations=owned_relations,
             embeddings=list(snapshot.embeddings),
             metadata=dict(snapshot.metadata or {}),
+        )
+
+    def _drop_owned_semantic_evidence(
+        self,
+        *,
+        snapshot: IRSnapshot,
+        target_paths: set[str],
+    ) -> IRSnapshot:
+        return self._drop_owned_evidence(
+            snapshot=snapshot,
+            target_paths=target_paths,
+            owned_sources=None,
         )
 
     @staticmethod
@@ -1572,6 +1624,11 @@ class IndexPipeline:
                 )
             )
         if scoped_scip_snapshot is not None:
+            base_snapshot = self._drop_owned_evidence(
+                snapshot=base_snapshot,
+                target_paths=target_paths,
+                owned_sources={"scip"},
+            )
             base_snapshot = merge_ir(base_snapshot, scoped_scip_snapshot)
 
         repair_frontier_summary = {

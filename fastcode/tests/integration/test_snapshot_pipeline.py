@@ -12,7 +12,13 @@ import pytest
 from git import Repo
 
 from fastcode.indexing.pipeline import IndexPipeline
-from fastcode.ir.types import IRAttachment, IRCodeUnit, IRSnapshot
+from fastcode.ir.types import (
+    IRAttachment,
+    IRCodeUnit,
+    IRRelation,
+    IRSnapshot,
+    IRUnitSupport,
+)
 from fastcode.scip.models import SCIPIndex
 from fastcode.store.index_run import IndexRunStore
 from fastcode.store.manifest import ManifestStore
@@ -1879,6 +1885,74 @@ def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
         assert rows_by_path["pkg/a.py"]["scoped_tool_ref"]
         assert rows_by_path["pkg/a.py"]["metadata"]["repair_frontier_summary"]
         assert rows_by_path["other/c.py"]["metadata"]["signature_hash"] == "sig:c:keep"
+
+
+def test_drop_owned_evidence_removes_scoped_scip_supports_only() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_support_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:supports",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:a",
+                    kind="function",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a",
+                )
+            ],
+            supports=[
+                IRUnitSupport(
+                    support_id="sup:scip",
+                    unit_id="unit:a",
+                    source="scip",
+                    support_kind="occurrence",
+                    path="pkg/a.py",
+                ),
+                IRUnitSupport(
+                    support_id="sup:semantic",
+                    unit_id="unit:a",
+                    source="semantic_resolver",
+                    support_kind="occurrence",
+                    path="pkg/a.py",
+                ),
+            ],
+            relations=[
+                IRRelation(
+                    relation_id="rel:scip",
+                    src_unit_id="unit:a",
+                    dst_unit_id="unit:a",
+                    relation_type="calls",
+                    resolution_state="derived",
+                    support_sources={"scip"},
+                    support_ids=["sup:scip"],
+                ),
+                IRRelation(
+                    relation_id="rel:semantic",
+                    src_unit_id="unit:a",
+                    dst_unit_id="unit:a",
+                    relation_type="calls",
+                    resolution_state="derived",
+                    support_sources={"semantic_resolver"},
+                    support_ids=["sup:semantic"],
+                ),
+            ],
+        )
+
+        pruned = pipeline._drop_owned_evidence(
+            snapshot=snapshot,
+            target_paths={"pkg/a.py"},
+            owned_sources={"scip"},
+        )
+
+        assert {support.support_id for support in pruned.supports} == {"sup:semantic"}
+        assert {relation.relation_id for relation in pruned.relations} == {
+            "rel:semantic"
+        }
 
 
 def _setup_repair_pipeline_with_one_changed_path(tmp: str) -> tuple[IndexPipeline, Any]:

@@ -1268,6 +1268,14 @@ class IndexPipeline:
         changed = {normalize_path(path) for path in changed_paths if path}
         return changed or candidate_paths
 
+    @staticmethod
+    def _candidate_scope_paths(elements: list[CodeElement]) -> set[str]:
+        return {
+            normalize_path(elem.relative_path or elem.file_path)
+            for elem in elements
+            if (elem.relative_path or elem.file_path)
+        }
+
     def _expand_repair_target_paths(
         self,
         *,
@@ -1276,6 +1284,8 @@ class IndexPipeline:
         scope_paths: set[str],
         max_hops: int | None = None,
         change_kinds: set[str] | None = None,
+        package_roots: list[str] | None = None,
+        degraded_reasons: list[str] | None = None,
     ) -> set[str]:
         if change_kinds is not None and change_kinds:
             if change_kinds == {"embedding_text_hash"}:
@@ -1335,6 +1345,17 @@ class IndexPipeline:
             if element_id in path_by_element_id
             and path_by_element_id[element_id] in scope_paths
         }
+        if expanded_paths and package_roots and degraded_reasons is not None:
+            root_set = {
+                normalize_path(root) for root in package_roots if normalize_path(root)
+            }
+            if root_set and any(
+                not any(
+                    path == root or path.startswith(f"{root}/") for root in root_set
+                )
+                for path in expanded_paths
+            ):
+                degraded_reasons.append("expansion_widened_past_package")
         return expanded_paths or scope_paths
 
     @staticmethod
@@ -1559,21 +1580,35 @@ class IndexPipeline:
 
         elements = self._reconstruct_elements_from_metadata()
         change_kind_set = set(change_kinds) if change_kinds else None
+        candidate_paths = self._candidate_scope_paths(elements)
         target_paths = self._repair_scope_paths(
             elements=elements,
             changed_paths=changed_paths,
             scope_kind=scope_kind,
             scope_roots=scope_roots,
         )
+        warnings: list[str] = []
+        degraded_reasons: list[str] = []
         if scope_kind != "package":
+            expansion_scope_paths = (
+                candidate_paths
+                if change_kind_set and change_kind_set - {"embedding_text_hash"}
+                else target_paths
+            )
             target_paths = self._expand_repair_target_paths(
                 elements=elements,
                 changed_paths=changed_paths,
-                scope_paths=target_paths,
+                scope_paths=expansion_scope_paths,
                 change_kinds=change_kind_set,
+                package_roots=(
+                    scope_roots
+                    or self._package_scope_roots(
+                        self.loader.repo_path or "",
+                        changed_paths,
+                    )
+                ),
+                degraded_reasons=degraded_reasons,
             )
-        warnings: list[str] = []
-        degraded_reasons: list[str] = []
         scoped_tool_languages: list[str] = []
         if not target_paths:
             return {

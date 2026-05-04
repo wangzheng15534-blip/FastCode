@@ -2052,6 +2052,87 @@ def test_run_semantic_repair_frontier_no_fallback_for_embedding_only_change() ->
         assert result["degraded_reasons"] == []
 
 
+def test_run_semantic_repair_frontier_records_expansion_widened_past_package() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_repair_expand_pkg_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:expand-package",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+            metadata={"semantic_resolver_runs": []},
+        )
+        record = pipeline.snapshot_store.save_snapshot(snapshot, metadata={})
+        pipeline.snapshot_store.save_relational_facts = Mock(return_value=None)
+        pipeline.snapshot_store.save_ir_graphs = Mock(return_value=None)
+        pipeline.snapshot_symbol_index.register_snapshot = Mock(return_value=None)
+        pipeline.ir_graph_builder.build_graphs = Mock(return_value=SimpleNamespace())
+        pipeline._load_artifacts_by_key = Mock(return_value=True)
+        pipeline.loader.repo_path = tmp
+        elements = [
+            SimpleNamespace(
+                id="elem:a",
+                relative_path="pkg/a.py",
+                file_path="pkg/a.py",
+                to_dict=lambda: {
+                    "id": "elem:a",
+                    "type": "function",
+                    "relative_path": "pkg/a.py",
+                    "metadata": {"stable_unit_id": "unit:function:a"},
+                },
+            ),
+            SimpleNamespace(
+                id="elem:other",
+                relative_path="other/c.py",
+                file_path="other/c.py",
+                to_dict=lambda: {
+                    "id": "elem:other",
+                    "type": "function",
+                    "relative_path": "other/c.py",
+                    "metadata": {"stable_unit_id": "unit:function:other"},
+                },
+            ),
+        ]
+        pipeline._reconstruct_elements_from_metadata = Mock(return_value=elements)
+        pipeline._apply_semantic_resolvers = Mock(return_value=snapshot)
+
+        class _StubGraph:
+            def __contains__(self, node_id: str) -> bool:
+                return node_id in {"elem:a", "elem:other"}
+
+            def predecessors(self, node_id: str) -> list[str]:
+                return ["elem:other"] if node_id == "elem:a" else []
+
+        pipeline.graph_builder = SimpleNamespace(
+            dependency_graph=_StubGraph(),
+            call_graph=_StubGraph(),
+            inheritance_graph=_StubGraph(),
+        )
+        os.makedirs(os.path.join(tmp, "pkg"), exist_ok=True)
+        os.makedirs(os.path.join(tmp, "other"), exist_ok=True)
+        with open(os.path.join(tmp, "pkg", "a.py"), "w", encoding="utf-8") as handle:
+            handle.write("print('a')\n")
+        with open(os.path.join(tmp, "other", "c.py"), "w", encoding="utf-8") as handle:
+            handle.write("print('c')\n")
+
+        result = pipeline.run_semantic_repair_frontier(
+            snapshot_id=record.snapshot_id,
+            scope_kind="path",
+            scope_roots=[],
+            changed_paths=["pkg/a.py"],
+            repo_name="repo",
+            change_kinds=["signature_hash"],
+        )
+
+        assert result["status"] == "repaired"
+        assert "expansion_widened_past_package" in result["degraded_reasons"]
+        assert result["repair_frontier"]["target_paths"] == [
+            "other/c.py",
+            "pkg/a.py",
+        ]
+
+
 # ---------------------------------------------------------------------------
 # Regression: stale fencing token must not leave artifact files
 # ---------------------------------------------------------------------------

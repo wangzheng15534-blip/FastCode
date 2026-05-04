@@ -183,30 +183,39 @@ class PgRetrievalStore:
     def _json_safe_payload(value: Any) -> Any:
         if isinstance(value, dict):
             payload: dict[str, Any] = {}
-            mapping = cast(dict[Any, Any], value)
-            for key, item in mapping.items():
-                key_str = str(key)
+            for k, v in value.items():
+                key_str = str(k)
                 if key_str == "embedding":
                     continue
-                payload[key_str] = PgRetrievalStore._json_safe_payload(item)
+                if isinstance(v, dict):
+                    payload[key_str] = PgRetrievalStore._json_safe_payload(v)
+                elif isinstance(v, (list, tuple, set)):
+                    payload[key_str] = [
+                        PgRetrievalStore._json_safe_payload(item) for item in v
+                    ]
+                elif isinstance(v, np.ndarray):
+                    payload[key_str] = v.tolist()
+                elif isinstance(v, np.integer):  # type: ignore[arg-type]
+                    payload[key_str] = int(v)
+                elif isinstance(v, np.floating):  # type: ignore[arg-type]
+                    payload[key_str] = float(v)
+                elif isinstance(v, np.bool_):  # type: ignore[arg-type]
+                    payload[key_str] = bool(v)
+                else:
+                    payload[key_str] = v
             return payload
-        if isinstance(value, list):
-            sequence = cast(Sequence[Any], value)
-            return [PgRetrievalStore._json_safe_payload(item) for item in sequence]
-        if isinstance(value, tuple):
-            sequence = cast(Sequence[Any], value)
-            return [PgRetrievalStore._json_safe_payload(item) for item in sequence]
+        if isinstance(value, (list, tuple)):
+            return [PgRetrievalStore._json_safe_payload(item) for item in value]
         if isinstance(value, set):
-            items = cast(set[Any], value)
-            return [PgRetrievalStore._json_safe_payload(item) for item in items]
+            return [PgRetrievalStore._json_safe_payload(item) for item in value]
         if isinstance(value, np.ndarray):
             return value.tolist()
         if isinstance(value, np.integer):  # type: ignore[arg-type]
-            return int(cast(Any, value))
+            return int(value)
         if isinstance(value, np.floating):  # type: ignore[arg-type]
-            return float(cast(Any, value))
+            return float(value)
         if isinstance(value, np.bool_):  # type: ignore[arg-type]
-            return bool(cast(Any, value))
+            return bool(value)
         return value
 
     def upsert_elements(self, snapshot_id: str, elements: list[dict[str, Any]]) -> None:

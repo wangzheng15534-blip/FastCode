@@ -20,7 +20,9 @@ import posixpath
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections import defaultdict
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
@@ -251,8 +253,48 @@ class HelperBackedSemanticResolver(SemanticResolver):
             return [node_path, helper_path, *helper_files]
         if self.helper_runtime == "go":
             go_path = shutil.which("go") or "go"
+            compiled = self._compiled_go_helper_command(go_path, Path(helper_path))
+            if compiled:
+                return [compiled, *helper_files]
             return [go_path, "run", helper_path, "--", *helper_files]
         return [sys.executable, helper_path, *helper_files]
+
+    def _compiled_go_helper_command(
+        self, go_path: str, helper_path: Path
+    ) -> str | None:
+        if not helper_path.exists():
+            return None
+        binary_path = self._go_helper_binary_path(helper_path)
+        try:
+            if binary_path.exists():
+                return str(binary_path)
+            binary_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = binary_path.with_suffix(binary_path.suffix + ".tmp")
+            result = subprocess.run(
+                [go_path, "build", "-o", str(tmp_path), str(helper_path)],
+                capture_output=True,
+                text=True,
+                timeout=self.helper_timeout_seconds,
+                check=False,
+                cwd=str(helper_path.parent),
+            )
+            if result.returncode != 0:
+                return None
+            os.replace(tmp_path, binary_path)
+            binary_path.chmod(0o755)
+            return str(binary_path)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    @staticmethod
+    def _go_helper_binary_path(helper_path: Path) -> Path:
+        digest = sha256(helper_path.read_bytes()).hexdigest()[:16]
+        suffix = ".exe" if os.name == "nt" else ""
+        return (
+            Path(tempfile.gettempdir())
+            / "fastcode-helper-cache"
+            / f"{helper_path.stem}-{digest}{suffix}"
+        )
 
     def _run_semantic_helper(
         self,

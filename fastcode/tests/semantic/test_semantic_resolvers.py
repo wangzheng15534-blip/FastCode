@@ -1560,6 +1560,71 @@ def test_go_target_files_use_repo_root_for_absolute_paths(
     assert result == [str(target)]
 
 
+def test_go_helper_command_uses_cached_binary_not_go_run(tmp_path: Path) -> None:
+    resolver = GoCompilerResolver()
+    binary = tmp_path / "go-helper"
+
+    with (
+        patch(
+            "fastcode.semantic.resolvers.helper_backed.shutil.which",
+            return_value="/usr/bin/go",
+        ),
+        patch.object(
+            resolver,
+            "_compiled_go_helper_command",
+            return_value=str(binary),
+        ) as compiled,
+    ):
+        command = resolver._helper_command(["/repo/main.go"])
+
+    compiled.assert_called_once()
+    assert command == [str(binary), "/repo/main.go"]
+
+
+def test_go_helper_command_falls_back_when_cached_binary_unavailable() -> None:
+    resolver = GoCompilerResolver()
+
+    with (
+        patch(
+            "fastcode.semantic.resolvers.helper_backed.shutil.which",
+            return_value="/usr/bin/go",
+        ),
+        patch.object(resolver, "_compiled_go_helper_command", return_value=None),
+    ):
+        command = resolver._helper_command(["/repo/main.go"])
+
+    assert command[:3] == ["/usr/bin/go", "run", str(resolver._helper_path())]
+    assert command[3:] == ["--", "/repo/main.go"]
+
+
+def test_compiled_go_helper_command_builds_and_reuses_cached_binary(
+    tmp_path: Path,
+) -> None:
+    resolver = GoCompilerResolver()
+    helper = tmp_path / "helper.go"
+    helper.write_text("package main\nfunc main() {}\n", encoding="utf-8")
+    binary = tmp_path / "helper-bin"
+
+    def _fake_build(command: list[str], **_: Any) -> SimpleNamespace:
+        Path(command[3]).write_bytes(b"binary")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with (
+        patch.object(resolver, "_go_helper_binary_path", return_value=binary),
+        patch(
+            "fastcode.semantic.resolvers.helper_backed.subprocess.run",
+            side_effect=_fake_build,
+        ) as run_mock,
+    ):
+        first = resolver._compiled_go_helper_command("/usr/bin/go", helper)
+        second = resolver._compiled_go_helper_command("/usr/bin/go", helper)
+
+    assert first == str(binary)
+    assert second == str(binary)
+    assert run_mock.call_count == 1
+    assert binary.exists()
+
+
 def test_java_compiler_facts_emit_semantic_relations():
     resolver = JavaCompilerResolver()
     file_app = _file_unit("src/App.java", language="java")

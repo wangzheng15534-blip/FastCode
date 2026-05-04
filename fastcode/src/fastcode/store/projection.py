@@ -28,11 +28,7 @@ class ProjectionStore:
         self.logger = logging.getLogger(__name__)
         proj_cfg = config.get("projection", {})
         storage_cfg = config.get("storage", {})
-        self.dsn = (
-            proj_cfg.get("postgres_dsn")
-            or storage_cfg.get("postgres_dsn")
-            or ""
-        )
+        self.dsn = proj_cfg.get("postgres_dsn") or storage_cfg.get("postgres_dsn") or ""
         self.enabled = bool(self.dsn)
         self.pool = None
         if self.enabled and psycopg is None:
@@ -110,6 +106,22 @@ class ProjectionStore:
                 )
                 cur.execute(
                     """
+                    CREATE TABLE IF NOT EXISTS projection_dirty_scopes (
+                        snapshot_id TEXT NOT NULL,
+                        scope_kind TEXT NOT NULL,
+                        scope_key TEXT NOT NULL,
+                        dirty_paths JSONB NOT NULL,
+                        dirty_units JSONB,
+                        dirty_package_roots JSONB,
+                        dirty_reason TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL,
+                        PRIMARY KEY (snapshot_id, scope_kind, scope_key)
+                    )
+                    """
+                )
+                cur.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS schema_migrations (
                         component TEXT NOT NULL,
                         version TEXT NOT NULL,
@@ -127,6 +139,189 @@ class ProjectionStore:
                     ("projection_store", "v1", utc_now()),
                 )
             conn.commit()
+
+    @staticmethod
+    def _json_list(value: Any) -> list[Any]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return [value]
+            return parsed if isinstance(parsed, list) else [parsed]
+        return list(value) if isinstance(value, (tuple, set)) else [value]
+
+    def _dirty_scope_from_row(self, row: Any) -> dict[str, Any] | None:
+        if not row:
+            return None
+        return {
+            "snapshot_id": row[0],
+            "scope_kind": row[1],
+            "scope_key": row[2],
+            "dirty_paths": self._json_list(row[3]),
+            "dirty_units": self._json_list(row[4]),
+            "dirty_package_roots": self._json_list(row[5]),
+            "dirty_reason": row[6],
+            "created_at": str(row[7]),
+            "updated_at": str(row[8]),
+        }
+
+    def get_dirty_scope(
+        self, snapshot_id: str, scope_kind: str, scope_key: str
+    ) -> dict[str, Any] | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                    SELECT snapshot_id, scope_kind, scope_key, dirty_paths,
+                           dirty_units, dirty_package_roots, dirty_reason,
+                           created_at, updated_at
+                    FROM projection_dirty_scopes
+                    WHERE snapshot_id=%s AND scope_kind=%s AND scope_key=%s
+                    """,
+                (snapshot_id, scope_kind, scope_key),
+            )
+            return self._dirty_scope_from_row(cur.fetchone())
+
+    def is_dirty(self, snapshot_id: str, scope_kind: str, scope_key: str) -> bool:
+        return bool(
+            self.get_dirty_scope(snapshot_id, scope_kind, scope_key)
+            or self.get_dirty_scope(snapshot_id, "all", "*")
+        )
+
+    def list_dirty_scopes(self, snapshot_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                    SELECT snapshot_id, scope_kind, scope_key, dirty_paths,
+                           dirty_units, dirty_package_roots, dirty_reason,
+                           created_at, updated_at
+                    FROM projection_dirty_scopes
+                    WHERE snapshot_id=%s
+                    ORDER BY updated_at DESC
+                    """,
+                (snapshot_id,),
+            )
+            return [
+                dirty
+                for row in cur.fetchall()
+                if (dirty := self._dirty_scope_from_row(row)) is not None
+            ]
+
+    def clear_dirty(self, snapshot_id: str, scope_kind: str, scope_key: str) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM projection_dirty_scopes
+                    WHERE snapshot_id=%s AND scope_kind=%s AND scope_key=%s
+                    """,
+                    (snapshot_id, scope_kind, scope_key),
+                )
+            conn.commit()
+
+    def mark_dirty(
+        self,
+        *,
+        snapshot_id: str,
+        scope_kind: str,
+        scope_key: str,
+        dirty_paths: list[str],
+        dirty_reason: str,
+        dirty_units: list[str] | None = None,
+        dirty_package_roots: list[str] | None = None,
+    ) -> None:
+        now = utc_now()
+        existing = self.get_dirty_scope(snapshot_id, scope_kind, scope_key)
+        paths = sorted(
+            set(dirty_paths) | set(existing.get("dirty_paths", []) if existing else [])
+        )
+        units = sorted(
+            set(dirty_units or [])
+            | set(existing.get("dirty_units", []) if existing else [])
+        )
+        package_roots = sorted(
+            set(dirty_package_roots or [])
+            | set(existing.get("dirty_package_roots", []) if existing else [])
+        )
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO projection_dirty_scopes (
+                        snapshot_id, scope_kind, scope_key, dirty_paths,
+                        dirty_units, dirty_package_roots, dirty_reason,
+                        created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s, %s)
+                    ON CONFLICT (snapshot_id, scope_kind, scope_key) DO UPDATE SET
+                        dirty_paths=EXCLUDED.dirty_paths,
+                        dirty_units=EXCLUDED.dirty_units,
+                        dirty_package_roots=EXCLUDED.dirty_package_roots,
+                        dirty_reason=EXCLUDED.dirty_reason,
+                        updated_at=EXCLUDED.updated_at
+                    """,
+                    (
+                        snapshot_id,
+                        scope_kind,
+                        scope_key,
+                        json.dumps(paths, ensure_ascii=False),
+                        json.dumps(units, ensure_ascii=False),
+                        json.dumps(package_roots, ensure_ascii=False),
+                        dirty_reason,
+                        now,
+                        now,
+                    ),
+                )
+            conn.commit()
+
+    def mark_all_dirty(
+        self,
+        snapshot_id: str,
+        dirty_reason: str,
+        *,
+        dirty_paths: list[str] | None = None,
+        dirty_units: list[str] | None = None,
+        dirty_package_roots: list[str] | None = None,
+    ) -> None:
+        self.mark_dirty(
+            snapshot_id=snapshot_id,
+            scope_kind="all",
+            scope_key="*",
+            dirty_paths=dirty_paths or [],
+            dirty_units=dirty_units,
+            dirty_package_roots=dirty_package_roots,
+            dirty_reason=dirty_reason,
+        )
+
+    def list_builds_for_snapshot(self, snapshot_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                    SELECT projection_id, snapshot_id, scope_kind, scope_key,
+                           params_hash, status, warnings_json, created_at, updated_at
+                    FROM projection_builds
+                    WHERE snapshot_id=%s AND status='ready'
+                    ORDER BY updated_at DESC
+                    """,
+                (snapshot_id,),
+            )
+            builds: list[dict[str, Any]] = []
+            for row in cur.fetchall():
+                builds.append(
+                    {
+                        "projection_id": row[0],
+                        "snapshot_id": row[1],
+                        "scope_kind": row[2],
+                        "scope_key": row[3],
+                        "params_hash": row[4],
+                        "status": row[5],
+                        "created_at": str(row[7]),
+                        "updated_at": str(row[8]),
+                    }
+                )
+            return builds
 
     def find_cached_projection_id(
         self, scope: ProjectionScope, params_hash: str

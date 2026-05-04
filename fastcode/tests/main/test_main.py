@@ -145,3 +145,47 @@ def test_process_semantic_repair_frontier_replays_pipeline_with_payload():
     assert result["repair_frontier"]["changed_paths"] == ["a.py"]
     assert result["repair_frontier"]["scope_kind"] == "package"
     assert result["repair_frontier"]["scope_roots"] == ["pkg"]
+
+
+def test_process_semantic_repair_frontier_marks_existing_projections_dirty():
+    fc = FastCode.__new__(FastCode)
+    fc.pipeline = SimpleNamespace(
+        run_semantic_repair_frontier=lambda **kwargs: {
+            "status": "repaired",
+            "warnings": [],
+            "repair_frontier": {
+                "scope_kind": kwargs["scope_kind"],
+                "scope_roots": kwargs["scope_roots"],
+                "changed_paths": kwargs["changed_paths"],
+                "target_paths": ["pkg/a.py", "pkg/b.py"],
+            },
+        }
+    )
+    marked: list[dict[str, Any]] = []
+    fc.projection_store = SimpleNamespace(
+        enabled=True,
+        list_builds_for_snapshot=lambda _snapshot_id: [
+            {"scope_kind": "snapshot", "scope_key": "scope:snapshot"},
+            {"scope_kind": "query", "scope_key": "scope:query"},
+        ],
+        mark_dirty=lambda **kwargs: marked.append(kwargs),
+    )
+
+    result = fc.process_semantic_repair_frontier(
+        {
+            "snapshot_id": "snap:1",
+            "repo_name": "repo",
+            "changed_paths": ["pkg/a.py"],
+            "scope_kind": "package",
+            "scope_roots": ["pkg"],
+            "change_kinds": ["api_surface_hash"],
+        }
+    )
+
+    assert result["projection_dirty"]["marked"] == 2
+    assert result["projection_dirty"]["reason"] == "api"
+    assert {entry["scope_key"] for entry in marked} == {
+        "scope:snapshot",
+        "scope:query",
+    }
+    assert marked[0]["dirty_paths"] == ["pkg/a.py", "pkg/b.py"]

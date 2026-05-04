@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
+import tempfile
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from fastcode.indexing.projection import ProjectionService
+from fastcode.ir.projection import ProjectionBuildResult
+from fastcode.ir.types import IRSnapshot
 from fastcode.main import FastCode
 
 pytestmark = [pytest.mark.test_double]
@@ -24,6 +28,10 @@ class _FakeProjectionStore:
         self._builds: dict[str, dict[str, Any]] = {}
         # When find_by_snapshot is called, return these projection_ids
         self._snapshot_to_projection: dict[str, str | None] = {}
+        self.cached_id: str | None = None
+        self.saved: list[tuple[ProjectionBuildResult, str]] = []
+        self.dirty_scopes: set[tuple[str, str, str]] = set()
+        self.cleared: list[tuple[str, str, str]] = []
 
     def set_layer(self, projection_id: str, layer: str, data: dict[str, Any]) -> None:
         self._layers.setdefault(projection_id, {})[layer.upper()] = data
@@ -34,8 +42,51 @@ class _FakeProjectionStore:
     def get_build(self, projection_id: str) -> dict[str, Any] | None:
         return self._builds.get(projection_id)
 
+    def find_cached_projection_id(self, _scope: Any, _params_hash: str) -> str | None:
+        return self.cached_id
+
+    def is_dirty(self, snapshot_id: str, scope_kind: str, scope_key: str) -> bool:
+        return (snapshot_id, scope_kind, scope_key) in self.dirty_scopes
+
+    def clear_dirty(self, snapshot_id: str, scope_kind: str, scope_key: str) -> None:
+        self.cleared.append((snapshot_id, scope_kind, scope_key))
+        self.dirty_scopes.discard((snapshot_id, scope_kind, scope_key))
+
+    def save(self, result: ProjectionBuildResult, params_hash: str) -> None:
+        self.saved.append((result, params_hash))
+        self._builds[result.projection_id] = {
+            "projection_id": result.projection_id,
+            "snapshot_id": result.snapshot_id,
+            "scope_kind": result.scope_kind,
+            "scope_key": result.scope_key,
+            "status": "ready",
+        }
+        self.set_layer(result.projection_id, "L0", result.l0)
+        self.set_layer(result.projection_id, "L1", result.l1)
+        self.set_layer(result.projection_id, "L2", result.l2_index)
+
     def _connect(self) -> Any:
         return self
+
+
+class _FakeProjectionTransformer:
+    ALGO_VERSION = "test"
+
+    def __init__(self) -> None:
+        self.calls: list[Any] = []
+
+    def build(self, scope: Any, **_kwargs: Any) -> ProjectionBuildResult:
+        self.calls.append(scope)
+        return ProjectionBuildResult(
+            projection_id=f"proj_built_{len(self.calls)}",
+            snapshot_id=scope.snapshot_id,
+            scope_kind=scope.scope_kind,
+            scope_key=scope.scope_key,
+            l0={"layer": "L0", "built": len(self.calls)},
+            l1={"layer": "L1", "built": len(self.calls)},
+            l2_index={"layer": "L2", "built": len(self.calls)},
+            chunks=[],
+        )
 
 
 class _FakeCursor:
@@ -128,9 +179,75 @@ def _make_fc_with_prefix(
     return fc, store, conn
 
 
+def _make_projection_service(
+    tmp: str, store: _FakeProjectionStore
+) -> tuple[ProjectionService, _FakeProjectionTransformer]:
+    transformer = _FakeProjectionTransformer()
+    snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:projection",
+        branch="main",
+        commit_id="c1",
+        tree_id="t1",
+    )
+    snapshot_store = SimpleNamespace(
+        get_snapshot_record=lambda _snapshot_id: SimpleNamespace(artifact_key="ak"),
+        load_snapshot=lambda _snapshot_id: snapshot,
+        load_ir_graphs=lambda _snapshot_id: None,
+        snapshot_dir=lambda snapshot_id: f"{tmp}/{snapshot_id}",
+    )
+    service = ProjectionService(
+        config={},
+        logger=logging.getLogger("test"),
+        projection_store=store,
+        projection_transformer=transformer,
+        snapshot_store=snapshot_store,
+        manifest_store=SimpleNamespace(),
+        load_artifacts_by_key=lambda _key: True,
+    )
+    return service, transformer
+
+
 # ---------------------------------------------------------------------------
 # Unit tests for FastCode.get_session_prefix
 # ---------------------------------------------------------------------------
+
+
+def test_build_projection_reuses_clean_cached_scope_double():
+    with tempfile.TemporaryDirectory(prefix="fc_projection_clean_") as tmp:
+        store = _FakeProjectionStore()
+        store.cached_id = "proj_cached"
+        store.set_layer("proj_cached", "L0", {"layer": "L0"})
+        store.set_layer("proj_cached", "L1", {"layer": "L1"})
+        store.set_layer("proj_cached", "L2", {"layer": "L2"})
+        service, transformer = _make_projection_service(tmp, store)
+
+        result = service.build_projection("snapshot", snapshot_id="snap:projection")
+
+        assert result["status"] == "reused"
+        assert result["projection_id"] == "proj_cached"
+        assert transformer.calls == []
+
+
+def test_build_projection_rebuilds_dirty_cached_scope_double():
+    with tempfile.TemporaryDirectory(prefix="fc_projection_dirty_") as tmp:
+        store = _FakeProjectionStore()
+        store.cached_id = "proj_cached"
+        store.set_layer("proj_cached", "L0", {"layer": "L0"})
+        store.set_layer("proj_cached", "L1", {"layer": "L1"})
+        store.set_layer("proj_cached", "L2", {"layer": "L2"})
+        scope_key = ProjectionService.projection_scope_key(
+            "snapshot", "snap:projection", None, None, None
+        )
+        store.dirty_scopes.add(("snap:projection", "snapshot", scope_key))
+        service, transformer = _make_projection_service(tmp, store)
+
+        result = service.build_projection("snapshot", snapshot_id="snap:projection")
+
+        assert result["status"] == "built"
+        assert result["projection_id"] == "proj_built_1"
+        assert len(transformer.calls) == 1
+        assert store.cleared == [("snap:projection", "snapshot", scope_key)]
 
 
 def test_get_session_prefix_returns_l0_and_l1_double():

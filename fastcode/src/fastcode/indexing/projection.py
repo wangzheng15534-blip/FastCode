@@ -160,11 +160,16 @@ class ProjectionService:
             ),
         )
 
+        scope_dirty = False
+        is_dirty = getattr(self.projection_store, "is_dirty", None)
+        if callable(is_dirty):
+            scope_dirty = bool(is_dirty(resolved_snapshot_id, scope_kind, scope_key))
+
         if not force:
             cached_id = self.projection_store.find_cached_projection_id(
                 scope, params_hash
             )
-            if cached_id:
+            if cached_id and not scope_dirty:
                 l0 = self.projection_store.get_layer(cached_id, "L0")
                 l1 = self.projection_store.get_layer(cached_id, "L1")
                 l2 = self.projection_store.get_layer(cached_id, "L2")
@@ -189,6 +194,9 @@ class ProjectionService:
             doc_mentions=doc_mentions or None,
         )
         self.projection_store.save(build, params_hash=params_hash)
+        clear_dirty = getattr(self.projection_store, "clear_dirty", None)
+        if callable(clear_dirty):
+            clear_dirty(resolved_snapshot_id, scope_kind, scope_key)
         payload = build.to_dict()
         mirror_root = self._mirror_projection_artifacts(resolved_snapshot_id, payload)
         payload["status"] = "built"

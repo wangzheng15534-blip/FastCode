@@ -9,7 +9,7 @@ import os
 import pickle
 from collections.abc import Callable, Generator
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 import networkx as nx
 import numpy as np
@@ -54,6 +54,7 @@ from ..utils import (
     config_to_legacy_dict,
     ensure_dir,
     load_runtime_config,
+    normalize_path,
     prepare_runtime_config_mapping,
     setup_logging,
 )
@@ -582,6 +583,69 @@ class FastCode:
     ) -> dict[str, Any]:
         return self.publishing_service.retry_index_run_recovery(run_id, payload=payload)
 
+    @staticmethod
+    def _projection_dirty_reason(change_kinds: list[str]) -> str:
+        kind_set = set(change_kinds)
+        if {"api_surface_hash", "signature_hash"} & kind_set:
+            return "api"
+        if "edge_surface_hash" in kind_set:
+            return "graph_topology"
+        if "embedding_text_hash" in kind_set:
+            return "semantic"
+        return "semantic"
+
+    def _mark_projection_dirty_for_repair(
+        self,
+        *,
+        snapshot_id: str,
+        result: dict[str, Any],
+        change_kinds: list[str],
+    ) -> dict[str, Any]:
+        store = getattr(self, "projection_store", None)
+        if store is None or not getattr(store, "enabled", False):
+            return {"marked": 0, "reason": None}
+        list_builds = getattr(store, "list_builds_for_snapshot", None)
+        mark_dirty = getattr(store, "mark_dirty", None)
+        if not callable(list_builds) or not callable(mark_dirty):
+            return {"marked": 0, "reason": "unsupported_store"}
+        list_projection_builds = cast(
+            Callable[[str], list[dict[str, Any]]], list_builds
+        )
+        mark_projection_dirty = cast(Callable[..., Any], mark_dirty)
+
+        frontier = dict(result.get("repair_frontier", {}) or {})
+        dirty_paths = sorted(
+            {
+                normalize_path(path)
+                for path in (
+                    list(frontier.get("changed_paths") or [])
+                    + list(frontier.get("target_paths") or [])
+                )
+                if path
+            }
+        )
+        if not dirty_paths:
+            return {"marked": 0, "reason": None}
+
+        dirty_reason = self._projection_dirty_reason(change_kinds)
+        marked = 0
+        for build in list_projection_builds(snapshot_id):
+            scope_kind = str(build.get("scope_kind") or "")
+            scope_key = str(build.get("scope_key") or "")
+            if not scope_kind or not scope_key:
+                continue
+            mark_projection_dirty(
+                snapshot_id=snapshot_id,
+                scope_kind=scope_kind,
+                scope_key=scope_key,
+                dirty_paths=dirty_paths,
+                dirty_units=[],
+                dirty_package_roots=list(frontier.get("scope_roots") or []),
+                dirty_reason=dirty_reason,
+            )
+            marked += 1
+        return {"marked": marked, "reason": dirty_reason, "dirty_paths": dirty_paths}
+
     def process_semantic_repair_frontier(
         self, payload: dict[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -606,6 +670,18 @@ class FastCode:
         result["repair_frontier"]["reason"] = (
             payload.get("reason") or "api_or_edge_surface_changed"
         )
+        try:
+            projection_dirty = self._mark_projection_dirty_for_repair(
+                snapshot_id=snapshot_id,
+                result=result,
+                change_kinds=list(payload.get("change_kinds") or []),
+            )
+            if projection_dirty.get("marked"):
+                result["projection_dirty"] = projection_dirty
+        except Exception as exc:
+            result.setdefault("warnings", []).append(
+                f"projection_dirty_mark_failed: {exc}"
+            )
         return result
 
     def process_redo_tasks(self, limit: int = 10) -> dict[str, Any]:

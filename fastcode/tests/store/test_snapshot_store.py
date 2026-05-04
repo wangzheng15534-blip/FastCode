@@ -669,6 +669,87 @@ class TestSnapshotStoreRelationalFacts:
         # Should not raise
         store.save_relational_facts(snap)
 
+    def test_relational_fact_payloads_do_not_call_record_to_dict_double(self) -> None:
+        class NoDictDocument(IRDocument):
+            def to_dict(self) -> dict[str, Any]:
+                raise AssertionError("document payload should stay field-explicit")
+
+        class NoDictSymbol(IRSymbol):
+            def to_dict(self) -> dict[str, Any]:
+                raise AssertionError("symbol payload should stay field-explicit")
+
+        class NoDictOccurrence(IROccurrence):
+            def to_dict(self) -> dict[str, Any]:
+                raise AssertionError("occurrence payload should stay field-explicit")
+
+        class NoDictEdge(IREdge):
+            def to_dict(self) -> dict[str, Any]:
+                raise AssertionError("edge payload should stay field-explicit")
+
+        class NoDictAttachment(IRAttachment):
+            def to_dict(self) -> dict[str, Any]:
+                raise AssertionError("attachment payload should stay field-explicit")
+
+        assert SnapshotStore._document_payload(
+            NoDictDocument(
+                doc_id="doc:a",
+                path="pkg/a.py",
+                language="python",
+                source_set={"scip", "fc_structure"},
+            )
+        )["source_set"] == ["fc_structure", "scip"]
+        assert SnapshotStore._symbol_payload(
+            NoDictSymbol(
+                symbol_id="sym:a",
+                external_symbol_id="scip python a",
+                path="pkg/a.py",
+                display_name="a",
+                kind="function",
+                language="python",
+                metadata={"rank": 1},
+            )
+        )["metadata"] == {"rank": 1}
+        assert (
+            SnapshotStore._occurrence_payload(
+                NoDictOccurrence(
+                    occurrence_id="occ:a",
+                    symbol_id="sym:a",
+                    doc_id="doc:a",
+                    role="definition",
+                    start_line=1,
+                    start_col=0,
+                    end_line=1,
+                    end_col=5,
+                    source="scip",
+                )
+            )["source"]
+            == "scip"
+        )
+        assert (
+            SnapshotStore._edge_payload(
+                NoDictEdge(
+                    edge_id="edge:a",
+                    src_id="sym:a",
+                    dst_id="sym:b",
+                    edge_type="call",
+                    source="scip",
+                    confidence="precise",
+                )
+            )["edge_type"]
+            == "call"
+        )
+        assert SnapshotStore._attachment_payload(
+            NoDictAttachment(
+                attachment_id="att:a",
+                target_id="sym:a",
+                target_type="symbol",
+                attachment_type="summary",
+                source="llm_annotation",
+                confidence="derived",
+                payload={"text": "summary"},
+            )
+        )["payload"] == {"text": "summary"}
+
     @given(snap=snapshot_st())
     @settings(max_examples=15)
     @pytest.mark.edge

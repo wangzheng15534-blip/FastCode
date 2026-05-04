@@ -345,48 +345,65 @@ class VectorStore:
         if not overviews:
             self.logger.warning("No repository overviews available for search")
             return []
+        if k <= 0:
+            return []
 
-        # Ensure query is float32 and normalized
-        query_vector = query_vector.astype(np.float32).reshape(1, -1)
-        if self.distance_metric == "cosine":
-            faiss.normalize_L2(query_vector)
+        query = np.array(query_vector, dtype=np.float32, copy=True).reshape(1, -1)
+        if query.shape[1] == 0:
+            return []
 
-        # Calculate similarities with all repo overviews
-        results: list[tuple[dict[str, Any], float]] = []
+        repo_names: list[str] = []
+        overview_payloads: list[dict[str, Any]] = []
+        embedding_rows: list[np.ndarray] = []
         for repo_name, overview_data in overviews.items():
-            embedding = overview_data["embedding"].reshape(1, -1)
-
-            # Normalize embedding if using cosine
-            if self.distance_metric == "cosine":
-                faiss.normalize_L2(embedding)
-
-            # Calculate similarity
-            if self.distance_metric == "cosine":
-                # Inner product (cosine similarity for normalized vectors)
-                similarity = float(np.dot(query_vector, embedding.T)[0, 0])
-            else:
-                # L2 distance converted to similarity
-                distance = float(np.linalg.norm(query_vector - embedding))
-                similarity = 1.0 / (1.0 + distance)
-
-            print(f"similarity: {similarity}, repo_name: {repo_name}")
-
-            # Apply minimum score filter
-            if min_score is not None and similarity < min_score:
+            raw_embedding = overview_data.get("embedding")
+            if raw_embedding is None:
                 continue
+            try:
+                embedding = np.asarray(raw_embedding, dtype=np.float32).reshape(-1)
+            except (TypeError, ValueError):
+                continue
+            if embedding.size != query.shape[1]:
+                continue
+            if not bool(np.isfinite(embedding).all()):
+                embedding = np.nan_to_num(
+                    embedding, copy=True, nan=0.0, posinf=0.0, neginf=0.0
+                )
+            repo_names.append(repo_name)
+            overview_payloads.append(overview_data)
+            embedding_rows.append(embedding)
 
-            # Prepare metadata for result
+        if not embedding_rows:
+            return []
+
+        matrix = np.vstack(embedding_rows).astype(np.float32, copy=False)
+        if self.distance_metric == "cosine":
+            faiss.normalize_L2(query)
+            faiss.normalize_L2(matrix)
+            scores = matrix @ query.reshape(-1)
+        else:
+            distances = np.linalg.norm(matrix - query, axis=1)
+            scores = 1.0 / (1.0 + distances)
+
+        ranked_indexes = np.argsort(scores)[::-1]
+        results: list[tuple[dict[str, Any], float]] = []
+        for raw_index in ranked_indexes:
+            index = int(raw_index)
+            score = float(scores[index])
+            if min_score is not None and score < min_score:
+                continue
+            metadata = overview_payloads[index].get("metadata", {})
+            if not isinstance(metadata, dict):
+                metadata = {}
             result_metadata = {
-                "repo_name": repo_name,
+                "repo_name": repo_names[index],
                 "type": "repository_overview",
-                **overview_data["metadata"],
+                **metadata,
             }
-
-            results.append((result_metadata, similarity))
-
-        # Sort by similarity and return top k
-        results.sort(key=lambda x: x[1], reverse=True)
-        return results[:k]
+            results.append((result_metadata, score))
+            if len(results) >= k:
+                break
+        return results
 
     def search_batch(
         self, query_vectors: np.ndarray, k: int = 10, min_score: float | None = None

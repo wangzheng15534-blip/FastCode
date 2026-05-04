@@ -14,7 +14,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ..db_runtime import DBRuntime
-from ..ir.types import IRSnapshot
+from ..ir.types import (
+    IRAttachment,
+    IRDocument,
+    IREdge,
+    IROccurrence,
+    IRSnapshot,
+    IRSymbol,
+)
 from ..scip.models import SCIPArtifactRef
 from ..utils import ensure_dir, safe_jsonable, utc_now
 from .records import SnapshotRecord, SnapshotRefRecord
@@ -33,6 +40,82 @@ class SnapshotStore:
             sqlite_path=self.db_path, storage_cfg=storage_cfg
         )
         self._init_db()
+
+    @staticmethod
+    def _source_set_payload(values: set[str]) -> list[str]:
+        return sorted(value for value in values if value)
+
+    @classmethod
+    def _document_payload(cls, doc: IRDocument) -> dict[str, Any]:
+        return {
+            "doc_id": doc.doc_id,
+            "path": doc.path,
+            "language": doc.language,
+            "blob_oid": doc.blob_oid,
+            "content_hash": doc.content_hash,
+            "source_set": cls._source_set_payload(doc.source_set),
+        }
+
+    @classmethod
+    def _symbol_payload(cls, sym: IRSymbol) -> dict[str, Any]:
+        return {
+            "symbol_id": sym.symbol_id,
+            "external_symbol_id": sym.external_symbol_id,
+            "path": sym.path,
+            "display_name": sym.display_name,
+            "kind": sym.kind,
+            "language": sym.language,
+            "qualified_name": sym.qualified_name,
+            "signature": sym.signature,
+            "start_line": sym.start_line,
+            "start_col": sym.start_col,
+            "end_line": sym.end_line,
+            "end_col": sym.end_col,
+            "source_priority": sym.source_priority,
+            "source_set": cls._source_set_payload(sym.source_set),
+            "metadata": safe_jsonable(sym.metadata),
+        }
+
+    @staticmethod
+    def _occurrence_payload(occ: IROccurrence) -> dict[str, Any]:
+        return {
+            "occurrence_id": occ.occurrence_id,
+            "symbol_id": occ.symbol_id,
+            "doc_id": occ.doc_id,
+            "role": occ.role,
+            "start_line": occ.start_line,
+            "start_col": occ.start_col,
+            "end_line": occ.end_line,
+            "end_col": occ.end_col,
+            "source": occ.source,
+            "metadata": safe_jsonable(occ.metadata),
+        }
+
+    @staticmethod
+    def _edge_payload(edge: IREdge) -> dict[str, Any]:
+        return {
+            "edge_id": edge.edge_id,
+            "src_id": edge.src_id,
+            "dst_id": edge.dst_id,
+            "edge_type": edge.edge_type,
+            "source": edge.source,
+            "confidence": edge.confidence,
+            "doc_id": edge.doc_id,
+            "metadata": safe_jsonable(edge.metadata),
+        }
+
+    @staticmethod
+    def _attachment_payload(attachment: IRAttachment) -> dict[str, Any]:
+        return {
+            "attachment_id": attachment.attachment_id,
+            "target_id": attachment.target_id,
+            "target_type": attachment.target_type,
+            "attachment_type": attachment.attachment_type,
+            "source": attachment.source,
+            "confidence": attachment.confidence,
+            "payload": safe_jsonable(attachment.payload),
+            "metadata": safe_jsonable(attachment.metadata),
+        }
 
     def _init_db(self) -> None:
         with self.db_runtime.connect() as conn:
@@ -938,7 +1021,7 @@ class SnapshotStore:
                         doc.doc_id,
                         doc.path,
                         doc.language,
-                        json.dumps(doc.to_dict(), ensure_ascii=False),
+                        json.dumps(self._document_payload(doc), ensure_ascii=False),
                     ),
                 )
             for sym in snapshot.symbols:
@@ -959,7 +1042,7 @@ class SnapshotStore:
                         sym.kind,
                         sym.language,
                         sym.source_priority,
-                        json.dumps(sym.to_dict(), ensure_ascii=False),
+                        json.dumps(self._symbol_payload(sym), ensure_ascii=False),
                     ),
                 )
             for occ in snapshot.occurrences:
@@ -982,7 +1065,7 @@ class SnapshotStore:
                         occ.end_line,
                         occ.end_col,
                         occ.source,
-                        json.dumps(occ.to_dict(), ensure_ascii=False),
+                        json.dumps(self._occurrence_payload(occ), ensure_ascii=False),
                     ),
                 )
             seen_edge_ids: set[str] = set()
@@ -1007,10 +1090,11 @@ class SnapshotStore:
                         edge.source,
                         edge.confidence,
                         edge.doc_id,
-                        json.dumps(edge.to_dict(), ensure_ascii=False),
+                        json.dumps(self._edge_payload(edge), ensure_ascii=False),
                     ),
                 )
             for attachment in snapshot.attachments:
+                attachment_payload = self._attachment_payload(attachment)
                 self.db_runtime.execute(
                     conn,
                     """
@@ -1027,8 +1111,8 @@ class SnapshotStore:
                         attachment.attachment_type,
                         attachment.source,
                         attachment.confidence,
-                        json.dumps(attachment.payload, ensure_ascii=False),
-                        json.dumps(attachment.metadata, ensure_ascii=False),
+                        json.dumps(attachment_payload["payload"], ensure_ascii=False),
+                        json.dumps(attachment_payload["metadata"], ensure_ascii=False),
                     ),
                 )
             conn.commit()

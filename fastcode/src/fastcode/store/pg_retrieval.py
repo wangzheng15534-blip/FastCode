@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -105,16 +104,113 @@ class PgRetrievalStore:
         return self.enabled and self.backend_mode == "pg_hybrid"
 
     @staticmethod
-    def _vector_literal(vec: Sequence[float]) -> str:
-        if not vec:
+    def _vector_array(vec: Any) -> np.ndarray | None:
+        try:
+            array = np.asarray(vec, dtype=np.float32).reshape(-1)
+        except (TypeError, ValueError):
+            return None
+        if array.size == 0:
+            return None
+        if not bool(np.isfinite(array).all()):
+            array = np.nan_to_num(array, copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+        return array
+
+    @staticmethod
+    def _vector_literal_from_array(vec: np.ndarray) -> str:
+        if vec.size == 0:
             raise ValueError("Cannot create vector literal from empty sequence")
-        cleaned: list[float] = []
-        for v in vec:
-            f = float(v)
-            if math.isnan(f) or math.isinf(f):
-                f = 0.0
-            cleaned.append(f)
-        return "[" + ",".join(f"{v:.8f}" for v in cleaned) + "]"
+        return "[" + ",".join(f"{float(v):.8f}" for v in vec) + "]"
+
+    @classmethod
+    def _vector_literal(cls, vec: Sequence[float] | np.ndarray) -> str:
+        array = cls._vector_array(vec)
+        if array is None:
+            raise ValueError("Cannot create vector literal from empty sequence")
+        return cls._vector_literal_from_array(array)
+
+    @staticmethod
+    def _row_value(row: Any, index: int, key: str) -> Any:
+        if isinstance(row, dict):
+            return cast(dict[str, Any], row).get(key)
+        try:
+            return row[index]
+        except (IndexError, KeyError, TypeError):
+            return None
+
+    @staticmethod
+    def _decode_metadata(raw_metadata: Any) -> dict[str, Any] | None:
+        if isinstance(raw_metadata, dict):
+            return cast(dict[str, Any], raw_metadata)
+        if not raw_metadata:
+            return None
+        try:
+            parsed = json.loads(str(raw_metadata))
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return cast(dict[str, Any], parsed) if isinstance(parsed, dict) else None
+
+    @classmethod
+    def _metadata_score_rows(cls, rows: Any) -> list[tuple[dict[str, Any], float]]:
+        out: list[tuple[dict[str, Any], float]] = []
+        for row in rows:
+            raw_metadata = cls._row_value(row, 0, "metadata_json")
+            metadata = cls._decode_metadata(raw_metadata)
+            if metadata is None:
+                continue
+            raw_score = cls._row_value(row, 1, "score")
+            out.append((metadata, float(raw_score or 0.0)))
+        return out
+
+    @classmethod
+    def _row_filter_value(
+        cls,
+        row: Any,
+        index: int,
+        key: str,
+        raw_metadata: Any,
+        metadata_key: str,
+    ) -> str | None:
+        raw_value = cls._row_value(row, index, key)
+        if raw_value is not None:
+            return str(raw_value)
+        if isinstance(raw_metadata, dict):
+            metadata = cast(dict[str, Any], raw_metadata)
+            fallback = metadata.get(metadata_key) or metadata.get(key)
+            return str(fallback) if fallback is not None else None
+        return None
+
+    @staticmethod
+    def _json_safe_payload(value: Any) -> Any:
+        if isinstance(value, dict):
+            payload: dict[str, Any] = {}
+            mapping = cast(dict[Any, Any], value)
+            for key, item in mapping.items():
+                key_str = str(key)
+                if key_str == "embedding":
+                    continue
+                payload[key_str] = PgRetrievalStore._json_safe_payload(item)
+            return payload
+        if isinstance(value, list):
+            sequence = cast(Sequence[Any], value)
+            return [PgRetrievalStore._json_safe_payload(item) for item in sequence]
+        if isinstance(value, tuple):
+            sequence = cast(Sequence[Any], value)
+            return [PgRetrievalStore._json_safe_payload(item) for item in sequence]
+        if isinstance(value, set):
+            items = cast(set[Any], value)
+            return [PgRetrievalStore._json_safe_payload(item) for item in items]
+        if isinstance(value, np.ndarray):
+            return [
+                PgRetrievalStore._json_safe_payload(item)
+                for item in value.astype(np.float32).tolist()
+            ]
+        if isinstance(value, np.integer):  # type: ignore[arg-type]
+            return int(cast(Any, value))
+        if isinstance(value, np.floating):  # type: ignore[arg-type]
+            return float(cast(Any, value))
+        if isinstance(value, np.bool_):  # type: ignore[arg-type]
+            return bool(cast(Any, value))
+        return value
 
     def upsert_elements(self, snapshot_id: str, elements: list[dict[str, Any]]) -> None:
         if not self.enabled:
@@ -143,36 +239,15 @@ class PgRetrievalStore:
                     ]
                 )
 
-                # Strip numpy arrays and other non-serializable values from metadata
-                # before JSON encoding. Embeddings are stored separately in the
-                # embedding/embedding_arr columns.
-                def _make_json_safe(val: Any) -> Any:
-                    if isinstance(val, np.ndarray):
-                        return val.tolist()
-                    if isinstance(val, np.integer):  # type: ignore[arg-type]
-                        return int(cast(Any, val))
-                    if isinstance(val, np.floating):  # type: ignore[arg-type]
-                        return float(cast(Any, val))
-                    if isinstance(val, np.bool_):  # type: ignore[arg-type]
-                        return bool(cast(Any, val))
-                    return val
-
-                serializable_elem = {k: _make_json_safe(v) for k, v in elem.items()}
-                if isinstance(serializable_elem.get("metadata"), dict):
-                    serializable_elem["metadata"] = {
-                        k: _make_json_safe(v)
-                        for k, v in serializable_elem["metadata"].items()
-                    }
+                serializable_elem = self._json_safe_payload(elem)
                 metadata_json = json.dumps(serializable_elem, ensure_ascii=False)
 
                 vector_literal: str | None = None
                 embedding_arr: list[float] | None = None
-                if isinstance(embedding, (list, tuple)) and embedding:
-                    embedding_arr = [float(x) for x in cast(list[Any], embedding)]
-                    vector_literal = self._vector_literal(embedding_arr)
-                if isinstance(embedding, np.ndarray) and embedding.size > 0:
-                    embedding_arr = [float(x) for x in embedding.tolist()]
-                    vector_literal = self._vector_literal(embedding_arr)
+                embedding_array = self._vector_array(embedding)
+                if embedding_array is not None:
+                    vector_literal = self._vector_literal_from_array(embedding_array)
+                    embedding_arr = [float(value) for value in embedding_array]
 
                 cur.execute(
                     """
@@ -241,9 +316,10 @@ class PgRetrievalStore:
         element_types: list[str] | None = None,
         top_k: int = 20,
     ) -> list[tuple[dict[str, Any], float]]:
-        if not self.enabled or not query_embedding:
+        query_vector = self._vector_array(query_embedding)
+        if not self.enabled or query_vector is None or top_k <= 0:
             return []
-        vector_literal = self._vector_literal(query_embedding)
+        vector_literal = self._vector_literal_from_array(query_vector)
 
         with self.db_runtime.connect() as conn:
             cur = conn.cursor()
@@ -315,110 +391,136 @@ class PgRetrievalStore:
                         """,
                         (vector_literal, snapshot_id, vector_literal, top_k),
                     )
-                rows = cur.fetchall()
-                out: list[tuple[dict[str, Any], float]] = []
-                for row in rows:
-                    raw_meta: Any = (
-                        cast(dict[str, Any], row).get("metadata_json")
-                        if isinstance(row, dict)
-                        else row[0]
-                    )
-                    raw_score: Any = (
-                        cast(dict[str, Any], row).get("score")
-                        if isinstance(row, dict)
-                        else row[1]
-                    )
-                    if isinstance(raw_meta, dict):
-                        meta = cast(dict[str, Any], raw_meta)
-                    elif raw_meta:
-                        try:
-                            meta = cast(dict[str, Any], json.loads(str(raw_meta)))
-                        except (json.JSONDecodeError, TypeError):
-                            continue
-                    else:
-                        continue
-                    out.append((meta, float(raw_score or 0.0)))
-                return out
+                return self._metadata_score_rows(cur.fetchall())
             except Exception as exc:
                 self.logger.debug(
                     "pgvector query failed, falling back to client-side cosine: %s", exc
                 )
-                # Fallback: compute cosine with embedding_arr client-side.
-                if repo_filter and element_types:
-                    cur.execute(
-                        """
-                        SELECT metadata_json, embedding_arr
-                        FROM embedding_vectors
-                        WHERE snapshot_id=%s
-                          AND repo_name = ANY(%s)
-                          AND element_type = ANY(%s)
-                        LIMIT %s
-                        """,
-                        (snapshot_id, repo_filter, element_types, top_k * 8),
-                    )
-                elif repo_filter:
-                    cur.execute(
-                        """
-                        SELECT metadata_json, embedding_arr
-                        FROM embedding_vectors
-                        WHERE snapshot_id=%s
-                          AND repo_name = ANY(%s)
-                        LIMIT %s
-                        """,
-                        (snapshot_id, repo_filter, top_k * 8),
-                    )
-                elif element_types:
-                    cur.execute(
-                        """
-                        SELECT metadata_json, embedding_arr
-                        FROM embedding_vectors
-                        WHERE snapshot_id=%s
-                          AND element_type = ANY(%s)
-                        LIMIT %s
-                        """,
-                        (snapshot_id, element_types, top_k * 8),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        SELECT metadata_json, embedding_arr
-                        FROM embedding_vectors
-                        WHERE snapshot_id=%s
-                        LIMIT %s
-                        """,
-                        (snapshot_id, top_k * 8),
-                    )
-                q = np.array(query_embedding, dtype=np.float32)
-                q_norm = float(np.linalg.norm(q)) or 1.0
-                scored: list[tuple[dict[str, Any], float]] = []
-                allowed_types = set(element_types) if element_types else None
-                allowed_repos = set(repo_filter) if repo_filter else None
-                for row in cur.fetchall():
-                    meta_raw, emb_arr = row
-                    if not emb_arr:
-                        continue
-                    emb = np.array(emb_arr, dtype=np.float32)
-                    denom = (float(np.linalg.norm(emb)) or 1.0) * q_norm
-                    score = float(np.dot(emb, q) / denom)
-                    meta = cast(
-                        dict[str, Any],
-                        meta_raw
-                        if isinstance(meta_raw, dict)
-                        else json.loads(meta_raw),
-                    )
-                    if allowed_types:
-                        meta_type: str | None = meta.get("type") or meta.get(
-                            "element_type"
-                        )
-                        if meta_type not in allowed_types:
-                            continue
-                    if allowed_repos:
-                        meta_repo: str | None = meta.get("repo_name")
-                        if meta_repo not in allowed_repos:
-                            continue
-                    scored.append((meta, score))
-                scored.sort(key=lambda x: x[1], reverse=True)
-                return scored[:top_k]
+                return self._semantic_search_fallback(
+                    cur,
+                    snapshot_id,
+                    query_vector,
+                    repo_filter=repo_filter,
+                    element_types=element_types,
+                    top_k=top_k,
+                )
+
+    def _semantic_search_fallback(
+        self,
+        cur: Any,
+        snapshot_id: str,
+        query_vector: np.ndarray,
+        *,
+        repo_filter: list[str] | None = None,
+        element_types: list[str] | None = None,
+        top_k: int = 20,
+    ) -> list[tuple[dict[str, Any], float]]:
+        # Fallback: compute cosine with embedding_arr client-side. Keep metadata
+        # raw until ranking picks the rows that must cross the Python boundary.
+        limit = max(top_k, 1) * 8
+        if repo_filter and element_types:
+            cur.execute(
+                """
+                SELECT metadata_json, embedding_arr, repo_name, element_type
+                FROM embedding_vectors
+                WHERE snapshot_id=%s
+                  AND repo_name = ANY(%s)
+                  AND element_type = ANY(%s)
+                LIMIT %s
+                """,
+                (snapshot_id, repo_filter, element_types, limit),
+            )
+        elif repo_filter:
+            cur.execute(
+                """
+                SELECT metadata_json, embedding_arr, repo_name, element_type
+                FROM embedding_vectors
+                WHERE snapshot_id=%s
+                  AND repo_name = ANY(%s)
+                LIMIT %s
+                """,
+                (snapshot_id, repo_filter, limit),
+            )
+        elif element_types:
+            cur.execute(
+                """
+                SELECT metadata_json, embedding_arr, repo_name, element_type
+                FROM embedding_vectors
+                WHERE snapshot_id=%s
+                  AND element_type = ANY(%s)
+                LIMIT %s
+                """,
+                (snapshot_id, element_types, limit),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT metadata_json, embedding_arr, repo_name, element_type
+                FROM embedding_vectors
+                WHERE snapshot_id=%s
+                LIMIT %s
+                """,
+                (snapshot_id, limit),
+            )
+
+        query_norm = float(np.linalg.norm(query_vector))
+        if query_norm <= 0.0:
+            return []
+        allowed_types = set(element_types) if element_types else None
+        allowed_repos = set(repo_filter) if repo_filter else None
+        raw_metadata_by_index: list[Any] = []
+        vectors: list[np.ndarray] = []
+
+        for row in cur.fetchall():
+            raw_metadata = self._row_value(row, 0, "metadata_json")
+            if allowed_repos:
+                row_repo = self._row_filter_value(
+                    row, 2, "repo_name", raw_metadata, "repo_name"
+                )
+                if row_repo is not None and row_repo not in allowed_repos:
+                    continue
+            if allowed_types:
+                row_type = self._row_filter_value(
+                    row, 3, "element_type", raw_metadata, "type"
+                )
+                if row_type is not None and row_type not in allowed_types:
+                    continue
+            embedding = self._vector_array(self._row_value(row, 1, "embedding_arr"))
+            if embedding is None or embedding.size != query_vector.size:
+                continue
+            raw_metadata_by_index.append(raw_metadata)
+            vectors.append(embedding)
+
+        if not vectors:
+            return []
+
+        matrix = np.vstack(vectors).astype(np.float32, copy=False)
+        denominators = np.linalg.norm(matrix, axis=1) * query_norm
+        scores = np.divide(
+            matrix @ query_vector,
+            denominators,
+            out=np.zeros(len(vectors), dtype=np.float32),
+            where=denominators > 0.0,
+        )
+
+        out: list[tuple[dict[str, Any], float]] = []
+        for raw_index in np.argsort(scores)[::-1]:
+            index = int(raw_index)
+            metadata = self._decode_metadata(raw_metadata_by_index[index])
+            if metadata is None:
+                continue
+            if allowed_types:
+                meta_type = metadata.get("type") or metadata.get("element_type")
+                if meta_type not in allowed_types:
+                    continue
+            if allowed_repos:
+                meta_repo = metadata.get("repo_name")
+                if meta_repo not in allowed_repos:
+                    continue
+            out.append((metadata, float(scores[index])))
+            if len(out) >= top_k:
+                break
+        return out
 
     def keyword_search(
         self,
@@ -506,26 +608,4 @@ class PgRetrievalStore:
                     """,
                     (query, snapshot_id, query, top_k),
                 )
-            out: list[tuple[dict[str, Any], float]] = []
-            for row in cur.fetchall():
-                raw_meta: Any = (
-                    cast(dict[str, Any], row).get("metadata_json")
-                    if isinstance(row, dict)
-                    else row[0]
-                )
-                raw_score: Any = (
-                    cast(dict[str, Any], row).get("score")
-                    if isinstance(row, dict)
-                    else row[1]
-                )
-                if isinstance(raw_meta, dict):
-                    meta = cast(dict[str, Any], raw_meta)
-                elif raw_meta:
-                    try:
-                        meta = cast(dict[str, Any], json.loads(str(raw_meta)))
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-                else:
-                    continue
-                out.append((meta, float(raw_score or 0.0)))
-            return out
+            return self._metadata_score_rows(cur.fetchall())

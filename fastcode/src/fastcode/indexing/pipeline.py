@@ -1937,15 +1937,17 @@ class IndexPipeline:
             temp_store.initialize(self.embedder.embedding_dim)
             vectors: list[list[float]] = []
             metadata: list[CodeElementMeta] = []
+            all_elem_dicts: list[dict[str, Any]] = []
             for elem in elements:
+                elem_dict = elem.to_dict()
+                elem_dict["snapshot_id"] = snapshot_id
+                all_elem_dicts.append(cast(dict[str, Any], elem_dict))
                 embedding = elem.metadata.get("embedding")
                 if embedding is not None:
                     elem.metadata["snapshot_id"] = snapshot_id
                     elem.metadata["source_priority"] = 10
                     vectors.append(embedding)
-                    elem_dict = elem.to_dict()
-                    elem_dict["snapshot_id"] = snapshot_id
-                    metadata.append(elem_dict)
+                    metadata.append(cast(CodeElementMeta, elem_dict))
             if not vectors:
                 raise RuntimeError("No embeddings produced during indexing")
             temp_store.add_vectors(np.array(vectors), metadata)
@@ -2585,9 +2587,7 @@ class IndexPipeline:
                 merged_snapshot,
                 metadata={"run_id": run_id, "artifact_key": artifact_key},
             )
-            all_pg_elements: list[dict[str, Any]] = [
-                cast(dict[str, Any], elem.to_dict()) for elem in elements
-            ]
+            all_pg_elements: list[dict[str, Any]] = list(all_elem_dicts)
             if doc_elements_payload:
                 all_pg_elements.extend(doc_elements_payload)
             if not self.pg_retrieval_store:

@@ -15,7 +15,7 @@ import re
 import shutil
 import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from time import perf_counter
 from typing import Any, cast
@@ -350,9 +350,63 @@ class IndexPipeline:
         )
         return elements
 
-    @staticmethod
-    def _unit_artifact_rows(elements: list[CodeElement]) -> list[dict[str, Any]]:
-        return [cast(dict[str, Any], elem.to_dict()) for elem in elements]
+    def _unit_artifact_rows(
+        self,
+        elements: Sequence[Any],
+        *,
+        target_paths: set[str] | None = None,
+        repair_frontier_summary: dict[str, Any] | None = None,
+        scoped_tool_ref: str | None = None,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        repo_root = self.loader.repo_path or ""
+        target_paths_norm = (
+            {normalize_path(path) for path in target_paths} if target_paths else None
+        )
+        for elem in elements:
+            row_data: Any = elem
+            to_dict = getattr(elem, "to_dict", None)
+            if callable(to_dict):
+                row_data = to_dict()
+            row = cast(dict[str, Any], row_data)
+            rel_path = normalize_path(
+                row.get("relative_path") or row.get("file_path") or ""
+            )
+            if target_paths_norm is not None and rel_path not in target_paths_norm:
+                continue
+            metadata = dict(cast(dict[str, Any], row.get("metadata", {}) or {}))
+            if rel_path:
+                metadata.setdefault(
+                    "package_root", self._package_scope_root(repo_root, rel_path)
+                )
+            embedding_artifact_ref = row.get("embedding_artifact_ref")
+            if embedding_artifact_ref is None:
+                embedding_artifact_ref = metadata.get("embedding_artifact_ref")
+            if embedding_artifact_ref is None and row.get("embedding_text"):
+                embedding_artifact_ref = self.embedder.embedding_artifact_ref(
+                    str(row["embedding_text"])
+                )
+            if embedding_artifact_ref is not None:
+                metadata["embedding_artifact_ref"] = embedding_artifact_ref
+            if scoped_tool_ref is not None:
+                metadata["scoped_tool_ref"] = scoped_tool_ref
+            if repair_frontier_summary is not None:
+                metadata["repair_frontier_summary"] = json.dumps(
+                    repair_frontier_summary,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            row["metadata"] = metadata
+            if embedding_artifact_ref is not None:
+                row["embedding_artifact_ref"] = embedding_artifact_ref
+            if scoped_tool_ref is not None:
+                row["scoped_tool_ref"] = scoped_tool_ref
+            if rel_path:
+                row["package_root"] = metadata.get("package_root")
+            if repair_frontier_summary is not None:
+                row["repair_frontier_summary"] = metadata["repair_frontier_summary"]
+            rows.append(row)
+        return rows
 
     def _has_active_doc_persistence(self, graph_runtime: Any) -> bool:
         """Return True when doc ingestion has at least one active sink."""
@@ -1520,6 +1574,32 @@ class IndexPipeline:
         if scoped_scip_snapshot is not None:
             base_snapshot = merge_ir(base_snapshot, scoped_scip_snapshot)
 
+        repair_frontier_summary = {
+            "snapshot_id": snapshot_id,
+            "scope_kind": scope_kind,
+            "scope_roots": scope_roots,
+            "changed_paths": changed_paths,
+            "target_paths": sorted(target_paths),
+            "change_kinds": sorted(change_kind_set or []),
+            "tool_rerun_languages": list(scoped_tool_languages),
+            "degraded_reasons": list(degraded_reasons),
+        }
+        scoped_tool_ref = hashlib.sha1(
+            json.dumps(repair_frontier_summary, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        affected_rows = self._unit_artifact_rows(
+            elements,
+            target_paths=target_paths,
+            repair_frontier_summary=repair_frontier_summary,
+            scoped_tool_ref=scoped_tool_ref,
+        )
+        affected_stable_unit_ids: list[str] = []
+        for row in affected_rows:
+            metadata = cast(dict[str, Any], row.get("metadata", {}) or {})
+            stable_unit_id = str(metadata.get("stable_unit_id") or "")
+            if stable_unit_id:
+                affected_stable_unit_ids.append(stable_unit_id)
+        affected_stable_unit_ids = sorted(set(affected_stable_unit_ids))
         repaired_snapshot = self._apply_semantic_resolvers(
             snapshot=base_snapshot,
             elements=elements,
@@ -1532,10 +1612,12 @@ class IndexPipeline:
             json.loads(record.metadata_json) if record.metadata_json is not None else {}
         )
         self.snapshot_store.save_snapshot(repaired_snapshot, metadata=metadata)
-        self.unit_artifact_store.replace_snapshot_units(
-            snapshot_id=snapshot_id,
-            elements=self._unit_artifact_rows(elements),
-        )
+        if affected_stable_unit_ids:
+            self.unit_artifact_store.refresh_units(
+                snapshot_id=snapshot_id,
+                stable_unit_ids=affected_stable_unit_ids,
+                elements=affected_rows,
+            )
         self.snapshot_symbol_index.register_snapshot(repaired_snapshot)
         self.snapshot_store.save_relational_facts(repaired_snapshot)
         repaired_ir_graphs = self.ir_graph_builder.build_graphs(repaired_snapshot)

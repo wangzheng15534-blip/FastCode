@@ -1811,6 +1811,41 @@ def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
             os.path.join(tmp, "pkg", "sub", "b.py"), "w", encoding="utf-8"
         ) as handle:
             handle.write("print('b')\n")
+        pipeline.unit_artifact_store.replace_snapshot_units(
+            "snap:repo:repair",
+            elements=[
+                {
+                    "type": "function",
+                    "relative_path": "pkg/a.py",
+                    "metadata": {
+                        "stable_unit_id": "unit:function:a",
+                        "signature_hash": "sig:a:old",
+                        "embedding_artifact_ref": "embedding:a:old",
+                        "package_root": "pkg",
+                    },
+                },
+                {
+                    "type": "function",
+                    "relative_path": "pkg/sub/b.py",
+                    "metadata": {
+                        "stable_unit_id": "unit:function:b",
+                        "signature_hash": "sig:b:old",
+                        "embedding_artifact_ref": "embedding:b:old",
+                        "package_root": "pkg",
+                    },
+                },
+                {
+                    "type": "function",
+                    "relative_path": "other/c.py",
+                    "metadata": {
+                        "stable_unit_id": "unit:function:c",
+                        "signature_hash": "sig:c:keep",
+                        "embedding_artifact_ref": "embedding:c",
+                        "package_root": "other",
+                    },
+                },
+            ],
+        )
         with patch(
             "fastcode.indexing.pipeline.run_scip_for_language",
             return_value=None,
@@ -1840,6 +1875,10 @@ def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
             "pkg/sub/b.py",
             "other/c.py",
         }
+        rows_by_path = {row["relative_path"]: row for row in stored_units}
+        assert rows_by_path["pkg/a.py"]["scoped_tool_ref"]
+        assert rows_by_path["pkg/a.py"]["metadata"]["repair_frontier_summary"]
+        assert rows_by_path["other/c.py"]["metadata"]["signature_hash"] == "sig:c:keep"
 
 
 def _setup_repair_pipeline_with_one_changed_path(tmp: str) -> tuple[IndexPipeline, Any]:

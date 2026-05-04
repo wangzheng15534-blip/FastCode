@@ -155,6 +155,12 @@ class CodeIndexer:
         ):
             elem.metadata["embedding"] = elem_dict.get("embedding")
             elem.metadata["embedding_text"] = elem_dict.get("embedding_text")
+            elem.metadata["embedding_text_hash"] = (
+                elem_dict.get("metadata", {}) or {}
+            ).get("embedding_text_hash")
+            elem.metadata["embedding_artifact_ref"] = elem_dict.get(
+                "embedding_artifact_ref"
+            )
 
         self.logger.info(
             f"✓ Repository extraction completed for {repo_name or 'Unknown'}: "
@@ -213,6 +219,12 @@ class CodeIndexer:
             ):
                 elem.metadata["embedding"] = elem_dict.get("embedding")
                 elem.metadata["embedding_text"] = elem_dict.get("embedding_text")
+                elem.metadata["embedding_text_hash"] = (
+                    elem_dict.get("metadata", {}) or {}
+                ).get("embedding_text_hash")
+                elem.metadata["embedding_artifact_ref"] = elem_dict.get(
+                    "embedding_artifact_ref"
+                )
 
         return self.elements
 

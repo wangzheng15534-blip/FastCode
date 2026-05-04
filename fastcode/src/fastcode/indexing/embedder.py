@@ -162,6 +162,10 @@ class CodeEmbedder:
         digest = hashlib.sha256(f"{payload}\0{text}".encode()).hexdigest()
         return f"embedding_v2_{digest}"
 
+    def embedding_artifact_ref(self, text: str) -> str:
+        """Return the stable cache/artifact locator for prepared embedding text."""
+        return self._embedding_cache_key(text)
+
     def _get_cached_embedding(self, key: str) -> np.ndarray | None:
         if not self._embedding_cache_enabled or self._embedding_cache is None:
             return None
@@ -288,6 +292,7 @@ class CodeEmbedder:
         for elem, text, embedding in zip(elements, texts, embeddings, strict=True):
             elem["embedding"] = embedding
             elem["embedding_text"] = text
+            elem["embedding_artifact_ref"] = self.embedding_artifact_ref(text)
             metadata = dict(elem.get("metadata", {}) or {})
             metadata["embedding_text_hash"] = hashlib.sha256(
                 text.encode("utf-8")

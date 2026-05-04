@@ -156,3 +156,6 @@ def test_embed_code_elements_persists_embedding_text_hash() -> None:
     metadata = batch[0]["metadata"]
     assert "embedding_text_hash" in metadata
     assert metadata["embedding_text_hash"]
+    assert batch[0]["embedding_artifact_ref"] == embedder.embedding_artifact_ref(
+        batch[0]["embedding_text"]
+    )

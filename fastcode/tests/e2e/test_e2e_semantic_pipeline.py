@@ -18,8 +18,8 @@ from __future__ import annotations
 import contextlib
 import os
 import pathlib
-from types import SimpleNamespace
 import subprocess
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 

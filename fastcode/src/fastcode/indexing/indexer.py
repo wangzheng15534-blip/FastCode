@@ -735,6 +735,6 @@ class CodeIndexer:
         Note: Repository overviews are no longer stored in self.elements
         """
         if self.vector_store and self.current_repo_name:
-            overviews = self.vector_store.load_repo_overviews()
+            overviews = self.vector_store.load_repo_overviews(include_embeddings=False)
             return overviews.get(self.current_repo_name)
         return None

@@ -110,12 +110,15 @@ Stable release should mean all of the following are true at once:
   - embedding cache payloads now store `float32` byte buffers plus explicit shape/dtype metadata instead of Python `list[float]` vectors
   - `store/cache.py` now persists hot dialogue/session/query payloads as explicit JSON envelopes and embedding entries as buffer-aware cache envelopes instead of generic object storage on the active cache paths
   - PostgreSQL retrieval persistence now strips raw embedding arrays from JSON metadata and stores vectors only in vector-specific columns
+  - `store/pg_retrieval.py` now builds JSON row payloads from an explicit stable element field set instead of recursively normalizing arbitrary whole-element dicts during hot inserts
 - Publishing boundary hardening:
   - Terminus lineage publishing now has a typed `IRSnapshot` boundary that builds payloads from snapshot fields and IR units/relations without full `IRSnapshot.to_dict()` expansion
   - `PublishingService` and the active index pipeline call the typed lineage publisher; the dict-based publisher API remains as a compatibility shim
+- API shell serialization hardening:
+  - REST and web query/session endpoints now use explicit source and dialogue serializers from `api/serialization.py` instead of generic recursive `safe_jsonable()` conversion
 - Object materialization hardening:
   - PostgreSQL semantic fallback now keeps candidate vectors in NumPy arrays and only JSON-decodes metadata for ranked results returned across the Python boundary
-  - repository-overview search ranks overview embeddings as a NumPy matrix and only materializes metadata for returned rows
+  - repository overview persistence now writes an explicit JSON manifest plus NumPy embedding archive, lets metadata-only callers skip the embedding archive entirely, and only JSON-decodes ranked overview metadata for returned rows
   - PostgreSQL relational fact persistence uses explicit typed payload serializers instead of repeated record `to_dict()` expansion
 - Async endpoint hardening:
   - REST API repository load/index/cache-load/multi-index/upload paths offload blocking work with `asyncio.to_thread`
@@ -484,15 +487,17 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 **Gap:** Boundary handling is still copy-heavy. Several hot paths materialize Python `dict`/`list` payloads repeatedly before persistence, cache storage, or native-library handoff. That undermines both throughput and the intended thin-shell contract.
 
 **Current audit findings:**
-- API/shell surfaces still normalize arbitrary objects through recursive Python copying:
+- generic JSON normalization is now narrower, but still present in remaining shell/storage edges:
   - `utils/json.py:safe_jsonable()` recursively converts dict/list/set/object trees
-  - `api/routes.py`, `api/web.py`, and `store/snapshot.py` still rely on generic safe-json conversion for response/history/graph persistence
+  - `store/snapshot.py` still relies on generic safe-json conversion for non-`networkx` graph persistence
+  - `api/routes.py` and `api/web.py` now use explicit source/dialogue serializers, but other API payloads still pass through dict-shaped records
 - store persistence still serializes JSON payloads at DB boundaries, but some hot rows now avoid full object expansion:
   - `store/snapshot.py` relational facts now use explicit field serializers instead of `json.dumps(obj.to_dict())`
-  - `store/manifest.py`, `store/index_run.py`, `store/projection.py` still expose dict-shaped boundaries in places
+  - `store/pg_retrieval.py` now emits explicit typed element payloads for `metadata_json` instead of generic whole-element cleanup, but `store/manifest.py`, `store/index_run.py`, and `store/projection.py` still expose dict-shaped boundaries in places
 - vector/cache paths copy embeddings through Python containers:
   - `indexing/embedder.py` now stores cached embeddings as native `float32` byte buffers
   - `store/cache.py` now writes dialogue/session/query payloads as explicit JSON envelopes and embedding payloads as length-prefixed buffer envelopes; generic `get()/set()` remains for legacy or untyped callers
+  - `store/vector.py` now persists repository overview metadata as an explicit JSON manifest plus NumPy embedding archive and lets metadata-only overview callers avoid loading embedding payloads
   - `store/pg_retrieval.py` no longer duplicates embeddings into JSON metadata, but still materializes `list[float]`/vector-literal form at the PG vector boundary
   - `store/pg_retrieval.py` still receives fallback search vectors through DB row arrays, but ranks them as a NumPy matrix before metadata inflation
 - publishing/integration edges are partially hardened:
@@ -541,8 +546,8 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - `store/pg_retrieval.py` now strips raw embedding arrays from `metadata_json` before insert so vector payloads are not duplicated in JSON storage
   - it still converts embeddings to Python lists/vector literals for the current pgvector/array insert path
 - vector retrieval path:
-  - `store/vector.py` keeps FAISS native indexes and now vectorizes repository-overview ranking before result metadata assembly
-  - repository overview persistence uses pickle/object graphs rather than a typed buffer-oriented format
+  - `store/vector.py` keeps FAISS native indexes, persists repository overviews as an explicit JSON manifest plus NumPy embedding archive, and vectorizes repository-overview ranking before result metadata assembly
+  - full repository-overview consumers still decode JSON metadata into Python dicts because selector/BM25 flows currently operate on Python text/metadata payloads
 - PostgreSQL retrieval result path:
   - semantic fallback now delays JSON metadata inflation until after vectorized NumPy ranking
   - direct pgvector/keyword result rows still materialize JSON payloads at the retrieval boundary

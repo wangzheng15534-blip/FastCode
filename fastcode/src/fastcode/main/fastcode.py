@@ -2038,9 +2038,9 @@ class FastCode:
                 freed_bytes += size
                 self.logger.info(f"Deleted {fpath} ({size / (1024 * 1024):.2f} MB)")
 
-        # Remove overview entry from repo_overviews.pkl
+        # Remove overview entry from repository overview storage
         if self.vector_store.delete_repo_overview(repo_name):
-            deleted_files.append("repo_overviews.pkl (entry)")
+            deleted_files.append("repository overview storage (entry)")
             self.logger.info(f"Deleted overview entry for {repo_name}")
 
         # Remove cloned source code

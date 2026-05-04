@@ -6,10 +6,11 @@ Vector Store - Store and retrieve code embeddings
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import pickle
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import faiss
 import numpy as np
@@ -18,6 +19,25 @@ if TYPE_CHECKING:
     from ..ir.element import CodeElementMeta
 
 from ..utils import ensure_dir
+
+_REPO_OVERVIEW_STORAGE_VERSION = 1
+_REPO_OVERVIEW_MANIFEST_FILENAME = "repo_overviews.json"
+_REPO_OVERVIEW_EMBEDDINGS_FILENAME = "repo_overviews_embeddings.npz"
+_LEGACY_REPO_OVERVIEW_FILENAME = "repo_overviews.pkl"
+
+
+class _RepoOverviewManifestEntry(TypedDict):
+    content: str
+    metadata_json: str
+
+
+class _RepoOverviewStoredEntry(TypedDict, total=False):
+    repo_name: str
+    content: str
+    embedding: np.ndarray
+    metadata: dict[str, Any]
+    metadata_json: str
+    raw_overview: dict[str, Any]
 
 
 class VectorStore:
@@ -222,40 +242,37 @@ class VectorStore:
             embedding: Embedding vector for the overview
             metadata: Additional metadata (repo_url, summary, structure, etc.)
         """
+        normalized_embedding = self._normalize_repo_overview_embedding(embedding)
+        if normalized_embedding is None:
+            raise ValueError("Repository overview embedding must be a numeric vector")
+        normalized_metadata = metadata
+
         if self.in_memory:
             # Keep entirely in memory during evaluation.
             self._in_memory_repo_overviews[repo_name] = {
                 "repo_name": repo_name,
                 "content": overview_content,
-                "embedding": embedding.astype(np.float32),
-                "metadata": metadata,
+                "embedding": normalized_embedding,
+                "metadata": normalized_metadata,
             }
             self.logger.info(f"Stored repository overview for {repo_name} (in-memory)")
             return
 
-        overview_path = os.path.join(self.persist_dir, "repo_overviews.pkl")
-
-        # Load existing overviews if they exist
-        overviews = {}
-        if os.path.exists(overview_path):
-            try:
-                with open(overview_path, "rb") as f:
-                    overviews = pickle.load(f)
-            except Exception as e:
-                self.logger.warning(f"Failed to load existing repo overviews: {e}")
-
-        # Add/update this repository's overview
+        overviews = self._load_repo_overview_entries(
+            include_embeddings=True,
+            decode_metadata=False,
+        )
         overviews[repo_name] = {
             "repo_name": repo_name,
             "content": overview_content,
-            "embedding": embedding.astype(np.float32),
-            "metadata": metadata,
+            "embedding": normalized_embedding,
+            "metadata_json": self._serialize_repo_overview_metadata(
+                normalized_metadata
+            ),
         }
 
-        # Save back to file
         try:
-            with open(overview_path, "wb") as f:
-                pickle.dump(overviews, f)
+            self._write_repo_overview_entries(overviews)
             self.logger.info(f"Saved repository overview for {repo_name}")
         except Exception as e:
             self.logger.error(f"Failed to save repository overview: {e}")
@@ -277,21 +294,21 @@ class VectorStore:
                 return True
             return False
 
-        overview_path = os.path.join(self.persist_dir, "repo_overviews.pkl")
-        if not os.path.exists(overview_path):
+        manifest_path = self._repo_overview_manifest_path()
+        legacy_path = self._legacy_repo_overview_path()
+        if not os.path.exists(manifest_path) and not os.path.exists(legacy_path):
             return False
 
         try:
-            with open(overview_path, "rb") as f:
-                overviews = pickle.load(f)
-
+            overviews = self._load_repo_overview_entries(
+                include_embeddings=True,
+                decode_metadata=False,
+            )
             if repo_name not in overviews:
                 return False
 
             del overviews[repo_name]
-
-            with open(overview_path, "wb") as f:
-                pickle.dump(overviews, f)
+            self._write_repo_overview_entries(overviews)
             self.logger.info(f"Deleted repository overview for {repo_name}")
             return True
         except Exception as e:
@@ -300,31 +317,26 @@ class VectorStore:
             )
             return False
 
-    def load_repo_overviews(self) -> dict[str, dict[str, Any]]:
+    def load_repo_overviews(
+        self, include_embeddings: bool = True
+    ) -> dict[str, dict[str, Any]]:
         """
         Load all repository overviews from storage
+
+        Args:
+            include_embeddings: When False, avoid loading the embedding archive
+                                and return only text/metadata fields.
 
         Returns:
             Dictionary mapping repo_name to overview data
         """
-        if self.in_memory:
-            # Return the in-memory overviews when persistence is disabled.
-            return self._in_memory_repo_overviews
-
-        overview_path = os.path.join(self.persist_dir, "repo_overviews.pkl")
-
-        if not os.path.exists(overview_path):
-            self.logger.info("No repository overviews found")
-            return {}
-
-        try:
-            with open(overview_path, "rb") as f:
-                overviews = pickle.load(f)
-            self.logger.info(f"Loaded {len(overviews)} repository overviews")
-            return overviews
-        except Exception as e:
-            self.logger.error(f"Failed to load repository overviews: {e}")
-            return {}
+        return cast(
+            dict[str, dict[str, Any]],
+            self._load_repo_overview_entries(
+                include_embeddings=include_embeddings,
+                decode_metadata=True,
+            ),
+        )
 
     def search_repository_overviews(
         self, query_vector: np.ndarray, k: int = 5, min_score: float | None = None
@@ -340,7 +352,10 @@ class VectorStore:
         Returns:
             List of (metadata, score) tuples for repository overviews only
         """
-        overviews = self.load_repo_overviews()
+        overviews = self._load_repo_overview_entries(
+            include_embeddings=True,
+            decode_metadata=False,
+        )
 
         if not overviews:
             self.logger.warning("No repository overviews available for search")
@@ -353,7 +368,7 @@ class VectorStore:
             return []
 
         repo_names: list[str] = []
-        overview_payloads: list[dict[str, Any]] = []
+        overview_payloads: list[_RepoOverviewStoredEntry] = []
         embedding_rows: list[np.ndarray] = []
         for repo_name, overview_data in overviews.items():
             raw_embedding = overview_data.get("embedding")
@@ -392,9 +407,7 @@ class VectorStore:
             score = float(scores[index])
             if min_score is not None and score < min_score:
                 continue
-            metadata = overview_payloads[index].get("metadata", {})
-            if not isinstance(metadata, dict):
-                metadata = {}
+            metadata = self._result_metadata_from_overview(overview_payloads[index])
             result_metadata = {
                 "repo_name": repo_names[index],
                 "type": "repository_overview",
@@ -822,3 +835,313 @@ class VectorStore:
         """Invalidate the scan cache (call this when indexes change)"""
         self._index_scan_cache = None
         self.logger.debug("Invalidated index scan cache")
+
+    def _repo_overview_manifest_path(self) -> str:
+        return os.path.join(self.persist_dir, _REPO_OVERVIEW_MANIFEST_FILENAME)
+
+    def _repo_overview_embeddings_path(self) -> str:
+        return os.path.join(self.persist_dir, _REPO_OVERVIEW_EMBEDDINGS_FILENAME)
+
+    def _legacy_repo_overview_path(self) -> str:
+        return os.path.join(self.persist_dir, _LEGACY_REPO_OVERVIEW_FILENAME)
+
+    @staticmethod
+    def _normalize_repo_overview_embedding(embedding: Any) -> np.ndarray | None:
+        try:
+            normalized = np.asarray(embedding, dtype=np.float32).reshape(-1)
+        except (TypeError, ValueError):
+            return None
+        if normalized.size == 0:
+            return None
+        if not np.isfinite(normalized).all():
+            normalized = np.nan_to_num(
+                normalized, copy=False, nan=0.0, posinf=0.0, neginf=0.0
+            )
+        return normalized.astype(np.float32, copy=False)
+
+    @staticmethod
+    def _serialize_repo_overview_metadata(metadata: Any) -> str:
+        safe_metadata = metadata if isinstance(metadata, dict) else {}
+        return json.dumps(
+            safe_metadata,
+            sort_keys=True,
+            ensure_ascii=False,
+            default=repr,
+        )
+
+    @staticmethod
+    def _deserialize_repo_overview_metadata(raw_metadata: Any) -> dict[str, Any]:
+        if not isinstance(raw_metadata, str):
+            return {}
+        try:
+            metadata = json.loads(raw_metadata)
+        except json.JSONDecodeError:
+            return {}
+        return metadata if isinstance(metadata, dict) else {}
+
+    def _load_repo_overview_entries(
+        self,
+        *,
+        include_embeddings: bool,
+        decode_metadata: bool,
+    ) -> dict[str, _RepoOverviewStoredEntry]:
+        if self.in_memory:
+            return self._load_in_memory_repo_overview_entries(
+                include_embeddings=include_embeddings,
+                decode_metadata=decode_metadata,
+            )
+
+        manifest_path = self._repo_overview_manifest_path()
+        legacy_path = self._legacy_repo_overview_path()
+
+        if os.path.exists(manifest_path):
+            try:
+                overviews = self._load_repo_overviews_from_bundle(
+                    include_embeddings=include_embeddings,
+                    decode_metadata=decode_metadata,
+                )
+                self.logger.info(f"Loaded {len(overviews)} repository overviews")
+                return overviews
+            except Exception as e:
+                self.logger.error(f"Failed to load repository overviews: {e}")
+                return {}
+
+        if os.path.exists(legacy_path):
+            try:
+                overviews = self._load_repo_overviews_from_legacy_pickle(
+                    include_embeddings=include_embeddings,
+                    decode_metadata=decode_metadata,
+                )
+                self.logger.info(f"Loaded {len(overviews)} legacy repository overviews")
+                return overviews
+            except Exception as e:
+                self.logger.error(f"Failed to load repository overviews: {e}")
+                return {}
+
+        self.logger.info("No repository overviews found")
+        return {}
+
+    def _load_in_memory_repo_overview_entries(
+        self,
+        *,
+        include_embeddings: bool,
+        decode_metadata: bool,
+    ) -> dict[str, _RepoOverviewStoredEntry]:
+        overviews: dict[str, _RepoOverviewStoredEntry] = {}
+        for repo_name, overview in self._in_memory_repo_overviews.items():
+            entry: _RepoOverviewStoredEntry = {
+                "repo_name": repo_name,
+                "content": str(overview.get("content", "")),
+            }
+            if include_embeddings:
+                embedding = self._normalize_repo_overview_embedding(
+                    overview.get("embedding")
+                )
+                if embedding is None:
+                    continue
+                entry["embedding"] = embedding
+            if decode_metadata:
+                metadata = overview.get("metadata", {})
+                entry["metadata"] = metadata if isinstance(metadata, dict) else {}
+            else:
+                entry["raw_overview"] = overview
+            overviews[repo_name] = entry
+        return overviews
+
+    def _load_repo_overviews_from_bundle(
+        self,
+        *,
+        include_embeddings: bool,
+        decode_metadata: bool,
+    ) -> dict[str, _RepoOverviewStoredEntry]:
+        with open(self._repo_overview_manifest_path(), encoding="utf-8") as f:
+            raw_manifest = json.load(f)
+
+        repos = raw_manifest.get("repos")
+        if not isinstance(repos, dict):
+            return {}
+
+        embeddings_by_repo: dict[str, np.ndarray] = {}
+        if include_embeddings:
+            embeddings_by_repo = self._load_repo_overview_embeddings()
+
+        overviews: dict[str, _RepoOverviewStoredEntry] = {}
+        for raw_repo_name, raw_entry in repos.items():
+            if not isinstance(raw_repo_name, str) or not isinstance(raw_entry, dict):
+                continue
+
+            entry: _RepoOverviewStoredEntry = {
+                "repo_name": raw_repo_name,
+                "content": str(raw_entry.get("content", "")),
+            }
+
+            if include_embeddings:
+                embedding = embeddings_by_repo.get(raw_repo_name)
+                if embedding is None:
+                    continue
+                entry["embedding"] = embedding
+
+            raw_metadata = raw_entry.get("metadata_json", "{}")
+            metadata_json = raw_metadata if isinstance(raw_metadata, str) else "{}"
+            if decode_metadata:
+                entry["metadata"] = self._deserialize_repo_overview_metadata(
+                    metadata_json
+                )
+            else:
+                entry["metadata_json"] = metadata_json
+
+            overviews[raw_repo_name] = entry
+
+        return overviews
+
+    def _load_repo_overviews_from_legacy_pickle(
+        self,
+        *,
+        include_embeddings: bool,
+        decode_metadata: bool,
+    ) -> dict[str, _RepoOverviewStoredEntry]:
+        with open(self._legacy_repo_overview_path(), "rb") as f:
+            raw_overviews = pickle.load(f)
+        if not isinstance(raw_overviews, dict):
+            return {}
+
+        overviews: dict[str, _RepoOverviewStoredEntry] = {}
+        for raw_repo_name, raw_entry in raw_overviews.items():
+            if not isinstance(raw_repo_name, str) or not isinstance(raw_entry, dict):
+                continue
+
+            entry: _RepoOverviewStoredEntry = {
+                "repo_name": raw_repo_name,
+                "content": str(raw_entry.get("content", "")),
+            }
+
+            if include_embeddings:
+                embedding = self._normalize_repo_overview_embedding(
+                    raw_entry.get("embedding")
+                )
+                if embedding is None:
+                    continue
+                entry["embedding"] = embedding
+
+            if decode_metadata:
+                metadata = raw_entry.get("metadata", {})
+                entry["metadata"] = metadata if isinstance(metadata, dict) else {}
+            else:
+                entry["metadata_json"] = self._serialize_repo_overview_metadata(
+                    raw_entry.get("metadata", {})
+                )
+
+            overviews[raw_repo_name] = entry
+
+        return overviews
+
+    def _load_repo_overview_embeddings(self) -> dict[str, np.ndarray]:
+        embeddings_path = self._repo_overview_embeddings_path()
+        if not os.path.exists(embeddings_path):
+            return {}
+
+        embeddings_by_repo: dict[str, np.ndarray] = {}
+        with np.load(embeddings_path, allow_pickle=False) as archive:
+            repo_names = np.asarray(archive["repo_names"]).tolist()
+            if not isinstance(repo_names, list):
+                return {}
+
+            for index, raw_repo_name in enumerate(repo_names):
+                repo_name = str(raw_repo_name)
+                embedding_key = f"e{index}"
+                if embedding_key not in archive.files:
+                    continue
+                embedding = self._normalize_repo_overview_embedding(
+                    archive[embedding_key]
+                )
+                if embedding is None:
+                    continue
+                embeddings_by_repo[repo_name] = embedding
+
+        return embeddings_by_repo
+
+    def _result_metadata_from_overview(
+        self, overview: _RepoOverviewStoredEntry
+    ) -> dict[str, Any]:
+        metadata_json = overview.get("metadata_json")
+        if isinstance(metadata_json, str):
+            return self._deserialize_repo_overview_metadata(metadata_json)
+        metadata = overview.get("metadata")
+        if isinstance(metadata, dict):
+            return metadata
+        raw_overview = overview.get("raw_overview")
+        if isinstance(raw_overview, dict):
+            raw_metadata = raw_overview.get("metadata", {})
+            return raw_metadata if isinstance(raw_metadata, dict) else {}
+        return {}
+
+    def _write_repo_overview_entries(
+        self, overviews: dict[str, _RepoOverviewStoredEntry]
+    ) -> None:
+        manifest_path = self._repo_overview_manifest_path()
+        embeddings_path = self._repo_overview_embeddings_path()
+        legacy_path = self._legacy_repo_overview_path()
+
+        if not overviews:
+            for path in (manifest_path, embeddings_path, legacy_path):
+                if os.path.exists(path):
+                    os.remove(path)
+            return
+
+        manifest_repos: dict[str, _RepoOverviewManifestEntry] = {}
+        repo_names: list[str] = []
+        embeddings: list[np.ndarray] = []
+
+        for repo_name in sorted(overviews):
+            entry = overviews[repo_name]
+            embedding = self._normalize_repo_overview_embedding(entry.get("embedding"))
+            if embedding is None:
+                continue
+
+            raw_metadata_json = entry.get("metadata_json")
+            metadata_json = (
+                raw_metadata_json
+                if isinstance(raw_metadata_json, str)
+                else self._serialize_repo_overview_metadata(entry.get("metadata", {}))
+            )
+
+            manifest_repos[repo_name] = {
+                "content": str(entry.get("content", "")),
+                "metadata_json": metadata_json,
+            }
+            repo_names.append(repo_name)
+            embeddings.append(embedding)
+
+        if not manifest_repos:
+            for path in (manifest_path, embeddings_path, legacy_path):
+                if os.path.exists(path):
+                    os.remove(path)
+            return
+
+        manifest_payload = {
+            "version": _REPO_OVERVIEW_STORAGE_VERSION,
+            "repos": manifest_repos,
+        }
+        manifest_tmp = f"{manifest_path}.tmp"
+        embeddings_tmp = f"{embeddings_path}.tmp.npz"
+
+        with open(manifest_tmp, "w", encoding="utf-8") as f:
+            json.dump(
+                manifest_payload,
+                f,
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        os.replace(manifest_tmp, manifest_path)
+
+        archive_payload: dict[str, Any] = {
+            "repo_names": np.asarray(repo_names, dtype=np.str_)
+        }
+        for index, embedding in enumerate(embeddings):
+            archive_payload[f"e{index}"] = embedding
+        np.savez_compressed(embeddings_tmp, **archive_payload)
+        os.replace(embeddings_tmp, embeddings_path)
+
+        if os.path.exists(legacy_path):
+            os.remove(legacy_path)

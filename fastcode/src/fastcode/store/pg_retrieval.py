@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 import numpy as np
@@ -15,6 +15,35 @@ from ..db_runtime import DBRuntime
 
 
 class PgRetrievalStore:
+    _ELEMENT_JSON_FIELDS = (
+        "id",
+        "type",
+        "name",
+        "file_path",
+        "relative_path",
+        "language",
+        "start_line",
+        "end_line",
+        "code",
+        "signature",
+        "docstring",
+        "summary",
+        "repo_name",
+        "repo_url",
+        "snapshot_id",
+        "source_priority",
+        "embedding_text",
+        "embedding_artifact_ref",
+        "ir_symbol_id",
+        "stable_unit_id",
+        "content_hash",
+        "syntax_hash",
+        "signature_hash",
+        "edge_surface_hash",
+        "embedding_text_hash",
+        "api_surface_hash",
+    )
+
     def __init__(self, db_runtime: DBRuntime, config: dict[str, Any]) -> None:
         self.db_runtime = db_runtime
         self.config = config
@@ -181,42 +210,46 @@ class PgRetrievalStore:
 
     @staticmethod
     def _json_safe_payload(value: Any) -> Any:
-        if isinstance(value, dict):
+        if isinstance(value, Mapping):
             payload: dict[str, Any] = {}
-            for k, v in value.items():
+            for k, v in cast(Mapping[Any, Any], value).items():
                 key_str = str(k)
                 if key_str == "embedding":
                     continue
-                if isinstance(v, dict):
-                    payload[key_str] = PgRetrievalStore._json_safe_payload(v)
-                elif isinstance(v, (list, tuple, set)):
-                    payload[key_str] = [
-                        PgRetrievalStore._json_safe_payload(item) for item in v
-                    ]
-                elif isinstance(v, np.ndarray):
-                    payload[key_str] = v.tolist()
-                elif isinstance(v, np.integer):  # type: ignore[arg-type]
-                    payload[key_str] = int(v)
-                elif isinstance(v, np.floating):  # type: ignore[arg-type]
-                    payload[key_str] = float(v)
-                elif isinstance(v, np.bool_):  # type: ignore[arg-type]
-                    payload[key_str] = bool(v)
-                else:
-                    payload[key_str] = v
+                payload[key_str] = PgRetrievalStore._json_safe_payload(v)
             return payload
         if isinstance(value, (list, tuple)):
-            return [PgRetrievalStore._json_safe_payload(item) for item in value]
+            return [
+                PgRetrievalStore._json_safe_payload(item)
+                for item in cast(Sequence[Any], value)
+            ]
         if isinstance(value, set):
-            return [PgRetrievalStore._json_safe_payload(item) for item in value]
+            return [
+                PgRetrievalStore._json_safe_payload(item)
+                for item in cast(set[Any], value)
+            ]
         if isinstance(value, np.ndarray):
             return value.tolist()
         if isinstance(value, np.integer):  # type: ignore[arg-type]
-            return int(value)
+            return int(cast(Any, value))
         if isinstance(value, np.floating):  # type: ignore[arg-type]
-            return float(value)
+            return float(cast(Any, value))
         if isinstance(value, np.bool_):  # type: ignore[arg-type]
-            return bool(value)
-        return value
+            return bool(cast(Any, value))
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        return repr(value)
+
+    @classmethod
+    def _serialize_element_payload(cls, elem: dict[str, Any]) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "metadata": cls._json_safe_payload(elem.get("metadata") or {})
+        }
+        for field_name in cls._ELEMENT_JSON_FIELDS:
+            if field_name not in elem:
+                continue
+            payload[field_name] = cls._json_safe_payload(elem.get(field_name))
+        return payload
 
     def upsert_elements(self, snapshot_id: str, elements: list[dict[str, Any]]) -> None:
         if not self.enabled:
@@ -227,8 +260,13 @@ class PgRetrievalStore:
                 element_id = str(elem.get("id") or "")
                 if not element_id:
                     continue
-                meta = cast(dict[str, Any], elem.get("metadata") or {})
+                raw_meta = elem.get("metadata")
+                meta = (
+                    cast(dict[str, Any], raw_meta) if isinstance(raw_meta, dict) else {}
+                )
                 embedding: Any = meta.get("embedding")
+                if embedding is None:
+                    embedding = elem.get("embedding")
                 repo_name: str = cast(
                     str, elem.get("repo_name") or meta.get("repo_name")
                 )
@@ -245,7 +283,7 @@ class PgRetrievalStore:
                     ]
                 )
 
-                serializable_elem = self._json_safe_payload(elem)
+                serializable_elem = self._serialize_element_payload(elem)
                 metadata_json = json.dumps(serializable_elem, ensure_ascii=False)
 
                 vector_literal: str | None = None

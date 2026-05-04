@@ -66,6 +66,11 @@ class _ExplodingMetadata:
         raise AssertionError("metadata for unreturned fallback row was materialized")
 
 
+class _OpaqueValue:
+    def __repr__(self) -> str:
+        return "<opaque>"
+
+
 def test_semantic_fallback_rechecks_repo_and_element_type_filters_double():
     rows = [
         ({"id": "ok", "type": "design_document", "repo_name": "repoA"}, [1.0, 0.0]),
@@ -162,3 +167,77 @@ def test_upsert_elements_keeps_embedding_out_of_metadata_json_double():
         assert "embedding" not in payload["metadata"]
         assert payload["metadata"]["embedding_text_hash"] == "hash"
         assert payload["metadata"]["embedding_artifact_ref"] == "embedding_v2_ref"
+
+
+def test_upsert_elements_accepts_root_embedding_when_metadata_lacks_one_double():
+    cursor = _RecordingCursor()
+    store = PgRetrievalStore.__new__(PgRetrievalStore)
+    store.enabled = True
+    store.logger = logging.getLogger(__name__)
+    store.db_runtime = _FakeDBRuntime(_FakeConn(cursor))
+
+    store.upsert_elements(
+        "snap:1",
+        [
+            {
+                "id": "elem:root-only",
+                "type": "function",
+                "name": "root_only",
+                "relative_path": "pkg/root_only.py",
+                "language": "python",
+                "summary": "summary",
+                "signature": "def root_only()",
+                "docstring": None,
+                "code": "return 1",
+                "repo_name": "repo",
+                "embedding": np.asarray([0.5, 0.25], dtype=np.float32),
+                "metadata": {
+                    "repo_name": "repo",
+                    "embedding_text_hash": "hash-root-only",
+                },
+            }
+        ],
+    )
+
+    vector_params = cursor.calls[0][1]
+    vector_payload = json.loads(vector_params[8])
+    assert vector_params[6] == "[0.50000000,0.25000000]"
+    assert vector_params[7] == pytest.approx([0.5, 0.25])
+    assert "embedding" not in vector_payload
+    assert vector_payload["metadata"]["embedding_text_hash"] == "hash-root-only"
+
+
+def test_upsert_elements_ignores_unknown_top_level_payloads_double():
+    cursor = _RecordingCursor()
+    store = PgRetrievalStore.__new__(PgRetrievalStore)
+    store.enabled = True
+    store.logger = logging.getLogger(__name__)
+    store.db_runtime = _FakeDBRuntime(_FakeConn(cursor))
+
+    store.upsert_elements(
+        "snap:1",
+        [
+            {
+                "id": "elem:opaque",
+                "type": "function",
+                "name": "opaque",
+                "relative_path": "pkg/opaque.py",
+                "language": "python",
+                "summary": "summary",
+                "signature": "def opaque()",
+                "docstring": None,
+                "code": "return 1",
+                "repo_name": "repo",
+                "embedding": np.asarray([1.0, 0.0], dtype=np.float32),
+                "opaque_payload": object(),
+                "metadata": {
+                    "repo_name": "repo",
+                    "opaque_metadata": _OpaqueValue(),
+                },
+            }
+        ],
+    )
+
+    vector_payload = json.loads(cursor.calls[0][1][8])
+    assert "opaque_payload" not in vector_payload
+    assert vector_payload["metadata"]["opaque_metadata"] == "<opaque>"

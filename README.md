@@ -621,7 +621,7 @@ OPENAI_API_KEY=sk-... MODEL=gpt-5.2 BASE_URL=https://api.openai.com/v1 \
 | `list_sessions` | List all existing conversation sessions with titles and turn counts. |
 | `get_session_history` | Retrieve the full Q&A history of a specific session. |
 | `delete_session` | Delete a conversation session and all its history. |
-| `delete_repo_metadata` | Delete indexed metadata for a repository (`.faiss`, `_metadata.pkl`, `_bm25.pkl`, `_graphs.pkl`) and remove its entry from `repo_overviews.pkl`, while keeping the repository source code. |
+| `delete_repo_metadata` | Delete indexed metadata for a repository (`.faiss`, `_metadata.pkl`, `_bm25.pkl`, `_graphs.pkl`) and remove its entry from repository overview storage, while keeping the repository source code. |
 
 #### `code_qa` Parameters
 

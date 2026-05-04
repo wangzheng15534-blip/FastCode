@@ -404,7 +404,7 @@ def delete_repo_metadata(repo_name: str) -> str:
     """Delete indexed metadata for a repository while keeping source code.
 
     This removes vector/BM25/graph index artifacts and the repository's
-    overview entry from repo_overviews.pkl, but does NOT delete source files
+    overview entry from repository overview storage, but does NOT delete source files
     from the configured repository workspace.
 
     Args:
@@ -518,7 +518,7 @@ def get_repo_structure(repo_name: str) -> str:
     if not _is_repo_indexed(repo_name):
         return f"Repository '{repo_name}' is not indexed. Use code_qa or reindex_repo first."
 
-    overviews = fc.vector_store.load_repo_overviews()
+    overviews = fc.vector_store.load_repo_overviews(include_embeddings=False)
     overview = overviews.get(repo_name)
     if not overview:
         return (

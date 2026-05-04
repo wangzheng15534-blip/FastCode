@@ -575,9 +575,9 @@ def remove_repo(
             click.echo(f"  - {fname} ({size / (1024 * 1024):.2f} MB)")
 
         # Check overview
-        overviews = fastcode.vector_store.load_repo_overviews()
+        overviews = fastcode.vector_store.load_repo_overviews(include_embeddings=False)
         if repo_name in overviews:
-            click.echo(f"  - repo_overviews.pkl (entry for {repo_name})")
+            click.echo(f"  - repository overview storage (entry for {repo_name})")
 
         if has_source and not keep_source:
             click.echo(f"  - repos/{repo_name}/ (source code)")

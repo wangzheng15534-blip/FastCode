@@ -238,7 +238,7 @@ class HybridRetriever:
         self.logger.info("Building BM25 index for repository overviews")
 
         # Load repo overviews from separate storage
-        repo_overviews = self.vector_store.load_repo_overviews()
+        repo_overviews = self.vector_store.load_repo_overviews(include_embeddings=False)
 
         if not repo_overviews:
             self.logger.warning("No repository overviews found for BM25 indexing")
@@ -888,7 +888,7 @@ class HybridRetriever:
         self.logger.info("Performing LLM-based repository selection")
 
         # Load overviews from storage
-        all_overviews = self.vector_store.load_repo_overviews()
+        all_overviews = self.vector_store.load_repo_overviews(include_embeddings=False)
         if not all_overviews:
             self.logger.warning("No repository overviews available for LLM selection")
             return []
@@ -1031,7 +1031,7 @@ class HybridRetriever:
         overviews = []
 
         # Load from separate storage
-        all_overviews = self.vector_store.load_repo_overviews()
+        all_overviews = self.vector_store.load_repo_overviews(include_embeddings=False)
 
         for repo_name in repo_names:
             if repo_name in all_overviews:

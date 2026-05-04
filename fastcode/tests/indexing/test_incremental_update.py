@@ -1,5 +1,5 @@
 """
-Tests for incremental update via blob_oid diffing.
+Tests for incremental update via file identity diffing.
 
 Each test is self-contained with its own factory functions.
 """
@@ -24,9 +24,19 @@ from fastcode.ir.types import (
 # ---------------------------------------------------------------------------
 
 
-def _make_file_unit(path: str, blob_oid: str, unit_id: str | None = None) -> IRCodeUnit:
-    """Create a file-level IRCodeUnit with blob_oid in metadata."""
+def _make_file_unit(
+    path: str,
+    blob_oid: str | None,
+    unit_id: str | None = None,
+    content_hash: str | None = None,
+) -> IRCodeUnit:
+    """Create a file-level IRCodeUnit with identity metadata."""
     uid = unit_id or f"unit:file:{path}"
+    metadata: dict[str, str] = {}
+    if blob_oid is not None:
+        metadata["blob_oid"] = blob_oid
+    if content_hash is not None:
+        metadata["content_hash"] = content_hash
     return IRCodeUnit(
         unit_id=uid,
         kind="file",
@@ -34,7 +44,7 @@ def _make_file_unit(path: str, blob_oid: str, unit_id: str | None = None) -> IRC
         language="python",
         display_name=path,
         source_set={"fc_structure"},
-        metadata={"blob_oid": blob_oid},
+        metadata=metadata,
     )
 
 
@@ -200,11 +210,62 @@ class TestDiffChangedFiles:
     def test_none_blob_oid_treated_as_change(self) -> None:
         """A file with blob_oid=None should be considered different from a hash."""
         old = _build_simple_snapshot({"a.py": "h1"})
-        # Manually build with None blob_oid
         new_units = [_make_file_unit("a.py", None)]
         new = _make_snapshot(snapshot_id="snap:test:new", units=new_units)
         cs = diff_changed_files(old, new)
         assert cs.modified == ["a.py"]
+
+    def test_content_hash_fallback_preserves_unchanged_file(self) -> None:
+        old = _make_snapshot(
+            snapshot_id="snap:test:old",
+            units=[_make_file_unit("a.py", None, content_hash="h1")],
+        )
+        new = _make_snapshot(
+            snapshot_id="snap:test:new",
+            units=[_make_file_unit("a.py", None, content_hash="h1")],
+        )
+        cs = diff_changed_files(old, new)
+        assert cs.unchanged == ["a.py"]
+        assert cs.modified == []
+
+    def test_content_hash_fallback_detects_modified_file(self) -> None:
+        old = _make_snapshot(
+            snapshot_id="snap:test:old",
+            units=[_make_file_unit("a.py", None, content_hash="h1")],
+        )
+        new = _make_snapshot(
+            snapshot_id="snap:test:new",
+            units=[_make_file_unit("a.py", None, content_hash="h2")],
+        )
+        cs = diff_changed_files(old, new)
+        assert cs.modified == ["a.py"]
+        assert cs.unchanged == []
+
+    def test_blob_oid_takes_precedence_over_stale_content_hash(self) -> None:
+        old = _make_snapshot(
+            snapshot_id="snap:test:old",
+            units=[_make_file_unit("a.py", "blob1", content_hash="stale")],
+        )
+        new = _make_snapshot(
+            snapshot_id="snap:test:new",
+            units=[_make_file_unit("a.py", "blob1", content_hash="different")],
+        )
+        cs = diff_changed_files(old, new)
+        assert cs.unchanged == ["a.py"]
+        assert cs.modified == []
+
+    def test_missing_file_identity_is_conservative_change(self) -> None:
+        old = _make_snapshot(
+            snapshot_id="snap:test:old",
+            units=[_make_file_unit("a.py", None)],
+        )
+        new = _make_snapshot(
+            snapshot_id="snap:test:new",
+            units=[_make_file_unit("a.py", None)],
+        )
+        cs = diff_changed_files(old, new)
+        assert cs.modified == ["a.py"]
+        assert cs.unchanged == []
 
 
 # ---------------------------------------------------------------------------

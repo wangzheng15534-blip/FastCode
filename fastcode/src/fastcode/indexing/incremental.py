@@ -1,7 +1,7 @@
 """
-Incremental snapshot update via blob_oid diffing.
+Incremental snapshot update via file identity diffing.
 
-Compares file-level blob_oids between two snapshots to detect changes,
+Compares file-level blob_oids or content hashes between snapshots to detect changes,
 then produces a new snapshot that preserves unchanged units, relations,
 and embeddings while replacing changed-file content with fresh extraction.
 """
@@ -23,7 +23,7 @@ from ..ir.types import (
 
 @dataclass
 class FileChangeSet:
-    """Diff result comparing two snapshots' file-level blob_oids."""
+    """Diff result comparing two snapshots' file-level content identities."""
 
     added: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
@@ -34,21 +34,21 @@ class FileChangeSet:
 def diff_changed_files(
     old_snapshot: IRSnapshot, new_snapshot: IRSnapshot
 ) -> FileChangeSet:
-    """Compare blob_oids per file path between two snapshots.
+    """Compare content identities per file path between two snapshots.
 
     Returns a FileChangeSet partitioning file paths into added, removed,
-    modified, and unchanged buckets based on blob_oid comparison.
+    modified, and unchanged buckets based on blob_oid/content_hash comparison.
     """
-    old_blob_by_path: dict[str, str | None] = {}
+    old_identity_by_path: dict[str, str | None] = {}
     for doc in old_snapshot.documents:
-        old_blob_by_path[doc.path] = doc.blob_oid
+        old_identity_by_path[doc.path] = doc.blob_oid or doc.content_hash
 
-    new_blob_by_path: dict[str, str | None] = {}
+    new_identity_by_path: dict[str, str | None] = {}
     for doc in new_snapshot.documents:
-        new_blob_by_path[doc.path] = doc.blob_oid
+        new_identity_by_path[doc.path] = doc.blob_oid or doc.content_hash
 
-    old_paths = set(old_blob_by_path)
-    new_paths = set(new_blob_by_path)
+    old_paths = set(old_identity_by_path)
+    new_paths = set(new_identity_by_path)
 
     added = sorted(new_paths - old_paths)
     removed = sorted(old_paths - new_paths)
@@ -56,7 +56,9 @@ def diff_changed_files(
     modified: list[str] = []
     unchanged: list[str] = []
     for path in sorted(old_paths & new_paths):
-        if old_blob_by_path[path] != new_blob_by_path[path]:
+        old_identity = old_identity_by_path[path]
+        new_identity = new_identity_by_path[path]
+        if not old_identity or not new_identity or old_identity != new_identity:
             modified.append(path)
         else:
             unchanged.append(path)

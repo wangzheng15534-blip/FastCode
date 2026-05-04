@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -218,6 +220,26 @@ def test_source_set_on_documents():
     snap = _build(elements)
     for doc in snap.documents:
         assert "fc_structure" in doc.source_set
+
+
+def test_documents_include_content_identity(tmp_path: Path):
+    """Structure-derived documents expose content identity for incremental diffing."""
+    source = tmp_path / "src" / "x.py"
+    source.parent.mkdir()
+    source.write_text("def x():\n    return 1\n")
+    expected_hash = hashlib.md5(source.read_bytes(), usedforsecurity=False).hexdigest()
+    elements = [_elem(name="x", relative_path="src/x.py")]
+
+    snap = build_ir_from_ast(
+        repo_name="test_repo",
+        snapshot_id="snap:test:identity",
+        elements=elements,
+        repo_root=str(tmp_path),
+    )
+
+    assert len(snap.documents) == 1
+    assert snap.documents[0].blob_oid == expected_hash
+    assert snap.documents[0].content_hash == expected_hash
 
 
 def test_source_priority_constant():

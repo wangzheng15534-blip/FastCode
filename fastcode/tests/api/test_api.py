@@ -89,6 +89,40 @@ class _FakeFastCode:
         return self.manifest_store.get_snapshot_manifest(snapshot_id)
 
 
+class _NoDictSource:
+    def __init__(self) -> None:
+        self.repository = "repo"
+        self.file = "src/config.py"
+        self.name = "load_config"
+        self.type = "function"
+        self.start_line = 11
+        self.end_line = 24
+        self.score = 0.75
+
+    def to_dict(self) -> dict[str, Any]:
+        raise AssertionError("API source serialization must not call to_dict()")
+
+
+class _NoDictTurn:
+    def __init__(self) -> None:
+        self.session_id = "sess-1"
+        self.turn_number = 2
+        self.timestamp = 1234.5
+        self.query = "Where is config loaded?"
+        self.answer = "src/config.py"
+        self.summary = "Config loader identified"
+        self.retrieved_elements = [_NoDictSource()]
+        self.metadata = {
+            "intent": "where",
+            "keywords": ("config", "loader"),
+            "repo_filter": ("repo",),
+            "multi_turn": True,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        raise AssertionError("API history serialization must not call to_dict()")
+
+
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------
@@ -420,3 +454,91 @@ class TestBlockingEndpointOffloads:
             fake_fastcode.vector_store.invalidate_scan_cache,
             fake_fastcode.vector_store.scan_available_indexes,
         ]
+
+
+class TestApiSerializationBoundaries:
+    def test_query_endpoint_serializes_sources_explicitly(self) -> None:
+        fake_fastcode = MagicMock()
+        fake_fastcode.query_snapshot.return_value = {
+            "answer": "ok",
+            "query": "Where is config loaded?",
+            "context_elements": 1,
+            "sources": [_NoDictSource()],
+        }
+
+        with patch(
+            "fastcode.api.routes._ensure_fastcode_initialized",
+            return_value=fake_fastcode,
+        ):
+            result = asyncio.run(
+                api.query_repository(
+                    api.QueryRequest(
+                        question="Where is config loaded?",
+                        snapshot_id="snap:1",
+                        repo_name=None,
+                        ref_name=None,
+                        filters=None,
+                        repo_filter=None,
+                        multi_turn=False,
+                        session_id=None,
+                    )
+                )
+            )
+
+        assert result.sources == [
+            {
+                "repository": "repo",
+                "repo": "repo",
+                "file": "src/config.py",
+                "name": "load_config",
+                "type": "function",
+                "lines": "11-24",
+                "start_line": 11,
+                "end_line": 24,
+                "score": 0.75,
+            }
+        ]
+
+    def test_session_endpoint_serializes_history_explicitly(self) -> None:
+        fake_fastcode = MagicMock()
+        fake_fastcode.get_session_history.return_value = [_NoDictTurn()]
+
+        with patch(
+            "fastcode.api.routes._ensure_fastcode_initialized",
+            return_value=fake_fastcode,
+        ):
+            result = asyncio.run(api.get_session("sess-1"))
+
+        assert result == {
+            "status": "success",
+            "session_id": "sess-1",
+            "history": [
+                {
+                    "session_id": "sess-1",
+                    "turn_number": 2,
+                    "timestamp": 1234.5,
+                    "query": "Where is config loaded?",
+                    "answer": "src/config.py",
+                    "summary": "Config loader identified",
+                    "retrieved_elements": [
+                        {
+                            "repository": "repo",
+                            "repo": "repo",
+                            "file": "src/config.py",
+                            "name": "load_config",
+                            "type": "function",
+                            "lines": "11-24",
+                            "start_line": 11,
+                            "end_line": 24,
+                            "score": 0.75,
+                        }
+                    ],
+                    "metadata": {
+                        "intent": "where",
+                        "keywords": ["config", "loader"],
+                        "repo_filter": ["repo"],
+                        "multi_turn": True,
+                    },
+                }
+            ],
+        }

@@ -32,6 +32,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from fastcode.api.serialization import (
+    serialize_dialogue_history,
+    serialize_query_sources,
+)
 from fastcode.main.fastcode import FastCode
 from fastcode.schemas.api import (
     DeleteReposRequest,
@@ -484,9 +488,7 @@ async def query_repository(request: QueryRequest):
         if total_tokens is None and prompt_tokens and completion_tokens:
             total_tokens = prompt_tokens + completion_tokens
 
-        # Ensure sources are JSON-serializable (query() already saves to cache)
-        sources = result.get("sources", [])
-        serialized_sources = [_safe_jsonable(source) for source in sources]
+        serialized_sources = serialize_query_sources(result.get("sources"))
 
         return QueryResponse(
             answer=result.get("answer", ""),
@@ -540,20 +542,16 @@ async def query_repository_stream(request: QueryRequest):
                     if status == "retrieving":
                         event_data = {"type": "status", "status": "retrieving"}
                     elif status == "generating":
-                        sources = metadata.get("sources", [])
-                        serialized_sources = [_safe_jsonable(s) for s in sources]
                         event_data = {
                             "type": "status",
                             "status": "generating",
-                            "sources": serialized_sources,
+                            "sources": serialize_query_sources(metadata.get("sources")),
                             "session_id": session_id,
                         }
                     elif status == "complete":
-                        sources = metadata.get("sources", [])
-                        serialized_sources = [_safe_jsonable(s) for s in sources]
                         event_data = {
                             "type": "done",
-                            "sources": serialized_sources,
+                            "sources": serialize_query_sources(metadata.get("sources")),
                             "context_elements": metadata.get("context_elements", 0),
                             "session_id": session_id,
                         }
@@ -665,39 +663,6 @@ async def new_session(clear_session_id: str | None = None):
     return NewSessionResponse(session_id=session_id)
 
 
-def _safe_jsonable(obj: Any) -> Any:
-    """Recursively convert objects to JSON-serializable structures."""
-    # Primitives
-    if obj is None or isinstance(obj, (bool, int, float, str)):
-        return obj
-    # Dict
-    if isinstance(obj, dict):
-        safe_dict = {}
-        for k, v in obj.items():
-            try:
-                safe_dict[str(k)] = _safe_jsonable(v)
-            except Exception:
-                safe_dict[str(k)] = repr(v)
-        return safe_dict
-    # List / tuple / set
-    if isinstance(obj, (list, tuple, set)):
-        return [_safe_jsonable(v) for v in obj]
-    # Has to_dict
-    if hasattr(obj, "to_dict"):
-        try:
-            return _safe_jsonable(obj.to_dict())
-        except Exception:
-            return {"repr": repr(obj)}
-    # Has __dict__
-    if hasattr(obj, "__dict__"):
-        try:
-            return _safe_jsonable(vars(obj))
-        except Exception:
-            return {"repr": repr(obj)}
-    # Fallback
-    return repr(obj)
-
-
 @app.get("/api/sessions")
 async def list_sessions():
     """List all dialogue sessions with titles (sorted by last update time)"""
@@ -735,9 +700,6 @@ async def get_session(session_id: str):
     try:
         history = fastcode_instance.get_session_history(session_id) or []
 
-        # Ensure JSON-serializable history
-        safe_history = [_safe_jsonable(turn) for turn in history]
-
         # Determine if this session was multi-turn from session index
         session_index = fastcode_instance.cache_manager._get_session_index(session_id)
         multi_turn = session_index.get("multi_turn", False) if session_index else False
@@ -745,7 +707,7 @@ async def get_session(session_id: str):
         return {
             "status": "success",
             "session_id": session_id,
-            "history": safe_history,
+            "history": serialize_dialogue_history(history),
             "multi_turn": multi_turn,
         }
     except Exception as e:

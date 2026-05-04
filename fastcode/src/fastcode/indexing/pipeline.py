@@ -7,8 +7,6 @@ extraction, IR merge, semantic resolution, and artifact persistence.
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
-from dataclasses import replace as dc_replace
-
 import hashlib
 import json
 import os
@@ -18,6 +16,7 @@ import shutil
 import tempfile
 import threading
 from collections.abc import Callable, Sequence
+from dataclasses import replace as dc_replace
 from datetime import datetime
 from time import perf_counter
 from typing import Any, cast
@@ -1493,11 +1492,13 @@ class IndexPipeline:
                 }
                 if not remaining_support_ids and not remaining_support_sources:
                     continue
-                owned_relations.append(dc_replace(
-                    relation,
-                    support_ids=remaining_support_ids,
-                    support_sources=remaining_support_sources,
-                ))
+                owned_relations.append(
+                    dc_replace(
+                        relation,
+                        support_ids=remaining_support_ids,
+                        support_sources=remaining_support_sources,
+                    )
+                )
                 continue
             owned_relations.append(relation)
 

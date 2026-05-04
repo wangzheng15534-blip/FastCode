@@ -28,6 +28,10 @@ import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
+from fastcode.api.serialization import (
+    serialize_dialogue_history,
+    serialize_query_sources,
+)
 from fastcode.main.fastcode import FastCode
 from fastcode.schemas.api import (
     DeleteReposRequest,
@@ -42,7 +46,6 @@ from fastcode.schemas.api import (
     QuerySnapshotRequest,
     StatusResponse,
 )
-from fastcode.utils import safe_jsonable
 
 # Shared request/response schemas live in fastcode.schemas.api.
 
@@ -562,8 +565,7 @@ async def query_repository(request: QueryRequest):
         if total_tokens is None and prompt_tokens and completion_tokens:
             total_tokens = prompt_tokens + completion_tokens
 
-        sources = result.get("sources", [])
-        serialized_sources = [safe_jsonable(source) for source in sources]
+        serialized_sources = serialize_query_sources(result.get("sources"))
 
         return QueryResponse(
             answer=result.get("answer", ""),
@@ -608,7 +610,7 @@ async def query_snapshot(request: QuerySnapshotRequest):
             answer=result.get("answer", ""),
             query=result.get("query", ""),
             context_elements=result.get("context_elements", 0),
-            sources=[safe_jsonable(source) for source in result.get("sources", [])],
+            sources=serialize_query_sources(result.get("sources")),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
@@ -889,8 +891,11 @@ async def get_session(session_id: str):
     fastcode = _ensure_fastcode_initialized()
     try:
         history = fastcode.get_session_history(session_id) or []
-        safe_history = [safe_jsonable(turn) for turn in history]
-        return {"status": "success", "session_id": session_id, "history": safe_history}
+        return {
+            "status": "success",
+            "session_id": session_id,
+            "history": serialize_dialogue_history(history),
+        }
     except Exception as e:
         logger.error(f"Failed to load session {session_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -9,6 +9,39 @@ from fastapi.testclient import TestClient
 from fastcode.api import web as web_app
 
 
+class _NoDictSource:
+    def __init__(self) -> None:
+        self.repository = "repo"
+        self.relative_path = "src/config.py"
+        self.name = "load_config"
+        self.type = "function"
+        self.lines = "11-24"
+        self.score = 0.75
+
+    def to_dict(self) -> dict[str, Any]:
+        raise AssertionError("web source serialization must not call to_dict()")
+
+
+class _NoDictTurn:
+    def __init__(self) -> None:
+        self.session_id = "abcd1234"
+        self.turn_number = 1
+        self.timestamp = 111.25
+        self.query = "Where is config loaded?"
+        self.answer = "src/config.py"
+        self.summary = "Config loader identified"
+        self.retrieved_elements = [_NoDictSource()]
+        self.metadata = {
+            "intent": "where",
+            "keywords": ("config", "loader"),
+            "repo_filter": ("repo",),
+            "multi_turn": True,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        raise AssertionError("web history serialization must not call to_dict()")
+
+
 class _FakeVectorStore:
     def invalidate_scan_cache(self) -> None:
         return None
@@ -23,7 +56,10 @@ class _FakeFastCode:
         self.repo_indexed = True
         self.repo_info = {"name": "repo"}
         self.vector_store = _FakeVectorStore()
-        self.cache_manager = SimpleNamespace(clear=lambda: True)
+        self.cache_manager = SimpleNamespace(
+            clear=lambda: True,
+            _get_session_index=lambda session_id: {"multi_turn": True},
+        )
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
 
     def load_repository(self, source: str, is_url: bool | None) -> None:
@@ -82,6 +118,10 @@ class _FakeFastCode:
             "context_elements": 1,
             "sources": [],
         }
+
+    def get_session_history(self, session_id: str) -> list[Any]:
+        self.calls.append(("get_session_history", (session_id,), {}))
+        return [_NoDictTurn()]
 
 
 async def _run_inline(func: Any, /, *args: Any, **kwargs: Any) -> Any:
@@ -159,6 +199,110 @@ def test_query_endpoint_offloads_blocking_query(
             },
         )
     ]
+
+
+def test_query_endpoint_serializes_sources_explicitly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeFastCode()
+    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
+    monkeypatch.setattr(web_app.uuid, "uuid4", lambda: "abcd1234-uuid")
+
+    def query_with_object_source(
+        question: str,
+        filters: dict[str, Any] | None = None,
+        *,
+        repo_filter: list[str] | None = None,
+        session_id: str | None = None,
+        enable_multi_turn: bool | None = None,
+    ) -> dict[str, Any]:
+        fake.calls.append(
+            (
+                "query",
+                (question, filters),
+                {
+                    "repo_filter": repo_filter,
+                    "session_id": session_id,
+                    "enable_multi_turn": enable_multi_turn,
+                },
+            )
+        )
+        return {
+            "answer": "ok",
+            "query": question,
+            "context_elements": 1,
+            "sources": [_NoDictSource()],
+        }
+
+    fake.query = query_with_object_source
+
+    client = TestClient(web_app.app)
+    response = client.post(
+        "/api/query",
+        json={"question": "where is x?", "filters": {"snapshot_id": "snap:1"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sources"] == [
+        {
+            "repository": "repo",
+            "repo": "repo",
+            "file": "src/config.py",
+            "name": "load_config",
+            "type": "function",
+            "lines": "11-24",
+            "start_line": 11,
+            "end_line": 24,
+            "score": 0.75,
+        }
+    ]
+
+
+def test_session_endpoint_serializes_history_explicitly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeFastCode()
+    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+
+    client = TestClient(web_app.app)
+    response = client.get("/api/session/abcd1234")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "success",
+        "session_id": "abcd1234",
+        "history": [
+            {
+                "session_id": "abcd1234",
+                "turn_number": 1,
+                "timestamp": 111.25,
+                "query": "Where is config loaded?",
+                "answer": "src/config.py",
+                "summary": "Config loader identified",
+                "retrieved_elements": [
+                    {
+                        "repository": "repo",
+                        "repo": "repo",
+                        "file": "src/config.py",
+                        "name": "load_config",
+                        "type": "function",
+                        "lines": "11-24",
+                        "start_line": 11,
+                        "end_line": 24,
+                        "score": 0.75,
+                    }
+                ],
+                "metadata": {
+                    "intent": "where",
+                    "keywords": ["config", "loader"],
+                    "repo_filter": ["repo"],
+                    "multi_turn": True,
+                },
+            }
+        ],
+        "multi_turn": True,
+    }
 
 
 def test_upload_zip_endpoint_offloads_blocking_zip_work(

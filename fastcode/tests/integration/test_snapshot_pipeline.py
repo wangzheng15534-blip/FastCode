@@ -1225,6 +1225,12 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "api_frontier_changed": 1,
             "api_frontier_changed_paths": ["b.py"],
             "package_scope_roots": ["."],
+            "change_kinds": [
+                "api_surface_hash",
+                "edge_surface_hash",
+                "embedding_text_hash",
+                "signature_hash",
+            ],
         }
         assert result["repair_queue"]["pending"] == 1
         assert result["repair_queue"]["task_type"] == "semantic_repair_frontier"
@@ -1662,6 +1668,84 @@ def test_resolve_snapshot_ref_uses_dirty_worktree_hash_for_local_changes() -> No
         assert ":dirty:" in dirty_ref["tree_id"]
 
 
+def _expand_repair_pipeline_with_graph(tmp: str) -> tuple[IndexPipeline, list[Any]]:
+    pipeline = _make_minimal_pipeline(tmp)
+    elements = [
+        SimpleNamespace(id="elem:a", relative_path="pkg/a.py", file_path="pkg/a.py"),
+        SimpleNamespace(id="elem:b", relative_path="pkg/b.py", file_path="pkg/b.py"),
+        SimpleNamespace(id="elem:c", relative_path="pkg/c.py", file_path="pkg/c.py"),
+        SimpleNamespace(id="elem:d", relative_path="pkg/d.py", file_path="pkg/d.py"),
+    ]
+
+    class _StubGraph:
+        def __init__(self, edges: dict[str, list[str]]) -> None:
+            self._edges = edges
+
+        def __contains__(self, node_id: str) -> bool:
+            return node_id in self._edges or any(
+                node_id in succ for succ in self._edges.values()
+            )
+
+        def predecessors(self, node_id: str) -> list[str]:
+            return [src for src, succs in self._edges.items() if node_id in succs]
+
+    pipeline.graph_builder = SimpleNamespace(
+        dependency_graph=_StubGraph(
+            {"elem:b": ["elem:a"], "elem:c": ["elem:b"], "elem:d": ["elem:c"]}
+        ),
+        call_graph=_StubGraph({}),
+        inheritance_graph=_StubGraph({}),
+    )
+    return pipeline, elements
+
+
+def test_expand_repair_target_paths_signature_change_uses_full_bfs() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_expand_sig_") as tmp:
+        pipeline, elements = _expand_repair_pipeline_with_graph(tmp)
+        scope_paths = {"pkg/a.py", "pkg/b.py", "pkg/c.py", "pkg/d.py"}
+
+        expanded = pipeline._expand_repair_target_paths(
+            elements=elements,
+            changed_paths=["pkg/a.py"],
+            scope_paths=scope_paths,
+            change_kinds={"signature_hash"},
+        )
+
+        assert expanded == scope_paths
+
+
+def test_expand_repair_target_paths_edge_only_change_uses_one_hop() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_expand_edge_") as tmp:
+        pipeline, elements = _expand_repair_pipeline_with_graph(tmp)
+        scope_paths = {"pkg/a.py", "pkg/b.py", "pkg/c.py", "pkg/d.py"}
+
+        expanded = pipeline._expand_repair_target_paths(
+            elements=elements,
+            changed_paths=["pkg/a.py"],
+            scope_paths=scope_paths,
+            change_kinds={"edge_surface_hash"},
+        )
+
+        assert expanded == {"pkg/a.py", "pkg/b.py"}
+
+
+def test_expand_repair_target_paths_embedding_only_change_returns_scope_unchanged() -> (
+    None
+):
+    with tempfile.TemporaryDirectory(prefix="fc_expand_embed_") as tmp:
+        pipeline, elements = _expand_repair_pipeline_with_graph(tmp)
+        scope_paths = {"pkg/a.py", "pkg/b.py", "pkg/c.py", "pkg/d.py"}
+
+        expanded = pipeline._expand_repair_target_paths(
+            elements=elements,
+            changed_paths=["pkg/a.py"],
+            scope_paths=scope_paths,
+            change_kinds={"embedding_text_hash"},
+        )
+
+        assert expanded == scope_paths
+
+
 def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_repair_") as tmp:
         pipeline = _make_minimal_pipeline(tmp)
@@ -1756,6 +1840,103 @@ def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
             "pkg/sub/b.py",
             "other/c.py",
         }
+
+
+def _setup_repair_pipeline_with_one_changed_path(tmp: str) -> tuple[IndexPipeline, Any]:
+    pipeline = _make_minimal_pipeline(tmp)
+    snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:repo:degraded",
+        branch="main",
+        commit_id="c1",
+        tree_id="t1",
+        metadata={"semantic_resolver_runs": []},
+    )
+    record = pipeline.snapshot_store.save_snapshot(snapshot, metadata={})
+    pipeline.snapshot_store.save_relational_facts = Mock(return_value=None)
+    pipeline.snapshot_store.save_ir_graphs = Mock(return_value=None)
+    pipeline.snapshot_symbol_index.register_snapshot = Mock(return_value=None)
+    pipeline.ir_graph_builder.build_graphs = Mock(return_value=SimpleNamespace())
+    pipeline._load_artifacts_by_key = Mock(return_value=True)
+    pipeline.loader.repo_path = tmp
+    pipeline._reconstruct_elements_from_metadata = Mock(
+        return_value=[
+            SimpleNamespace(
+                id="elem:a",
+                relative_path="pkg/a.py",
+                file_path="pkg/a.py",
+                to_dict=lambda: {
+                    "id": "elem:a",
+                    "type": "function",
+                    "relative_path": "pkg/a.py",
+                    "metadata": {"stable_unit_id": "unit:function:a"},
+                },
+            )
+        ]
+    )
+    pipeline._apply_semantic_resolvers = Mock(return_value=snapshot)
+    with open(os.path.join(tmp, "pyproject.toml"), "w", encoding="utf-8") as handle:
+        handle.write("[project]\nname='repo'\n")
+    os.makedirs(os.path.join(tmp, "pkg"), exist_ok=True)
+    with open(os.path.join(tmp, "pkg", "a.py"), "w", encoding="utf-8") as handle:
+        handle.write("print('a')\n")
+    return pipeline, record
+
+
+def test_run_semantic_repair_frontier_records_scoped_scip_failed_degraded_reason() -> (
+    None
+):
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_repair_degraded_") as tmp:
+        pipeline, record = _setup_repair_pipeline_with_one_changed_path(tmp)
+
+        with patch(
+            "fastcode.indexing.pipeline.run_scip_for_language",
+            side_effect=RuntimeError("indexer crashed"),
+        ):
+            result = pipeline.run_semantic_repair_frontier(
+                snapshot_id=record.snapshot_id,
+                scope_kind="package",
+                scope_roots=["pkg"],
+                changed_paths=["pkg/a.py"],
+                repo_name="repo",
+            )
+
+        assert result["status"] == "repaired"
+        assert "scoped_scip_failed:pkg" in result["degraded_reasons"]
+
+
+def test_run_semantic_repair_frontier_records_tooling_repo_fallback_for_path_scope() -> (
+    None
+):
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_repair_fallback_") as tmp:
+        pipeline, record = _setup_repair_pipeline_with_one_changed_path(tmp)
+        result = pipeline.run_semantic_repair_frontier(
+            snapshot_id=record.snapshot_id,
+            scope_kind="path",
+            scope_roots=[],
+            changed_paths=["pkg/a.py"],
+            repo_name="repo",
+            change_kinds=["signature_hash"],
+        )
+
+        assert result["status"] == "repaired"
+        assert "tooling_repo_fallback" in result["degraded_reasons"]
+
+
+def test_run_semantic_repair_frontier_no_fallback_for_embedding_only_change() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_repair_embed_") as tmp:
+        pipeline, record = _setup_repair_pipeline_with_one_changed_path(tmp)
+        result = pipeline.run_semantic_repair_frontier(
+            snapshot_id=record.snapshot_id,
+            scope_kind="path",
+            scope_roots=[],
+            changed_paths=["pkg/a.py"],
+            repo_name="repo",
+            change_kinds=["embedding_text_hash"],
+        )
+
+        assert result["status"] == "repaired"
+        assert result["degraded_reasons"] == []
 
 
 # ---------------------------------------------------------------------------

@@ -599,6 +599,7 @@ class FastCode:
             repo_name=(
                 str(payload.get("repo_name")) if payload.get("repo_name") else None
             ),
+            change_kinds=list(payload.get("change_kinds") or []),
         )
         result["repair_frontier"]["snapshot_id"] = snapshot_id
         result["repair_frontier"]["repo_name"] = payload.get("repo_name")

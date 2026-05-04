@@ -935,6 +935,36 @@ class IndexPipeline:
                 changed_paths.add(rel_path)
         return sorted(changed_paths)
 
+    _CHANGE_KIND_FIELDS = (
+        "signature_hash",
+        "api_surface_hash",
+        "edge_surface_hash",
+        "embedding_text_hash",
+    )
+
+    def _classify_change_kinds(
+        self,
+        *,
+        new_elements: list[CodeElement],
+        existing_by_stable_unit_id: dict[str, dict[str, Any]],
+    ) -> set[str]:
+        kinds: set[str] = set()
+        for elem in new_elements:
+            stable_unit_id = (elem.metadata or {}).get("stable_unit_id")
+            if not stable_unit_id:
+                return set(self._CHANGE_KIND_FIELDS)
+            existing = existing_by_stable_unit_id.get(str(stable_unit_id))
+            if not existing:
+                return set(self._CHANGE_KIND_FIELDS)
+            existing_meta = dict(
+                cast(dict[str, Any], existing.get("metadata", {}) or {})
+            )
+            current_meta = dict(elem.metadata or {})
+            for field_name in self._CHANGE_KIND_FIELDS:
+                if current_meta.get(field_name) != existing_meta.get(field_name):
+                    kinds.add(field_name)
+        return kinds
+
     def _package_scope_root(self, repo_root: str, rel_path: str) -> str:
         repo_root_abs = os.path.abspath(repo_root or ".")
         current_dir = os.path.dirname(os.path.join(repo_root_abs, rel_path))
@@ -1097,6 +1127,10 @@ class IndexPipeline:
             new_elements=new_elements,
             existing_by_stable_unit_id=existing_by_stable_unit_id,
         )
+        change_kinds = self._classify_change_kinds(
+            new_elements=new_elements,
+            existing_by_stable_unit_id=existing_by_stable_unit_id,
+        )
         package_scope_roots = self._package_scope_roots(
             self.loader.repo_path or "",
             api_frontier_changed_paths,
@@ -1114,6 +1148,7 @@ class IndexPipeline:
             "api_frontier_changed": int(bool(api_frontier_changed_paths)),
             "api_frontier_changed_paths": api_frontier_changed_paths,
             "package_scope_roots": package_scope_roots,
+            "change_kinds": sorted(change_kinds),
         }
         return all_elements, summary
 
@@ -1128,6 +1163,7 @@ class IndexPipeline:
         widened: bool,
         scope_kind: str,
         scope_roots: list[str],
+        change_kinds: list[str] | None = None,
     ) -> dict[str, Any] | None:
         if not changed_paths or not widened:
             return None
@@ -1143,6 +1179,7 @@ class IndexPipeline:
                 "widened": widened,
                 "scope_kind": scope_kind,
                 "scope_roots": scope_roots,
+                "change_kinds": list(change_kinds or []),
             },
         }
 
@@ -1184,7 +1221,14 @@ class IndexPipeline:
         changed_paths: list[str],
         scope_paths: set[str],
         max_hops: int | None = None,
+        change_kinds: set[str] | None = None,
     ) -> set[str]:
+        if change_kinds is not None and change_kinds:
+            if change_kinds == {"embedding_text_hash"}:
+                return scope_paths
+            if change_kinds <= {"edge_surface_hash"} and max_hops is None:
+                max_hops = 1
+
         path_by_element_id = {
             str(elem.id): normalize_path(elem.relative_path or elem.file_path)
             for elem in elements
@@ -1332,6 +1376,7 @@ class IndexPipeline:
         scope_roots: list[str],
         target_paths: set[str],
         warnings: list[str],
+        degraded_reasons: list[str] | None = None,
     ) -> tuple[IRSnapshot | None, list[str]]:
         repo_root = self.loader.repo_path or ""
         if scope_kind != "package" or not repo_root or not scope_roots:
@@ -1363,6 +1408,8 @@ class IndexPipeline:
                         filtered_indexes.append(filtered)
             except Exception as exc:
                 warnings.append(f"scoped_scip_failed:{scope_root}:{exc}")
+                if degraded_reasons is not None:
+                    degraded_reasons.append(f"scoped_scip_failed:{scope_root}")
             finally:
                 if temp_root:
                     shutil.rmtree(temp_root, ignore_errors=True)
@@ -1370,9 +1417,7 @@ class IndexPipeline:
             return None, languages
 
         combined = SCIPIndex(
-            documents=[
-                doc for index in filtered_indexes for doc in index.documents
-            ],
+            documents=[doc for index in filtered_indexes for doc in index.documents],
             indexer_name=filtered_indexes[0].indexer_name,
             indexer_version=filtered_indexes[0].indexer_version,
             metadata={"scoped": True, "scope_roots": scope_roots},
@@ -1395,6 +1440,7 @@ class IndexPipeline:
         scope_roots: list[str],
         changed_paths: list[str],
         repo_name: str | None = None,
+        change_kinds: list[str] | None = None,
     ) -> dict[str, Any]:
         record = self.snapshot_store.get_snapshot_record(snapshot_id)
         if not record:
@@ -1406,6 +1452,7 @@ class IndexPipeline:
             raise RuntimeError(f"failed to load artifacts for snapshot: {snapshot_id}")
 
         elements = self._reconstruct_elements_from_metadata()
+        change_kind_set = set(change_kinds) if change_kinds else None
         target_paths = self._repair_scope_paths(
             elements=elements,
             changed_paths=changed_paths,
@@ -1417,8 +1464,10 @@ class IndexPipeline:
                 elements=elements,
                 changed_paths=changed_paths,
                 scope_paths=target_paths,
+                change_kinds=change_kind_set,
             )
         warnings: list[str] = []
+        degraded_reasons: list[str] = []
         scoped_tool_languages: list[str] = []
         if not target_paths:
             return {
@@ -1426,6 +1475,7 @@ class IndexPipeline:
                 "snapshot_id": snapshot_id,
                 "repo_name": repo_name or snapshot.repo_name,
                 "warnings": warnings,
+                "degraded_reasons": degraded_reasons,
                 "repair_frontier": {
                     "scope_kind": scope_kind,
                     "scope_roots": scope_roots,
@@ -1443,6 +1493,12 @@ class IndexPipeline:
                 )
             except Exception as exc:
                 warnings.append(f"scoped_tool_language_detection_failed: {exc}")
+        elif (
+            scope_kind != "package"
+            and change_kind_set
+            and change_kind_set - {"embedding_text_hash"}
+        ):
+            degraded_reasons.append("tooling_repo_fallback")
 
         base_snapshot = self._drop_owned_semantic_evidence(
             snapshot=snapshot,
@@ -1450,13 +1506,16 @@ class IndexPipeline:
         )
         scoped_scip_snapshot = None
         if scope_kind == "package":
-            scoped_scip_snapshot, scoped_tool_languages = self._run_scoped_scip_frontier(
-                snapshot=base_snapshot,
-                repo_name=repo_name or snapshot.repo_name,
-                scope_kind=scope_kind,
-                scope_roots=scope_roots,
-                target_paths=target_paths,
-                warnings=warnings,
+            scoped_scip_snapshot, scoped_tool_languages = (
+                self._run_scoped_scip_frontier(
+                    snapshot=base_snapshot,
+                    repo_name=repo_name or snapshot.repo_name,
+                    scope_kind=scope_kind,
+                    scope_roots=scope_roots,
+                    target_paths=target_paths,
+                    warnings=warnings,
+                    degraded_reasons=degraded_reasons,
+                )
             )
         if scoped_scip_snapshot is not None:
             base_snapshot = merge_ir(base_snapshot, scoped_scip_snapshot)
@@ -1487,6 +1546,7 @@ class IndexPipeline:
             "snapshot_id": snapshot_id,
             "repo_name": repo_name or snapshot.repo_name,
             "warnings": warnings,
+            "degraded_reasons": degraded_reasons,
             "repair_frontier": {
                 "scope_kind": scope_kind,
                 "scope_roots": scope_roots,
@@ -2275,6 +2335,11 @@ class IndexPipeline:
                 ),
                 scope_roots=(
                     cast(list[str], incremental_plan.get("package_scope_roots", []))
+                    if incremental_plan is not None
+                    else []
+                ),
+                change_kinds=(
+                    cast(list[str], incremental_plan.get("change_kinds", []))
                     if incremental_plan is not None
                     else []
                 ),

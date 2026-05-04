@@ -55,7 +55,7 @@ from ..utils import compute_file_hash, ensure_dir, normalize_path
 from .doc_ingester import KeyDocIngester
 from .embedder import CodeEmbedder
 from .global_builder import GlobalIndexBuilder
-from .incremental import apply_incremental_update, diff_changed_files
+from .incremental import FileChangeSet, apply_incremental_update, diff_changed_files
 from .indexer import CodeIndexer
 from .loader import RepositoryLoader
 from .terminus import TerminusPublisher
@@ -1991,10 +1991,27 @@ class IndexPipeline:
             )
 
             self.index_run_store.mark_status(run_id, "validating")
+            ast_elements = elements
+            if incremental_plan is not None:
+                changed_paths_for_ast = {
+                    normalize_path(str(path))
+                    for path in incremental_plan.get("changed_paths", [])
+                    if path
+                }
+                ast_elements = [
+                    elem
+                    for elem in elements
+                    if normalize_path(elem.relative_path or elem.file_path)
+                    in changed_paths_for_ast
+                ]
+                incremental_plan["ast_ir_rebuilt_elements"] = len(ast_elements)
+                incremental_plan["ast_ir_reused_files"] = int(
+                    incremental_plan.get("unchanged", 0) or 0
+                )
             ast_snapshot: IRSnapshot = build_ir_from_ast(
                 repo_name=repo_name,
                 snapshot_id=snapshot_id,
-                elements=elements,
+                elements=ast_elements,
                 repo_root=self.loader.repo_path or "",
                 branch=snapshot_ref.get("branch"),
                 commit_id=snapshot_ref.get("commit_id"),
@@ -2325,9 +2342,39 @@ class IndexPipeline:
                 if prev_snap_id and prev_snap_id != snapshot_id:
                     prev_snapshot = self.snapshot_store.load_snapshot(prev_snap_id)
                     if prev_snapshot:
-                        incremental_change_set = diff_changed_files(
-                            prev_snapshot, merged_snapshot
-                        )
+                        if incremental_plan is not None:
+                            incremental_change_set = FileChangeSet(
+                                added=cast(
+                                    list[str], incremental_plan.get("added_paths", [])
+                                ),
+                                removed=cast(
+                                    list[str],
+                                    incremental_plan.get("removed_paths", []),
+                                ),
+                                modified=cast(
+                                    list[str],
+                                    incremental_plan.get("modified_paths", []),
+                                ),
+                                unchanged=[
+                                    doc.path
+                                    for doc in prev_snapshot.documents
+                                    if doc.path
+                                    not in set(
+                                        cast(
+                                            list[str],
+                                            incremental_plan.get("removed_paths", []),
+                                        )
+                                        + cast(
+                                            list[str],
+                                            incremental_plan.get("modified_paths", []),
+                                        )
+                                    )
+                                ],
+                            )
+                        else:
+                            incremental_change_set = diff_changed_files(
+                                prev_snapshot, merged_snapshot
+                            )
                         changed_count = (
                             len(incremental_change_set.added)
                             + len(incremental_change_set.modified)

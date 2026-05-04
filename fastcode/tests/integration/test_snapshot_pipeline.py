@@ -1214,7 +1214,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
         assert [file_info["relative_path"] for file_info in changed_file_infos] == [
             "b.py"
         ]
-        assert set(seen_ast_element_ids) == {"unchanged:1", "changed:2"}
+        assert set(seen_ast_element_ids) == {"changed:2"}
         assert {row["id"] for row in temp_store_metadata} == {
             "unchanged:1",
             "changed:2",
@@ -1228,6 +1228,8 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "modified_paths": ["b.py"],
             "removed_paths": [],
             "changed_paths": ["b.py"],
+            "ast_ir_rebuilt_elements": 1,
+            "ast_ir_reused_files": 1,
             "reused_elements": 1,
             "reindexed_elements": 1,
             "reused_changed_embeddings": 0,

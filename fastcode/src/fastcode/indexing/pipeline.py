@@ -27,7 +27,7 @@ from ..graph.build import CodeGraphBuilder
 from ..ir.element import CodeElement, CodeElementMeta
 from ..ir.graph import IRGraphBuilder
 from ..ir.merge import merge_ir
-from ..ir.types import IRSnapshot
+from ..ir.types import IRRelation, IRSnapshot, IRUnitSupport
 from ..ir.validate import validate_snapshot
 from ..module_resolver import ModuleResolver
 from ..retrieval.hybrid import HybridRetriever
@@ -1237,6 +1237,56 @@ class IndexPipeline:
         }
         return expanded_paths or scope_paths
 
+    def _drop_owned_semantic_evidence(
+        self,
+        *,
+        snapshot: IRSnapshot,
+        target_paths: set[str],
+    ) -> IRSnapshot:
+        owned_supports: list[IRUnitSupport] = []
+        removed_support_ids: set[str] = set()
+        for support in snapshot.supports:
+            support_path = normalize_path(support.path or "")
+            owned = (
+                support.source not in {"fc_structure", "scip"}
+                and support_path in target_paths
+            )
+            if owned:
+                removed_support_ids.add(support.support_id)
+                continue
+            owned_supports.append(support)
+
+        unit_paths = {
+            unit.unit_id: normalize_path(unit.path) for unit in snapshot.units
+        }
+        owned_relations: list[IRRelation] = []
+        for relation in snapshot.relations:
+            src_path = unit_paths.get(relation.src_unit_id, "")
+            resolver_owned = (
+                relation.source not in {"fc_structure", "scip"}
+                and src_path in target_paths
+            )
+            if resolver_owned:
+                continue
+            if any(
+                support_id in removed_support_ids for support_id in relation.support_ids
+            ):
+                continue
+            owned_relations.append(relation)
+
+        return IRSnapshot(
+            repo_name=snapshot.repo_name,
+            snapshot_id=snapshot.snapshot_id,
+            branch=snapshot.branch,
+            commit_id=snapshot.commit_id,
+            tree_id=snapshot.tree_id,
+            units=list(snapshot.units),
+            supports=owned_supports,
+            relations=owned_relations,
+            embeddings=list(snapshot.embeddings),
+            metadata=dict(snapshot.metadata or {}),
+        )
+
     def run_semantic_repair_frontier(
         self,
         *,
@@ -1294,8 +1344,12 @@ class IndexPipeline:
             except Exception as exc:
                 warnings.append(f"scoped_tool_language_detection_failed: {exc}")
 
-        repaired_snapshot = self._apply_semantic_resolvers(
+        base_snapshot = self._drop_owned_semantic_evidence(
             snapshot=snapshot,
+            target_paths=target_paths,
+        )
+        repaired_snapshot = self._apply_semantic_resolvers(
+            snapshot=base_snapshot,
             elements=elements,
             legacy_graph_builder=self.graph_builder,
             target_paths=target_paths,

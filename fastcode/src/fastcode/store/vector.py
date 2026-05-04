@@ -348,7 +348,7 @@ class VectorStore:
         if k <= 0:
             return []
 
-        query = np.array(query_vector, dtype=np.float32, copy=True).reshape(1, -1)
+        query = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
         if query.shape[1] == 0:
             return []
 
@@ -365,9 +365,9 @@ class VectorStore:
                 continue
             if embedding.size != query.shape[1]:
                 continue
-            if not bool(np.isfinite(embedding).all()):
+            if not np.isfinite(embedding).all():
                 embedding = np.nan_to_num(
-                    embedding, copy=True, nan=0.0, posinf=0.0, neginf=0.0
+                    embedding, copy=False, nan=0.0, posinf=0.0, neginf=0.0
                 )
             repo_names.append(repo_name)
             overview_payloads.append(overview_data)

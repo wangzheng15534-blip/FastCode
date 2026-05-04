@@ -200,10 +200,7 @@ class PgRetrievalStore:
             items = cast(set[Any], value)
             return [PgRetrievalStore._json_safe_payload(item) for item in items]
         if isinstance(value, np.ndarray):
-            return [
-                PgRetrievalStore._json_safe_payload(item)
-                for item in value.astype(np.float32).tolist()
-            ]
+            return value.tolist()
         if isinstance(value, np.integer):  # type: ignore[arg-type]
             return int(cast(Any, value))
         if isinstance(value, np.floating):  # type: ignore[arg-type]
@@ -247,7 +244,7 @@ class PgRetrievalStore:
                 embedding_array = self._vector_array(embedding)
                 if embedding_array is not None:
                     vector_literal = self._vector_literal_from_array(embedding_array)
-                    embedding_arr = [float(value) for value in embedding_array]
+                    embedding_arr = embedding_array.tolist()
 
                 cur.execute(
                     """

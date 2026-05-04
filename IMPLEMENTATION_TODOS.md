@@ -25,12 +25,22 @@ The core algorithmic path is much stronger than the original prototype: snapshot
 The remaining gap to a stable release is no longer mainly "does the core pipeline work?" The gap is production evidence and operational hardening:
 - true incremental source/index/update caching at the pipeline core
 - true embedding/model cache reuse keyed by content and model fingerprint
+- strict FP/FCIS dataflow enforcement across API -> schema -> core -> store boundaries
+- completion of typed store/query/projection records so persistence and API shells stop leaking raw dict payloads
 - install/package reproducibility from a clean environment
 - real external-tool integration evidence across supported languages
 - real PostgreSQL/backend semantics beyond local fakes
 - API/file-upload security hardening
 - service-wide state isolation under concurrent load/query/mutation traffic
 - release documentation, compatibility policy, and deployment runbooks
+
+Stable release should mean all of the following are true at once:
+- core indexing/query paths are incrementally efficient, not only correct
+- cache reuse is deterministic and invalidates on schema/model/tool changes
+- package/import boundaries preserve a thin shell around a test-heavy functional core
+- storage backends, migrations, and artifact compatibility are tested against real upgrade scenarios
+- install, deploy, operate, and recover workflows are documented and reproducible
+- release claims about language support, backend support, and compatibility are narrower than the proven evidence, not broader
 
 ## Landed hardening
 
@@ -89,17 +99,42 @@ The remaining gap to a stable release is no longer mainly "does the core pipelin
   - agency-mode `query()` and `query_stream()` preserve cheap detected intent
   - iterative-agent standard retrieval applies caller filters after rerank
   - regression test proves semantic escalation can enable real IR graph expansion, not just a mocked second retrieval
+- Incremental prefilter hardening:
+  - `IndexPipeline._plan_incremental_elements()` reuses unchanged element metadata from the previous artifact manifest
+  - compatible snapshots call `CodeIndexer.index_files()` only for added/modified files instead of falling back to full `extract_elements()`
+  - integration coverage proves unchanged files bypass full extraction when compatibility checks match
+- Embedding cache hardening:
+  - `CodeEmbedder` now uses cache-aware batch embedding in the active indexing path
+  - identical embedding texts are deduplicated before provider calls
+  - cache keys are model-aware across provider/model/dimension/normalization/sequence-length settings
+  - embedding cache payloads now store `float32` byte buffers plus explicit shape/dtype metadata instead of Python `list[float]` vectors
+  - PostgreSQL retrieval persistence now strips raw embedding arrays from JSON metadata and stores vectors only in vector-specific columns
+- Publishing boundary hardening:
+  - Terminus lineage publishing now has a typed `IRSnapshot` boundary that builds payloads from snapshot fields and IR units/relations without full `IRSnapshot.to_dict()` expansion
+  - `PublishingService` and the active index pipeline call the typed lineage publisher; the dict-based publisher API remains as a compatibility shim
+- Object materialization hardening:
+  - PostgreSQL semantic fallback now keeps candidate vectors in NumPy arrays and only JSON-decodes metadata for ranked results returned across the Python boundary
+  - repository-overview search ranks overview embeddings as a NumPy matrix and only materializes metadata for returned rows
+  - PostgreSQL relational fact persistence uses explicit typed payload serializers instead of repeated record `to_dict()` expansion
 - Async endpoint hardening:
   - REST API repository load/index/cache-load/multi-index/upload paths offload blocking work with `asyncio.to_thread`
   - web UI upload and upload+index paths offload ZIP extraction, repository load, and indexing
   - REST API and web UI delete/cache/refresh maintenance endpoints offload blocking mutations
 - Lock fencing hardening:
   - PostgreSQL same-owner lock refresh preserves the current fencing token instead of invalidating in-flight work
+- Package-root import-boundary hardening:
+  - `fastcode/__init__.py` no longer mutates process environment at import time
+  - `fastcode/__init__.py` keeps compatibility re-exports lazy instead of importing shell-heavy modules eagerly
+  - `fastcode.main.__init__` now exposes `FastCode` lazily so `import fastcode.main` does not load the composition root
+  - internal API/MCP modules import `FastCode` from `fastcode.main.fastcode` instead of the root compatibility surface
+  - architecture tests now enforce thin package roots and ban internal `from fastcode import ...` re-export usage
 
 ## Critical verification currently green
 
-- Full smoke gate:
-  - `1677 passed, 7 skipped`
+- Workspace-root smoke gate:
+  - `1721 passed, 53 skipped`
+- Package-root smoke gate:
+  - `1694 passed, 13 skipped`
 - Focused regression areas repeatedly verified:
   - `test_api`
   - `test_manifest_store`
@@ -109,11 +144,60 @@ The remaining gap to a stable release is no longer mainly "does the core pipelin
   - `test_snapshot_pipeline`
   - `test_snapshot_store`
 
+## Incremental Update and Cache Audit
+
+**Audit date:** May 4, 2026
+
+**Verdict:** partial PASS. FastCode now has real early reuse for unchanged files, but it does not yet implement graceful end-to-end incremental update for compiler/tool-backed stages.
+
+**What is already true in code:**
+- `fastcode.indexing.pipeline._plan_incremental_elements()` reuses unchanged element metadata from the previous artifact manifest and only reindexes added/modified files.
+- `fastcode.tests.integration.test_snapshot_pipeline.test_pipeline_incremental_prefilter_only_indexes_changed_files` proves unchanged files bypass `extract_elements()` and only changed files are passed to `index_files()`.
+- `fastcode.indexing.embedder.CodeEmbedder` uses cache-aware `embed_code_elements()`, deduplicates identical texts, and keys cache entries by provider/model/dimension/normalization/max-sequence-length identity.
+- helper-backed semantic resolvers already scope helper input to changed `target_paths`, so helper work is narrower than full-repo in the happy path.
+
+**What is not yet true:**
+- the pipeline still rebuilds a full combined `elements` list and then rebuilds AST IR from that whole set, so reuse is earlier than before but not yet shard-native.
+- optional SCIP still detects languages by walking the repository and then invokes repo-scoped indexers, so one-file edits can still pay near full compiler/indexer cost.
+- the late `diff_changed_files()` / `apply_incremental_update()` path is not yet a sufficient primary correctness anchor because `build_ir_from_ast()` does not currently persist canonical `blob_oid` / `content_hash` on file units.
+- helper-backed runtimes still pay per-run process startup cost; the Go helper currently uses `go run`, which also implies repeated compile/build overhead.
+
+**Release implication:** current behavior materially reduces repeated parse and embedding work for unchanged files, but stable-release claims must still say compiler/tooling cost is only partially incremental.
+
+## Architecture contract in force
+
+The current release bar is aligned to the repo-template functional-core guidance:
+
+1. Pydantic stops at the boundary:
+   - `fastcode.schemas.api` owns request/response validation.
+   - core packages (`ir`, `graph`, `retrieval`) stay Pydantic-free.
+2. Persistence trusts typed records:
+   - store/infrastructure code should return frozen dataclasses or typed records, not ad hoc dict payloads.
+3. Translation stays explicit:
+   - shell code maps field-by-field between API payloads, core dataclasses, and storage records.
+   - no `**model_dump()`, `**__dict__`, or hidden mass-assignment at boundaries.
+4. FCIS test split:
+   - functional core gets the majority of regression effort.
+   - imperative shell remains thin and covered mostly by boundary/integration tests.
+5. Package roots stay thin:
+   - Python always executes `fastcode/__init__.py` before importing any `fastcode.*` submodule.
+   - root and subpackage `__init__.py` files must not perform runtime setup, environment mutation, or eager shell imports.
+   - root re-exports are compatibility-only and lazy; internal modules import concrete domain/composition modules directly.
+
+This contract is only partially complete today. The architecture tests now enforce parts of it, including package-root purity, but large store and shell surfaces are still dict-heavy.
+
 ## Stable Release Gap
 
 ### P0: Must Close Before Stable Release
 
 These are release blockers. Do not tag a stable release while any P0 item is open.
+
+### P0 Acceptance Bar
+
+Every P0 item needs all three forms of closure:
+- implementation: the code path exists and is wired into the default runtime path
+- enforcement: tests, architecture checks, or release-gate automation fail when it regresses
+- evidence: docs, metrics, or benchmark output show the stable-release claim is true in practice
 
 ### P0.1 Install and packaging reproducibility
 
@@ -131,23 +215,50 @@ These are release blockers. Do not tag a stable release while any P0 item is ope
 - `pip install dist/*.whl` in a fresh virtualenv can run CLI, API import, helper path checks, and a tiny index/query smoke.
 - Release docs list exact install commands for local-only and production/PostgreSQL modes.
 
+### P0.1a Workspace and layout stability
+
+**Gap:** The package split is now mostly landed, but stable release also requires the merged workspace to behave correctly from the repository root, not only when commands are run from `fastcode/`.
+
+The template philosophy remains correct for Python: use one importable package with descriptive domain modules instead of pretending uv workspace members provide native import isolation. The stable-release risk is not the nested domain layout itself; it is accidental boundary collapse through package roots, eager re-exports, and imports that route pure modules through shell-heavy compatibility surfaces.
+
+**Current state:**
+- root `pytest` collection now honors workspace-level `testpaths`, recursion excludes, import paths, and marker registration
+- stale renamed-module references were cleaned up in active tests and comments
+- root smoke no longer collects `repo_backup/` or dies on import-file mismatch
+
+**Remaining work:**
+- remove or clean stale `__pycache__` trees left behind by the pre-merge layout so they stop polluting diagnostics
+- keep root and package pytest policy in sync when markers or plugins change
+- audit public docs/examples for pre-merge module paths
+- keep architecture tests green for package-root purity whenever new public exports or subpackage `__init__.py` files are added
+
+**Exit criteria:**
+- `uv run pytest` from repository root is a supported release command
+- workspace-level QA commands no longer depend on implicit `cd fastcode`
+
 ### P0.2 True incremental source/index caching
 
-**Gap:** The current release path is not actually incremental. Snapshot publish still pays full repository scan, full parse, full embedding, full AST IR build, and optional full-repo SCIP cost before `apply_incremental_update()` trims the final snapshot.
+**Gap:** The current release path is partially incremental, not gracefully incremental end to end. The manifest-driven prefilter can skip unchanged-file parse and embedding, but later AST/IR materialization, whole-repo SCIP, and some helper/tool startup costs still scale close to a full reindex.
 
 **Why this is core-level:** This is the largest remaining architecture gap between a hardened prototype and a stable release. On medium and large repos, “incremental” behavior still scales like full reindex.
 
 **Current failure modes:**
-- `run_index_pipeline()` performs full extraction before diffing changed files.
-- `diff_changed_files()` depends on file fingerprints that are not yet mandatory/populated end to end.
-- repository traversal is repeated across repo info, indexing, non-git identity, and SCIP language detection
-- unchanged files are reused too late, after the expensive work already happened
+- repository inventory and file hashing are recomputed repeatedly across snapshot identity, incremental planning, and SCIP language detection.
+- `run_index_pipeline()` rehydrates unchanged metadata into one full `elements` list and rebuilds AST IR from the entire combined set instead of merging file-native IR shards.
+- optional SCIP remains repo-scoped: `detect_scip_languages()` walks the repository and `run_scip_for_language()` invokes language indexers for the repo even when only one file changed.
+- `diff_changed_files()` relies on canonical file-unit `blob_oid` / `content_hash`, but `build_ir_from_ast()` does not yet populate those identities end to end, so the late snapshot-diff merge cannot be the primary trusted planner.
+- unchanged files are skipped before parse/embedding, but not yet before AST-IR rebuild, relational fact rebuild, IR graph rebuild, or most compiler/indexer work.
 
 **Required work:**
-- Add a manifest-first planner before extraction:
+- Promote the existing manifest-first prefilter into the canonical `plan_changes` stage:
   - inventory repository once
   - compute file fingerprints once
-  - diff against prior snapshot before parse/embed/SCIP
+  - diff against prior snapshot before parse/embed/SCIP/helper execution
+- Share one canonical inventory pass across:
+  - repository identity
+  - loader-visible files
+  - incremental planner
+  - SCIP language detection
 - Make file fingerprints first-class and mandatory:
   - prefer git `blob_oid` when available
   - otherwise persist `content_hash`
@@ -164,29 +275,90 @@ These are release blockers. Do not tag a stable release while any P0 item is ope
   - `persist`
 - Promote existing `CodeIndexer.index_files()` and file-manifest logic into the snapshot pipeline instead of keeping them as side paths.
 - Reuse unchanged per-file artifacts before embedding and before SCIP where supported.
+- Split compiler/tooling invalidation by scope:
+  - file-local helper execution when exported interface is unchanged
+  - dependent-neighborhood rebuild when exported interface changes
+  - package/workspace or repo-wide rebuild when toolchain/build graph changes
+- Remove avoidable repeated tool startup:
+  - replace `go run` helper execution with packaged binaries, cached build artifacts, or daemonized helper mode
 - Treat “missing file fingerprints” as a reason to disable incremental mode, not to silently claim success.
 
 **Exit criteria:**
 - A one-file edit does not trigger full-repo parsing or full-repo embedding.
+- A one-file implementation-only edit does not trigger whole-repo SCIP/helper recomputation unless interface or build-graph rules require widening.
 - Incremental publish reports correct `added/modified/removed/unchanged` counts for both git and non-git repos.
 - There is an integration test proving unchanged files are not reparsed or re-embedded.
 - There is a benchmark/regression test showing one-file update cost is materially below full reindex.
 
+### P0.2a Graceful update under code change
+
+**Research framing:** A graceful updater should widen work in proportion to semantic impact, not in proportion to raw textual churn.
+
+**Core idea:** Separate change detection into four classes and bind each class to an invalidation radius:
+- identity-stable: no rebuild
+- implementation-local: changed file body, stable exported interface
+- interface-affecting: changed exports, signatures, inheritance, imports, or generated symbol set
+- toolchain/global: changed build config, dependency lockfile, generator output, parser fingerprint, or model/tool fingerprint
+
+**Recommended update calculus:**
+1. inventory once:
+   - collect `blob_oid` or `content_hash`
+   - language
+   - package/workspace membership
+   - toolchain slice (`go.mod`, `package.json`, `tsconfig`, `pyproject.toml`, `Cargo.toml`, etc.)
+2. derive two digests per file:
+   - content digest for exact file identity
+   - interface digest for exported semantic surface
+3. choose invalidation radius:
+   - content changed, interface stable:
+     - reparse changed file
+     - recompute embeddings only for changed file elements
+     - rerun file-local semantic helper
+     - preserve reverse dependencies
+   - interface changed:
+     - invalidate reverse imports/callers/inheritors reachable from the changed file
+     - rerun affected helper/SCIP/package slices
+   - toolchain/global changed:
+     - widen to package, workspace, or full repository explicitly
+4. store file-native artifacts:
+   - `ParseShard`
+   - `IRShard`
+   - `EmbeddingShard`
+   - `SemanticFactShard`
+   - `InterfaceDigest`
+   - dependency frontier metadata
+5. publish atomically:
+   - stage a new snapshot
+   - merge unchanged shards plus recomputed shards
+   - promote only after validation succeeds
+
+**Graceful degradation rules:**
+- Missing or inconsistent fingerprints must widen scope, never narrow it.
+- Helper/SCIP/tool failure must downgrade semantic precision with warnings, not silently preserve stale changed-file facts.
+- Unknown dependency frontier must invalidate the larger safe neighborhood.
+- A degraded incremental publish should carry explicit metadata about which reuse assumptions were disabled.
+
+**Evidence requirements:**
+- A function-body edit stays file-local.
+- A signature or inheritance change invalidates dependents but not unrelated subtrees.
+- A build-config change widens scope deterministically.
+- Benchmarks are reported by edit class, not only by “full vs incremental”.
+
 ### P0.3 Embedding/model cache correctness and reuse
 
-**Gap:** There is no real content-addressed embedding cache in the active indexing path, and artifact reuse is not guarded by a complete embedding/model fingerprint.
+**Gap:** There is now a real text-level embedding cache in the active indexing path, but its correctness envelope is still narrower than a stable release requires.
 
 **Why this is core-level:** Stable release users will judge the system by repeated indexing/update cost. Without a correct embedding cache, model inference dominates runtime and cost even when source changes are small.
 
 **Current failure modes:**
-- `CodeEmbedder` always computes embeddings in active index flows.
-- `CacheManager.get_embedding/set_embedding` exists but is not wired into repository indexing.
-- cache/artifact reuse does not validate provider/model/normalization/prepare-text schema, so stale vectors can be silently reused across model changes.
+- embedding cache identity is still mostly local to `CodeEmbedder`; snapshot metadata, vector artifacts, repo-overview artifacts, and PG/vector persistence do not yet share one first-class embedding fingerprint contract.
+- the preparation schema is implicit in `_prepare_code_text()` and only manually versioned through optional `cache_version`, so schema drift still depends on operator discipline.
+- the incremental manifest compatibility hash checks major embedding settings, but the same fingerprint discipline is not yet propagated uniformly across all reuse surfaces.
 - Ollama embedding path is effectively serial, ignoring batch-level reuse opportunities.
 - model startup is eager, so read-only operations can pay unnecessary model initialization overhead.
 
 **Required work:**
-- Introduce an `EmbeddingService` or equivalent core boundary with:
+- Formalize the current embedder path behind an `EmbeddingService` or equivalent core boundary with:
   - `prepare_text(element)`
   - `fingerprint()`
   - `embed_many(texts)`
@@ -263,6 +435,156 @@ These are release blockers. Do not tag a stable release while any P0 item is ope
 - Postgres integration tests are part of the release gate or explicitly required before tagging.
 - SQLite limitations are documented in user-facing release docs.
 
+### P0.6a FP/FCIS data schema flow completion
+
+**Gap:** The codebase now has the right package layout for `api`, `schemas`, `retrieval`, `store`, and `main`, but the dataflow contract is still inconsistent. Core paths use frozen dataclasses in several places, while other store/query/projection flows still pass raw `dict[str, Any]` payloads across boundaries.
+
+**Why this is release-critical:** Stable release needs predictable schema flow:
+- API shell validates with Pydantic
+- core logic operates on explicit frozen types
+- persistence returns typed records
+- translation between these layers is explicit and testable
+
+Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
+
+**Current gaps visible in code:**
+- `store/index_run.py` still returns raw dict payloads for claimed tasks and run lookups
+- `store/manifest.py` and `store/snapshot.py` still expose mixed record/dict APIs instead of converging on typed records
+- `store/projection.py`, `store/cache.py`, `store/vector.py`, and `store/pg_retrieval.py` remain heavily dict-oriented at public boundaries
+- query/retrieval paths still use dict-shaped rows as a primary interchange format instead of a small typed boundary model set
+- `schemas/__init__.py` and `schemas/api.py` correctly isolate Pydantic, but the rest of the system has not fully converged on explicit translation adapters
+
+**Required work:**
+- define the canonical schema flow explicitly in code/docs:
+  - `schemas.api` / `schemas.config` for Pydantic boundary types
+  - `schemas.core_types` and `store.records` for frozen dataclass interchange
+  - adapters that translate field-by-field between boundary, core, and persistence forms
+- eliminate mixed dict/record public APIs where possible:
+  - add typed `IndexRunRecord` / publish-task records
+  - add typed SCIP artifact ref records
+  - add typed projection/build/session/cache metadata records where those payloads are stable enough
+- make store modules prefer `*_record()` style APIs and treat dict-returning helpers as compatibility shims
+- keep retrieval-core purity strict:
+  - no Pydantic imports
+  - no hidden boundary serialization logic in pure ranking/fusion/graph functions
+- add architecture fitness tests that assert:
+  - shell packages do not mass-assign Pydantic payloads into core/store records
+  - store modules do not regress from typed records back to dict returns in stabilized surfaces
+  - imports continue to point inward after the package split
+
+**Exit criteria:**
+- a maintainer can trace request data as:
+  - `api schema -> explicit translator -> core dataclass -> explicit persistence record`
+- the hot release paths no longer rely on undocumented dict shapes as their primary cross-layer contract
+- architecture tests fail fast when new code bypasses explicit translation
+
+### P0.6b Copy-boundary and serialization discipline
+
+**Gap:** Boundary handling is still copy-heavy. Several hot paths materialize Python `dict`/`list` payloads repeatedly before persistence, cache storage, or native-library handoff. That undermines both throughput and the intended thin-shell contract.
+
+**Current audit findings:**
+- API/query shell still normalizes arbitrary objects through recursive Python copying:
+  - `utils/json.py:safe_jsonable()` recursively converts dict/list/set/object trees
+  - `query/handler.py` uses `safe_jsonable()` for dialogue/source persistence
+- store persistence still serializes JSON payloads at DB boundaries, but some hot rows now avoid full object expansion:
+  - `store/snapshot.py` relational facts now use explicit field serializers instead of `json.dumps(obj.to_dict())`
+  - `store/manifest.py`, `store/index_run.py`, `store/projection.py` still expose dict-shaped boundaries in places
+- vector/cache paths copy embeddings through Python containers:
+  - `indexing/embedder.py` now stores cached embeddings as native `float32` byte buffers
+  - `store/pg_retrieval.py` no longer duplicates embeddings into JSON metadata, but still materializes `list[float]`/vector-literal form at the PG vector boundary
+  - `store/pg_retrieval.py` still receives fallback search vectors through DB row arrays, but ranks them as a NumPy matrix before metadata inflation
+  - `store/cache.py` uses generic pickle payloads instead of typed/native buffer storage for hot entries
+- publishing/integration edges are partially hardened:
+  - Terminus lineage publishing now accepts typed `IRSnapshot` objects and avoids full snapshot `to_dict()` expansion in `PublishingService` and the active index pipeline
+  - remaining copy points include JSON outbox payload strings, dict-shaped manifest return payloads, and the legacy dict publisher API kept for compatibility
+
+**Direction:** "Zero-copy" is only realistic where data remains in native buffers or immutable typed views end to end. In pure Python object graphs, the release target should be:
+- zero extra copies across native/vector boundaries where possible
+- one explicit materialization at the shell/storage boundary where JSON is actually required
+- no repeated dict/list reconstruction between adjacent internal layers
+
+**Required work:**
+- Define boundary classes by transport type:
+  - Python-core typed dataclasses for internal flow
+  - native-buffer carriers for embeddings/vectors
+  - JSON/bytes serializers only at persistence/API/native-process edges
+- For embedding/vector paths:
+  - keep embeddings as `np.ndarray[np.float32]` through compute, cache lookup, batch add, and DB/vector handoff
+  - avoid `tolist()` except where the storage driver strictly requires JSON/array literals
+  - prefer binary/native array transfer where backend supports it
+- For JSON/document paths:
+  - serialize once at the final boundary instead of `to_dict()` followed by recursive cleanup followed by `json.dumps()`
+  - evaluate direct JSON emission in the native/storage layer when supported by the backend/driver
+- For store/query shell:
+  - replace generic `safe_jsonable()` usage on known typed payloads with explicit serializers
+  - eliminate dict round-trips like `record -> dict -> row/json -> dict -> record` on hot paths
+- Add architecture/perf tests that fail when:
+  - embeddings are converted to Python lists in active hot paths without a backend requirement
+  - boundary code performs repeated `to_dict()` / `safe_jsonable()` / `dict()` normalization on already-typed objects
+  - cache/storage adapters regress from typed/buffer-aware APIs to generic pickle/dict payloads
+
+**Exit criteria:**
+- hot embedding/vector flows stay in native array form until the final backend boundary
+- typed internal payloads are materialized to JSON at most once per boundary crossing
+- a benchmark proves lower copy/allocation overhead for repeated index/update/query workloads
+
+### P0.6c Object materialization minimization
+
+**Gap:** Even where FastCode already uses native-backed libraries (`FAISS`, `NumPy`, `pgvector`), the runtime frequently materializes results back into Python `dict`, `list`, dataclass, or `networkx` object graphs too early. That destroys the benefit of keeping work in C/C++/Rust-backed layers.
+
+**Current audit findings:**
+- embedding path:
+  - `indexing/embedder.py` now writes cached vectors as `float32` byte buffers and reconstructs cache hits with `np.frombuffer(...)`
+  - stale pre-buffer list payloads are treated as cache misses and overwritten with the current binary format
+- PostgreSQL retrieval path:
+  - `store/pg_retrieval.py` now strips raw embedding arrays from `metadata_json` before insert so vector payloads are not duplicated in JSON storage
+  - it still converts embeddings to Python lists/vector literals for the current pgvector/array insert path
+- vector retrieval path:
+  - `store/vector.py` keeps FAISS native indexes and now vectorizes repository-overview ranking before result metadata assembly
+  - repository overview persistence uses pickle/object graphs rather than a typed buffer-oriented format
+- PostgreSQL retrieval result path:
+  - semantic fallback now delays JSON metadata inflation until after vectorized NumPy ranking
+  - direct pgvector/keyword result rows still materialize JSON payloads at the retrieval boundary
+- graph path:
+  - hot graph operations still use `networkx`, which is fundamentally Python-object heavy
+  - graph persistence/load paths materialize large object graphs instead of keeping a compact native representation
+- IR/store path:
+  - `IRSnapshot.to_dict()/from_dict()` and record `to_dict()/from_dict()` patterns are still common interchange mechanisms
+  - DB rows are routinely converted with `row_to_dict()` before typed reconstruction
+
+**Design rule:** keep data in C/C++/Rust-backed representation as long as possible, and only materialize into Python objects when:
+- Python business logic must inspect or mutate it
+- an API boundary requires JSON/text output
+- a backend driver lacks a native/binary transfer path
+
+**Required work:**
+- Introduce explicit "materialization boundaries" in architecture docs/code:
+  - native buffer / native index boundary
+  - typed Python domain boundary
+  - JSON/text/API boundary
+- For vectors/embeddings:
+  - prefer ndarray/buffer-preserving cache payloads
+  - avoid list-of-float round-trips for pgvector/FAISS handoff if binary/native driver support is available
+  - keep batch search/rerank operations vectorized in NumPy/FAISS rather than re-looping through Python objects prematurely
+- For graph processing:
+  - migrate hot graph algorithms toward `igraph` or another compact native-backed engine
+  - isolate Python object materialization to debug/export/API layers
+- For store/DB paths:
+  - move from `row -> dict -> typed record` toward `row -> typed record` adapters
+  - avoid full JSON object inflation when only a few fields are needed
+- For IR interchange:
+  - stop using `to_dict()/from_dict()` as the default internal interchange format in hot paths
+  - keep typed instances or compact columnar/native forms until a real boundary requires expansion
+- Add measurement around:
+  - Python allocation counts
+  - peak RSS during index/query/update workloads
+  - materialization cost share in profiling for medium repositories
+
+**Exit criteria:**
+- profiling shows hot paths spend most time in native/vector/graph backends, not Python object assembly
+- repeated query/index/update workloads avoid unnecessary `list`/`dict`/JSON inflation in the inner loop
+- architecture tests and profiling notes identify any intentional materialization boundary explicitly
+
 ### P0.7 API and file-upload security hardening
 
 **Gap:** Blocking upload/index work is now offloaded, but upload extraction is still not release-grade security.
@@ -302,9 +624,101 @@ These are release blockers. Do not tag a stable release while any P0 item is ope
 - Define semantic versioning policy and compatibility promises for snapshots, manifests, and projection artifacts.
 - Add release checklist: tests, packaging, install smoke, migration smoke, docs update, changelog.
 - Add a minimal benchmark/performance envelope for medium repositories to catch major regressions.
+- Separate release gates into explicit tiers:
+  - architecture gate
+  - package/install gate
+  - backend integration gate
+  - external-tool gate
+  - performance gate
+- Define what can block a patch release vs minor release vs major release.
+- Define which warnings/errors are acceptable degraded behavior and which invalidate a stable release claim.
 
 **Exit criteria:**
 - A maintainer can tag a release by following one checklist with reproducible commands and expected outputs.
+
+### P0.10 Documentation, deployment, and operator runbooks
+
+**Gap:** The codebase has more runtime modes than the docs currently prove safe to install and operate.
+
+**Required work:**
+- Write a release-grade install guide for:
+  - local single-user mode
+  - API/web service mode
+  - PostgreSQL-backed mode
+  - optional language-tooling/SCIP mode
+- Write deployment runbooks covering:
+  - required environment variables
+  - filesystem expectations for cache/artifact roots
+  - startup/shutdown sequencing
+  - backup/restore of snapshots, manifests, and projection artifacts
+  - log locations and diagnostic collection
+- Write operator playbooks for:
+  - cache invalidation
+  - artifact rebuild after model/tool change
+  - database migration/rollback handling
+  - lock/fencing incident recovery
+  - failed upload/index remediation
+- Document trusted-local-only vs production-service assumptions explicitly for the API/web entrypoints.
+- Document supported language tiers:
+  - stable
+  - degraded/structural
+  - experimental
+
+**Exit criteria:**
+- A new maintainer can install, start, index, query, upgrade, and recover the service using only checked-in docs.
+- Public docs do not over-claim support that is only partially tested.
+
+### P0.11 Artifact and migration compatibility policy
+
+**Gap:** Snapshot/manifests/projection/vector artifacts now carry more metadata, but there is not yet a strict compatibility contract for upgrades and invalidation.
+
+**Required work:**
+- Version every persisted artifact family explicitly:
+  - snapshot metadata
+  - manifest records
+  - projection artifacts
+  - cache payloads
+  - vector/index artifacts
+- Define upgrade rules for:
+  - forward-incompatible schema changes
+  - additive metadata fields
+  - tool-output schema changes
+  - embedding fingerprint changes
+  - helper/scip artifact lineage changes
+- Add startup validation that detects incompatible artifacts early and reports rebuild requirements clearly.
+- Add migration/compatibility tests covering:
+  - load old artifact -> accept
+  - load old artifact -> rebuild required
+  - load incompatible artifact -> explicit hard failure
+
+**Exit criteria:**
+- Upgrading versions cannot silently load semantically incompatible artifacts.
+- Release notes can state exactly which prior artifacts remain readable and which require rebuild.
+
+### P0.12 Dependency and supply-chain hardening
+
+**Gap:** Stable release needs tighter control over dependency drift and packaging trust than development smoke tests currently prove.
+
+**Required work:**
+- Add a dependency review pass for runtime packages with:
+  - pinned or constrained high-risk libraries
+  - explicit extras boundaries
+  - known-native/tooling dependencies documented
+- Add security/reproducibility checks:
+  - `pip-audit` or equivalent
+  - wheel/sdist content verification
+  - helper asset inclusion verification
+  - lockfile or documented resolver strategy for repeatable installs
+- Review subprocess/tool invocation surfaces for:
+  - path resolution
+  - environment inheritance
+  - timeout policy
+  - stderr/stdout diagnostics
+- Decide which external tools are mandatory, optional, or auto-detected and encode that in install metadata/docs.
+
+**Exit criteria:**
+- A stable release can be rebuilt and installed reproducibly from a clean environment with documented dependency expectations.
+- Dependency/tooling changes that would alter runtime behavior are visible in release review, not discovered after release.
 
 ### P1: Strongly Recommended Before Stable Release
 
@@ -356,6 +770,10 @@ Still raw-dict-heavy at boundaries:
 - index run records
 - SCIP artifact record payloads
 - projection/cache session payloads
+- vector-store search/repo-overview payloads
+- pg-retrieval row/result payloads
+
+This item should be treated as the implementation slice of the broader P0.6a schema-flow requirement above, not as isolated cleanup.
 
 ### P1.6 Observability and debuggability
 
@@ -368,6 +786,101 @@ Still raw-dict-heavy at boundaries:
   - artifact-handle cache hit/miss
   - incremental planner changed-file counts
 - Add a documented diagnostic bundle for support: config summary, storage backend, dependency availability, latest run metadata.
+
+### P1.7 Release-fixture and benchmark realism
+
+- Add one or more medium-sized real-world fixtures that exercise:
+  - multi-language indexing
+  - repeated incremental updates
+  - cache reuse after restart
+  - query-time snapshot switching
+- Record baseline envelopes for:
+  - cold full index
+  - warm full index
+  - one-file incremental update
+  - repeated identical query against cached snapshot artifacts
+- Track peak memory and artifact size growth, not just wall-clock time.
+
+### P1.8 Runtime dependency optimization audit
+
+**Gap:** Several hot-path dependencies are selected for convenience or compatibility rather than measured runtime efficiency. Stable release should not carry pure-Python bottlenecks in the core path if there is already a viable compiled/runtime-efficient alternative.
+
+**Current audit findings:**
+- `networkx` is still used in active graph paths:
+  - `ir/graph.py`
+  - `ir/merge.py`
+  - `graph/build.py`
+  - `retrieval/hybrid.py`
+  - `mcp/graph_tools.py`
+  - `store/snapshot.py`
+  - `main/fastcode.py`
+- `python-igraph` is already present as a dependency and is only partially used today:
+  - `indexing/projection_transform.py` prefers `igraph` and falls back to `networkx`
+- this means the project currently pays:
+  - dependency weight for both graph stacks
+  - Python-object overhead in core graph operations
+  - inconsistent graph semantics and conversion cost across modules
+
+**Required work:**
+- Benchmark graph-heavy operations under `networkx` vs `igraph` on representative repository snapshots:
+  - graph build
+  - path/impact analysis
+  - community clustering
+  - retrieval graph expansion
+  - snapshot graph load/save conversion
+- Decide the graph contract intentionally:
+  - `igraph` as primary runtime graph engine for hot paths
+  - `networkx` retained only as compatibility/test adapter if needed
+- If `igraph` wins materially, refactor toward one canonical internal graph representation for hot paths and isolate conversions at boundaries.
+- Avoid dual-maintenance where one module uses `igraph` and the next immediately converts back to `networkx`.
+- Add correctness regression tests proving graph engine substitution preserves:
+  - directed/undirected semantics
+  - edge attributes
+  - multi-edge expectations or explicit non-support
+  - path and clustering output invariants
+
+**Exit criteria:**
+- The graph engine used in hot paths is chosen by benchmark evidence, not convenience.
+- Stable release does not pay repeated conversion overhead between graph libraries on critical query/index flows.
+
+### P1.9 Dependency-level performance hardening
+
+**Gap:** Beyond graph libraries, the runtime stack still includes some heavyweight or slower-than-necessary choices that need measurement and possible narrowing before stable release.
+
+**Audit targets:**
+- serialization and API payloads:
+  - evaluate whether `orjson` should replace standard JSON on hot API/cache paths
+- tabular/dataframe dependency surface:
+  - audit `pandas` usage frequency and hot-path necessity; remove or isolate if it is not on the release-critical path
+- cache backend behavior:
+  - compare `diskcache` local latency against actual workload patterns
+  - verify whether Redis is only optional scale-out infrastructure or part of the default performance story
+- embedding and vector flow:
+  - remove avoidable Python loops around NumPy/FAISS batch operations
+  - confirm no per-row conversion churn between Python lists and `ndarray`
+- Pydantic boundary cost:
+  - keep validation at the shell only; avoid repeated model materialization in internal loops
+- text/token prep:
+  - audit repeated tokenization/normalization work for cacheable preprocessing
+
+**Required work:**
+- Produce a dependency audit table with:
+  - dependency
+  - active hot-path usage
+  - measured cost
+  - replacement/isolation candidate
+  - decision
+- Split dependencies into:
+  - core hot-path mandatory
+  - optional feature dependency
+  - dev/test only
+  - compatibility shim pending removal
+- Remove or demote dependencies that are not justified by measured production value.
+- Add benchmark tests around any substitution that changes runtime behavior or output formatting.
+
+**Exit criteria:**
+- The stable dependency set is intentionally minimal for the hot path.
+- Performance-sensitive libraries are selected based on measured workload evidence and documented tradeoffs.
 
 ### P2: Post-Stable Quality Improvements
 
@@ -424,8 +937,27 @@ Still raw-dict-heavy at boundaries:
 - `test_helper_backed_resolver_degrades_gracefully_when_helper_file_missing` — missing asset simulation with `_DummyFallbackResolver`; asserts `structural_fallback` tier and `tool_invocation_failed` diagnostic
 - `test_helper_path_co_located_with_resolver_module` — co-location invariant: helper parent directory matches `helper_backed.py` module directory
 
+### Layout merge and root test entrypoint
+
+**Status:** Fixed.
+
+**Audit verdict:** PASS after hardening.
+
+**What changed:**
+- workspace-root pytest now has explicit discovery config:
+  - `testpaths = ["tests", "fastcode/tests"]`
+  - `norecursedirs` excludes `repo_backup/` and other non-project trees
+  - root `pythonpath` includes workspace root, `fastcode/src`, and `nanobot`
+  - root marker registration covers `edge`, `negative`, `test_double`, `integration`, `e2e`, `regression`, `property`, `benchmark`, and `snapshot`
+  - root addopts now mirrors package behavior for schemathesis opt-out
+- stale renamed-module test references were updated for the new package layout
+
+**Verified outcome:**
+- `uv run pytest -q -rs` from repository root now completes successfully instead of failing during collection on `repo_backup/`
+
 ## Rules for updating this file
 
 - Update this file whenever a hardening slice lands.
 - Remove completed items from the remaining-work sections or move them into landed status.
 - Do not create separate audit/status markdown files unless the user explicitly asks for one.
+- When adding a new stable-release claim, also add the matching enforcement test and evidence requirement here.

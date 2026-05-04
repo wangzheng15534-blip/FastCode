@@ -1224,6 +1224,10 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "modified": 1,
             "removed": 0,
             "unchanged": 1,
+            "added_paths": [],
+            "modified_paths": ["b.py"],
+            "removed_paths": [],
+            "changed_paths": ["b.py"],
             "reused_elements": 1,
             "reindexed_elements": 1,
             "reused_changed_embeddings": 0,
@@ -1491,6 +1495,8 @@ def test_plan_incremental_elements_reuses_changed_unit_embedding_when_text_hash_
         assert plan["semantic_frontier_widened"] == 0
         assert plan["api_frontier_changed"] == 0
         assert plan["api_frontier_changed_paths"] == []
+        assert plan["changed_paths"] == ["b.py"]
+        assert pipeline._preservable_incremental_sources(plan) == {"scip"}
         assert planned_elements[0].metadata["embedding"] == pytest.approx(
             [0.9, 0.8, 0.7]
         )
@@ -1642,6 +1648,7 @@ def test_plan_incremental_elements_marks_package_scope_when_api_surface_changes(
         assert plan["api_frontier_changed"] == 1
         assert plan["api_frontier_changed_paths"] == ["pkg/b.py"]
         assert plan["package_scope_roots"] == ["."]
+        assert pipeline._preservable_incremental_sources(plan) is None
 
 
 def test_resolve_snapshot_ref_uses_dirty_worktree_hash_for_local_changes() -> None:

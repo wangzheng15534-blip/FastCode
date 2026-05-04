@@ -1190,11 +1190,16 @@ class IndexPipeline:
             api_frontier_changed_paths,
         )
         all_elements = unchanged_elements + new_elements
+        changed_paths = sorted(set(added + modified))
         summary = {
             "added": len(added),
             "modified": len(modified),
             "removed": len(deleted),
             "unchanged": len(unchanged),
+            "added_paths": sorted(added),
+            "modified_paths": sorted(modified),
+            "removed_paths": sorted(deleted),
+            "changed_paths": changed_paths,
             "reused_elements": len(unchanged_elements),
             "reindexed_elements": len(new_elements),
             "reused_changed_embeddings": reused_changed_embeddings,
@@ -1205,6 +1210,28 @@ class IndexPipeline:
             "change_kinds": sorted(change_kinds),
         }
         return all_elements, summary
+
+    @staticmethod
+    def _preservable_incremental_sources(
+        incremental_plan: dict[str, Any] | None,
+    ) -> set[str] | None:
+        if incremental_plan is None:
+            return None
+        change_kinds = {
+            str(kind) for kind in incremental_plan.get("change_kinds", []) if kind
+        }
+        unstable_tool_surfaces = {
+            "api_surface_hash",
+            "signature_hash",
+            "edge_surface_hash",
+        }
+        if change_kinds & unstable_tool_surfaces:
+            return None
+        if int(incremental_plan.get("removed", 0) or 0) > 0:
+            return None
+        if int(incremental_plan.get("modified", 0) or 0) <= 0:
+            return None
+        return {"scip"}
 
     @staticmethod
     def _build_repair_frontier_task(
@@ -1843,7 +1870,7 @@ class IndexPipeline:
         try:
             self.index_run_store.mark_status(run_id, "extracting")
             artifact_key = self.snapshot_store.artifact_key_for_snapshot(snapshot_id)
-            incremental_plan: dict[str, int] | None = None
+            incremental_plan: dict[str, Any] | None = None
             planned_elements, incremental_plan = self._plan_incremental_elements(
                 repo_name=repo_name,
                 repo_url=repo_url,
@@ -2195,6 +2222,11 @@ class IndexPipeline:
                                 prev_snapshot,
                                 merged_snapshot,
                                 incremental_change_set,
+                                preserve_sources_for_modified_paths=(
+                                    self._preservable_incremental_sources(
+                                        incremental_plan
+                                    )
+                                ),
                             )
 
             target_paths = (
@@ -2488,6 +2520,13 @@ class IndexPipeline:
                 }
             if incremental_plan is not None:
                 result["incremental_prefilter"] = dict(incremental_plan)
+                preserved_sources = self._preservable_incremental_sources(
+                    incremental_plan
+                )
+                if preserved_sources:
+                    result["incremental_prefilter"][
+                        "preserved_source_owned_evidence"
+                    ] = sorted(preserved_sources)
             widened_repair_needed = bool(
                 incremental_plan is None
                 or incremental_plan.get("semantic_frontier_widened", 0) > 0

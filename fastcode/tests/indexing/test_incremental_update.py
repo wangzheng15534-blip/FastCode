@@ -587,6 +587,111 @@ class TestApplyIncrementalUpdate:
         support_ids = {s.support_id for s in result.supports}
         assert "sup:new" in support_ids
 
+    def test_preserve_source_owned_supports_for_stable_changed_units(self) -> None:
+        old_func = _make_symbol_unit(
+            "b.py",
+            "func",
+            unit_id="unit:sym:b.py:func:old",
+        )
+        new_func = _make_symbol_unit(
+            "b.py",
+            "func",
+            unit_id="unit:sym:b.py:func:new",
+        )
+        old_support = IRUnitSupport(
+            support_id="sup:scip:old",
+            unit_id="unit:sym:b.py:func:old",
+            source="scip",
+            support_kind="occurrence",
+            role="definition",
+            path="b.py",
+        )
+        old_relation = IRRelation(
+            relation_id="rel:scip:self",
+            src_unit_id="unit:sym:b.py:func:old",
+            dst_unit_id="unit:sym:b.py:func:old",
+            relation_type="definition",
+            resolution_state="anchored",
+            support_sources={"scip"},
+            support_ids=["sup:scip:old"],
+        )
+        old = _build_simple_snapshot(
+            {"a.py": "h1", "b.py": "h2"},
+            extra_units=[old_func],
+            supports=[old_support],
+            relations=[old_relation],
+        )
+        new = _build_simple_snapshot(
+            {"a.py": "h1", "b.py": "h2_new"},
+            extra_units=[new_func],
+            snapshot_id="snap:test:new",
+            commit_id="new123",
+        )
+        cs = FileChangeSet(modified=["b.py"], unchanged=["a.py"])
+
+        result = apply_incremental_update(
+            old,
+            new,
+            cs,
+            preserve_sources_for_modified_paths={"scip"},
+        )
+
+        assert any(
+            support.source == "scip"
+            and support.unit_id == "unit:sym:b.py:func:new"
+            and support.metadata["relink_reason"] == "source_owned_incremental_preserve"
+            for support in result.supports
+        )
+        assert any(
+            relation.src_unit_id == "unit:sym:b.py:func:new"
+            and relation.dst_unit_id == "unit:sym:b.py:func:new"
+            and relation.support_sources == {"scip"}
+            and relation.metadata["relink_reason"]
+            == "source_owned_incremental_preserve"
+            for relation in result.relations
+        )
+
+    def test_unlisted_source_owned_supports_are_not_preserved(self) -> None:
+        old_func = _make_symbol_unit(
+            "b.py",
+            "func",
+            unit_id="unit:sym:b.py:func:old",
+        )
+        new_func = _make_symbol_unit(
+            "b.py",
+            "func",
+            unit_id="unit:sym:b.py:func:new",
+        )
+        old = _build_simple_snapshot(
+            {"b.py": "h2"},
+            extra_units=[old_func],
+            supports=[
+                IRUnitSupport(
+                    support_id="sup:semantic:old",
+                    unit_id="unit:sym:b.py:func:old",
+                    source="semantic_resolver",
+                    support_kind="occurrence",
+                    path="b.py",
+                )
+            ],
+        )
+        new = _build_simple_snapshot(
+            {"b.py": "h2_new"},
+            extra_units=[new_func],
+            snapshot_id="snap:test:new",
+            commit_id="new123",
+        )
+        cs = FileChangeSet(modified=["b.py"])
+
+        result = apply_incremental_update(
+            old,
+            new,
+            cs,
+            preserve_sources_for_modified_paths={"scip"},
+        )
+
+        assert all(support.source != "semantic_resolver" for support in result.supports)
+
 
 # ---------------------------------------------------------------------------
 # Tests: integration — diff + apply together

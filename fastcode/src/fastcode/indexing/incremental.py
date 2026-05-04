@@ -111,6 +111,29 @@ def _replacement_map(
     return replacements
 
 
+def _preserve_source(source: str, preserve_sources: set[str] | None) -> bool:
+    return preserve_sources is not None and source in preserve_sources
+
+
+def _relation_sources(relation: IRRelation) -> set[str]:
+    if relation.support_sources:
+        return set(relation.support_sources)
+    source = relation.source
+    return {source} if source else set()
+
+
+def _support_key(
+    support: IRUnitSupport,
+) -> tuple[str, str, str, str | None, str | None]:
+    return (
+        support.unit_id,
+        support.source,
+        support.support_kind,
+        support.path,
+        support.external_id,
+    )
+
+
 def _merge_units(
     change_set: FileChangeSet,
     old_units_by_path: dict[str, list[IRCodeUnit]],
@@ -140,18 +163,69 @@ def _merge_supports(
     old_supports: list[IRUnitSupport],
     new_supports: list[IRUnitSupport],
     tombstoned_ids: set[str],
+    replacement_map: dict[str, str],
+    preserve_sources_for_modified_paths: set[str] | None = None,
 ) -> list[IRUnitSupport]:
-    """Merge supports: drop old tombstoned, replace with new."""
+    """Merge supports, optionally relinking preserved source-owned supports."""
     merged: list[IRUnitSupport] = []
     for support in old_supports:
         if support.unit_id not in tombstoned_ids:
             merged.append(support)
+            continue
+        replacement_id = replacement_map.get(support.unit_id)
+        if not replacement_id or not _preserve_source(
+            support.source, preserve_sources_for_modified_paths
+        ):
+            continue
+        payload = support.to_dict()
+        payload["unit_id"] = replacement_id
+        payload["support_id"] = f"relink:{support.support_id}"
+        metadata = dict(payload.get("metadata") or {})
+        metadata["relinked_from_unit_id"] = support.unit_id
+        metadata["relink_reason"] = "source_owned_incremental_preserve"
+        payload["metadata"] = metadata
+        merged.append(IRUnitSupport.from_dict(payload))
+
+    seen = {_support_key(support) for support in merged}
     for support in new_supports:
-        if support.unit_id in tombstoned_ids or support.unit_id not in {
-            s.unit_id for s in merged
-        }:
+        key = _support_key(support)
+        if key not in seen:
             merged.append(support)
+            seen.add(key)
     return merged
+
+
+def _relinked_relation(
+    relation: IRRelation,
+    *,
+    src_unit_id: str,
+    dst_unit_id: str,
+    relink_reason: str,
+) -> IRRelation:
+    metadata = dict(relation.metadata or {})
+    metadata["relinked_from_src_unit_id"] = relation.src_unit_id
+    metadata["relinked_from_dst_unit_id"] = relation.dst_unit_id
+    metadata["relink_reason"] = relink_reason
+    digest = hashlib.sha256(
+        (
+            f"{relation.relation_type}\0"
+            f"{src_unit_id}\0"
+            f"{dst_unit_id}\0"
+            f"{relation.relation_id}\0"
+            f"{relink_reason}"
+        ).encode()
+    ).hexdigest()[:24]
+    return IRRelation(
+        relation_id=f"relink:{digest}",
+        src_unit_id=src_unit_id,
+        dst_unit_id=dst_unit_id,
+        relation_type=relation.relation_type,
+        resolution_state=relation.resolution_state,
+        support_sources=set(relation.support_sources),
+        support_ids=list(relation.support_ids),
+        pending_capabilities=set(relation.pending_capabilities),
+        metadata=metadata,
+    )
 
 
 def _merge_relations(
@@ -160,6 +234,7 @@ def _merge_relations(
     tombstoned_ids: set[str],
     new_unit_ids: set[str],
     replacement_map: dict[str, str],
+    preserve_sources_for_modified_paths: set[str] | None = None,
 ) -> list[IRRelation]:
     """Merge relations with source ownership and stable-destination relinking.
 
@@ -175,33 +250,39 @@ def _merge_relations(
         src_tombstoned = relation.src_unit_id in tombstoned_ids
         dst_tombstoned = relation.dst_unit_id in tombstoned_ids
         if src_tombstoned:
+            replacement_src = replacement_map.get(relation.src_unit_id)
+            relation_sources = _relation_sources(relation)
+            preserve_relation = bool(relation_sources) and all(
+                _preserve_source(source, preserve_sources_for_modified_paths)
+                for source in relation_sources
+            )
+            if preserve_relation and replacement_src:
+                replacement_dst = (
+                    replacement_map.get(relation.dst_unit_id)
+                    if dst_tombstoned
+                    else relation.dst_unit_id
+                )
+                if replacement_dst:
+                    merged.append(
+                        _relinked_relation(
+                            relation,
+                            src_unit_id=replacement_src,
+                            dst_unit_id=replacement_dst,
+                            relink_reason="source_owned_incremental_preserve",
+                        )
+                    )
             continue
         if dst_tombstoned:
             replacement_dst = replacement_map.get(relation.dst_unit_id)
             if replacement_dst is None:
                 continue
             if replacement_dst != relation.dst_unit_id:
-                metadata = dict(relation.metadata or {})
-                metadata["relinked_from_unit_id"] = relation.dst_unit_id
-                digest = hashlib.sha256(
-                    (
-                        f"{relation.relation_type}\0"
-                        f"{relation.src_unit_id}\0"
-                        f"{replacement_dst}\0"
-                        f"{relation.relation_id}"
-                    ).encode()
-                ).hexdigest()[:24]
                 merged.append(
-                    IRRelation(
-                        relation_id=f"relink:{digest}",
+                    _relinked_relation(
+                        relation,
                         src_unit_id=relation.src_unit_id,
                         dst_unit_id=replacement_dst,
-                        relation_type=relation.relation_type,
-                        resolution_state=relation.resolution_state,
-                        support_sources=set(relation.support_sources),
-                        support_ids=list(relation.support_ids),
-                        pending_capabilities=set(relation.pending_capabilities),
-                        metadata=metadata,
+                        relink_reason="stable_destination_incremental_relink",
                     )
                 )
                 continue
@@ -260,6 +341,7 @@ def apply_incremental_update(
     old_snapshot: IRSnapshot,
     new_extraction: IRSnapshot,
     change_set: FileChangeSet,
+    preserve_sources_for_modified_paths: set[str] | None = None,
 ) -> IRSnapshot:
     """Produce a merged snapshot from an old snapshot and fresh extraction.
 
@@ -275,6 +357,9 @@ def apply_incremental_update(
         old_snapshot: Previously persisted snapshot.
         new_extraction: Freshly extracted snapshot (full extraction of repo).
         change_set: File diff from diff_changed_files().
+        preserve_sources_for_modified_paths: Support sources, such as {"scip"},
+            that may be relinked across modified files when the caller has proven
+            the source-owned semantic surface is unchanged.
 
     Returns:
         New IRSnapshot with updated content merged in.
@@ -301,15 +386,21 @@ def apply_incremental_update(
             new_unit_ids.add(unit.unit_id)
 
     # Merge each component.
+    replacements = _replacement_map(change_set, old_units_by_path, new_units_by_path)
     merged_supports = _merge_supports(
-        old_snapshot.supports, new_extraction.supports, tombstoned_ids
+        old_snapshot.supports,
+        new_extraction.supports,
+        tombstoned_ids,
+        replacements,
+        preserve_sources_for_modified_paths,
     )
     merged_relations = _merge_relations(
         old_snapshot.relations,
         new_extraction.relations,
         tombstoned_ids,
         new_unit_ids,
-        _replacement_map(change_set, old_units_by_path, new_units_by_path),
+        replacements,
+        preserve_sources_for_modified_paths,
     )
     merged_embeddings = _merge_embeddings(
         old_snapshot.embeddings, new_extraction.embeddings, tombstoned_ids

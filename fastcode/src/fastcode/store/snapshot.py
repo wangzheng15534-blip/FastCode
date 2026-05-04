@@ -73,7 +73,7 @@ class SnapshotStore:
             "end_col": sym.end_col,
             "source_priority": sym.source_priority,
             "source_set": cls._source_set_payload(sym.source_set),
-            "metadata": safe_jsonable(sym.metadata),
+            "metadata": dict(sym.metadata) if sym.metadata else {},
         }
 
     @staticmethod
@@ -88,7 +88,7 @@ class SnapshotStore:
             "end_line": occ.end_line,
             "end_col": occ.end_col,
             "source": occ.source,
-            "metadata": safe_jsonable(occ.metadata),
+            "metadata": dict(occ.metadata) if occ.metadata else {},
         }
 
     @staticmethod
@@ -101,7 +101,7 @@ class SnapshotStore:
             "source": edge.source,
             "confidence": edge.confidence,
             "doc_id": edge.doc_id,
-            "metadata": safe_jsonable(edge.metadata),
+            "metadata": dict(edge.metadata) if edge.metadata else {},
         }
 
     @staticmethod
@@ -113,8 +113,8 @@ class SnapshotStore:
             "attachment_type": attachment.attachment_type,
             "source": attachment.source,
             "confidence": attachment.confidence,
-            "payload": safe_jsonable(attachment.payload),
-            "metadata": safe_jsonable(attachment.metadata),
+            "payload": dict(attachment.payload) if attachment.payload else {},
+            "metadata": dict(attachment.metadata) if attachment.metadata else {},
         }
 
     def _init_db(self) -> None:

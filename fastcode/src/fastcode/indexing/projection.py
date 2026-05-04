@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from ..ir.projection import ProjectionScope
@@ -101,6 +101,33 @@ class ProjectionService:
                 json.dump(chunk, f, ensure_ascii=False, indent=2)
         return root
 
+    @staticmethod
+    def _projection_coverage_paths(snapshot: Any, result: Any) -> list[str]:
+        coverage_nodes: set[str] = set()
+        for layer in (result.l0, result.l1, result.l2_index):
+            meta = cast(dict[str, Any], layer.get("meta") or {})
+            for node_id in cast(list[Any], meta.get("covers_nodes") or []):
+                if node_id:
+                    coverage_nodes.add(str(node_id))
+
+        path_by_node: dict[str, str] = {}
+        for symbol in getattr(snapshot, "symbols", []) or []:
+            path = getattr(symbol, "path", "")
+            if path:
+                path_by_node[str(symbol.symbol_id)] = str(path)
+        for document in getattr(snapshot, "documents", []) or []:
+            path = getattr(document, "path", "")
+            if path:
+                path_by_node[str(document.doc_id)] = str(path)
+
+        return sorted(
+            {
+                path_by_node[node_id]
+                for node_id in coverage_nodes
+                if node_id in path_by_node
+            }
+        )
+
     def build_projection(
         self,
         scope_kind: str,
@@ -193,7 +220,13 @@ class ProjectionService:
             ir_graphs=ir_graphs,
             doc_mentions=doc_mentions or None,
         )
-        self.projection_store.save(build, params_hash=params_hash)
+        coverage_paths = self._projection_coverage_paths(snapshot, build)
+        self.projection_store.save(
+            build,
+            params_hash=params_hash,
+            scope=scope,
+            coverage_paths=coverage_paths,
+        )
         clear_dirty = getattr(self.projection_store, "clear_dirty", None)
         if callable(clear_dirty):
             clear_dirty(resolved_snapshot_id, scope_kind, scope_key)
@@ -202,6 +235,65 @@ class ProjectionService:
         payload["status"] = "built"
         payload["mirror_path"] = mirror_root
         return payload
+
+    def rebuild_dirty_projections(self, snapshot_id: str) -> dict[str, Any]:
+        list_dirty = getattr(self.projection_store, "list_dirty_scopes", None)
+        list_builds = getattr(self.projection_store, "list_builds_for_snapshot", None)
+        if not callable(list_dirty) or not callable(list_builds):
+            return {"snapshot_id": snapshot_id, "rebuilt": 0, "skipped": 0}
+
+        dirty_scopes = cast(list[dict[str, Any]], list_dirty(snapshot_id))
+        if not dirty_scopes:
+            return {"snapshot_id": snapshot_id, "rebuilt": 0, "skipped": 0}
+
+        builds = cast(list[dict[str, Any]], list_builds(snapshot_id))
+        builds_by_scope = {
+            (str(build.get("scope_kind")), str(build.get("scope_key"))): build
+            for build in builds
+        }
+        rebuilt: list[str] = []
+        skipped = 0
+        seen: set[tuple[str, str]] = set()
+        rebuilt_all_marker = False
+        for dirty in dirty_scopes:
+            dirty_kind = str(dirty.get("scope_kind") or "")
+            dirty_key = str(dirty.get("scope_key") or "")
+            if dirty_kind == "all" and dirty_key == "*":
+                targets = list(builds_by_scope.values())
+                rebuilt_all_marker = bool(targets) or rebuilt_all_marker
+            else:
+                target = builds_by_scope.get((dirty_kind, dirty_key))
+                targets = [target] if target else []
+            if not targets:
+                skipped += 1
+                continue
+            for build in targets:
+                if not build:
+                    skipped += 1
+                    continue
+                key = (str(build.get("scope_kind")), str(build.get("scope_key")))
+                if key in seen:
+                    continue
+                seen.add(key)
+                result = self.build_projection(
+                    scope_kind=key[0],
+                    snapshot_id=snapshot_id,
+                    query=build.get("query"),
+                    target_id=build.get("target_id"),
+                    filters=build.get("filters") or {},
+                    force=True,
+                )
+                rebuilt.append(str(result.get("projection_id")))
+        if rebuilt_all_marker:
+            clear_dirty = getattr(self.projection_store, "clear_dirty", None)
+            if callable(clear_dirty):
+                clear_dirty(snapshot_id, "all", "*")
+        return {
+            "snapshot_id": snapshot_id,
+            "rebuilt": len(rebuilt),
+            "skipped": skipped,
+            "projection_ids": rebuilt,
+        }
 
     def get_projection_layer(self, projection_id: str, layer: str) -> dict[str, Any]:
         if not self.projection_store.enabled:

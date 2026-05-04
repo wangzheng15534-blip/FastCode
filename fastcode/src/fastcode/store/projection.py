@@ -69,6 +69,11 @@ class ProjectionStore:
                         scope_kind TEXT NOT NULL,
                         scope_key TEXT NOT NULL,
                         params_hash TEXT NOT NULL,
+                        query TEXT,
+                        target_id TEXT,
+                        filters_json JSONB,
+                        coverage_paths_json JSONB,
+                        coverage_nodes_json JSONB,
                         status TEXT NOT NULL,
                         warnings_json TEXT,
                         created_at TIMESTAMPTZ NOT NULL,
@@ -82,6 +87,14 @@ class ProjectionStore:
                     ON projection_builds (snapshot_id, scope_kind, scope_key, params_hash, updated_at DESC)
                     """
                 )
+                for column_sql in (
+                    "ADD COLUMN IF NOT EXISTS query TEXT",
+                    "ADD COLUMN IF NOT EXISTS target_id TEXT",
+                    "ADD COLUMN IF NOT EXISTS filters_json JSONB",
+                    "ADD COLUMN IF NOT EXISTS coverage_paths_json JSONB",
+                    "ADD COLUMN IF NOT EXISTS coverage_nodes_json JSONB",
+                ):
+                    cur.execute(f"ALTER TABLE projection_builds {column_sql}")
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS projection_views (
@@ -300,7 +313,9 @@ class ProjectionStore:
             cur.execute(
                 """
                     SELECT projection_id, snapshot_id, scope_kind, scope_key,
-                           params_hash, status, warnings_json, created_at, updated_at
+                           params_hash, status, warnings_json, created_at, updated_at,
+                           query, target_id, filters_json, coverage_paths_json,
+                           coverage_nodes_json
                     FROM projection_builds
                     WHERE snapshot_id=%s AND status='ready'
                     ORDER BY updated_at DESC
@@ -319,6 +334,11 @@ class ProjectionStore:
                         "status": row[5],
                         "created_at": str(row[7]),
                         "updated_at": str(row[8]),
+                        "query": row[9],
+                        "target_id": row[10],
+                        "filters": row[11] or {},
+                        "coverage_paths": self._json_list(row[12]),
+                        "coverage_nodes": self._json_list(row[13]),
                     }
                 )
             return builds
@@ -344,21 +364,47 @@ class ProjectionStore:
             row = cur.fetchone()
             return row[0] if row else None
 
-    def save(self, result: ProjectionBuildResult, params_hash: str) -> None:
+    @staticmethod
+    def _coverage_nodes(result: ProjectionBuildResult) -> list[str]:
+        nodes: set[str] = set()
+        for layer in (result.l0, result.l1, result.l2_index):
+            meta = layer.get("meta") or {}
+            for node_id in meta.get("covers_nodes") or []:
+                if node_id:
+                    nodes.add(str(node_id))
+        return sorted(nodes)
+
+    def save(
+        self,
+        result: ProjectionBuildResult,
+        params_hash: str,
+        *,
+        scope: ProjectionScope,
+        coverage_paths: list[str] | None = None,
+    ) -> None:
         now = utc_now()
+        coverage_nodes = self._coverage_nodes(result)
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO projection_builds (
                         projection_id, snapshot_id, scope_kind, scope_key, params_hash,
-                        status, warnings_json, created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        query, target_id, filters_json, coverage_paths_json,
+                        coverage_nodes_json, status, warnings_json, created_at,
+                        updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb,
+                              %s::jsonb, %s, %s, %s, %s)
                     ON CONFLICT (projection_id) DO UPDATE SET
                         snapshot_id=EXCLUDED.snapshot_id,
                         scope_kind=EXCLUDED.scope_kind,
                         scope_key=EXCLUDED.scope_key,
                         params_hash=EXCLUDED.params_hash,
+                        query=EXCLUDED.query,
+                        target_id=EXCLUDED.target_id,
+                        filters_json=EXCLUDED.filters_json,
+                        coverage_paths_json=EXCLUDED.coverage_paths_json,
+                        coverage_nodes_json=EXCLUDED.coverage_nodes_json,
                         status=EXCLUDED.status,
                         warnings_json=EXCLUDED.warnings_json,
                         updated_at=EXCLUDED.updated_at
@@ -369,6 +415,14 @@ class ProjectionStore:
                         result.scope_kind,
                         result.scope_key,
                         params_hash,
+                        scope.query,
+                        scope.target_id,
+                        json.dumps(scope.filters or {}, ensure_ascii=False),
+                        json.dumps(
+                            sorted(set(coverage_paths or [])),
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(coverage_nodes, ensure_ascii=False),
                         "ready",
                         json.dumps(result.warnings or [], ensure_ascii=False),
                         now,
@@ -447,7 +501,8 @@ class ProjectionStore:
             cur.execute(
                 """
                     SELECT projection_id, snapshot_id, scope_kind, scope_key, params_hash, status,
-                           warnings_json, created_at, updated_at
+                           warnings_json, created_at, updated_at, query, target_id,
+                           filters_json, coverage_paths_json, coverage_nodes_json
                     FROM projection_builds
                     WHERE projection_id=%s
                     """,
@@ -471,4 +526,9 @@ class ProjectionStore:
                 "warnings": warnings_parsed,
                 "created_at": str(row[7]),
                 "updated_at": str(row[8]),
+                "query": row[9],
+                "target_id": row[10],
+                "filters": row[11] or {},
+                "coverage_paths": self._json_list(row[12]),
+                "coverage_nodes": self._json_list(row[13]),
             }

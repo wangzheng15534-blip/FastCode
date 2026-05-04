@@ -13,7 +13,7 @@ import pytest
 
 from fastcode.indexing.projection import ProjectionService
 from fastcode.ir.projection import ProjectionBuildResult
-from fastcode.ir.types import IRSnapshot
+from fastcode.ir.types import IRCodeUnit, IRSnapshot
 from fastcode.main import FastCode
 
 pytestmark = [pytest.mark.test_double]
@@ -52,7 +52,32 @@ class _FakeProjectionStore:
         self.cleared.append((snapshot_id, scope_kind, scope_key))
         self.dirty_scopes.discard((snapshot_id, scope_kind, scope_key))
 
-    def save(self, result: ProjectionBuildResult, params_hash: str) -> None:
+    def list_dirty_scopes(self, snapshot_id: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "snapshot_id": dirty_snapshot_id,
+                "scope_kind": scope_kind,
+                "scope_key": scope_key,
+            }
+            for dirty_snapshot_id, scope_kind, scope_key in sorted(self.dirty_scopes)
+            if dirty_snapshot_id == snapshot_id
+        ]
+
+    def list_builds_for_snapshot(self, snapshot_id: str) -> list[dict[str, Any]]:
+        return [
+            build
+            for build in self._builds.values()
+            if build.get("snapshot_id") == snapshot_id
+        ]
+
+    def save(
+        self,
+        result: ProjectionBuildResult,
+        params_hash: str,
+        *,
+        scope: Any,
+        coverage_paths: list[str] | None = None,
+    ) -> None:
         self.saved.append((result, params_hash))
         self._builds[result.projection_id] = {
             "projection_id": result.projection_id,
@@ -60,6 +85,10 @@ class _FakeProjectionStore:
             "scope_kind": result.scope_kind,
             "scope_key": result.scope_key,
             "status": "ready",
+            "query": getattr(scope, "query", None),
+            "target_id": getattr(scope, "target_id", None),
+            "filters": getattr(scope, "filters", {}) or {},
+            "coverage_paths": coverage_paths or [],
         }
         self.set_layer(result.projection_id, "L0", result.l0)
         self.set_layer(result.projection_id, "L1", result.l1)
@@ -82,9 +111,21 @@ class _FakeProjectionTransformer:
             snapshot_id=scope.snapshot_id,
             scope_kind=scope.scope_kind,
             scope_key=scope.scope_key,
-            l0={"layer": "L0", "built": len(self.calls)},
-            l1={"layer": "L1", "built": len(self.calls)},
-            l2_index={"layer": "L2", "built": len(self.calls)},
+            l0={
+                "layer": "L0",
+                "built": len(self.calls),
+                "meta": {"covers_nodes": ["unit:a"]},
+            },
+            l1={
+                "layer": "L1",
+                "built": len(self.calls),
+                "meta": {"covers_nodes": ["unit:a"]},
+            },
+            l2_index={
+                "layer": "L2",
+                "built": len(self.calls),
+                "meta": {"covers_nodes": ["unit:a"]},
+            },
             chunks=[],
         )
 
@@ -189,6 +230,15 @@ def _make_projection_service(
         branch="main",
         commit_id="c1",
         tree_id="t1",
+        units=[
+            IRCodeUnit(
+                unit_id="unit:a",
+                kind="function",
+                path="pkg/a.py",
+                language="python",
+                display_name="a",
+            )
+        ],
     )
     snapshot_store = SimpleNamespace(
         get_snapshot_record=lambda _snapshot_id: SimpleNamespace(artifact_key="ak"),
@@ -248,6 +298,51 @@ def test_build_projection_rebuilds_dirty_cached_scope_double():
         assert result["projection_id"] == "proj_built_1"
         assert len(transformer.calls) == 1
         assert store.cleared == [("snap:projection", "snapshot", scope_key)]
+
+
+def test_build_projection_saves_coverage_paths_double():
+    with tempfile.TemporaryDirectory(prefix="fc_projection_coverage_") as tmp:
+        store = _FakeProjectionStore()
+        service, _transformer = _make_projection_service(tmp, store)
+
+        result = service.build_projection("snapshot", snapshot_id="snap:projection")
+
+        assert result["status"] == "built"
+        assert store._builds[result["projection_id"]]["coverage_paths"] == ["pkg/a.py"]
+
+
+def test_rebuild_dirty_projections_replays_recorded_scope_double():
+    with tempfile.TemporaryDirectory(prefix="fc_projection_rebuild_dirty_") as tmp:
+        store = _FakeProjectionStore()
+        service, transformer = _make_projection_service(tmp, store)
+        first = service.build_projection(
+            "query",
+            snapshot_id="snap:projection",
+            query="find a",
+            filters={"language": "python"},
+        )
+        store.dirty_scopes.add(("snap:projection", "query", first["scope_key"]))
+
+        result = service.rebuild_dirty_projections("snap:projection")
+
+        assert result["rebuilt"] == 1
+        assert len(transformer.calls) == 2
+        assert transformer.calls[-1].query == "find a"
+        assert transformer.calls[-1].filters == {"language": "python"}
+
+
+def test_rebuild_dirty_projections_clears_all_dirty_marker_double():
+    with tempfile.TemporaryDirectory(prefix="fc_projection_rebuild_all_dirty_") as tmp:
+        store = _FakeProjectionStore()
+        service, transformer = _make_projection_service(tmp, store)
+        service.build_projection("snapshot", snapshot_id="snap:projection")
+        store.dirty_scopes.add(("snap:projection", "all", "*"))
+
+        result = service.rebuild_dirty_projections("snap:projection")
+
+        assert result["rebuilt"] == 1
+        assert len(transformer.calls) == 2
+        assert ("snap:projection", "all", "*") not in store.dirty_scopes
 
 
 def test_get_session_prefix_returns_l0_and_l1_double():

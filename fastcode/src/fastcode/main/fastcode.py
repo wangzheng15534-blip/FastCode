@@ -586,13 +586,43 @@ class FastCode:
     @staticmethod
     def _projection_dirty_reason(change_kinds: list[str]) -> str:
         kind_set = set(change_kinds)
-        if {"api_surface_hash", "signature_hash"} & kind_set:
-            return "api"
         if "edge_surface_hash" in kind_set:
             return "graph_topology"
+        if {"api_surface_hash", "signature_hash"} & kind_set:
+            return "api"
         if "embedding_text_hash" in kind_set:
             return "semantic"
         return "semantic"
+
+    def _projection_dirty_widened(
+        self,
+        *,
+        change_kinds: list[str],
+        dirty_paths: list[str],
+    ) -> bool:
+        kind_set = set(change_kinds)
+        topology_heavy = bool(
+            "edge_surface_hash" in kind_set
+            and {"api_surface_hash", "signature_hash"} & kind_set
+        )
+        threshold = int(
+            (getattr(self, "config", {}) or {})
+            .get("projection", {})
+            .get("dirty_widen_path_threshold", 8)
+        )
+        return topology_heavy or len(dirty_paths) > threshold
+
+    @staticmethod
+    def _projection_build_intersects_paths(
+        build: dict[str, Any], dirty_paths: list[str]
+    ) -> bool:
+        coverage_paths = {
+            normalize_path(path) for path in build.get("coverage_paths") or [] if path
+        }
+        if not coverage_paths:
+            return True
+        dirty_path_set = {normalize_path(path) for path in dirty_paths if path}
+        return bool(coverage_paths & dirty_path_set)
 
     def _mark_projection_dirty_for_repair(
         self,
@@ -606,12 +636,18 @@ class FastCode:
             return {"marked": 0, "reason": None}
         list_builds = getattr(store, "list_builds_for_snapshot", None)
         mark_dirty = getattr(store, "mark_dirty", None)
+        mark_all_dirty = getattr(store, "mark_all_dirty", None)
         if not callable(list_builds) or not callable(mark_dirty):
             return {"marked": 0, "reason": "unsupported_store"}
         list_projection_builds = cast(
             Callable[[str], list[dict[str, Any]]], list_builds
         )
         mark_projection_dirty = cast(Callable[..., Any], mark_dirty)
+        mark_all_projections_dirty = (
+            cast(Callable[..., Any], mark_all_dirty)
+            if callable(mark_all_dirty)
+            else None
+        )
 
         frontier = dict(result.get("repair_frontier", {}) or {})
         dirty_paths = sorted(
@@ -628,11 +664,38 @@ class FastCode:
             return {"marked": 0, "reason": None}
 
         dirty_reason = self._projection_dirty_reason(change_kinds)
+        dirty_package_roots = list(frontier.get("scope_roots") or [])
+        if (
+            self._projection_dirty_widened(
+                change_kinds=change_kinds,
+                dirty_paths=dirty_paths,
+            )
+            and mark_all_projections_dirty is not None
+        ):
+            mark_all_projections_dirty(
+                snapshot_id,
+                dirty_reason,
+                dirty_paths=dirty_paths,
+                dirty_units=[],
+                dirty_package_roots=dirty_package_roots,
+            )
+            return {
+                "marked": 1,
+                "reason": dirty_reason,
+                "dirty_paths": dirty_paths,
+                "widened": True,
+                "scope_kind": "all",
+            }
+
         marked = 0
+        skipped_clean = 0
         for build in list_projection_builds(snapshot_id):
             scope_kind = str(build.get("scope_kind") or "")
             scope_key = str(build.get("scope_key") or "")
             if not scope_kind or not scope_key:
+                continue
+            if not self._projection_build_intersects_paths(build, dirty_paths):
+                skipped_clean += 1
                 continue
             mark_projection_dirty(
                 snapshot_id=snapshot_id,
@@ -640,11 +703,16 @@ class FastCode:
                 scope_key=scope_key,
                 dirty_paths=dirty_paths,
                 dirty_units=[],
-                dirty_package_roots=list(frontier.get("scope_roots") or []),
+                dirty_package_roots=dirty_package_roots,
                 dirty_reason=dirty_reason,
             )
             marked += 1
-        return {"marked": marked, "reason": dirty_reason, "dirty_paths": dirty_paths}
+        return {
+            "marked": marked,
+            "reason": dirty_reason,
+            "dirty_paths": dirty_paths,
+            "skipped_clean": skipped_clean,
+        }
 
     def process_semantic_repair_frontier(
         self, payload: dict[str, Any] | None = None

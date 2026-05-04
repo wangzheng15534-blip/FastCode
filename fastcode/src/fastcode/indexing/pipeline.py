@@ -12,6 +12,7 @@ import json
 import os
 import pickle
 import re
+import shutil
 import tempfile
 import threading
 from collections.abc import Callable
@@ -39,6 +40,7 @@ from ..scip.indexers import (
     run_scip_for_language,
 )
 from ..scip.loader import load_scip_artifact, run_scip_python_index
+from ..scip.models import SCIPIndex
 from ..scip.scip_adapter import build_ir_from_scip
 from ..scip.symbol_resolver import SymbolResolver
 from ..semantic import apply_resolution_patch, build_default_semantic_resolver_registry
@@ -1287,6 +1289,104 @@ class IndexPipeline:
             metadata=dict(snapshot.metadata or {}),
         )
 
+    @staticmethod
+    def _filter_scip_index_to_paths(
+        scip_index: SCIPIndex | None, target_paths: set[str]
+    ) -> SCIPIndex | None:
+        if scip_index is None:
+            return None
+        filtered_docs = [
+            doc
+            for doc in scip_index.documents
+            if normalize_path(doc.path) in target_paths
+        ]
+        if not filtered_docs:
+            return None
+        return SCIPIndex(
+            documents=filtered_docs,
+            indexer_name=scip_index.indexer_name,
+            indexer_version=scip_index.indexer_version,
+            metadata=dict(scip_index.metadata or {}),
+        )
+
+    def _copy_scope_root(self, repo_root: str, scope_root: str, temp_root: str) -> str:
+        normalized_root = normalize_path(scope_root)
+        if normalized_root == ".":
+            return repo_root
+        source_root = os.path.join(repo_root, normalized_root)
+        dest_root = os.path.join(temp_root, normalized_root)
+        ensure_dir(os.path.dirname(dest_root))
+        shutil.copytree(source_root, dest_root, symlinks=True)
+        for marker in self._PACKAGE_SCOPE_MARKERS:
+            source_marker = os.path.join(repo_root, marker)
+            if os.path.exists(source_marker):
+                shutil.copy2(source_marker, os.path.join(temp_root, marker))
+        return temp_root
+
+    def _run_scoped_scip_frontier(
+        self,
+        *,
+        snapshot: IRSnapshot,
+        repo_name: str,
+        scope_kind: str,
+        scope_roots: list[str],
+        target_paths: set[str],
+        warnings: list[str],
+    ) -> tuple[IRSnapshot | None, list[str]]:
+        repo_root = self.loader.repo_path or ""
+        if scope_kind != "package" or not repo_root or not scope_roots:
+            return None, []
+        languages = detect_scip_languages_in_paths(repo_root, sorted(target_paths))
+        if not languages:
+            return None, []
+
+        filtered_indexes: list[SCIPIndex] = []
+        for scope_root in scope_roots:
+            materialized_root = repo_root
+            temp_root: str | None = None
+            try:
+                if normalize_path(scope_root) != ".":
+                    temp_root = tempfile.mkdtemp(prefix="fastcode_scope_repo_")
+                    materialized_root = self._copy_scope_root(
+                        repo_root, scope_root, temp_root
+                    )
+                for language in languages:
+                    scoped_index = run_scip_for_language(
+                        language,
+                        materialized_root,
+                        tempfile.mkdtemp(prefix="fastcode_scope_scip_"),
+                    )
+                    filtered = self._filter_scip_index_to_paths(
+                        scoped_index, target_paths
+                    )
+                    if filtered is not None:
+                        filtered_indexes.append(filtered)
+            except Exception as exc:
+                warnings.append(f"scoped_scip_failed:{scope_root}:{exc}")
+            finally:
+                if temp_root:
+                    shutil.rmtree(temp_root, ignore_errors=True)
+        if not filtered_indexes:
+            return None, languages
+
+        combined = SCIPIndex(
+            documents=[
+                doc for index in filtered_indexes for doc in index.documents
+            ],
+            indexer_name=filtered_indexes[0].indexer_name,
+            indexer_version=filtered_indexes[0].indexer_version,
+            metadata={"scoped": True, "scope_roots": scope_roots},
+        )
+        scip_snapshot = build_ir_from_scip(
+            repo_name=repo_name,
+            snapshot_id=snapshot.snapshot_id,
+            scip_index=combined,
+            branch=snapshot.branch,
+            commit_id=snapshot.commit_id,
+            tree_id=snapshot.tree_id,
+        )
+        return scip_snapshot, languages
+
     def run_semantic_repair_frontier(
         self,
         *,
@@ -1348,6 +1448,19 @@ class IndexPipeline:
             snapshot=snapshot,
             target_paths=target_paths,
         )
+        scoped_scip_snapshot = None
+        if scope_kind == "package":
+            scoped_scip_snapshot, scoped_tool_languages = self._run_scoped_scip_frontier(
+                snapshot=base_snapshot,
+                repo_name=repo_name or snapshot.repo_name,
+                scope_kind=scope_kind,
+                scope_roots=scope_roots,
+                target_paths=target_paths,
+                warnings=warnings,
+            )
+        if scoped_scip_snapshot is not None:
+            base_snapshot = merge_ir(base_snapshot, scoped_scip_snapshot)
+
         repaired_snapshot = self._apply_semantic_resolvers(
             snapshot=base_snapshot,
             elements=elements,

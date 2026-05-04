@@ -1679,9 +1679,11 @@ def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
         pipeline.snapshot_symbol_index.register_snapshot = Mock(return_value=None)
         pipeline.ir_graph_builder.build_graphs = Mock(return_value=SimpleNamespace())
         pipeline._load_artifacts_by_key = Mock(return_value=True)
+        pipeline.loader.repo_path = tmp
         pipeline._reconstruct_elements_from_metadata = Mock(
             return_value=[
                 SimpleNamespace(
+                    id="elem:a",
                     relative_path="pkg/a.py",
                     file_path="pkg/a.py",
                     to_dict=lambda: {
@@ -1692,6 +1694,7 @@ def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
                     },
                 ),
                 SimpleNamespace(
+                    id="elem:b",
                     relative_path="pkg/sub/b.py",
                     file_path="pkg/sub/b.py",
                     to_dict=lambda: {
@@ -1702,6 +1705,7 @@ def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
                     },
                 ),
                 SimpleNamespace(
+                    id="elem:c",
                     relative_path="other/c.py",
                     file_path="other/c.py",
                     to_dict=lambda: {
@@ -1714,14 +1718,26 @@ def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
             ]
         )
         pipeline._apply_semantic_resolvers = Mock(return_value=snapshot)
-
-        result = pipeline.run_semantic_repair_frontier(
-            snapshot_id=record.snapshot_id,
-            scope_kind="package",
-            scope_roots=["pkg"],
-            changed_paths=["pkg/a.py"],
-            repo_name="repo",
-        )
+        with open(os.path.join(tmp, "pyproject.toml"), "w", encoding="utf-8") as handle:
+            handle.write("[project]\nname='repo'\n")
+        os.makedirs(os.path.join(tmp, "pkg", "sub"), exist_ok=True)
+        with open(os.path.join(tmp, "pkg", "a.py"), "w", encoding="utf-8") as handle:
+            handle.write("print('a')\n")
+        with open(
+            os.path.join(tmp, "pkg", "sub", "b.py"), "w", encoding="utf-8"
+        ) as handle:
+            handle.write("print('b')\n")
+        with patch(
+            "fastcode.indexing.pipeline.run_scip_for_language",
+            return_value=None,
+        ):
+            result = pipeline.run_semantic_repair_frontier(
+                snapshot_id=record.snapshot_id,
+                scope_kind="package",
+                scope_roots=["pkg"],
+                changed_paths=["pkg/a.py"],
+                repo_name="repo",
+            )
 
         assert result["status"] == "repaired"
         assert sorted(result["repair_frontier"]["target_paths"]) == [

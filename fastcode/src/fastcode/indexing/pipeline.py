@@ -7,6 +7,8 @@ extraction, IR merge, semantic resolution, and artifact persistence.
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
+from dataclasses import replace as dc_replace
+
 import hashlib
 import json
 import os
@@ -1491,10 +1493,11 @@ class IndexPipeline:
                 }
                 if not remaining_support_ids and not remaining_support_sources:
                     continue
-                relation_payload = relation.to_dict()
-                relation_payload["support_ids"] = remaining_support_ids
-                relation_payload["support_sources"] = sorted(remaining_support_sources)
-                owned_relations.append(IRRelation.from_dict(relation_payload))
+                owned_relations.append(dc_replace(
+                    relation,
+                    support_ids=remaining_support_ids,
+                    support_sources=remaining_support_sources,
+                ))
                 continue
             owned_relations.append(relation)
 

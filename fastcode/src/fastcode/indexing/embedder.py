@@ -171,7 +171,10 @@ class CodeEmbedder:
     def _get_cached_embedding(self, key: str) -> np.ndarray | None:
         if not self._embedding_cache_enabled or self._embedding_cache is None:
             return None
-        cached = self._embedding_cache.get(key)
+        if hasattr(self._embedding_cache, "get_cached_embedding_payload"):
+            cached = self._embedding_cache.get_cached_embedding_payload(key)
+        else:
+            cached = self._embedding_cache.get(key)
         if cached is None:
             return None
         embedding = self._cached_embedding_to_array(cached)
@@ -224,7 +227,10 @@ class CodeEmbedder:
             "normalize": self.normalize,
             "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
         }
-        self._embedding_cache.set(key, payload)
+        if hasattr(self._embedding_cache, "set_cached_embedding_payload"):
+            self._embedding_cache.set_cached_embedding_payload(key, payload)
+        else:
+            self._embedding_cache.set(key, payload)
 
     def _embed_texts_with_cache(self, texts: list[str]) -> np.ndarray:
         if not texts:

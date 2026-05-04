@@ -3,13 +3,19 @@ Caching Module - Cache embeddings, queries, and results
 """
 
 import hashlib
+import json
 import logging
 import pickle
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from diskcache import Cache as DiskCache
+
+_CACHE_RECORD_MAGIC = b"fastcode-cache:v1:"
+_CACHE_JSON_KIND = b"json:"
+_CACHE_EMBEDDING_KIND = b"embedding:"
+_CACHE_NOT_MARSHALLED = object()
 
 
 class CacheManager:
@@ -74,24 +80,103 @@ class CacheManager:
         hash_val = hashlib.md5(content.encode()).hexdigest()
         return f"{prefix}_{hash_val}"
 
+    def _cache_get_raw(self, key: str) -> Any | None:
+        if self.backend == "disk":
+            return self.cache.get(key)
+        if self.backend == "redis":
+            return self.cache.get(key)
+        return None
+
+    def _cache_set_raw(self, key: str, value: Any, ttl: int) -> bool:
+        if self.backend == "disk":
+            self.cache.set(key, value, expire=ttl)
+            return True
+        if self.backend == "redis":
+            self.cache.setex(key, ttl, value)  # type: ignore[arg-type]
+            return True
+        return False
+
+    @staticmethod
+    def _json_cache_payload(value: Any) -> bytes:
+        json_bytes = json.dumps(value, separators=(",", ":"), sort_keys=True).encode(
+            "utf-8"
+        )
+        return _CACHE_RECORD_MAGIC + _CACHE_JSON_KIND + json_bytes
+
+    @staticmethod
+    def _embedding_cache_payload(value: dict[str, Any]) -> bytes:
+        raw_buffer = value.get("embedding_bytes")
+        if not isinstance(raw_buffer, (bytes, bytearray, memoryview)):
+            raise TypeError("embedding_bytes must be bytes-like")
+        metadata = {k: v for k, v in value.items() if k != "embedding_bytes"}
+        metadata_bytes = json.dumps(
+            metadata, separators=(",", ":"), sort_keys=True
+        ).encode("utf-8")
+        return (
+            _CACHE_RECORD_MAGIC
+            + _CACHE_EMBEDDING_KIND
+            + str(len(metadata_bytes)).encode("ascii")
+            + b":"
+            + metadata_bytes
+            + bytes(cast(Any, raw_buffer))
+        )
+
+    @staticmethod
+    def _decode_marshaled_value(value: Any) -> Any:
+        if not isinstance(value, (bytes, bytearray, memoryview)):
+            return _CACHE_NOT_MARSHALLED
+
+        raw_value = bytes(cast(Any, value))
+        if not raw_value.startswith(_CACHE_RECORD_MAGIC):
+            return _CACHE_NOT_MARSHALLED
+
+        payload = raw_value[len(_CACHE_RECORD_MAGIC) :]
+        if payload.startswith(_CACHE_JSON_KIND):
+            json_bytes = payload[len(_CACHE_JSON_KIND) :]
+            return json.loads(json_bytes.decode("utf-8"))
+
+        if payload.startswith(_CACHE_EMBEDDING_KIND):
+            remainder = payload[len(_CACHE_EMBEDDING_KIND) :]
+            delimiter_index = remainder.find(b":")
+            if delimiter_index <= 0:
+                raise ValueError("invalid embedding cache payload header")
+            metadata_len = int(remainder[:delimiter_index].decode("ascii"))
+            metadata_start = delimiter_index + 1
+            metadata_end = metadata_start + metadata_len
+            metadata_obj = json.loads(
+                remainder[metadata_start:metadata_end].decode("utf-8")
+            )
+            if not isinstance(metadata_obj, dict):
+                raise ValueError("invalid embedding cache metadata")
+            metadata = cast(dict[str, Any], metadata_obj)
+            metadata["embedding_bytes"] = remainder[metadata_end:]
+            return metadata
+
+        raise ValueError("unsupported cache payload kind")
+
     def get(self, key: str) -> Any | None:
         """Get value from cache"""
         if not self.enabled or self.cache is None:
             return None
 
         try:
-            if self.backend == "disk":
-                value: Any = self.cache.get(key)
-                if value is not None:
-                    self.logger.debug(f"Cache hit: {key}")
-                return value
-
-            if self.backend == "redis":
-                value = self.cache.get(key)
-                if value:
-                    self.logger.debug(f"Cache hit: {key}")
-                    return pickle.loads(value)  # type: ignore[arg-type]
+            value = self._cache_get_raw(key)
+            if value is None:
                 return None
+
+            decoded = self._decode_marshaled_value(value)
+            if decoded is not _CACHE_NOT_MARSHALLED:
+                self.logger.debug(f"Cache hit: {key}")
+                return decoded
+
+            if self.backend == "redis" and isinstance(
+                value, (bytes, bytearray, memoryview)
+            ):
+                self.logger.debug(f"Cache hit: {key}")
+                return pickle.loads(bytes(cast(Any, value)))
+
+            self.logger.debug(f"Cache hit: {key}")
+            return value
 
         except Exception as e:
             self.logger.warning(f"Cache get error: {e}")
@@ -170,6 +255,28 @@ class CacheManager:
         key = self._generate_key("embedding", text)
         return self.set(key, embedding)
 
+    def get_cached_embedding_payload(self, key: str) -> dict[str, Any] | None:
+        """Get embedding payload stored under an explicit cache key."""
+        value = self.get(key)
+        if isinstance(value, dict):
+            return cast(dict[str, Any], value)
+        return None
+
+    def set_cached_embedding_payload(
+        self, key: str, payload: dict[str, Any], ttl: int | None = None
+    ) -> bool:
+        """Store embedding payload in a buffer-aware cache envelope."""
+        if not self.enabled or self.cache is None:
+            return False
+        ttl_value = int(self.ttl if ttl is None else ttl)
+        try:
+            return self._cache_set_raw(
+                key, self._embedding_cache_payload(payload), ttl_value
+            )
+        except Exception as e:
+            self.logger.warning(f"Embedding cache set error: {e}")
+            return False
+
     def get_query_result(self, query: str, repo_hash: str) -> Any | None:
         """Get cached query result"""
         if not self.cache_queries:
@@ -182,7 +289,14 @@ class CacheManager:
         if not self.cache_queries:
             return False
         key = self._generate_key("query", query, repo_hash)
-        return self.set(key, result)
+        if not self.enabled or self.cache is None:
+            return False
+        try:
+            ttl = self.ttl
+            return self._cache_set_raw(key, self._json_cache_payload(result), ttl)
+        except Exception as e:
+            self.logger.warning(f"Query cache set error: {e}")
+            return False
 
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics"""
@@ -259,7 +373,9 @@ class CacheManager:
 
             # Save to cache (with longer TTL for dialogue history)
             # Use configurable dialogue_ttl instead of hardcoded value
-            self.set(key, turn_data, ttl=self.dialogue_ttl)
+            self._cache_set_raw(
+                key, self._json_cache_payload(turn_data), self.dialogue_ttl
+            )
 
             # Update session index (propagate multi_turn flag from metadata)
             multi_turn = (metadata or {}).get("multi_turn")
@@ -395,7 +511,9 @@ class CacheManager:
                 session_index["multi_turn"] = True
 
             # Use configurable dialogue_ttl instead of hardcoded value
-            self.set(key, session_index, ttl=self.dialogue_ttl)
+            self._cache_set_raw(
+                key, self._json_cache_payload(session_index), self.dialogue_ttl
+            )
             return True
 
         except Exception as e:

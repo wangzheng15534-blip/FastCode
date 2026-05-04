@@ -108,6 +108,7 @@ Stable release should mean all of the following are true at once:
   - identical embedding texts are deduplicated before provider calls
   - cache keys are model-aware across provider/model/dimension/normalization/sequence-length settings
   - embedding cache payloads now store `float32` byte buffers plus explicit shape/dtype metadata instead of Python `list[float]` vectors
+  - `store/cache.py` now persists hot dialogue/session/query payloads as explicit JSON envelopes and embedding entries as buffer-aware cache envelopes instead of generic object storage on the active cache paths
   - PostgreSQL retrieval persistence now strips raw embedding arrays from JSON metadata and stores vectors only in vector-specific columns
 - Publishing boundary hardening:
   - Terminus lineage publishing now has a typed `IRSnapshot` boundary that builds payloads from snapshot fields and IR units/relations without full `IRSnapshot.to_dict()` expansion
@@ -483,17 +484,17 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 **Gap:** Boundary handling is still copy-heavy. Several hot paths materialize Python `dict`/`list` payloads repeatedly before persistence, cache storage, or native-library handoff. That undermines both throughput and the intended thin-shell contract.
 
 **Current audit findings:**
-- API/query shell still normalizes arbitrary objects through recursive Python copying:
+- API/shell surfaces still normalize arbitrary objects through recursive Python copying:
   - `utils/json.py:safe_jsonable()` recursively converts dict/list/set/object trees
-  - `query/handler.py` uses `safe_jsonable()` for dialogue/source persistence
+  - `api/routes.py`, `api/web.py`, and `store/snapshot.py` still rely on generic safe-json conversion for response/history/graph persistence
 - store persistence still serializes JSON payloads at DB boundaries, but some hot rows now avoid full object expansion:
   - `store/snapshot.py` relational facts now use explicit field serializers instead of `json.dumps(obj.to_dict())`
   - `store/manifest.py`, `store/index_run.py`, `store/projection.py` still expose dict-shaped boundaries in places
 - vector/cache paths copy embeddings through Python containers:
   - `indexing/embedder.py` now stores cached embeddings as native `float32` byte buffers
+  - `store/cache.py` now writes dialogue/session/query payloads as explicit JSON envelopes and embedding payloads as length-prefixed buffer envelopes; generic `get()/set()` remains for legacy or untyped callers
   - `store/pg_retrieval.py` no longer duplicates embeddings into JSON metadata, but still materializes `list[float]`/vector-literal form at the PG vector boundary
   - `store/pg_retrieval.py` still receives fallback search vectors through DB row arrays, but ranks them as a NumPy matrix before metadata inflation
-  - `store/cache.py` uses generic pickle payloads instead of typed/native buffer storage for hot entries
 - publishing/integration edges are partially hardened:
   - Terminus lineage publishing now accepts typed `IRSnapshot` objects and avoids full snapshot `to_dict()` expansion in `PublishingService` and the active index pipeline
   - remaining copy points include JSON outbox payload strings, dict-shaped manifest return payloads, and the legacy dict publisher API kept for compatibility

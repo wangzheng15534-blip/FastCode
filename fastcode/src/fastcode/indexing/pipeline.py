@@ -1175,6 +1175,68 @@ class IndexPipeline:
         changed = {normalize_path(path) for path in changed_paths if path}
         return changed or candidate_paths
 
+    def _expand_repair_target_paths(
+        self,
+        *,
+        elements: list[CodeElement],
+        changed_paths: list[str],
+        scope_paths: set[str],
+        max_hops: int | None = None,
+    ) -> set[str]:
+        path_by_element_id = {
+            str(elem.id): normalize_path(elem.relative_path or elem.file_path)
+            for elem in elements
+            if (elem.relative_path or elem.file_path)
+        }
+        seed_ids = {
+            element_id
+            for element_id, path in path_by_element_id.items()
+            if path in {normalize_path(p) for p in changed_paths}
+        }
+        if not seed_ids:
+            return scope_paths
+
+        frontier_ids = set(seed_ids)
+        visited_ids = set(seed_ids)
+        hop_budget = (
+            int(max_hops)
+            if max_hops is not None
+            else max(1, int(self.config.get("graph", {}).get("max_depth", 5)))
+        )
+        graphs = [
+            getattr(self.graph_builder, "dependency_graph", None),
+            getattr(self.graph_builder, "call_graph", None),
+            getattr(self.graph_builder, "inheritance_graph", None),
+        ]
+
+        for _ in range(hop_budget):
+            next_ids: set[str] = set()
+            for graph in graphs:
+                if graph is None:
+                    continue
+                for node_id in frontier_ids:
+                    if node_id not in graph:
+                        continue
+                    try:
+                        next_ids.update(
+                            str(pred) for pred in graph.predecessors(node_id)
+                        )
+                    except Exception:  # noqa: S112
+                        continue
+            next_ids -= visited_ids
+            if not next_ids:
+                break
+            visited_ids |= next_ids
+            frontier_ids = next_ids
+
+        expanded_paths = {
+            path_by_element_id[element_id]
+            for element_id in visited_ids
+            if element_id in path_by_element_id
+            and path_by_element_id[element_id] in scope_paths
+        }
+        return expanded_paths or scope_paths
+
     def run_semantic_repair_frontier(
         self,
         *,
@@ -1200,6 +1262,12 @@ class IndexPipeline:
             scope_kind=scope_kind,
             scope_roots=scope_roots,
         )
+        if scope_kind != "package":
+            target_paths = self._expand_repair_target_paths(
+                elements=elements,
+                changed_paths=changed_paths,
+                scope_paths=target_paths,
+            )
         warnings: list[str] = []
         scoped_tool_languages: list[str] = []
         if not target_paths:

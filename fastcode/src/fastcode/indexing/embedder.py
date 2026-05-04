@@ -19,6 +19,8 @@ import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
 
+_EMBEDDING_CACHE_FORMAT = "ndarray.float32.v1"
+
 
 class CodeEmbedder:
     """Generate embeddings for code using sentence transformers"""
@@ -172,10 +174,8 @@ class CodeEmbedder:
         cached = self._embedding_cache.get(key)
         if cached is None:
             return None
-        raw = cached.get("embedding") if isinstance(cached, dict) else cached
-        try:
-            embedding = np.asarray(raw, dtype=np.float32)
-        except (TypeError, ValueError):
+        embedding = self._cached_embedding_to_array(cached)
+        if embedding is None:
             return None
         if embedding.ndim != 1:
             return None
@@ -183,11 +183,40 @@ class CodeEmbedder:
             return None
         return embedding
 
+    @staticmethod
+    def _cached_embedding_to_array(cached: Any) -> np.ndarray | None:
+        if not isinstance(cached, dict):
+            return None
+        if cached.get("embedding_format") != _EMBEDDING_CACHE_FORMAT:
+            return None
+        raw_buffer = cached.get("embedding_bytes")
+        if not isinstance(raw_buffer, (bytes, bytearray, memoryview)):
+            return None
+        raw_shape = cached.get("embedding_shape")
+        if not isinstance(raw_shape, (list, tuple)):
+            return None
+        try:
+            shape = tuple(int(dim) for dim in raw_shape)
+        except (TypeError, ValueError):
+            return None
+        if len(shape) != 1:
+            return None
+        embedding = np.frombuffer(raw_buffer, dtype=np.float32)
+        if embedding.size != shape[0]:
+            return None
+        return embedding.reshape(shape)
+
     def _set_cached_embedding(self, key: str, text: str, embedding: np.ndarray) -> None:
         if not self._embedding_cache_enabled or self._embedding_cache is None:
             return
+        embedding_array = np.ascontiguousarray(
+            np.asarray(embedding, dtype=np.float32).reshape(-1)
+        )
         payload = {
-            "embedding": np.asarray(embedding, dtype=np.float32).tolist(),
+            "embedding_format": _EMBEDDING_CACHE_FORMAT,
+            "embedding_dtype": "float32",
+            "embedding_shape": tuple(int(dim) for dim in embedding_array.shape),
+            "embedding_bytes": embedding_array.tobytes(order="C"),
             "provider": self.provider,
             "model": self.model_name,
             "dimension": self.embedding_dim,

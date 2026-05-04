@@ -91,6 +91,43 @@ def test_embed_text_reuses_cached_embedding() -> None:
     assert np.array_equal(first, second)
 
 
+def test_embedding_cache_writes_float32_buffer_payload() -> None:
+    cache = _MemoryCache()
+    embedder = _CountingEmbedder(cache)
+
+    first = embedder.embed_text("buffered text")
+    key = embedder._embedding_cache_key("buffered text")
+    cached = cache.values[key]
+    second = embedder.embed_text("buffered text")
+
+    assert "embedding" not in cached
+    assert cached["embedding_format"] == "ndarray.float32.v1"
+    assert cached["embedding_dtype"] == "float32"
+    assert cached["embedding_shape"] == (3,)
+    assert isinstance(cached["embedding_bytes"], bytes)
+    assert np.array_equal(first, second)
+    assert embedder.raw_batches == [["buffered text"]]
+
+
+def test_embedding_cache_recomputes_old_list_payload() -> None:
+    cache = _MemoryCache()
+    embedder = _CountingEmbedder(cache)
+    key = embedder._embedding_cache_key("old text")
+    cache.set(
+        key,
+        {
+            "embedding": [1.0, 2.0, 3.0],
+            "dimension": 3,
+        },
+    )
+
+    cached = embedder.embed_text("old text")
+
+    assert np.array_equal(cached, np.asarray(embedder._vector_for_text("old text")))
+    assert embedder.raw_batches == [["old text"]]
+    assert cache.values[key]["embedding_format"] == "ndarray.float32.v1"
+
+
 def test_embed_batch_deduplicates_inputs_before_raw_embedding() -> None:
     cache = _MemoryCache()
     embedder = _CountingEmbedder(cache)

@@ -1233,6 +1233,42 @@ class IndexPipeline:
             return None
         return {"scip"}
 
+    def _incremental_scip_scope(
+        self,
+        incremental_plan: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if incremental_plan is None:
+            return None
+        changed_paths = [
+            normalize_path(str(path))
+            for path in incremental_plan.get("changed_paths", [])
+            if path
+        ]
+        if not changed_paths:
+            return {
+                "mode": "skip",
+                "reason": "no_incremental_scip_frontier",
+                "target_paths": [],
+                "scope_roots": [],
+            }
+        if self._preservable_incremental_sources(incremental_plan):
+            return {
+                "mode": "skip",
+                "reason": "source_owned_evidence_preserved",
+                "target_paths": changed_paths,
+                "scope_roots": [],
+            }
+        scope_roots = list(
+            incremental_plan.get("package_scope_roots")
+            or self._package_scope_roots(self.loader.repo_path or "", changed_paths)
+        )
+        return {
+            "mode": "package",
+            "reason": "incremental_surface_frontier",
+            "target_paths": changed_paths,
+            "scope_roots": scope_roots,
+        }
+
     @staticmethod
     def _build_repair_frontier_task(
         *,
@@ -1976,6 +2012,7 @@ class IndexPipeline:
                 try:
                     scip_artifact_paths: list[str] = []
                     experimental_scip_languages: list[str] = []
+                    scip_data: SCIPIndex | None = None
                     if scip_artifact_path:
                         scip_data = load_scip_artifact(scip_artifact_path)
                         scip_artifact_paths = [scip_artifact_path]
@@ -1988,88 +2025,174 @@ class IndexPipeline:
                             tree_id=snapshot_ref.get("tree_id"),
                         )
                     else:
-                        out_dir = tempfile.mkdtemp(prefix="fastcode_scip_")
-                        scip_indexes = []
-                        detected_languages = detect_scip_languages(
-                            self.loader.repo_path or ""
-                        )
-                        experimental_scip_languages = [
-                            language
-                            for language in detected_languages
-                            if (profile := get_scip_indexer_profile(language))
-                            is not None
-                            and profile.experimental
-                        ]
-                        if experimental_scip_languages:
-                            warning = "experimental_scip_languages: " + ", ".join(
-                                sorted(experimental_scip_languages)
-                            )
+                        scip_scope = self._incremental_scip_scope(incremental_plan)
+                        if scip_scope and scip_scope["mode"] == "skip":
+                            warning = f"incremental_scip_skipped:{scip_scope['reason']}"
                             warnings.append(warning)
                             layer2["warnings"].append(warning)
-                        for language in detected_languages:
-                            scip_index = run_scip_for_language(
-                                language, self.loader.repo_path or "", out_dir
-                            )
-                            if scip_index is not None:
-                                scip_indexes.append((language, scip_index))
-                                artifact_path = os.path.join(
-                                    out_dir, f"{language}.scip"
-                                )
-                                if os.path.exists(artifact_path):
-                                    scip_artifact_paths.append(artifact_path)
-                        if not scip_indexes:
-                            out_path = os.path.join(out_dir, "index.scip.json")
-                            run_scip_python_index(self.loader.repo_path or "", out_path)
-                            scip_indexes.append(
-                                ("python", load_scip_artifact(out_path))
-                            )
-                            scip_artifact_paths.append(out_path)
-                        scip_snapshots = [
-                            build_ir_from_scip(
+                            scip_snapshot = IRSnapshot(
                                 repo_name=repo_name,
                                 snapshot_id=snapshot_id,
-                                scip_index=index,
                                 branch=snapshot_ref.get("branch"),
                                 commit_id=snapshot_ref.get("commit_id"),
                                 tree_id=snapshot_ref.get("tree_id"),
-                                language_hint=language,
+                                metadata={
+                                    "scip_languages": [],
+                                    "experimental_scip_languages": [],
+                                    "incremental_scip_scope": scip_scope,
+                                },
                             )
-                            for language, index in scip_indexes
-                        ]
-                        scip_snapshot = IRSnapshot(
-                            repo_name=repo_name,
-                            snapshot_id=snapshot_id,
-                            branch=snapshot_ref.get("branch"),
-                            commit_id=snapshot_ref.get("commit_id"),
-                            tree_id=snapshot_ref.get("tree_id"),
-                            units=[
-                                unit for snap in scip_snapshots for unit in snap.units
-                            ],
-                            supports=[
-                                support
-                                for snap in scip_snapshots
-                                for support in snap.supports
-                            ],
-                            relations=[
-                                relation
-                                for snap in scip_snapshots
-                                for relation in snap.relations
-                            ],
-                            embeddings=[
-                                embedding
-                                for snap in scip_snapshots
-                                for embedding in snap.embeddings
-                            ],
-                            metadata={
-                                "scip_languages": [
-                                    language for language, _ in scip_indexes
+                        elif scip_scope and scip_scope["mode"] == "package":
+                            scoped_snapshot, scoped_languages = (
+                                self._run_scoped_scip_frontier(
+                                    snapshot=ast_snapshot,
+                                    repo_name=repo_name,
+                                    scope_kind="package",
+                                    scope_roots=cast(
+                                        list[str], scip_scope.get("scope_roots", [])
+                                    ),
+                                    target_paths=set(
+                                        cast(
+                                            list[str],
+                                            scip_scope.get("target_paths", []),
+                                        )
+                                    ),
+                                    warnings=warnings,
+                                )
+                            )
+                            experimental_scip_languages = [
+                                language
+                                for language in scoped_languages
+                                if (profile := get_scip_indexer_profile(language))
+                                is not None
+                                and profile.experimental
+                            ]
+                            if experimental_scip_languages:
+                                warning = "experimental_scip_languages: " + ", ".join(
+                                    sorted(experimental_scip_languages)
+                                )
+                                warnings.append(warning)
+                                layer2["warnings"].append(warning)
+                            if scoped_snapshot is None:
+                                warning = "incremental_scip_no_scoped_artifacts"
+                                warnings.append(warning)
+                                layer2["warnings"].append(warning)
+                                scip_snapshot = IRSnapshot(
+                                    repo_name=repo_name,
+                                    snapshot_id=snapshot_id,
+                                    branch=snapshot_ref.get("branch"),
+                                    commit_id=snapshot_ref.get("commit_id"),
+                                    tree_id=snapshot_ref.get("tree_id"),
+                                    metadata={
+                                        "scip_languages": scoped_languages,
+                                        "experimental_scip_languages": list(
+                                            experimental_scip_languages
+                                        ),
+                                        "incremental_scip_scope": scip_scope,
+                                    },
+                                )
+                            else:
+                                scoped_snapshot.metadata["scip_languages"] = (
+                                    scoped_languages
+                                )
+                                scoped_snapshot.metadata[
+                                    "experimental_scip_languages"
+                                ] = list(experimental_scip_languages)
+                                scoped_snapshot.metadata["incremental_scip_scope"] = (
+                                    scip_scope
+                                )
+                                scip_snapshot = scoped_snapshot
+                        else:
+                            out_dir = tempfile.mkdtemp(prefix="fastcode_scip_")
+                            scip_indexes = []
+                            detected_languages = detect_scip_languages(
+                                self.loader.repo_path or ""
+                            )
+                            experimental_scip_languages = [
+                                language
+                                for language in detected_languages
+                                if (profile := get_scip_indexer_profile(language))
+                                is not None
+                                and profile.experimental
+                            ]
+                            if experimental_scip_languages:
+                                warning = "experimental_scip_languages: " + ", ".join(
+                                    sorted(experimental_scip_languages)
+                                )
+                                warnings.append(warning)
+                                layer2["warnings"].append(warning)
+                            for language in detected_languages:
+                                scip_index = run_scip_for_language(
+                                    language, self.loader.repo_path or "", out_dir
+                                )
+                                if scip_index is not None:
+                                    scip_indexes.append((language, scip_index))
+                                    artifact_path = os.path.join(
+                                        out_dir, f"{language}.scip"
+                                    )
+                                    if os.path.exists(artifact_path):
+                                        scip_artifact_paths.append(artifact_path)
+                            if not scip_indexes:
+                                out_path = os.path.join(out_dir, "index.scip.json")
+                                run_scip_python_index(
+                                    self.loader.repo_path or "", out_path
+                                )
+                                scip_indexes.append(
+                                    ("python", load_scip_artifact(out_path))
+                                )
+                                scip_artifact_paths.append(out_path)
+                            scip_snapshots = [
+                                build_ir_from_scip(
+                                    repo_name=repo_name,
+                                    snapshot_id=snapshot_id,
+                                    scip_index=index,
+                                    branch=snapshot_ref.get("branch"),
+                                    commit_id=snapshot_ref.get("commit_id"),
+                                    tree_id=snapshot_ref.get("tree_id"),
+                                    language_hint=language,
+                                )
+                                for language, index in scip_indexes
+                            ]
+                            scip_snapshot = IRSnapshot(
+                                repo_name=repo_name,
+                                snapshot_id=snapshot_id,
+                                branch=snapshot_ref.get("branch"),
+                                commit_id=snapshot_ref.get("commit_id"),
+                                tree_id=snapshot_ref.get("tree_id"),
+                                units=[
+                                    unit
+                                    for snap in scip_snapshots
+                                    for unit in snap.units
                                 ],
-                                "experimental_scip_languages": list(
-                                    experimental_scip_languages
-                                ),
-                            },
-                        )
-                        scip_data = scip_indexes[0][1]
+                                supports=[
+                                    support
+                                    for snap in scip_snapshots
+                                    for support in snap.supports
+                                ],
+                                relations=[
+                                    relation
+                                    for snap in scip_snapshots
+                                    for relation in snap.relations
+                                ],
+                                embeddings=[
+                                    embedding
+                                    for snap in scip_snapshots
+                                    for embedding in snap.embeddings
+                                ],
+                                metadata={
+                                    "scip_languages": [
+                                        language for language, _ in scip_indexes
+                                    ],
+                                    "experimental_scip_languages": list(
+                                        experimental_scip_languages
+                                    ),
+                                    "incremental_scip_scope": {
+                                        "mode": "full",
+                                        "reason": "no_incremental_plan",
+                                    },
+                                },
+                            )
+                            scip_data = scip_indexes[0][1]
                     # Preserve ALL generated SCIP artifacts (not just the first)
                     if scip_artifact_paths:
                         import shutil
@@ -2100,9 +2223,16 @@ class IndexPipeline:
                             )[0]
                             artifact_records.append(
                                 {
-                                    "indexer_name": scip_data.indexer_name
-                                    or "scip-python",
-                                    "indexer_version": scip_data.indexer_version,
+                                    "indexer_name": (
+                                        (scip_data.indexer_name or "scip-python")
+                                        if scip_data is not None
+                                        else "scip-python"
+                                    ),
+                                    "indexer_version": (
+                                        scip_data.indexer_version
+                                        if scip_data is not None
+                                        else None
+                                    ),
                                     "artifact_path": artifact_path,
                                     "checksum": digest.hexdigest(),
                                     "language": language_name,

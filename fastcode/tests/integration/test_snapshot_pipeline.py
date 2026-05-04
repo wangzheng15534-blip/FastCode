@@ -1649,6 +1649,30 @@ def test_plan_incremental_elements_marks_package_scope_when_api_surface_changes(
         assert plan["api_frontier_changed_paths"] == ["pkg/b.py"]
         assert plan["package_scope_roots"] == ["."]
         assert pipeline._preservable_incremental_sources(plan) is None
+        assert pipeline._incremental_scip_scope(plan) == {
+            "mode": "package",
+            "reason": "incremental_surface_frontier",
+            "target_paths": ["pkg/b.py"],
+            "scope_roots": ["."],
+        }
+
+
+def test_incremental_scip_scope_skips_when_source_owned_evidence_preserved() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_scip_scope_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        plan = {
+            "modified": 1,
+            "removed": 0,
+            "changed_paths": ["pkg/b.py"],
+            "change_kinds": ["embedding_text_hash"],
+        }
+
+        assert pipeline._incremental_scip_scope(plan) == {
+            "mode": "skip",
+            "reason": "source_owned_evidence_preserved",
+            "target_paths": ["pkg/b.py"],
+            "scope_roots": [],
+        }
 
 
 def test_resolve_snapshot_ref_uses_dirty_worktree_hash_for_local_changes() -> None:

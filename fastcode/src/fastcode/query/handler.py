@@ -16,7 +16,6 @@ from ..semantic.symbol_index import SnapshotSymbolIndex
 from ..store.cache import CacheManager
 from ..store.manifest import ManifestStore
 from ..store.snapshot import SnapshotStore
-from ..utils import safe_jsonable
 from .answer import AnswerGenerator
 from .processor import QueryProcessor
 
@@ -343,20 +342,14 @@ class QueryPipeline:
             if session_id:
                 turn_number = self._get_next_turn_number(session_id)
                 summary = result.get("summary", "")
-                # Use formatted sources from result instead of raw retrieved elements
-                # This ensures proper display format when loading history
                 sources = result.get("sources", [])
-                # Ensure sources are fully JSON-serializable
-                serializable_sources = safe_jsonable(sources)
 
-                # Ensure metadata is JSON-serializable
                 metadata = {
                     "intent": getattr(processed_query, "intent", None),
                     "keywords": getattr(processed_query, "keywords", None),
                     "repo_filter": repo_filter,
                     "multi_turn": enable_multi_turn,
                 }
-                serializable_metadata = safe_jsonable(metadata)
 
                 self.cache_manager.save_dialogue_turn(
                     session_id=session_id,
@@ -364,8 +357,8 @@ class QueryPipeline:
                     query=question,
                     answer=result.get("answer", ""),
                     summary=summary,
-                    retrieved_elements=serializable_sources,
-                    metadata=serializable_metadata,
+                    retrieved_elements=sources,
+                    metadata=metadata,
                 )
 
                 self.logger.info(
@@ -545,15 +538,6 @@ class QueryPipeline:
             # Save dialogue turn if session_id provided
             if session_id:
                 turn_number = self._get_next_turn_number(session_id)
-                serializable_sources = safe_jsonable(result.get("sources", []))
-                serializable_metadata = safe_jsonable(
-                    {
-                        "intent": getattr(processed_query, "intent", None),
-                        "keywords": getattr(processed_query, "keywords", None),
-                        "repo_filter": repo_filter,
-                        "multi_turn": enable_multi_turn,
-                    }
-                )
 
                 self.cache_manager.save_dialogue_turn(
                     session_id=session_id,
@@ -561,8 +545,13 @@ class QueryPipeline:
                     query=question,
                     answer=full_answer,
                     summary=summary or "",
-                    retrieved_elements=serializable_sources,
-                    metadata=serializable_metadata,
+                    retrieved_elements=result.get("sources", []),
+                    metadata={
+                        "intent": getattr(processed_query, "intent", None),
+                        "keywords": getattr(processed_query, "keywords", None),
+                        "repo_filter": repo_filter,
+                        "multi_turn": enable_multi_turn,
+                    },
                 )
 
                 self.logger.info(

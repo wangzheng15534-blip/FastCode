@@ -5,7 +5,7 @@ Published manifest storage for branch/ref -> snapshot mapping.
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from ..db_runtime import DBRuntime
 from ..utils import utc_now
@@ -13,6 +13,17 @@ from .records import ManifestRecord
 
 
 class ManifestStore:
+    _MANIFEST_FIELDS = (
+        "manifest_id",
+        "repo_name",
+        "ref_name",
+        "snapshot_id",
+        "index_run_id",
+        "published_at",
+        "previous_manifest_id",
+        "status",
+    )
+
     def __init__(self, db_path_or_runtime: str | DBRuntime) -> None:
         if isinstance(db_path_or_runtime, DBRuntime):
             self.db_runtime = db_path_or_runtime
@@ -89,13 +100,14 @@ class ManifestStore:
         index_run_id: str,
         status: str = "published",
     ) -> dict[str, Any]:
-        return self.publish_record(
+        record = self.publish_record(
             repo_name=repo_name,
             ref_name=ref_name,
             snapshot_id=snapshot_id,
             index_run_id=index_run_id,
             status=status,
-        ).to_dict()
+        )
+        return self._manifest_payload(record)
 
     def publish_record(
         self,
@@ -168,7 +180,7 @@ class ManifestStore:
         self, repo_name: str, ref_name: str
     ) -> dict[str, Any] | None:
         record = self.get_branch_manifest_record(repo_name, ref_name)
-        return record.to_dict() if record is not None else None
+        return self._manifest_payload(record) if record is not None else None
 
     def get_branch_manifest_record(
         self, repo_name: str, ref_name: str
@@ -187,7 +199,7 @@ class ManifestStore:
 
     def get_snapshot_manifest(self, snapshot_id: str) -> dict[str, Any] | None:
         record = self.get_snapshot_manifest_record(snapshot_id)
-        return record.to_dict() if record is not None else None
+        return self._manifest_payload(record) if record is not None else None
 
     def get_snapshot_manifest_record(self, snapshot_id: str) -> ManifestRecord | None:
         with self.db_runtime.connect() as conn:
@@ -204,5 +216,46 @@ class ManifestStore:
         return self._row_to_manifest_record(row)
 
     def _row_to_manifest_record(self, row: Any) -> ManifestRecord | None:
-        payload = self.db_runtime.row_to_dict(row)
-        return ManifestRecord.from_dict(payload) if payload is not None else None
+        manifest_id = self._row_value(row, 0, "manifest_id")
+        if manifest_id is None:
+            return None
+        return ManifestRecord(
+            manifest_id=str(manifest_id),
+            repo_name=str(self._row_value(row, 1, "repo_name") or ""),
+            ref_name=str(self._row_value(row, 2, "ref_name") or ""),
+            snapshot_id=str(self._row_value(row, 3, "snapshot_id") or ""),
+            index_run_id=str(self._row_value(row, 4, "index_run_id") or ""),
+            published_at=str(self._row_value(row, 5, "published_at") or ""),
+            previous_manifest_id=(
+                str(previous_manifest_id)
+                if (
+                    previous_manifest_id := self._row_value(
+                        row, 6, "previous_manifest_id"
+                    )
+                )
+                is not None
+                else None
+            ),
+            status=str(self._row_value(row, 7, "status") or ""),
+        )
+
+    @staticmethod
+    def _row_value(row: Any, index: int, key: str) -> Any:
+        if row is None:
+            return None
+        if isinstance(row, dict):
+            return cast(dict[str, Any], row).get(key)
+        try:
+            return row[key]
+        except (IndexError, KeyError, TypeError):
+            try:
+                return row[index]
+            except (IndexError, KeyError, TypeError):
+                return None
+
+    @classmethod
+    def _manifest_payload(cls, record: ManifestRecord) -> dict[str, Any]:
+        return {
+            field_name: getattr(record, field_name)
+            for field_name in cls._MANIFEST_FIELDS
+        }

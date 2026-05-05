@@ -12,6 +12,8 @@ from typing import Any, cast
 
 from diskcache import Cache as DiskCache
 
+from .records import DialogueSessionRecord, DialogueTurnRecord
+
 _CACHE_RECORD_MAGIC = b"fastcode-cache:v1:"
 _CACHE_JSON_KIND = b"json:"
 _CACHE_EMBEDDING_KIND = b"embedding:"
@@ -102,6 +104,29 @@ class CacheManager:
             "utf-8"
         )
         return _CACHE_RECORD_MAGIC + _CACHE_JSON_KIND + json_bytes
+
+    @staticmethod
+    def _dialogue_turn_payload(record: DialogueTurnRecord) -> dict[str, Any]:
+        return {
+            "session_id": record.session_id,
+            "turn_number": record.turn_number,
+            "timestamp": record.timestamp,
+            "query": record.query,
+            "answer": record.answer,
+            "summary": record.summary,
+            "retrieved_elements": list(record.retrieved_elements),
+            "metadata": dict(record.metadata),
+        }
+
+    @staticmethod
+    def _dialogue_session_payload(record: DialogueSessionRecord) -> dict[str, Any]:
+        return {
+            "session_id": record.session_id,
+            "created_at": record.created_at,
+            "total_turns": record.total_turns,
+            "last_updated": record.last_updated,
+            "multi_turn": record.multi_turn,
+        }
 
     @staticmethod
     def _embedding_cache_payload(value: dict[str, Any]) -> bytes:
@@ -356,17 +381,16 @@ class CacheManager:
             return False
 
         try:
-            # Create turn data
-            turn_data = {
-                "session_id": session_id,
-                "turn_number": turn_number,
-                "timestamp": time.time(),
-                "query": query,
-                "answer": answer,
-                "summary": summary,
-                "retrieved_elements": retrieved_elements or [],
-                "metadata": metadata or {},
-            }
+            turn_record = DialogueTurnRecord(
+                session_id=session_id,
+                turn_number=turn_number,
+                timestamp=time.time(),
+                query=query,
+                answer=answer,
+                summary=summary,
+                retrieved_elements=list(retrieved_elements or []),
+                metadata=dict(metadata or {}),
+            )
 
             # Generate key
             key = f"dialogue_{session_id}_turn_{turn_number}"
@@ -374,7 +398,9 @@ class CacheManager:
             # Save to cache (with longer TTL for dialogue history)
             # Use configurable dialogue_ttl instead of hardcoded value
             self._cache_set_raw(
-                key, self._json_cache_payload(turn_data), self.dialogue_ttl
+                key,
+                self._json_cache_payload(self._dialogue_turn_payload(turn_record)),
+                self.dialogue_ttl,
             )
 
             # Update session index (propagate multi_turn flag from metadata)
@@ -404,12 +430,23 @@ class CacheManager:
         if not self.enabled:
             return None
 
-        key = f"dialogue_{session_id}_turn_{turn_number}"
-        return self.get(key)
+        record = self.get_dialogue_turn_record(session_id, turn_number)
+        return self._dialogue_turn_payload(record) if record is not None else None
 
-    def get_dialogue_history(
+    def get_dialogue_turn_record(
+        self, session_id: str, turn_number: int
+    ) -> DialogueTurnRecord | None:
+        if not self.enabled:
+            return None
+        key = f"dialogue_{session_id}_turn_{turn_number}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return DialogueTurnRecord.from_dict(cast(dict[str, Any], value))
+
+    def get_dialogue_history_records(
         self, session_id: str, max_turns: int | None = None
-    ) -> list[dict[str, Any]]:
+    ) -> list[DialogueTurnRecord]:
         """
         Get dialogue history for a session
 
@@ -425,11 +462,11 @@ class CacheManager:
 
         try:
             # Get session index
-            session_index = self._get_session_index(session_id)
+            session_index = self.get_session_index_record(session_id)
             if not session_index:
                 return []
 
-            total_turns: int = session_index.get("total_turns", 0)
+            total_turns = session_index.total_turns
             if total_turns == 0:
                 return []
 
@@ -440,17 +477,25 @@ class CacheManager:
                 start_turn = total_turns - max_turns + 1
 
             # Retrieve turns
-            history: list[dict[str, Any]] = []
+            history: list[DialogueTurnRecord] = []
             for turn_num in range(start_turn, total_turns + 1):
-                turn_data = self.get_dialogue_turn(session_id, turn_num)
-                if turn_data:
-                    history.append(turn_data)
+                turn_record = self.get_dialogue_turn_record(session_id, turn_num)
+                if turn_record is not None:
+                    history.append(turn_record)
 
             return history
 
         except Exception as e:
             self.logger.error(f"Failed to get dialogue history: {e}")
             return []
+
+    def get_dialogue_history(
+        self, session_id: str, max_turns: int | None = None
+    ) -> list[dict[str, Any]]:
+        return [
+            self._dialogue_turn_payload(record)
+            for record in self.get_dialogue_history_records(session_id, max_turns)
+        ]
 
     def get_recent_summaries(
         self, session_id: str, num_rounds: int
@@ -469,15 +514,17 @@ class CacheManager:
             return []
 
         try:
-            history = self.get_dialogue_history(session_id, max_turns=num_rounds)
+            history = self.get_dialogue_history_records(
+                session_id, max_turns=num_rounds
+            )
 
             summaries: list[dict[str, Any]] = []
             for turn in history:
                 summaries.append(
                     {
-                        "turn_number": turn.get("turn_number"),
-                        "query": turn.get("query"),
-                        "summary": turn.get("summary"),
+                        "turn_number": turn.turn_number,
+                        "query": turn.query,
+                        "summary": turn.summary,
                     }
                 )
 
@@ -493,26 +540,35 @@ class CacheManager:
         """Update session index with new turn"""
         try:
             key = f"dialogue_session_{session_id}_index"
-            session_index: dict[str, Any] = self.get(key) or {
-                "session_id": session_id,
-                "created_at": time.time(),
-                "total_turns": 0,
-                "last_updated": time.time(),
-                "multi_turn": False,
-            }
-
-            session_index["total_turns"] = max(
-                session_index["total_turns"], turn_number
+            existing_record = self.get_session_index_record(session_id)
+            now = time.time()
+            session_index = DialogueSessionRecord(
+                session_id=session_id,
+                created_at=(
+                    existing_record.created_at if existing_record is not None else now
+                ),
+                total_turns=max(
+                    existing_record.total_turns if existing_record is not None else 0,
+                    turn_number,
+                ),
+                last_updated=now,
+                multi_turn=(
+                    True
+                    if multi_turn is True
+                    else (
+                        existing_record.multi_turn
+                        if existing_record is not None
+                        else False
+                    )
+                ),
             )
-            session_index["last_updated"] = time.time()
 
             # Once a session is marked as multi_turn, keep it that way
-            if multi_turn is True:
-                session_index["multi_turn"] = True
-
             # Use configurable dialogue_ttl instead of hardcoded value
             self._cache_set_raw(
-                key, self._json_cache_payload(session_index), self.dialogue_ttl
+                key,
+                self._json_cache_payload(self._dialogue_session_payload(session_index)),
+                self.dialogue_ttl,
             )
             return True
 
@@ -520,10 +576,17 @@ class CacheManager:
             self.logger.error(f"Failed to update session index: {e}")
             return False
 
+    def get_session_index_record(self, session_id: str) -> DialogueSessionRecord | None:
+        key = f"dialogue_session_{session_id}_index"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return DialogueSessionRecord.from_dict(cast(dict[str, Any], value))
+
     def _get_session_index(self, session_id: str) -> dict[str, Any] | None:
         """Get session index"""
-        key = f"dialogue_session_{session_id}_index"
-        return self.get(key)
+        record = self.get_session_index_record(session_id)
+        return self._dialogue_session_payload(record) if record is not None else None
 
     def delete_session(self, session_id: str) -> bool:
         """
@@ -540,11 +603,11 @@ class CacheManager:
 
         try:
             # Get session index
-            session_index = self._get_session_index(session_id)
+            session_index = self.get_session_index_record(session_id)
             if not session_index:
                 return False
 
-            total_turns: int = session_index.get("total_turns", 0)
+            total_turns = session_index.total_turns
 
             # Delete all turns
             for turn_num in range(1, total_turns + 1):
@@ -573,7 +636,21 @@ class CacheManager:
             return []
 
         try:
-            sessions: list[dict[str, Any]] = []
+            return [
+                self._dialogue_session_payload(record)
+                for record in self.list_session_records()
+            ]
+
+        except Exception as e:
+            self.logger.error(f"Failed to list sessions: {e}")
+            return []
+
+    def list_session_records(self) -> list[DialogueSessionRecord]:
+        if not self.enabled or self.cache is None:
+            return []
+
+        try:
+            sessions: list[DialogueSessionRecord] = []
 
             if self.backend == "disk":
                 # Scan for session index keys
@@ -584,8 +661,12 @@ class CacheManager:
                         and key.endswith("_index")
                     ):
                         session_data = self.get(key)
-                        if session_data:
-                            sessions.append(session_data)
+                        if isinstance(session_data, dict):
+                            sessions.append(
+                                DialogueSessionRecord.from_dict(
+                                    cast(dict[str, Any], session_data)
+                                )
+                            )
 
             elif self.backend == "redis":
                 # Scan for session index keys
@@ -593,12 +674,16 @@ class CacheManager:
                     session_data = self.get(
                         key.decode() if isinstance(key, bytes) else key
                     )
-                    if session_data:
-                        sessions.append(session_data)
+                    if isinstance(session_data, dict):
+                        sessions.append(
+                            DialogueSessionRecord.from_dict(
+                                cast(dict[str, Any], session_data)
+                            )
+                        )
 
             # Sort by creation time descending (fallback to last_updated)
             sessions.sort(
-                key=lambda x: (x.get("created_at", 0), x.get("last_updated", 0)),
+                key=lambda record: (record.created_at, record.last_updated),
                 reverse=True,
             )
             return sessions

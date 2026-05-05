@@ -6,13 +6,40 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from ..db_runtime import DBRuntime
 from ..utils import utc_now
+from .records import IndexRunRecord, PublishTaskRecord
 
 
 class IndexRunStore:
+    _RUN_FIELDS = (
+        "run_id",
+        "repo_name",
+        "snapshot_id",
+        "branch",
+        "commit_id",
+        "idempotency_key",
+        "status",
+        "error_message",
+        "warnings_json",
+        "created_at",
+        "started_at",
+        "completed_at",
+    )
+    _PUBLISH_TASK_FIELDS = (
+        "task_id",
+        "run_id",
+        "snapshot_id",
+        "manifest_id",
+        "status",
+        "attempts",
+        "last_error",
+        "created_at",
+        "updated_at",
+    )
+
     def __init__(self, db_path_or_runtime: str | DBRuntime) -> None:
         if isinstance(db_path_or_runtime, DBRuntime):
             self.db_runtime = db_path_or_runtime
@@ -217,7 +244,7 @@ class IndexRunStore:
             )
             conn.commit()
 
-    def claim_next_publish_task(self) -> dict[str, Any] | None:
+    def claim_next_publish_task_record(self) -> PublishTaskRecord | None:
         with self.db_runtime.connect() as conn:
             if self.db_runtime.backend == "postgres":
                 row = self.db_runtime.execute(
@@ -242,6 +269,10 @@ class IndexRunStore:
                 ).fetchone()
             if not row:
                 return None
+            task = self._row_to_publish_task_record(row)
+            if task is None:
+                return None
+            now = utc_now()
             self.db_runtime.execute(
                 conn,
                 """
@@ -249,10 +280,24 @@ class IndexRunStore:
                 SET status='running', attempts=attempts+1, updated_at=?
                 WHERE task_id=?
                 """,
-                (utc_now(), row["task_id"]),
+                (now, task.task_id),
             )
             conn.commit()
-        return self.db_runtime.row_to_dict(row)
+        return PublishTaskRecord(
+            task_id=task.task_id,
+            run_id=task.run_id,
+            snapshot_id=task.snapshot_id,
+            manifest_id=task.manifest_id,
+            status="running",
+            attempts=task.attempts + 1,
+            last_error=task.last_error,
+            created_at=task.created_at,
+            updated_at=now,
+        )
+
+    def claim_next_publish_task(self) -> dict[str, Any] | None:
+        task = self.claim_next_publish_task_record()
+        return self._publish_task_payload(task) if task is not None else None
 
     def mark_publish_task_failed(self, task_id: str, error: str) -> None:
         with self.db_runtime.connect() as conn:
@@ -267,12 +312,16 @@ class IndexRunStore:
             )
             conn.commit()
 
-    def get_run(self, run_id: str) -> dict[str, Any] | None:
+    def get_run_record(self, run_id: str) -> IndexRunRecord | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn, "SELECT * FROM index_runs WHERE run_id=?", (run_id,)
             ).fetchone()
-        return self.db_runtime.row_to_dict(row) if row else None
+        return self._row_to_run_record(row)
+
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
+        record = self.get_run_record(run_id)
+        return self._run_payload(record) if record is not None else None
 
     _ALLOWED_RUN_FIELDS = frozenset(
         {
@@ -299,3 +348,71 @@ class IndexRunStore:
                 tuple(values),
             )
             conn.commit()
+
+    @staticmethod
+    def _row_value(row: Any, index: int, key: str) -> Any:
+        if row is None:
+            return None
+        if isinstance(row, dict):
+            return cast(dict[str, Any], row).get(key)
+        try:
+            return row[key]
+        except (IndexError, KeyError, TypeError):
+            try:
+                return row[index]
+            except (IndexError, KeyError, TypeError):
+                return None
+
+    @classmethod
+    def _payload_from_row(
+        cls, row: Any, fields: tuple[str, ...]
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        payload = {
+            field_name: cls._row_value(row, index, field_name)
+            for index, field_name in enumerate(fields)
+        }
+        first_field = fields[0]
+        return payload if payload.get(first_field) is not None else None
+
+    @classmethod
+    def _row_to_run_record(cls, row: Any) -> IndexRunRecord | None:
+        payload = cls._payload_from_row(row, cls._RUN_FIELDS)
+        return IndexRunRecord.from_dict(payload) if payload is not None else None
+
+    @classmethod
+    def _row_to_publish_task_record(cls, row: Any) -> PublishTaskRecord | None:
+        payload = cls._payload_from_row(row, cls._PUBLISH_TASK_FIELDS)
+        return PublishTaskRecord.from_dict(payload) if payload is not None else None
+
+    @staticmethod
+    def _run_payload(record: IndexRunRecord) -> dict[str, Any]:
+        return {
+            "run_id": record.run_id,
+            "repo_name": record.repo_name,
+            "snapshot_id": record.snapshot_id,
+            "branch": record.branch,
+            "commit_id": record.commit_id,
+            "idempotency_key": record.idempotency_key,
+            "status": record.status,
+            "error_message": record.error_message,
+            "warnings_json": record.warnings_json,
+            "created_at": record.created_at,
+            "started_at": record.started_at,
+            "completed_at": record.completed_at,
+        }
+
+    @staticmethod
+    def _publish_task_payload(record: PublishTaskRecord) -> dict[str, Any]:
+        return {
+            "task_id": record.task_id,
+            "run_id": record.run_id,
+            "snapshot_id": record.snapshot_id,
+            "manifest_id": record.manifest_id,
+            "status": record.status,
+            "attempts": record.attempts,
+            "last_error": record.last_error,
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+        }

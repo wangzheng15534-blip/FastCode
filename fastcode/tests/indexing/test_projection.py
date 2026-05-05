@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from fastcode.indexing.projection import ProjectionService
-from fastcode.ir.projection import ProjectionBuildResult
+from fastcode.ir.projection import ProjectionBuildResult, ProjectionScope
 from fastcode.ir.types import IRCodeUnit, IRSnapshot
 from fastcode.main import FastCode
 
@@ -309,6 +309,34 @@ def test_build_projection_saves_coverage_paths_double():
 
         assert result["status"] == "built"
         assert store._builds[result["projection_id"]]["coverage_paths"] == ["pkg/a.py"]
+
+
+def test_build_projection_uses_explicit_scope_and_build_serializers_double(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    with tempfile.TemporaryDirectory(prefix="fc_projection_typed_") as tmp:
+        store = _FakeProjectionStore()
+        service, _transformer = _make_projection_service(tmp, store)
+
+        def _boom_scope(_: ProjectionScope) -> dict[str, Any]:
+            raise AssertionError(
+                "projection service must not call ProjectionScope.to_dict()"
+            )
+
+        def _boom_build(_: ProjectionBuildResult) -> dict[str, Any]:
+            raise AssertionError(
+                "projection service must not call ProjectionBuildResult.to_dict()"
+            )
+
+        monkeypatch.setattr(ProjectionScope, "to_dict", _boom_scope)
+        monkeypatch.setattr(ProjectionBuildResult, "to_dict", _boom_build)
+
+        result = service.build_projection("snapshot", snapshot_id="snap:projection")
+
+        assert result["status"] == "built"
+        assert result["projection_id"] == "proj_built_1"
+        assert result["l0"]["layer"] == "L0"
+        assert result["l2_index"]["layer"] == "L2"
 
 
 def test_rebuild_dirty_projections_replays_recorded_scope_double():

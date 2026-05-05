@@ -318,6 +318,42 @@ class TestPublishReturnStructure:
         assert len(ids) == 5
 
 
+class TestExplicitManifestBoundaries:
+    def test_publish_uses_explicit_manifest_serializer(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        store = _make_store()
+
+        def _boom(_: ManifestRecord) -> dict[str, object]:
+            raise AssertionError(
+                "manifest store must not call ManifestRecord.to_dict()"
+            )
+
+        monkeypatch.setattr(ManifestRecord, "to_dict", _boom)
+
+        published = store.publish("repo", "main", "snap1", "run1")
+        branch = store.get_branch_manifest("repo", "main")
+
+        assert published["snapshot_id"] == "snap1"
+        assert branch is not None
+        assert branch["manifest_id"] == published["manifest_id"]
+
+    def test_publish_record_loads_previous_manifest_without_row_to_dict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _make_store()
+        first = store.publish_record("repo", "main", "snap1", "run1")
+
+        def _boom(_: object) -> dict[str, object]:
+            raise AssertionError("manifest store must not call row_to_dict()")
+
+        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom)
+
+        second = store.publish_record("repo", "main", "snap2", "run2")
+
+        assert second.previous_manifest_id == first.manifest_id
+
+
 class TestCrossRepoSnapshotLookup:
     @pytest.mark.edge
     def test_snapshot_manifest_across_repos_property(self):

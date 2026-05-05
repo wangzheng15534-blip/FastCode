@@ -55,7 +55,35 @@ class ProjectionService:
     def projection_params_hash(
         scope: ProjectionScope, projection_algo_version: str = "v1"
     ) -> str:
-        return projection_params_hash(scope.to_dict(), projection_algo_version)
+        return projection_params_hash(
+            ProjectionService._scope_payload(scope), projection_algo_version
+        )
+
+    @staticmethod
+    def _scope_payload(scope: ProjectionScope) -> dict[str, Any]:
+        return {
+            "scope_kind": scope.scope_kind,
+            "snapshot_id": scope.snapshot_id,
+            "scope_key": scope.scope_key,
+            "query": scope.query,
+            "target_id": scope.target_id,
+            "filters": dict(scope.filters),
+        }
+
+    @staticmethod
+    def _projection_build_payload(result: Any) -> dict[str, Any]:
+        return {
+            "projection_id": result.projection_id,
+            "snapshot_id": result.snapshot_id,
+            "scope_kind": result.scope_kind,
+            "scope_key": result.scope_key,
+            "l0": result.l0,
+            "l1": result.l1,
+            "l2_index": result.l2_index,
+            "chunks": result.chunks,
+            "warnings": list(result.warnings),
+            "created_at": result.created_at,
+        }
 
     def _resolve_snapshot_id(
         self,
@@ -230,7 +258,7 @@ class ProjectionService:
         clear_dirty = getattr(self.projection_store, "clear_dirty", None)
         if callable(clear_dirty):
             clear_dirty(resolved_snapshot_id, scope_kind, scope_key)
-        payload = build.to_dict()
+        payload = self._projection_build_payload(build)
         mirror_root = self._mirror_projection_artifacts(resolved_snapshot_id, payload)
         payload["status"] = "built"
         payload["mirror_path"] = mirror_root

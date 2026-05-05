@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import tempfile
+from typing import Any
+
+import pytest
 
 from fastcode.store.unit_artifacts import UnitArtifactStore
+
+
+class _OpaqueValue:
+    def __repr__(self) -> str:
+        return "<opaque>"
 
 
 def test_unit_artifact_store_replaces_and_lists_snapshot_units() -> None:
@@ -125,3 +133,55 @@ def test_unit_artifact_store_refreshes_only_requested_units() -> None:
         assert rows_by_id["unit:function:a"]["scoped_tool_ref"] == "tool:repair"
         assert rows_by_id["unit:function:b"]["signature_hash"] == "keep"
         assert rows_by_id["unit:function:b"]["embedding_artifact_ref"] == "embedding:b"
+
+
+def test_unit_artifact_store_list_avoids_generic_row_to_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_row_") as tmp:
+        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store.replace_snapshot_units(
+            "snap:1",
+            elements=[
+                {
+                    "type": "function",
+                    "relative_path": "pkg/a.py",
+                    "metadata": {
+                        "stable_unit_id": "unit:function:a",
+                        "signature_hash": "sig-a",
+                    },
+                }
+            ],
+        )
+
+        def _boom(_: object) -> dict[str, Any]:
+            raise AssertionError("unit artifact store must not call row_to_dict()")
+
+        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom)
+
+        rows = store.list_snapshot_units("snap:1")
+
+        assert rows[0]["stable_unit_id"] == "unit:function:a"
+        assert rows[0]["metadata"]["signature_hash"] == "sig-a"
+
+
+def test_unit_artifact_store_serializes_opaque_metadata_values() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_opaque_") as tmp:
+        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store.replace_snapshot_units(
+            "snap:1",
+            elements=[
+                {
+                    "type": "function",
+                    "relative_path": "pkg/a.py",
+                    "metadata": {
+                        "stable_unit_id": "unit:function:a",
+                        "opaque": _OpaqueValue(),
+                    },
+                }
+            ],
+        )
+
+        rows = store.list_snapshot_units("snap:1")
+
+        assert rows[0]["metadata"]["opaque"] == "<opaque>"

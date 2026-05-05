@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, ClassVar
+from collections.abc import Mapping, Sequence
+from typing import Any, ClassVar, cast
 
 from ..db_runtime import DBRuntime
 from ..utils import utc_now
@@ -16,6 +17,24 @@ class UnitArtifactStore:
         "package_root": "TEXT",
         "repair_frontier_summary": "TEXT",
     }
+    _UNIT_ARTIFACT_FIELDS: ClassVar[tuple[str, ...]] = (
+        "snapshot_id",
+        "stable_unit_id",
+        "relative_path",
+        "unit_type",
+        "content_hash",
+        "syntax_hash",
+        "signature_hash",
+        "edge_surface_hash",
+        "embedding_text_hash",
+        "api_surface_hash",
+        "embedding_artifact_ref",
+        "scoped_tool_ref",
+        "package_root",
+        "repair_frontier_summary",
+        "metadata_json",
+        "created_at",
+    )
 
     def __init__(self, db_path_or_runtime: str | DBRuntime) -> None:
         if isinstance(db_path_or_runtime, DBRuntime):
@@ -97,10 +116,7 @@ class UnitArtifactStore:
             return bool(row)
 
         rows = self.db_runtime.execute(conn, f"PRAGMA table_info({table})").fetchall()
-        return any(
-            (self.db_runtime.row_to_dict(row) or {}).get("name") == column
-            for row in rows
-        )
+        return any(self._row_value(row, 1, "name") == column for row in rows)
 
     def _ensure_extra_columns(self, conn: Any) -> None:
         for column, column_type in self._EXTRA_COLUMNS.items():
@@ -119,13 +135,69 @@ class UnitArtifactStore:
             return value
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
+    @staticmethod
+    def _row_value(row: Any, index: int, key: str) -> Any:
+        if row is None:
+            return None
+        if isinstance(row, dict):
+            return cast(dict[str, Any], row).get(key)
+        try:
+            return row[key]
+        except (IndexError, KeyError, TypeError):
+            try:
+                return row[index]
+            except (IndexError, KeyError, TypeError):
+                return None
+
+    @classmethod
+    def _metadata_mapping(cls, elem: dict[str, Any]) -> dict[str, Any]:
+        raw_metadata = elem.get("metadata")
+        return (
+            cast(dict[str, Any], raw_metadata) if isinstance(raw_metadata, dict) else {}
+        )
+
+    @classmethod
+    def _json_safe_value(cls, value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {
+                str(key): cls._json_safe_value(item)
+                for key, item in cast(Mapping[Any, Any], value).items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [cls._json_safe_value(item) for item in cast(Sequence[Any], value)]
+        if isinstance(value, set):
+            return [cls._json_safe_value(item) for item in cast(set[Any], value)]
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        return repr(value)
+
+    @classmethod
+    def _serialize_metadata_json(cls, metadata: dict[str, Any]) -> str:
+        return json.dumps(
+            cls._json_safe_value(metadata),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+    @staticmethod
+    def _deserialize_metadata_json(raw_metadata: Any) -> dict[str, Any]:
+        if raw_metadata is None:
+            return {}
+        if isinstance(raw_metadata, dict):
+            return cast(dict[str, Any], raw_metadata)
+        try:
+            metadata = json.loads(str(raw_metadata))
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        return cast(dict[str, Any], metadata) if isinstance(metadata, dict) else {}
+
     def _insert_unit(
         self,
         conn: Any,
         snapshot_id: str,
         elem: dict[str, Any],
     ) -> None:
-        metadata = dict(elem.get("metadata", {}) or {})
+        metadata = self._metadata_mapping(elem)
         stable_unit_id = str(metadata.get("stable_unit_id") or "")
         if not stable_unit_id:
             return
@@ -183,7 +255,7 @@ class UnitArtifactStore:
                 scoped_tool_ref,
                 package_root,
                 repair_frontier_summary,
-                json.dumps(metadata, ensure_ascii=False),
+                self._serialize_metadata_json(metadata),
                 utc_now(),
             ),
         )
@@ -227,7 +299,7 @@ class UnitArtifactStore:
                     (snapshot_id, stable_unit_id),
                 )
             for elem in elements:
-                metadata = dict(elem.get("metadata", {}) or {})
+                metadata = self._metadata_mapping(elem)
                 stable_unit_id = str(metadata.get("stable_unit_id") or "")
                 if stable_unit_id in requested_ids:
                     self._insert_unit(conn, snapshot_id, elem)
@@ -244,14 +316,21 @@ class UnitArtifactStore:
                 """,
                 (snapshot_id,),
             ).fetchall()
-        results: list[dict[str, Any]] = []
-        for row in rows:
-            payload = self.db_runtime.row_to_dict(row) or {}
-            metadata_json = payload.pop("metadata_json", None)
-            if metadata_json:
-                try:
-                    payload["metadata"] = json.loads(metadata_json)
-                except (json.JSONDecodeError, TypeError):
-                    payload["metadata"] = {}
-            results.append(payload)
-        return results
+        return [
+            payload
+            for row in rows
+            if (payload := self._unit_payload_from_row(row)) is not None
+        ]
+
+    @classmethod
+    def _unit_payload_from_row(cls, row: Any) -> dict[str, Any] | None:
+        stable_unit_id = cls._row_value(row, 1, "stable_unit_id")
+        if stable_unit_id is None:
+            return None
+        payload = {
+            field_name: cls._row_value(row, index, field_name)
+            for index, field_name in enumerate(cls._UNIT_ARTIFACT_FIELDS)
+        }
+        metadata_json = payload.pop("metadata_json", None)
+        payload["metadata"] = cls._deserialize_metadata_json(metadata_json)
+        return payload

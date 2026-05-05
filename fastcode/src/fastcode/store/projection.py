@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from ..ir.projection import ProjectionBuildResult, ProjectionScope
 from ..utils import utc_now
+from .records import ProjectionBuildRecord, ProjectionDirtyScopeRecord
 
 try:
     import psycopg
@@ -167,24 +169,73 @@ class ProjectionStore:
             return parsed if isinstance(parsed, list) else [parsed]
         return list(value) if isinstance(value, (tuple, set)) else [value]
 
-    def _dirty_scope_from_row(self, row: Any) -> dict[str, Any] | None:
-        if not row:
+    @staticmethod
+    def _row_value(row: Any, index: int, key: str) -> Any:
+        if row is None:
             return None
+        if isinstance(row, Mapping):
+            return row.get(key)
+        try:
+            return row[key]
+        except (IndexError, KeyError, TypeError):
+            try:
+                return row[index]
+            except (IndexError, KeyError, TypeError):
+                return None
+
+    @classmethod
+    def _json_mapping(cls, value: Any) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if isinstance(value, Mapping):
+            return {str(key): item for key, item in value.items()}
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+            return cls._json_mapping(parsed)
+        return {}
+
+    @classmethod
+    def _string_list(cls, value: Any) -> list[str]:
+        return [str(item) for item in cls._json_list(value) if item is not None]
+
+    def _row_to_dirty_scope_record(self, row: Any) -> ProjectionDirtyScopeRecord | None:
+        snapshot_id = self._row_value(row, 0, "snapshot_id")
+        if snapshot_id is None:
+            return None
+        return ProjectionDirtyScopeRecord(
+            snapshot_id=str(snapshot_id),
+            scope_kind=str(self._row_value(row, 1, "scope_kind") or ""),
+            scope_key=str(self._row_value(row, 2, "scope_key") or ""),
+            dirty_paths=self._string_list(self._row_value(row, 3, "dirty_paths")),
+            dirty_units=self._string_list(self._row_value(row, 4, "dirty_units")),
+            dirty_package_roots=self._string_list(
+                self._row_value(row, 5, "dirty_package_roots")
+            ),
+            dirty_reason=str(self._row_value(row, 6, "dirty_reason") or ""),
+            created_at=str(self._row_value(row, 7, "created_at") or ""),
+            updated_at=str(self._row_value(row, 8, "updated_at") or ""),
+        )
+
+    @staticmethod
+    def _dirty_scope_payload(record: ProjectionDirtyScopeRecord) -> dict[str, Any]:
         return {
-            "snapshot_id": row[0],
-            "scope_kind": row[1],
-            "scope_key": row[2],
-            "dirty_paths": self._json_list(row[3]),
-            "dirty_units": self._json_list(row[4]),
-            "dirty_package_roots": self._json_list(row[5]),
-            "dirty_reason": row[6],
-            "created_at": str(row[7]),
-            "updated_at": str(row[8]),
+            "snapshot_id": record.snapshot_id,
+            "scope_kind": record.scope_kind,
+            "scope_key": record.scope_key,
+            "dirty_paths": list(record.dirty_paths),
+            "dirty_units": list(record.dirty_units),
+            "dirty_package_roots": list(record.dirty_package_roots),
+            "dirty_reason": record.dirty_reason,
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
         }
 
-    def get_dirty_scope(
+    def get_dirty_scope_record(
         self, snapshot_id: str, scope_kind: str, scope_key: str
-    ) -> dict[str, Any] | None:
+    ) -> ProjectionDirtyScopeRecord | None:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
@@ -196,15 +247,23 @@ class ProjectionStore:
                     """,
                 (snapshot_id, scope_kind, scope_key),
             )
-            return self._dirty_scope_from_row(cur.fetchone())
+            return self._row_to_dirty_scope_record(cur.fetchone())
+
+    def get_dirty_scope(
+        self, snapshot_id: str, scope_kind: str, scope_key: str
+    ) -> dict[str, Any] | None:
+        record = self.get_dirty_scope_record(snapshot_id, scope_kind, scope_key)
+        return self._dirty_scope_payload(record) if record is not None else None
 
     def is_dirty(self, snapshot_id: str, scope_kind: str, scope_key: str) -> bool:
         return bool(
-            self.get_dirty_scope(snapshot_id, scope_kind, scope_key)
-            or self.get_dirty_scope(snapshot_id, "all", "*")
+            self.get_dirty_scope_record(snapshot_id, scope_kind, scope_key)
+            or self.get_dirty_scope_record(snapshot_id, "all", "*")
         )
 
-    def list_dirty_scopes(self, snapshot_id: str) -> list[dict[str, Any]]:
+    def list_dirty_scope_records(
+        self, snapshot_id: str
+    ) -> list[ProjectionDirtyScopeRecord]:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
@@ -218,10 +277,16 @@ class ProjectionStore:
                 (snapshot_id,),
             )
             return [
-                dirty
+                record
                 for row in cur.fetchall()
-                if (dirty := self._dirty_scope_from_row(row)) is not None
+                if (record := self._row_to_dirty_scope_record(row)) is not None
             ]
+
+    def list_dirty_scopes(self, snapshot_id: str) -> list[dict[str, Any]]:
+        return [
+            self._dirty_scope_payload(record)
+            for record in self.list_dirty_scope_records(snapshot_id)
+        ]
 
     def clear_dirty(self, snapshot_id: str, scope_kind: str, scope_key: str) -> None:
         with self._connect() as conn:
@@ -247,17 +312,14 @@ class ProjectionStore:
         dirty_package_roots: list[str] | None = None,
     ) -> None:
         now = utc_now()
-        existing = self.get_dirty_scope(snapshot_id, scope_kind, scope_key)
-        paths = sorted(
-            set(dirty_paths) | set(existing.get("dirty_paths", []) if existing else [])
-        )
+        existing = self.get_dirty_scope_record(snapshot_id, scope_kind, scope_key)
+        paths = sorted(set(dirty_paths) | set(existing.dirty_paths if existing else []))
         units = sorted(
-            set(dirty_units or [])
-            | set(existing.get("dirty_units", []) if existing else [])
+            set(dirty_units or []) | set(existing.dirty_units if existing else [])
         )
         package_roots = sorted(
             set(dirty_package_roots or [])
-            | set(existing.get("dirty_package_roots", []) if existing else [])
+            | set(existing.dirty_package_roots if existing else [])
         )
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -308,7 +370,61 @@ class ProjectionStore:
             dirty_reason=dirty_reason,
         )
 
-    def list_builds_for_snapshot(self, snapshot_id: str) -> list[dict[str, Any]]:
+    def _row_to_build_record(self, row: Any) -> ProjectionBuildRecord | None:
+        projection_id = self._row_value(row, 0, "projection_id")
+        if projection_id is None:
+            return None
+        return ProjectionBuildRecord(
+            projection_id=str(projection_id),
+            snapshot_id=str(self._row_value(row, 1, "snapshot_id") or ""),
+            scope_kind=str(self._row_value(row, 2, "scope_kind") or ""),
+            scope_key=str(self._row_value(row, 3, "scope_key") or ""),
+            params_hash=str(self._row_value(row, 4, "params_hash") or ""),
+            status=str(self._row_value(row, 5, "status") or ""),
+            warnings=self._string_list(self._row_value(row, 6, "warnings_json")),
+            created_at=str(self._row_value(row, 7, "created_at") or ""),
+            updated_at=str(self._row_value(row, 8, "updated_at") or ""),
+            query=(
+                str(query)
+                if (query := self._row_value(row, 9, "query")) is not None
+                else None
+            ),
+            target_id=(
+                str(target_id)
+                if (target_id := self._row_value(row, 10, "target_id")) is not None
+                else None
+            ),
+            filters=self._json_mapping(self._row_value(row, 11, "filters_json")),
+            coverage_paths=self._string_list(
+                self._row_value(row, 12, "coverage_paths_json")
+            ),
+            coverage_nodes=self._string_list(
+                self._row_value(row, 13, "coverage_nodes_json")
+            ),
+        )
+
+    @staticmethod
+    def _build_payload(record: ProjectionBuildRecord) -> dict[str, Any]:
+        return {
+            "projection_id": record.projection_id,
+            "snapshot_id": record.snapshot_id,
+            "scope_kind": record.scope_kind,
+            "scope_key": record.scope_key,
+            "params_hash": record.params_hash,
+            "status": record.status,
+            "warnings": list(record.warnings),
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+            "query": record.query,
+            "target_id": record.target_id,
+            "filters": dict(record.filters),
+            "coverage_paths": list(record.coverage_paths),
+            "coverage_nodes": list(record.coverage_nodes),
+        }
+
+    def list_build_records_for_snapshot(
+        self, snapshot_id: str
+    ) -> list[ProjectionBuildRecord]:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
@@ -322,26 +438,17 @@ class ProjectionStore:
                     """,
                 (snapshot_id,),
             )
-            builds: list[dict[str, Any]] = []
-            for row in cur.fetchall():
-                builds.append(
-                    {
-                        "projection_id": row[0],
-                        "snapshot_id": row[1],
-                        "scope_kind": row[2],
-                        "scope_key": row[3],
-                        "params_hash": row[4],
-                        "status": row[5],
-                        "created_at": str(row[7]),
-                        "updated_at": str(row[8]),
-                        "query": row[9],
-                        "target_id": row[10],
-                        "filters": row[11] or {},
-                        "coverage_paths": self._json_list(row[12]),
-                        "coverage_nodes": self._json_list(row[13]),
-                    }
-                )
-            return builds
+            return [
+                record
+                for row in cur.fetchall()
+                if (record := self._row_to_build_record(row)) is not None
+            ]
+
+    def list_builds_for_snapshot(self, snapshot_id: str) -> list[dict[str, Any]]:
+        return [
+            self._build_payload(record)
+            for record in self.list_build_records_for_snapshot(snapshot_id)
+        ]
 
     def find_cached_projection_id(
         self, scope: ProjectionScope, params_hash: str
@@ -497,6 +604,10 @@ class ProjectionStore:
             return row[0] if row else None
 
     def get_build(self, projection_id: str) -> dict[str, Any] | None:
+        record = self.get_build_record(projection_id)
+        return self._build_payload(record) if record is not None else None
+
+    def get_build_record(self, projection_id: str) -> ProjectionBuildRecord | None:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """
@@ -508,27 +619,4 @@ class ProjectionStore:
                     """,
                 (projection_id,),
             )
-            row = cur.fetchone()
-            if not row:
-                return None
-            warnings = row[6]
-            try:
-                warnings_parsed = json.loads(warnings) if warnings else []
-            except Exception:
-                warnings_parsed = [str(warnings)]
-            return {
-                "projection_id": row[0],
-                "snapshot_id": row[1],
-                "scope_kind": row[2],
-                "scope_key": row[3],
-                "params_hash": row[4],
-                "status": row[5],
-                "warnings": warnings_parsed,
-                "created_at": str(row[7]),
-                "updated_at": str(row[8]),
-                "query": row[9],
-                "target_id": row[10],
-                "filters": row[11] or {},
-                "coverage_paths": self._json_list(row[12]),
-                "coverage_nodes": self._json_list(row[13]),
-            }
+            return self._row_to_build_record(cur.fetchone())

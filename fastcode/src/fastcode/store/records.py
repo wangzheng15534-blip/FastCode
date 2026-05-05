@@ -1,9 +1,42 @@
-"""Typed records for manifest and snapshot-ref store boundaries."""
+"""Typed records for store persistence boundaries."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
+
+
+def _string_list_payload(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in cast(list[Any], value)]
+    if isinstance(value, tuple):
+        return [str(item) for item in cast(tuple[Any, ...], value)]
+    return []
+
+
+def _string_key_mapping_payload(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): item for key, item in cast(dict[Any, Any], value).items()}
+
+
+def _dict_list_payload(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        items = cast(list[Any], value)
+    elif isinstance(value, tuple):
+        items = list(cast(tuple[Any, ...], value))
+    else:
+        return []
+    payload: list[dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, dict):
+            payload.append(
+                {
+                    str(key): sub_item
+                    for key, sub_item in cast(dict[Any, Any], item).items()
+                }
+            )
+    return payload
 
 
 @dataclass(frozen=True)
@@ -134,4 +167,445 @@ class SnapshotRecord:
                 if data.get("metadata_json") is not None
                 else None
             ),
+        )
+
+
+@dataclass(frozen=True)
+class SCIPArtifactRecord:
+    snapshot_id: str
+    indexer_name: str
+    indexer_version: str | None
+    artifact_path: str
+    checksum: str
+    created_at: str
+    artifact_id: str | None = None
+    sequence_no: int | None = None
+    role: str | None = None
+    metadata_json: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "snapshot_id": self.snapshot_id,
+            "indexer_name": self.indexer_name,
+            "indexer_version": self.indexer_version,
+            "artifact_path": self.artifact_path,
+            "checksum": self.checksum,
+            "created_at": self.created_at,
+            "artifact_id": self.artifact_id,
+            "sequence_no": self.sequence_no,
+            "role": self.role,
+            "metadata_json": self.metadata_json,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SCIPArtifactRecord:
+        raw_sequence_no = data.get("sequence_no")
+        return cls(
+            snapshot_id=str(data.get("snapshot_id") or ""),
+            indexer_name=str(data.get("indexer_name") or ""),
+            indexer_version=(
+                str(data["indexer_version"])
+                if data.get("indexer_version") is not None
+                else None
+            ),
+            artifact_path=str(data.get("artifact_path") or ""),
+            checksum=str(data.get("checksum") or ""),
+            created_at=str(data.get("created_at") or ""),
+            artifact_id=(
+                str(data["artifact_id"])
+                if data.get("artifact_id") is not None
+                else None
+            ),
+            sequence_no=(int(raw_sequence_no) if raw_sequence_no is not None else None),
+            role=str(data["role"]) if data.get("role") is not None else None,
+            metadata_json=(
+                str(data["metadata_json"])
+                if data.get("metadata_json") is not None
+                else None
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class RedoTaskRecord:
+    task_id: str
+    task_type: str
+    payload_json: str
+    status: str
+    attempts: int
+    last_error: str | None
+    next_attempt_at: str | None
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "task_type": self.task_type,
+            "payload_json": self.payload_json,
+            "status": self.status,
+            "attempts": self.attempts,
+            "last_error": self.last_error,
+            "next_attempt_at": self.next_attempt_at,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RedoTaskRecord:
+        return cls(
+            task_id=str(data.get("task_id") or ""),
+            task_type=str(data.get("task_type") or ""),
+            payload_json=str(data.get("payload_json") or ""),
+            status=str(data.get("status") or ""),
+            attempts=int(data.get("attempts") or 0),
+            last_error=(
+                str(data["last_error"]) if data.get("last_error") is not None else None
+            ),
+            next_attempt_at=(
+                str(data["next_attempt_at"])
+                if data.get("next_attempt_at") is not None
+                else None
+            ),
+            created_at=str(data.get("created_at") or ""),
+            updated_at=str(data.get("updated_at") or ""),
+        )
+
+
+@dataclass(frozen=True)
+class OutboxEventRecord:
+    event_id: str
+    event_type: str
+    payload: str
+    snapshot_id: str
+    status: str
+    attempts: int
+    max_attempts: int
+    created_at: str
+    last_attempt_at: str | None
+    error_message: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "event_type": self.event_type,
+            "payload": self.payload,
+            "snapshot_id": self.snapshot_id,
+            "status": self.status,
+            "attempts": self.attempts,
+            "max_attempts": self.max_attempts,
+            "created_at": self.created_at,
+            "last_attempt_at": self.last_attempt_at,
+            "error_message": self.error_message,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> OutboxEventRecord:
+        return cls(
+            event_id=str(data.get("event_id") or ""),
+            event_type=str(data.get("event_type") or ""),
+            payload=str(data.get("payload") or ""),
+            snapshot_id=str(data.get("snapshot_id") or ""),
+            status=str(data.get("status") or ""),
+            attempts=int(data.get("attempts") or 0),
+            max_attempts=int(data.get("max_attempts") or 0),
+            created_at=str(data.get("created_at") or ""),
+            last_attempt_at=(
+                str(data["last_attempt_at"])
+                if data.get("last_attempt_at") is not None
+                else None
+            ),
+            error_message=(
+                str(data["error_message"])
+                if data.get("error_message") is not None
+                else None
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectionDirtyScopeRecord:
+    snapshot_id: str
+    scope_kind: str
+    scope_key: str
+    dirty_paths: list[str]
+    dirty_units: list[str]
+    dirty_package_roots: list[str]
+    dirty_reason: str
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "snapshot_id": self.snapshot_id,
+            "scope_kind": self.scope_kind,
+            "scope_key": self.scope_key,
+            "dirty_paths": list(self.dirty_paths),
+            "dirty_units": list(self.dirty_units),
+            "dirty_package_roots": list(self.dirty_package_roots),
+            "dirty_reason": self.dirty_reason,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ProjectionDirtyScopeRecord:
+        return cls(
+            snapshot_id=str(data.get("snapshot_id") or ""),
+            scope_kind=str(data.get("scope_kind") or ""),
+            scope_key=str(data.get("scope_key") or ""),
+            dirty_paths=_string_list_payload(data.get("dirty_paths")),
+            dirty_units=_string_list_payload(data.get("dirty_units")),
+            dirty_package_roots=_string_list_payload(data.get("dirty_package_roots")),
+            dirty_reason=str(data.get("dirty_reason") or ""),
+            created_at=str(data.get("created_at") or ""),
+            updated_at=str(data.get("updated_at") or ""),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectionBuildRecord:
+    projection_id: str
+    snapshot_id: str
+    scope_kind: str
+    scope_key: str
+    params_hash: str
+    status: str
+    warnings: list[str]
+    created_at: str
+    updated_at: str
+    query: str | None
+    target_id: str | None
+    filters: dict[str, Any]
+    coverage_paths: list[str]
+    coverage_nodes: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "projection_id": self.projection_id,
+            "snapshot_id": self.snapshot_id,
+            "scope_kind": self.scope_kind,
+            "scope_key": self.scope_key,
+            "params_hash": self.params_hash,
+            "status": self.status,
+            "warnings": list(self.warnings),
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "query": self.query,
+            "target_id": self.target_id,
+            "filters": dict(self.filters),
+            "coverage_paths": list(self.coverage_paths),
+            "coverage_nodes": list(self.coverage_nodes),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ProjectionBuildRecord:
+        return cls(
+            projection_id=str(data.get("projection_id") or ""),
+            snapshot_id=str(data.get("snapshot_id") or ""),
+            scope_kind=str(data.get("scope_kind") or ""),
+            scope_key=str(data.get("scope_key") or ""),
+            params_hash=str(data.get("params_hash") or ""),
+            status=str(data.get("status") or ""),
+            warnings=_string_list_payload(data.get("warnings")),
+            created_at=str(data.get("created_at") or ""),
+            updated_at=str(data.get("updated_at") or ""),
+            query=str(data["query"]) if data.get("query") is not None else None,
+            target_id=(
+                str(data["target_id"]) if data.get("target_id") is not None else None
+            ),
+            filters=_string_key_mapping_payload(data.get("filters")),
+            coverage_paths=_string_list_payload(data.get("coverage_paths")),
+            coverage_nodes=_string_list_payload(data.get("coverage_nodes")),
+        )
+
+
+@dataclass(frozen=True)
+class IndexRunRecord:
+    run_id: str
+    repo_name: str
+    snapshot_id: str
+    branch: str | None
+    commit_id: str | None
+    idempotency_key: str | None
+    status: str
+    error_message: str | None
+    warnings_json: str | None
+    created_at: str
+    started_at: str | None
+    completed_at: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "repo_name": self.repo_name,
+            "snapshot_id": self.snapshot_id,
+            "branch": self.branch,
+            "commit_id": self.commit_id,
+            "idempotency_key": self.idempotency_key,
+            "status": self.status,
+            "error_message": self.error_message,
+            "warnings_json": self.warnings_json,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> IndexRunRecord:
+        return cls(
+            run_id=str(data.get("run_id") or ""),
+            repo_name=str(data.get("repo_name") or ""),
+            snapshot_id=str(data.get("snapshot_id") or ""),
+            branch=str(data["branch"]) if data.get("branch") is not None else None,
+            commit_id=(
+                str(data["commit_id"]) if data.get("commit_id") is not None else None
+            ),
+            idempotency_key=(
+                str(data["idempotency_key"])
+                if data.get("idempotency_key") is not None
+                else None
+            ),
+            status=str(data.get("status") or ""),
+            error_message=(
+                str(data["error_message"])
+                if data.get("error_message") is not None
+                else None
+            ),
+            warnings_json=(
+                str(data["warnings_json"])
+                if data.get("warnings_json") is not None
+                else None
+            ),
+            created_at=str(data.get("created_at") or ""),
+            started_at=(
+                str(data["started_at"]) if data.get("started_at") is not None else None
+            ),
+            completed_at=(
+                str(data["completed_at"])
+                if data.get("completed_at") is not None
+                else None
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class PublishTaskRecord:
+    task_id: str
+    run_id: str
+    snapshot_id: str
+    manifest_id: str | None
+    status: str
+    attempts: int
+    last_error: str | None
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "run_id": self.run_id,
+            "snapshot_id": self.snapshot_id,
+            "manifest_id": self.manifest_id,
+            "status": self.status,
+            "attempts": self.attempts,
+            "last_error": self.last_error,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PublishTaskRecord:
+        return cls(
+            task_id=str(data.get("task_id") or ""),
+            run_id=str(data.get("run_id") or ""),
+            snapshot_id=str(data.get("snapshot_id") or ""),
+            manifest_id=(
+                str(data["manifest_id"])
+                if data.get("manifest_id") is not None
+                else None
+            ),
+            status=str(data.get("status") or ""),
+            attempts=int(data.get("attempts") or 0),
+            last_error=(
+                str(data["last_error"]) if data.get("last_error") is not None else None
+            ),
+            created_at=str(data.get("created_at") or ""),
+            updated_at=str(data.get("updated_at") or ""),
+        )
+
+
+@dataclass(frozen=True)
+class DialogueTurnRecord:
+    session_id: str
+    turn_number: int
+    timestamp: float
+    query: str
+    answer: str
+    summary: str
+    retrieved_elements: list[dict[str, Any]]
+    metadata: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "turn_number": self.turn_number,
+            "timestamp": self.timestamp,
+            "query": self.query,
+            "answer": self.answer,
+            "summary": self.summary,
+            "retrieved_elements": list(self.retrieved_elements),
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DialogueTurnRecord:
+        timestamp_value = data.get("timestamp")
+        return cls(
+            session_id=str(data.get("session_id") or ""),
+            turn_number=int(data.get("turn_number") or 0),
+            timestamp=(
+                float(timestamp_value)
+                if isinstance(timestamp_value, (int, float))
+                else 0.0
+            ),
+            query=str(data.get("query") or ""),
+            answer=str(data.get("answer") or ""),
+            summary=str(data.get("summary") or ""),
+            retrieved_elements=_dict_list_payload(data.get("retrieved_elements")),
+            metadata=_string_key_mapping_payload(data.get("metadata")),
+        )
+
+
+@dataclass(frozen=True)
+class DialogueSessionRecord:
+    session_id: str
+    created_at: float
+    total_turns: int
+    last_updated: float
+    multi_turn: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "created_at": self.created_at,
+            "total_turns": self.total_turns,
+            "last_updated": self.last_updated,
+            "multi_turn": self.multi_turn,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DialogueSessionRecord:
+        created_at = data.get("created_at")
+        last_updated = data.get("last_updated")
+        return cls(
+            session_id=str(data.get("session_id") or ""),
+            created_at=(
+                float(created_at) if isinstance(created_at, (int, float)) else 0.0
+            ),
+            total_turns=int(data.get("total_turns") or 0),
+            last_updated=(
+                float(last_updated) if isinstance(last_updated, (int, float)) else 0.0
+            ),
+            multi_turn=bool(data.get("multi_turn", False)),
         )

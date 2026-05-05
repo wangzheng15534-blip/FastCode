@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from fastcode.store.cache import (
     _CACHE_EMBEDDING_KIND,
     _CACHE_JSON_KIND,
     _CACHE_RECORD_MAGIC,
     CacheManager,
 )
+from fastcode.store.records import DialogueSessionRecord, DialogueTurnRecord
 
 
 def _cache_config(
@@ -140,5 +143,94 @@ def test_query_result_cache_uses_json_cache_envelope(tmp_path: Path) -> None:
         assert (
             manager.get_query_result("Where is config loaded?", "repo-hash") == result
         )
+    finally:
+        manager.cache.close()
+
+
+def test_dialogue_record_accessors_use_explicit_serializers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manager = CacheManager(_cache_config(tmp_path))
+
+    def _boom_turn(_: DialogueTurnRecord) -> dict[str, object]:
+        raise AssertionError("cache manager must not call DialogueTurnRecord.to_dict()")
+
+    def _boom_session(_: DialogueSessionRecord) -> dict[str, object]:
+        raise AssertionError(
+            "cache manager must not call DialogueSessionRecord.to_dict()"
+        )
+
+    monkeypatch.setattr(DialogueTurnRecord, "to_dict", _boom_turn)
+    monkeypatch.setattr(DialogueSessionRecord, "to_dict", _boom_session)
+
+    try:
+        assert manager.save_dialogue_turn(
+            session_id="session-typed",
+            turn_number=1,
+            query="Where is config loaded?",
+            answer="src/config.py",
+            summary="Located config load path",
+            retrieved_elements=[{"file": "src/config.py", "type": "file"}],
+            metadata={"multi_turn": True},
+        )
+
+        turn_record = manager.get_dialogue_turn_record("session-typed", 1)
+        session_record = manager.get_session_index_record("session-typed")
+        history = manager.get_dialogue_history("session-typed")
+        sessions = manager.list_sessions()
+
+        assert turn_record is not None
+        assert turn_record.query == "Where is config loaded?"
+        assert session_record is not None
+        assert session_record.total_turns == 1
+        assert session_record.multi_turn is True
+        assert history[0]["summary"] == "Located config load path"
+        assert sessions[0]["session_id"] == "session-typed"
+    finally:
+        manager.cache.close()
+
+
+def test_dialogue_history_records_and_delete_session_use_typed_session_index(
+    tmp_path: Path,
+) -> None:
+    manager = CacheManager(_cache_config(tmp_path))
+
+    try:
+        assert manager.save_dialogue_turn(
+            session_id="session-history",
+            turn_number=1,
+            query="Q1",
+            answer="A1",
+            summary="S1",
+            metadata={},
+        )
+        assert manager.save_dialogue_turn(
+            session_id="session-history",
+            turn_number=2,
+            query="Q2",
+            answer="A2",
+            summary="S2",
+            metadata={"multi_turn": True},
+        )
+
+        history_records = manager.get_dialogue_history_records(
+            "session-history", max_turns=2
+        )
+        summaries = manager.get_recent_summaries("session-history", 2)
+        session_records = manager.list_session_records()
+
+        assert [record.turn_number for record in history_records] == [1, 2]
+        assert summaries == [
+            {"turn_number": 1, "query": "Q1", "summary": "S1"},
+            {"turn_number": 2, "query": "Q2", "summary": "S2"},
+        ]
+        assert len(session_records) == 1
+        assert session_records[0].session_id == "session-history"
+        assert session_records[0].total_turns == 2
+        assert session_records[0].multi_turn is True
+
+        assert manager.delete_session("session-history") is True
+        assert manager.get_dialogue_turn_record("session-history", 1) is None
+        assert manager.get_session_index_record("session-history") is None
     finally:
         manager.cache.close()

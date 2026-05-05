@@ -446,13 +446,14 @@ class TestBlockingEndpointOffloads:
         assert offloaded == [
             fake_fastcode.load_repository,
             fake_fastcode.index_repository,
+            api._call_with_service_lock,
             fake_fastcode._load_multi_repo_cache,
             fake_fastcode.load_multiple_repositories,
+            api._call_with_service_lock,
             fake_fastcode.remove_repository,
-            fake_fastcode.cache_manager.clear,
+            api._call_with_service_lock,
             fake_fastcode.cache_manager.get_stats,
-            fake_fastcode.vector_store.invalidate_scan_cache,
-            fake_fastcode.vector_store.scan_available_indexes,
+            api._refresh_index_cache_sync,
         ]
 
 

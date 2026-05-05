@@ -7,6 +7,7 @@ Main FastCode Class - Orchestrate all components
 import json
 import os
 import pickle
+import threading
 from collections.abc import Callable, Generator
 from datetime import datetime
 from typing import Any, cast
@@ -29,7 +30,12 @@ from ..indexing.projection_transform import ProjectionTransformer
 from ..indexing.publishing import PublishingService
 from ..indexing.redo_worker import RedoWorker
 from ..indexing.terminus import TerminusPublisher
-from ..ir.element import CodeElement, CodeElementMeta
+from ..ir.element import (
+    CodeElement,
+    CodeElementMeta,
+    deserialize_code_element,
+    serialize_code_element,
+)
 from ..ir.graph import IRGraphBuilder
 from ..ir.types import IRSnapshot
 from ..module_resolver import ModuleResolver
@@ -124,6 +130,7 @@ class FastCode:
         # Setup logging
         self.logger = setup_logging(self.config)
         self.logger.info("Initializing FastCode system")
+        self._service_state_lock = threading.RLock()
 
         # Initialize resolver attributes (will be set in index_repository)
         self.global_index_builder: GlobalIndexBuilder | None = None
@@ -299,7 +306,20 @@ class FastCode:
     def _infer_is_url(source: str) -> bool:
         return IndexPipeline._infer_is_url(source)
 
+    def _state_lock(self) -> threading.RLock:
+        lock = getattr(self, "_service_state_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._service_state_lock = lock
+        return lock
+
     def load_repository(
+        self, source: str, is_url: bool | None = None, is_zip: bool = False
+    ):
+        with self._state_lock():
+            return self._load_repository_unlocked(source, is_url, is_zip)
+
+    def _load_repository_unlocked(
         self, source: str, is_url: bool | None = None, is_zip: bool = False
     ):
         """
@@ -352,6 +372,10 @@ class FastCode:
             raise
 
     def index_repository(self, force: bool = False):
+        with self._state_lock():
+            return self._index_repository_unlocked(force=force)
+
+    def _index_repository_unlocked(self, force: bool = False):
         """
         Index the loaded repository
 
@@ -396,7 +420,7 @@ class FastCode:
                 embedding = elem.metadata.get("embedding")
                 if embedding is not None:
                     vectors.append(embedding)
-                    metadata.append(elem.to_dict())
+                    metadata.append(serialize_code_element(elem))
 
             if vectors:
                 vectors_array: np.ndarray = np.array(vectors)
@@ -534,19 +558,20 @@ class FastCode:
         enable_scip: bool = True,
     ) -> dict[str, Any]:
         """Run snapshot-oriented indexing pipeline (delegates to IndexPipeline)."""
-        return self.pipeline.run_index_pipeline(
-            source=source,
-            is_url=is_url,
-            ref=ref,
-            commit=commit,
-            force=force,
-            publish=publish,
-            scip_artifact_path=scip_artifact_path,
-            enable_scip=enable_scip,
-            load_repository_cb=self.load_repository,
-            get_loaded_repositories=lambda: self.loaded_repositories,
-            graph_runtime=self.graph_runtime,
-        )
+        with self._state_lock():
+            return self.pipeline.run_index_pipeline(
+                source=source,
+                is_url=is_url,
+                ref=ref,
+                commit=commit,
+                force=force,
+                publish=publish,
+                scip_artifact_path=scip_artifact_path,
+                enable_scip=enable_scip,
+                load_repository_cb=self.load_repository,
+                get_loaded_repositories=lambda: self.loaded_repositories,
+                graph_runtime=self.graph_runtime,
+            )
 
     def _apply_semantic_resolvers(
         self,
@@ -893,16 +918,17 @@ class FastCode:
         filters: dict[str, Any] | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
-        return self.projection_service.build_projection(
-            scope_kind=scope_kind,
-            snapshot_id=snapshot_id,
-            repo_name=repo_name,
-            ref_name=ref_name,
-            query=query,
-            target_id=target_id,
-            filters=filters,
-            force=force,
-        )
+        with self._state_lock():
+            return self.projection_service.build_projection(
+                scope_kind=scope_kind,
+                snapshot_id=snapshot_id,
+                repo_name=repo_name,
+                ref_name=ref_name,
+                query=query,
+                target_id=target_id,
+                filters=filters,
+                force=force,
+            )
 
     def get_projection_layer(self, projection_id: str, layer: str) -> dict[str, Any]:
         return self.projection_service.get_projection_layer(projection_id, layer)
@@ -924,15 +950,16 @@ class FastCode:
         session_id: str | None = None,
         enable_multi_turn: bool | None = None,
     ) -> dict[str, Any]:
-        return self.query_handler.query_snapshot(
-            question=question,
-            repo_name=repo_name,
-            ref_name=ref_name,
-            snapshot_id=snapshot_id,
-            filters=filters,
-            session_id=session_id,
-            enable_multi_turn=enable_multi_turn,
-        )
+        with self._state_lock():
+            return self.query_handler.query_snapshot(
+                question=question,
+                repo_name=repo_name,
+                ref_name=ref_name,
+                snapshot_id=snapshot_id,
+                filters=filters,
+                session_id=session_id,
+                enable_multi_turn=enable_multi_turn,
+            )
 
     def query(
         self,
@@ -947,15 +974,16 @@ class FastCode:
         ]
         | None = None,
     ) -> dict[str, Any]:
-        return self.query_handler.query(
-            question=question,
-            filters=filters,
-            repo_filter=repo_filter,
-            session_id=session_id,
-            enable_multi_turn=enable_multi_turn,
-            use_agency_mode=use_agency_mode,
-            prompt_builder=prompt_builder,
-        )
+        with self._state_lock():
+            return self.query_handler.query(
+                question=question,
+                filters=filters,
+                repo_filter=repo_filter,
+                session_id=session_id,
+                enable_multi_turn=enable_multi_turn,
+                use_agency_mode=use_agency_mode,
+                prompt_builder=prompt_builder,
+            )
 
     def _escalate_query_semantics(
         self,
@@ -1034,15 +1062,16 @@ class FastCode:
         ]
         | None = None,
     ) -> Generator[tuple[str | None, dict[str, Any] | None], Any, None]:
-        yield from self.query_handler.query_stream(
-            question=question,
-            filters=filters,
-            repo_filter=repo_filter,
-            session_id=session_id,
-            enable_multi_turn=enable_multi_turn,
-            use_agency_mode=use_agency_mode,
-            prompt_builder=prompt_builder,
-        )
+        with self._state_lock():
+            yield from self.query_handler.query_stream(
+                question=question,
+                filters=filters,
+                repo_filter=repo_filter,
+                session_id=session_id,
+                enable_multi_turn=enable_multi_turn,
+                use_agency_mode=use_agency_mode,
+                prompt_builder=prompt_builder,
+            )
 
     def _extract_sources_from_elements(
         self, elements: list[dict[str, Any]]
@@ -1396,6 +1425,10 @@ class FastCode:
         }
 
     def load_multiple_repositories(self, sources: list[dict[str, Any]]):
+        with self._state_lock():
+            return self._load_multiple_repositories_unlocked(sources)
+
+    def _load_multiple_repositories_unlocked(self, sources: list[dict[str, Any]]):
         """
         Load and index multiple repositories (saves each repository separately)
 
@@ -1475,7 +1508,7 @@ class FastCode:
                     embedding = elem.metadata.get("embedding")
                     if embedding is not None:
                         vectors.append(embedding)
-                        metadata.append(elem.to_dict())
+                        metadata.append(serialize_code_element(elem))
 
                 if vectors:
                     vectors_array: np.ndarray = np.array(vectors)
@@ -1630,6 +1663,12 @@ class FastCode:
         return stats
 
     def _load_multi_repo_cache(self, repo_names: list[str] | None = None) -> bool:
+        with self._state_lock():
+            return self._load_multi_repo_cache_unlocked(repo_names=repo_names)
+
+    def _load_multi_repo_cache_unlocked(
+        self, repo_names: list[str] | None = None
+    ) -> bool:
         """
         Load multi-repository index from cache by merging individual repository indices
 
@@ -1725,9 +1764,10 @@ class FastCode:
                             data = pickle.load(f)
                             all_bm25_corpus.extend(data["bm25_corpus"])
 
-                            # Reconstruct CodeElement objects
-                            for elem_dict in data["bm25_elements"]:
-                                all_bm25_elements.append(CodeElement(**elem_dict))
+                            for elem_payload in data["bm25_elements"]:
+                                all_bm25_elements.append(
+                                    deserialize_code_element(elem_payload)
+                                )
 
                         self.logger.info(f"Loaded BM25 data for {repo_name}")
                     except Exception as e:
@@ -1955,17 +1995,19 @@ class FastCode:
 
     def cleanup(self):
         """Cleanup resources"""
-        self.shutdown()
-        self.loader.cleanup()
-        self.logger.info("Cleanup complete")
+        with self._state_lock():
+            self.shutdown()
+            self.loader.cleanup()
+            self.logger.info("Cleanup complete")
 
     def shutdown(self):
         """Stop background workers."""
-        if self._redo_worker is not None:
-            self._redo_worker.stop()
-        graph_rt = getattr(self, "graph_runtime", None)
-        if graph_rt is not None:
-            graph_rt.close()
+        with self._state_lock():
+            if self._redo_worker is not None:
+                self._redo_worker.stop()
+            graph_rt = getattr(self, "graph_runtime", None)
+            if graph_rt is not None:
+                graph_rt.close()
 
     def _get_full_dialogue_history(
         self, session_id: str | None, enable_multi_turn: bool = False
@@ -2002,6 +2044,12 @@ class FastCode:
         return self.cache_manager.delete_session(session_id)
 
     def remove_repository(
+        self, repo_name: str, delete_source: bool = True
+    ) -> dict[str, Any]:
+        with self._state_lock():
+            return self._remove_repository_unlocked(repo_name, delete_source)
+
+    def _remove_repository_unlocked(
         self, repo_name: str, delete_source: bool = True
     ) -> dict[str, Any]:
         """
@@ -2077,6 +2125,36 @@ class FastCode:
         Returns:
             List of session metadata with first query as title
         """
+        list_session_records = getattr(self.cache_manager, "list_session_records", None)
+        get_turn_record = getattr(self.cache_manager, "get_dialogue_turn_record", None)
+        if callable(list_session_records) and callable(get_turn_record):
+            enriched_sessions: list[dict[str, Any]] = []
+            for session in cast(list[Any], list_session_records()):
+                session_id = str(session.session_id)
+                title = "Unknown Session"
+                if session_id:
+                    first_turn = cast(Any, get_turn_record(session_id, 1))
+                    if first_turn is not None:
+                        first_query = str(first_turn.query)
+                        title = (
+                            first_query[:77] + "..."
+                            if len(first_query) > 80
+                            else first_query
+                        )
+                    else:
+                        title = f"Session {session_id}"
+                enriched_sessions.append(
+                    {
+                        "session_id": session_id,
+                        "created_at": float(session.created_at),
+                        "total_turns": int(session.total_turns),
+                        "last_updated": float(session.last_updated),
+                        "multi_turn": bool(session.multi_turn),
+                        "title": title,
+                    }
+                )
+            return enriched_sessions
+
         sessions = self.cache_manager.list_sessions()
 
         # Enrich each session with the first query as a title

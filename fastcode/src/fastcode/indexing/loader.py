@@ -20,6 +20,7 @@ from ..utils import (
     normalize_path,
     should_ignore_path,
 )
+from ..utils.archive import safe_extract_zip
 
 
 class RepositoryLoader:
@@ -185,8 +186,7 @@ class RepositoryLoader:
         try:
             # Extract ZIP file
             with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                # Extract all files
-                zip_ref.extractall(extract_path)
+                safe_extract_zip(zip_ref, extract_path)
 
             # If ZIP contains a single root directory, flatten it so repository
             # always lives directly under repo workspace root/<repo_name>.

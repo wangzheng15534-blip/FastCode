@@ -8,7 +8,7 @@ import logging
 import threading
 import traceback
 from collections.abc import Callable, Generator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ..retrieval.core import snapshot as _snapshot
 from ..retrieval.hybrid import HybridRetriever
@@ -611,9 +611,14 @@ class QueryPipeline:
         Returns:
             Next turn number (1-indexed)
         """
+        get_record = getattr(self.cache_manager, "get_session_index_record", None)
+        if callable(get_record):
+            session_record = cast(Any, get_record(session_id))
+            if session_record is not None:
+                return int(session_record.total_turns) + 1
         session_index = self.cache_manager._get_session_index(session_id)
         if session_index:
-            return session_index.get("total_turns", 0) + 1
+            return int(session_index.get("total_turns", 0)) + 1
         return 1
 
     def _extract_sources_from_elements(

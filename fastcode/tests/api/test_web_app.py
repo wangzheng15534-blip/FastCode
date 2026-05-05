@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -124,6 +124,51 @@ class _FakeFastCode:
         return [_NoDictTurn()]
 
 
+class _RecordingLock:
+    def __init__(self, events: list[Any]) -> None:
+        self.events = events
+        self.active = False
+
+    def __enter__(self) -> _RecordingLock:
+        self.events.append("enter")
+        self.active = True
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.events.append("exit")
+        self.active = False
+
+
+class _LockedVectorStore:
+    def __init__(self, lock: _RecordingLock, events: list[Any]) -> None:
+        self.lock = lock
+        self.events = events
+
+    def invalidate_scan_cache(self) -> None:
+        self.events.append(("invalidate_scan_cache", self.lock.active))
+
+
+class _LockedFastCode:
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+        self.lock = _RecordingLock(self.events)
+        self.vector_store = _LockedVectorStore(self.lock, self.events)
+        self.repo_info = {"name": "repo"}
+
+    def _state_lock(self) -> _RecordingLock:
+        return self.lock
+
+    def _load_repository_unlocked(self, source: str, is_url: bool | None) -> None:
+        self.events.append(("load_unlocked", source, is_url, self.lock.active))
+
+    def _index_repository_unlocked(self, *, force: bool = False) -> None:
+        self.events.append(("index_unlocked", force, self.lock.active))
+
+    def get_repository_summary(self) -> str:
+        self.events.append(("summary", self.lock.active))
+        return "summary"
+
+
 async def _run_inline(func: Any, /, *args: Any, **kwargs: Any) -> Any:
     return func(*args, **kwargs)
 
@@ -145,12 +190,18 @@ def test_load_endpoint_offloads_blocking_call(
     assert fake.calls == [("load_repository", ("/tmp/repo", False), {})]
 
 
-def test_load_and_index_endpoint_offloads_both_calls(
+def test_load_and_index_endpoint_runs_load_and_index_atomically(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeFastCode()
+    offloaded: list[Any] = []
+
+    async def record_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        offloaded.append(func)
+        return func(*args, **kwargs)
+
     monkeypatch.setattr(web_app, "fastcode_instance", fake)
-    monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
+    monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
 
     client = TestClient(web_app.app)
     response = client.post(
@@ -165,6 +216,25 @@ def test_load_and_index_endpoint_offloads_both_calls(
     assert fake.calls == [
         ("load_repository", ("/tmp/repo", False), {}),
         ("index_repository", (), {"force": True}),
+    ]
+    assert offloaded == [web_app._load_and_index_sync]
+
+
+def test_load_and_index_sync_uses_one_service_lock() -> None:
+    fake = _LockedFastCode()
+
+    result = web_app._load_and_index_sync(
+        cast(Any, fake), "/tmp/repo", False, force=True
+    )
+
+    assert result["summary"] == "summary"
+    assert fake.events == [
+        "enter",
+        ("load_unlocked", "/tmp/repo", False, True),
+        ("index_unlocked", True, True),
+        ("invalidate_scan_cache", True),
+        ("summary", True),
+        "exit",
     ]
 
 
@@ -338,7 +408,7 @@ def test_upload_zip_endpoint_offloads_blocking_zip_work(
     assert offloaded == [fake_upload_sync]
 
 
-def test_upload_and_index_endpoint_offloads_upload_and_index(
+def test_upload_and_index_endpoint_offloads_atomic_upload_and_index(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeFastCode()
@@ -348,17 +418,18 @@ def test_upload_and_index_endpoint_offloads_upload_and_index(
         offloaded.append(func)
         return func(*args, **kwargs)
 
-    def fake_upload_sync(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    def fake_upload_and_index_sync(*args: Any, **kwargs: Any) -> dict[str, Any]:
         return {
             "status": "success",
-            "message": "uploaded",
-            "repo_info": {"name": "repo"},
-            "repo_path": "/tmp/repo",
+            "message": "uploaded and indexed",
+            "summary": "summary",
         }
 
     monkeypatch.setattr(web_app, "fastcode_instance", fake)
     monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
-    monkeypatch.setattr(web_app, "_upload_repository_zip_sync", fake_upload_sync)
+    monkeypatch.setattr(
+        web_app, "_upload_and_index_sync", fake_upload_and_index_sync
+    )
 
     client = TestClient(web_app.app)
     response = client.post(
@@ -368,7 +439,39 @@ def test_upload_and_index_endpoint_offloads_upload_and_index(
 
     assert response.status_code == 200
     assert response.json()["summary"] == "summary"
-    assert offloaded == [fake_upload_sync, fake.index_repository]
+    assert offloaded == [fake_upload_and_index_sync]
+
+
+def test_upload_and_index_sync_uses_one_service_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _LockedFastCode()
+
+    def fake_upload_unlocked(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        fake.events.append(("upload_unlocked", fake.lock.active))
+        return {
+            "status": "success",
+            "repo_info": {"name": "repo"},
+            "repo_path": "/tmp/repo",
+        }
+
+    monkeypatch.setattr(
+        web_app, "_upload_repository_zip_sync_unlocked", fake_upload_unlocked
+    )
+
+    result = web_app._upload_and_index_sync(
+        cast(Any, fake), cast(Any, object()), "repo.zip", force=True
+    )
+
+    assert result["summary"] == "summary"
+    assert fake.events == [
+        "enter",
+        ("upload_unlocked", True),
+        ("index_unlocked", True, True),
+        ("invalidate_scan_cache", True),
+        ("summary", True),
+        "exit",
+    ]
 
 
 def test_mutating_maintenance_endpoints_offload_blocking_work(
@@ -397,7 +500,6 @@ def test_mutating_maintenance_endpoints_offload_blocking_work(
     assert refresh_response.status_code == 200
     assert offloaded == [
         fake.remove_repository,
-        fake.cache_manager.clear,
-        fake.vector_store.invalidate_scan_cache,
-        fake.vector_store.scan_available_indexes,
+        web_app._call_with_service_lock,
+        web_app._refresh_index_cache_sync,
     ]

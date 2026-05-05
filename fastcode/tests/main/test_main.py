@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import pickle
 from dataclasses import is_dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
+from fastcode.ir.element import CodeElement
 from fastcode.main import FastCode
 from fastcode.schemas.config import config_from_mapping
 
@@ -281,3 +285,92 @@ def test_process_semantic_repair_frontier_widens_topology_dirty_scopes():
     assert result["projection_dirty"]["reason"] == "graph_topology"
     assert result["projection_dirty"]["widened"] is True
     assert all_dirty
+
+
+def test_load_multi_repo_cache_uses_explicit_code_element_deserializer(
+    tmp_path: Path,
+) -> None:
+    fc = FastCode.__new__(FastCode)
+    fc.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+    )
+    fc.embedder = SimpleNamespace(embedding_dim=3)
+    fc.loaded_repositories = {}
+    fc.vector_store = SimpleNamespace(
+        persist_dir=str(tmp_path),
+        initialize=lambda _dimension: None,
+        merge_from_index=lambda _repo_name: True,
+        get_count=lambda: 1,
+    )
+    fc.retriever = SimpleNamespace(
+        persist_dir=str(tmp_path),
+        full_bm25_elements=[],
+        full_bm25_corpus=[],
+        full_bm25=None,
+        index_for_bm25=lambda _elements: None,
+        build_repo_overview_bm25=lambda: None,
+    )
+    fc.graph_builder = SimpleNamespace(
+        load=lambda _repo_name: True,
+        merge_from_file=lambda _repo_name: True,
+    )
+    fc._reconstruct_elements_from_metadata = lambda: []
+
+    (tmp_path / "repo.faiss").touch()
+    with open(tmp_path / "repo_metadata.pkl", "wb") as handle:
+        pickle.dump({"metadata": []}, handle)
+
+    payload = {
+        "id": "file:service",
+        "type": "file",
+        "name": "service.py",
+        "file_path": "/repo/service.py",
+        "relative_path": "service.py",
+        "language": "python",
+        "start_line": 1,
+        "end_line": 2,
+        "code": "pass\n",
+        "signature": None,
+        "docstring": None,
+        "summary": None,
+        "metadata": {"stable_unit_id": "unit:file:service"},
+        "repo_name": "repo",
+        "repo_url": None,
+    }
+    with open(tmp_path / "repo_bm25.pkl", "wb") as handle:
+        pickle.dump({"bm25_corpus": [["service"]], "bm25_elements": [payload]}, handle)
+
+    calls: list[dict[str, Any]] = []
+
+    def _deserialize(element_payload: dict[str, Any]) -> CodeElement:
+        calls.append(element_payload)
+        return CodeElement(
+            id=element_payload["id"],
+            type=element_payload["type"],
+            name=element_payload["name"],
+            file_path=element_payload["file_path"],
+            relative_path=element_payload["relative_path"],
+            language=element_payload["language"],
+            start_line=element_payload["start_line"],
+            end_line=element_payload["end_line"],
+            code=element_payload["code"],
+            signature=element_payload["signature"],
+            docstring=element_payload["docstring"],
+            summary=element_payload["summary"],
+            metadata=element_payload["metadata"],
+            repo_name=element_payload["repo_name"],
+            repo_url=element_payload["repo_url"],
+        )
+
+    with patch(
+        "fastcode.main.fastcode.deserialize_code_element",
+        side_effect=_deserialize,
+    ) as mock_deserialize:
+        assert fc._load_multi_repo_cache(["repo"]) is True
+
+    assert mock_deserialize.call_count == 1
+    assert calls == [payload]
+    assert fc.retriever.full_bm25_elements[0].id == "file:service"
+    assert fc.retriever.full_bm25_corpus == [["service"]]

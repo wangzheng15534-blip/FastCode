@@ -22,9 +22,10 @@ import shutil
 import tempfile
 import uuid
 import zipfile
-from contextlib import asynccontextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager, asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -32,6 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from fastcode.api.cors import cors_middleware_options
 from fastcode.api.serialization import (
     serialize_dialogue_history,
     serialize_query_sources,
@@ -46,6 +48,11 @@ from fastcode.schemas.api import (
     QueryRequest,
     QueryResponse,
     StatusResponse,
+)
+from fastcode.utils.archive import (
+    UnsafeArchiveError,
+    safe_extract_zip,
+    safe_repo_name_from_archive,
 )
 
 # Global FastCode instance
@@ -76,6 +83,101 @@ def _upload_repository_zip_sync(
     file: UploadFile,
     filename: str,
 ) -> dict[str, Any]:
+    lock_fn = getattr(fastcode, "_state_lock", None)
+    if callable(lock_fn):
+        with cast(AbstractContextManager[Any], lock_fn()):
+            return _upload_repository_zip_sync_unlocked(fastcode, file, filename)
+    return _upload_repository_zip_sync_unlocked(fastcode, file, filename)
+
+
+def _call_with_service_lock(
+    fastcode: FastCode,
+    callback: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    lock_fn = getattr(fastcode, "_state_lock", None)
+    if callable(lock_fn):
+        with cast(AbstractContextManager[Any], lock_fn()):
+            return callback(*args, **kwargs)
+    return callback(*args, **kwargs)
+
+
+def _refresh_index_cache_sync(fastcode: FastCode) -> list[dict[str, Any]]:
+    def _refresh() -> list[dict[str, Any]]:
+        fastcode.vector_store.invalidate_scan_cache()
+        return fastcode.vector_store.scan_available_indexes(use_cache=False)
+
+    return _call_with_service_lock(fastcode, _refresh)
+
+
+def _load_repository_locked_path(
+    fastcode: FastCode,
+    source: str,
+    is_url: bool | None,
+) -> None:
+    load_unlocked = getattr(fastcode, "_load_repository_unlocked", None)
+    if callable(load_unlocked):
+        load_unlocked(source, is_url)
+        return
+    fastcode.load_repository(source, is_url)
+
+
+def _index_repository_locked_path(fastcode: FastCode, *, force: bool) -> None:
+    index_unlocked = getattr(fastcode, "_index_repository_unlocked", None)
+    if callable(index_unlocked):
+        index_unlocked(force=force)
+        return
+    fastcode.index_repository(force=force)
+
+
+def _load_and_index_sync(
+    fastcode: FastCode,
+    source: str,
+    is_url: bool | None,
+    *,
+    force: bool,
+) -> dict[str, Any]:
+    def _load_and_index() -> dict[str, Any]:
+        _load_repository_locked_path(fastcode, source, is_url)
+        _index_repository_locked_path(fastcode, force=force)
+        fastcode.vector_store.invalidate_scan_cache()
+        return {
+            "status": "success",
+            "message": "Repository loaded and indexed successfully",
+            "summary": fastcode.get_repository_summary(),
+        }
+
+    return _call_with_service_lock(fastcode, _load_and_index)
+
+
+def _upload_and_index_sync(
+    fastcode: FastCode,
+    file: UploadFile,
+    filename: str,
+    *,
+    force: bool,
+) -> dict[str, Any]:
+    def _upload_and_index() -> dict[str, Any]:
+        upload_result = _upload_repository_zip_sync_unlocked(fastcode, file, filename)
+        if upload_result.get("status") != "success":
+            return upload_result
+        _index_repository_locked_path(fastcode, force=force)
+        fastcode.vector_store.invalidate_scan_cache()
+        return {
+            "status": "success",
+            "message": "Repository uploaded and indexed successfully",
+            "summary": fastcode.get_repository_summary(),
+        }
+
+    return _call_with_service_lock(fastcode, _upload_and_index)
+
+
+def _upload_repository_zip_sync_unlocked(
+    fastcode: FastCode,
+    file: UploadFile,
+    filename: str,
+) -> dict[str, Any]:
     file.file.seek(0, 2)
     file_size = file.file.tell()
     file.file.seek(0)
@@ -87,11 +189,8 @@ def _upload_repository_zip_sync(
             detail=f"File too large. Maximum size is {max_size / (1024 * 1024)}MB",
         )
 
-    repo_name = filename.rsplit(".", 1)[0]
-    for suffix in ["-main", "-master", "_main", "_master"]:
-        if repo_name.endswith(suffix):
-            repo_name = repo_name[: -len(suffix)]
-            break
+    archive_filename = Path(filename).name
+    repo_name = safe_repo_name_from_archive(archive_filename)
 
     repo_workspace = getattr(fastcode.loader, "safe_repo_root", "./repos")
     repos_dir = Path(repo_workspace)
@@ -103,8 +202,8 @@ def _upload_repository_zip_sync(
 
     temp_dir = tempfile.mkdtemp(prefix="fastcode_upload_")
     try:
-        zip_path = Path(temp_dir) / filename
-        logger.info(f"Saving uploaded ZIP file: {filename} ({file_size} bytes)")
+        zip_path = Path(temp_dir) / archive_filename
+        logger.info(f"Saving uploaded ZIP file: {archive_filename} ({file_size} bytes)")
         with open(zip_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
@@ -113,7 +212,7 @@ def _upload_repository_zip_sync(
 
         logger.info(f"Extracting ZIP file to temporary directory: {extract_dir}")
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(extract_dir)
+            safe_extract_zip(zip_ref, extract_dir)
 
         extracted_items = list(extract_dir.iterdir())
         if len(extracted_items) == 1 and extracted_items[0].is_dir():
@@ -125,11 +224,11 @@ def _upload_repository_zip_sync(
         shutil.move(str(source_repo_path), str(repo_path))
 
         logger.info(f"Loading repository from: {repo_path}")
-        fastcode.load_repository(str(repo_path), is_url=False)
+        _load_repository_locked_path(fastcode, str(repo_path), False)
 
         return {
             "status": "success",
-            "message": f"ZIP file '{file.filename}' uploaded and extracted to repos/{repo_name}",
+            "message": f"ZIP file '{archive_filename}' uploaded and extracted to repos/{repo_name}",
             "repo_info": fastcode.repo_info,
             "repo_path": str(repo_path),
         }
@@ -171,10 +270,7 @@ if assets_path.exists():
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    **cors_middleware_options(),
 )
 
 
@@ -291,7 +387,9 @@ async def index_repository(force: bool = False):
         await asyncio.to_thread(fastcode.index_repository, force=force)
 
         # Invalidate scan cache since we just added/updated an index
-        fastcode.vector_store.invalidate_scan_cache()
+        await asyncio.to_thread(
+            _call_with_service_lock, fastcode, fastcode.vector_store.invalidate_scan_cache
+        )
 
         return {
             "status": "success",
@@ -326,7 +424,9 @@ async def index_multiple(request: IndexMultipleRequest):
         )
 
         # Invalidate scan cache since we just added/updated indexes
-        fastcode.vector_store.invalidate_scan_cache()
+        await asyncio.to_thread(
+            _call_with_service_lock, fastcode, fastcode.vector_store.invalidate_scan_cache
+        )
 
         return {
             "status": "success",
@@ -345,21 +445,14 @@ async def load_and_index(request: LoadRepositoryRequest, force: bool = False):
 
     try:
         logger.info(f"Loading repository: {request.source}")
-        await asyncio.to_thread(
-            fastcode.load_repository, request.source, request.is_url
-        )
-
         logger.info("Indexing repository")
-        await asyncio.to_thread(fastcode.index_repository, force=force)
-
-        # Invalidate scan cache since we just added/updated an index
-        fastcode.vector_store.invalidate_scan_cache()
-
-        return {
-            "status": "success",
-            "message": "Repository loaded and indexed successfully",
-            "summary": fastcode.get_repository_summary(),
-        }
+        return await asyncio.to_thread(
+            _load_and_index_sync,
+            fastcode,
+            request.source,
+            request.is_url,
+            force=force,
+        )
 
     except Exception as e:
         logger.error(f"Failed to load and index: {e}")
@@ -405,7 +498,7 @@ async def upload_repository_zip(file: UploadFile = File(...)):
 
     # Validate file type
     filename = file.filename
-    if not filename or not filename.endswith(".zip"):
+    if not filename or not filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only ZIP files are supported")
 
     try:
@@ -417,6 +510,9 @@ async def upload_repository_zip(file: UploadFile = File(...)):
     except zipfile.BadZipFile:
         logger.error("Invalid ZIP file")
         raise HTTPException(status_code=400, detail="Invalid ZIP file")
+    except UnsafeArchiveError as e:
+        logger.warning(f"Rejected unsafe ZIP file: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to upload and extract ZIP: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -428,26 +524,27 @@ async def upload_and_index(file: UploadFile = File(...), force: bool = False):
     if fastcode_instance is None:
         raise HTTPException(status_code=500, detail="FastCode not initialized")
 
-    # First upload and load
-    upload_result = await upload_repository_zip(file)
+    filename = file.filename
+    if not filename or not filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Only ZIP files are supported")
 
-    if upload_result["status"] != "success":
-        return upload_result
-
-    # Then index
     try:
         logger.info("Indexing uploaded repository")
-        await asyncio.to_thread(fastcode_instance.index_repository, force=force)
-
-        # Invalidate scan cache since we just added an index
-        fastcode_instance.vector_store.invalidate_scan_cache()
-
-        return {
-            "status": "success",
-            "message": "Repository uploaded and indexed successfully",
-            "summary": fastcode_instance.get_repository_summary(),
-        }
-
+        return await asyncio.to_thread(
+            _upload_and_index_sync,
+            fastcode_instance,
+            file,
+            filename,
+            force=force,
+        )
+    except HTTPException:
+        raise
+    except zipfile.BadZipFile:
+        logger.error("Invalid ZIP file")
+        raise HTTPException(status_code=400, detail="Invalid ZIP file")
+    except UnsafeArchiveError as e:
+        logger.warning(f"Rejected unsafe ZIP file: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to index uploaded repository: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -615,7 +712,11 @@ async def clear_cache():
     if fastcode_instance is None:
         raise HTTPException(status_code=500, detail="FastCode not initialized")
 
-    success = await asyncio.to_thread(fastcode_instance.cache_manager.clear)
+    success = await asyncio.to_thread(
+        _call_with_service_lock,
+        fastcode_instance,
+        fastcode_instance.cache_manager.clear,
+    )
 
     if success:
         return {"status": "success", "message": "Cache cleared"}
@@ -632,12 +733,8 @@ async def refresh_index_cache():
         raise HTTPException(status_code=500, detail="FastCode not initialized")
 
     try:
-        # Invalidate cache first
-        await asyncio.to_thread(fastcode_instance.vector_store.invalidate_scan_cache)
-
-        # Perform fresh scan
         available_repos = await asyncio.to_thread(
-            fastcode_instance.vector_store.scan_available_indexes, use_cache=False
+            _refresh_index_cache_sync, fastcode_instance
         )
 
         return {
@@ -701,8 +798,21 @@ async def get_session(session_id: str):
         history = fastcode_instance.get_session_history(session_id) or []
 
         # Determine if this session was multi-turn from session index
-        session_index = fastcode_instance.cache_manager._get_session_index(session_id)
-        multi_turn = session_index.get("multi_turn", False) if session_index else False
+        get_record = getattr(
+            fastcode_instance.cache_manager, "get_session_index_record", None
+        )
+        if callable(get_record):
+            session_record = cast(Any, get_record(session_id))
+            multi_turn = (
+                bool(session_record.multi_turn) if session_record is not None else False
+            )
+        else:
+            session_index = fastcode_instance.cache_manager._get_session_index(
+                session_id
+            )
+            multi_turn = (
+                bool(session_index.get("multi_turn", False)) if session_index else False
+            )
 
         return {
             "status": "success",

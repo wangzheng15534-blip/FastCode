@@ -498,9 +498,7 @@ class IndexPipeline:
                 "syntax_hash": getattr(element, "syntax_hash", None),
                 "signature_hash": getattr(element, "signature_hash", None),
                 "edge_surface_hash": getattr(element, "edge_surface_hash", None),
-                "embedding_text_hash": getattr(
-                    element, "embedding_text_hash", None
-                ),
+                "embedding_text_hash": getattr(element, "embedding_text_hash", None),
                 "api_surface_hash": getattr(element, "api_surface_hash", None),
                 "metadata": cls._unit_artifact_metadata_payload(
                     getattr(element, "metadata", None)
@@ -536,9 +534,10 @@ class IndexPipeline:
                     "embedding_text_hash",
                     "api_surface_hash",
                 ):
-                    if payload.get(field_name) is None and legacy_payload.get(
-                        field_name
-                    ) is not None:
+                    if (
+                        payload.get(field_name) is None
+                        and legacy_payload.get(field_name) is not None
+                    ):
                         payload[field_name] = legacy_payload.get(field_name)
                 if not payload["metadata"]:
                     payload["metadata"] = cls._unit_artifact_metadata_payload(
@@ -579,7 +578,9 @@ class IndexPipeline:
                     else str(mapping.get("docstring"))
                 ),
                 "summary": (
-                    None if mapping.get("summary") is None else str(mapping.get("summary"))
+                    None
+                    if mapping.get("summary") is None
+                    else str(mapping.get("summary"))
                 ),
                 "metadata": metadata,
                 "repo_name": (
@@ -593,7 +594,9 @@ class IndexPipeline:
                     else str(mapping.get("repo_url"))
                 ),
             }
-        metadata = cls._unit_artifact_metadata_payload(getattr(element, "metadata", None))
+        metadata = cls._unit_artifact_metadata_payload(
+            getattr(element, "metadata", None)
+        )
         signature = getattr(element, "signature", None)
         docstring = getattr(element, "docstring", None)
         summary = getattr(element, "summary", None)
@@ -644,7 +647,10 @@ class IndexPipeline:
             "repo_name",
             "repo_url",
         ):
-            if payload[field_name] is None and legacy_payload.get(field_name) is not None:
+            if (
+                payload[field_name] is None
+                and legacy_payload.get(field_name) is not None
+            ):
                 payload[field_name] = str(legacy_payload.get(field_name))
         return payload
 

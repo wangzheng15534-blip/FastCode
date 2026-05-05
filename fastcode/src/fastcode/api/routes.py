@@ -400,7 +400,9 @@ async def index_repository(force: bool = False):
         await asyncio.to_thread(fastcode.index_repository, force=force)
 
         await asyncio.to_thread(
-            _call_with_service_lock, fastcode, fastcode.vector_store.invalidate_scan_cache
+            _call_with_service_lock,
+            fastcode,
+            fastcode.vector_store.invalidate_scan_cache,
         )
 
         return {
@@ -433,7 +435,9 @@ async def run_index_pipeline(request: IndexRunRequest):
             enable_scip=request.enable_scip,
         )
         await asyncio.to_thread(
-            _call_with_service_lock, fastcode, fastcode.vector_store.invalidate_scan_cache
+            _call_with_service_lock,
+            fastcode,
+            fastcode.vector_store.invalidate_scan_cache,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -561,7 +565,9 @@ async def index_multiple(request: IndexMultipleRequest):
         )
 
         await asyncio.to_thread(
-            _call_with_service_lock, fastcode, fastcode.vector_store.invalidate_scan_cache
+            _call_with_service_lock,
+            fastcode,
+            fastcode.vector_store.invalidate_scan_cache,
         )
 
         return {

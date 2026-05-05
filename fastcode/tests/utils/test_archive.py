@@ -25,8 +25,9 @@ def _zip_with(entries: dict[str, bytes]) -> zipfile.ZipFile:
 
 
 def test_safe_extract_zip_rejects_path_traversal(tmp_path: Path) -> None:
-    with _zip_with({"../escape.py": b"bad"}) as zip_ref, pytest.raises(
-        UnsafeArchiveError
+    with (
+        _zip_with({"../escape.py": b"bad"}) as zip_ref,
+        pytest.raises(UnsafeArchiveError),
     ):
         safe_extract_zip(zip_ref, tmp_path)
 
@@ -34,8 +35,9 @@ def test_safe_extract_zip_rejects_path_traversal(tmp_path: Path) -> None:
 
 
 def test_safe_extract_zip_rejects_absolute_paths(tmp_path: Path) -> None:
-    with _zip_with({"/tmp/escape.py": b"bad"}) as zip_ref, pytest.raises(
-        UnsafeArchiveError
+    with (
+        _zip_with({"/tmp/escape.py": b"bad"}) as zip_ref,
+        pytest.raises(UnsafeArchiveError),
     ):
         safe_extract_zip(zip_ref, tmp_path)
 
@@ -53,8 +55,9 @@ def test_safe_extract_zip_rejects_symlinks(tmp_path: Path) -> None:
 
 
 def test_safe_extract_zip_enforces_expanded_size_limit(tmp_path: Path) -> None:
-    with _zip_with({"large.txt": b"x" * 20}) as zip_ref, pytest.raises(
-        UnsafeArchiveError
+    with (
+        _zip_with({"large.txt": b"x" * 20}) as zip_ref,
+        pytest.raises(UnsafeArchiveError),
     ):
         safe_extract_zip(
             zip_ref,
@@ -67,7 +70,9 @@ def test_safe_extract_zip_extracts_valid_archive(tmp_path: Path) -> None:
     with _zip_with({"repo/main.py": b"print('ok')\n"}) as zip_ref:
         safe_extract_zip(zip_ref, tmp_path)
 
-    assert (tmp_path / "repo" / "main.py").read_text(encoding="utf-8") == "print('ok')\n"
+    assert (tmp_path / "repo" / "main.py").read_text(
+        encoding="utf-8"
+    ) == "print('ok')\n"
 
 
 def test_safe_repo_name_from_archive_sanitizes_upload_name() -> None:

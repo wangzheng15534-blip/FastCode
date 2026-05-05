@@ -427,9 +427,7 @@ def test_upload_and_index_endpoint_offloads_atomic_upload_and_index(
 
     monkeypatch.setattr(web_app, "fastcode_instance", fake)
     monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
-    monkeypatch.setattr(
-        web_app, "_upload_and_index_sync", fake_upload_and_index_sync
-    )
+    monkeypatch.setattr(web_app, "_upload_and_index_sync", fake_upload_and_index_sync)
 
     client = TestClient(web_app.app)
     response = client.post(

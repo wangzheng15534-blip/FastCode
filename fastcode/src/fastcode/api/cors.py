@@ -12,6 +12,7 @@ class CorsMiddlewareOptions(TypedDict):
     allow_methods: list[str]
     allow_headers: list[str]
 
+
 _DEFAULT_CORS_ORIGINS = (
     "http://127.0.0.1",
     "http://127.0.0.1:8000",

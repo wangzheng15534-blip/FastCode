@@ -388,7 +388,9 @@ async def index_repository(force: bool = False):
 
         # Invalidate scan cache since we just added/updated an index
         await asyncio.to_thread(
-            _call_with_service_lock, fastcode, fastcode.vector_store.invalidate_scan_cache
+            _call_with_service_lock,
+            fastcode,
+            fastcode.vector_store.invalidate_scan_cache,
         )
 
         return {
@@ -425,7 +427,9 @@ async def index_multiple(request: IndexMultipleRequest):
 
         # Invalidate scan cache since we just added/updated indexes
         await asyncio.to_thread(
-            _call_with_service_lock, fastcode, fastcode.vector_store.invalidate_scan_cache
+            _call_with_service_lock,
+            fastcode,
+            fastcode.vector_store.invalidate_scan_cache,
         )
 
         return {

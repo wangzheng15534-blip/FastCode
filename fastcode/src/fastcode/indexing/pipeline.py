@@ -15,7 +15,9 @@ import re
 import shutil
 import tempfile
 import threading
+from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from dataclasses import replace as dc_replace
 from datetime import datetime
 from time import perf_counter
@@ -60,6 +62,15 @@ from .incremental import FileChangeSet, apply_incremental_update, diff_changed_f
 from .indexer import CodeIndexer
 from .loader import RepositoryLoader
 from .terminus import TerminusPublisher
+
+
+@dataclass(frozen=True)
+class LoadedSnapshotArtifacts:
+    artifact_key: str
+    snapshot_id: str | None
+    vector_store: VectorStore
+    retriever: HybridRetriever
+    graph_builder: CodeGraphBuilder
 
 
 class IndexPipeline:
@@ -128,6 +139,9 @@ class IndexPipeline:
         self._set_repo_loaded = set_repo_loaded
         self._set_repo_info = set_repo_info
         self._artifact_lock = threading.RLock()
+        self._artifact_handle_cache: OrderedDict[str, LoadedSnapshotArtifacts] = (
+            OrderedDict()
+        )
 
     # ------------------------------------------------------------------
     # URL inference (pure static utility)
@@ -283,6 +297,90 @@ class IndexPipeline:
         with self._artifact_lock:
             return self._load_artifacts_by_key_locked(artifact_key)
 
+    def _artifact_handle_cache_limit(self) -> int:
+        configured = self.config.get("query", {}).get("snapshot_handle_cache_size", 4)
+        try:
+            return max(1, int(configured))
+        except (TypeError, ValueError):
+            return 4
+
+    def _invalidate_loaded_artifact_handle(self, artifact_key: str) -> None:
+        self._artifact_handle_cache.pop(artifact_key, None)
+
+    def load_snapshot_artifacts_handle(
+        self,
+        artifact_key: str,
+        *,
+        snapshot_id: str | None = None,
+    ) -> LoadedSnapshotArtifacts | None:
+        with self._artifact_lock:
+            return self._load_snapshot_artifacts_handle_locked(
+                artifact_key,
+                snapshot_id=snapshot_id,
+            )
+
+    def _load_snapshot_artifacts_handle_locked(
+        self,
+        artifact_key: str,
+        *,
+        snapshot_id: str | None = None,
+    ) -> LoadedSnapshotArtifacts | None:
+        cached = self._artifact_handle_cache.get(artifact_key)
+        if cached is not None:
+            self._artifact_handle_cache.move_to_end(artifact_key)
+            return cached
+
+        resolved_snapshot_id = snapshot_id
+        if resolved_snapshot_id is None and artifact_key.startswith("snap_"):
+            record = self.snapshot_store.find_by_artifact_key(artifact_key)
+            if isinstance(record, Mapping):
+                candidate = record.get("snapshot_id")
+                if isinstance(candidate, str) and candidate:
+                    resolved_snapshot_id = candidate
+
+        vector_store = VectorStore(self.config)
+        if not vector_store.load(artifact_key):
+            return None
+
+        graph_builder = CodeGraphBuilder(self.config)
+        graph_loaded = graph_builder.load(artifact_key)
+        retriever = HybridRetriever(
+            self.config,
+            vector_store,
+            self.embedder,
+            graph_builder,
+            repo_root=self.loader.repo_path,
+        )
+        retriever.set_pg_retrieval_store(self.pg_retrieval_store)
+        bm25_loaded = retriever.load_bm25(artifact_key)
+        ir_graphs = None
+        if resolved_snapshot_id:
+            ir_graphs = self.snapshot_store.load_ir_graphs(resolved_snapshot_id)
+        retriever.set_ir_graphs(ir_graphs, snapshot_id=resolved_snapshot_id)
+        retriever.build_repo_overview_bm25()
+
+        if not bm25_loaded or not graph_loaded:
+            elements = self._reconstruct_elements_from_metadata_view(
+                vector_store.metadata
+            )
+            if elements:
+                if not bm25_loaded:
+                    retriever.index_for_bm25(elements)
+                if not graph_loaded:
+                    graph_builder.build_graphs(elements)
+
+        handle = LoadedSnapshotArtifacts(
+            artifact_key=artifact_key,
+            snapshot_id=resolved_snapshot_id,
+            vector_store=vector_store,
+            retriever=retriever,
+            graph_builder=graph_builder,
+        )
+        self._artifact_handle_cache[artifact_key] = handle
+        while len(self._artifact_handle_cache) > self._artifact_handle_cache_limit():
+            self._artifact_handle_cache.popitem(last=False)
+        return handle
+
     def _load_artifacts_by_key_locked(self, artifact_key: str) -> bool:
         if not self.vector_store.load(artifact_key):
             return False
@@ -312,13 +410,16 @@ class IndexPipeline:
         self._set_repo_loaded(True)
         return True
 
-    def _reconstruct_elements_from_metadata(self) -> list[CodeElement]:
+    @staticmethod
+    def _reconstruct_elements_from_metadata_view(
+        metadata_rows: Sequence[Mapping[str, Any]],
+    ) -> list[CodeElement]:
         """
         Reconstruct CodeElement objects from vector store metadata.
         Excludes repository_overview elements.
         """
         elements: list[CodeElement] = []
-        for meta in self.vector_store.metadata:
+        for meta in metadata_rows:
             try:
                 if meta.get("type") == "repository_overview":
                     continue
@@ -341,10 +442,14 @@ class IndexPipeline:
                     repo_url=meta.get("repo_url"),
                 )
                 elements.append(element)
-            except Exception as e:
-                self.logger.warning(f"Failed to reconstruct element: {e}")
+            except (TypeError, ValueError):
                 continue
+        return elements
 
+    def _reconstruct_elements_from_metadata(self) -> list[CodeElement]:
+        elements = self._reconstruct_elements_from_metadata_view(
+            self.vector_store.metadata
+        )
         self.logger.info(
             f"Reconstructed {len(elements)} elements from metadata"
             " (excluding repository_overview)"
@@ -2050,6 +2155,7 @@ class IndexPipeline:
         metadata = (
             json.loads(record.metadata_json) if record.metadata_json is not None else {}
         )
+        self._invalidate_loaded_artifact_handle(record.artifact_key)
         self.snapshot_store.save_snapshot(repaired_snapshot, metadata=metadata)
         if affected_stable_unit_ids:
             self.unit_artifact_store.refresh_units(
@@ -2821,6 +2927,7 @@ class IndexPipeline:
                 raise RuntimeError(f"stale_lock_detected_for_snapshot:{snapshot_id}")
 
             # Artifact persistence — only after fencing confirmed valid.
+            self._invalidate_loaded_artifact_handle(artifact_key)
             temp_store.save(artifact_key)
             temp_retriever.save_bm25(artifact_key)
             temp_graph.save(artifact_key)

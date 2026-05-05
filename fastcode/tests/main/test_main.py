@@ -465,8 +465,109 @@ def test_service_state_lock_serializes_query_with_mutations(
     assert not query_thread.is_alive()
     assert not mutation_thread.is_alive()
     assert not errors, f"Threads raised: {errors}"
-    assert max_concurrent <= 1, (
-        f"query overlapped with {mutation_name}; calls={calls}"
-    )
+    assert max_concurrent <= 1, f"query overlapped with {mutation_name}; calls={calls}"
     assert "query" in calls
     assert mutation_name in calls
+
+
+def test_snapshot_artifact_handle_loader_caches_by_artifact_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+    from collections import OrderedDict
+
+    import fastcode.indexing.pipeline as pipeline_module
+
+    vector_loads: list[str] = []
+    bm25_loads: list[str] = []
+
+    class FakeVectorStore:
+        def __init__(self, config: dict[str, Any]) -> None:
+            self.config = config
+            self.metadata = [
+                {
+                    "id": "file:auth",
+                    "type": "file",
+                    "name": "auth.py",
+                    "file_path": "auth.py",
+                    "relative_path": "auth.py",
+                    "language": "python",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "code": "pass",
+                    "signature": None,
+                    "docstring": None,
+                    "summary": None,
+                    "metadata": {},
+                    "repo_name": "repo",
+                    "repo_url": None,
+                }
+            ]
+
+        def load(self, artifact_key: str) -> bool:
+            vector_loads.append(artifact_key)
+            return True
+
+    class FakeGraphBuilder:
+        def __init__(self, config: dict[str, Any]) -> None:
+            self.config = config
+
+        def load(self, artifact_key: str) -> bool:
+            return True
+
+    class FakeRetriever:
+        def __init__(
+            self,
+            config: dict[str, Any],
+            vector_store: Any,
+            embedder: Any,
+            graph_builder: Any,
+            repo_root: str | None = None,
+        ) -> None:
+            self.config = config
+            self.vector_store = vector_store
+            self.graph_builder = graph_builder
+            self.repo_root = repo_root
+
+        def set_pg_retrieval_store(self, store: Any) -> None:
+            self.store = store
+
+        def load_bm25(self, artifact_key: str) -> bool:
+            bm25_loads.append(artifact_key)
+            return True
+
+        def set_ir_graphs(self, ir_graphs: Any, snapshot_id: str | None = None) -> None:
+            self.ir_graphs = ir_graphs
+            self.snapshot_id = snapshot_id
+
+        def build_repo_overview_bm25(self) -> None:
+            return None
+
+    monkeypatch.setattr(pipeline_module, "VectorStore", FakeVectorStore)
+    monkeypatch.setattr(pipeline_module, "CodeGraphBuilder", FakeGraphBuilder)
+    monkeypatch.setattr(pipeline_module, "HybridRetriever", FakeRetriever)
+
+    pipeline = pipeline_module.IndexPipeline.__new__(pipeline_module.IndexPipeline)
+    pipeline.config = {"query": {"snapshot_handle_cache_size": 2}}
+    pipeline.embedder = object()
+    pipeline.loader = SimpleNamespace(repo_path="/tmp/repo")
+    pipeline.snapshot_store = SimpleNamespace(
+        load_ir_graphs=lambda snapshot_id: "ir-graphs",
+        find_by_artifact_key=lambda artifact_key: {"snapshot_id": "snap:1"},
+    )
+    pipeline.pg_retrieval_store = None
+    pipeline._artifact_lock = threading.RLock()
+    pipeline._artifact_handle_cache = OrderedDict()
+
+    first = pipeline.load_snapshot_artifacts_handle(
+        "snap_cache",
+        snapshot_id="snap:1",
+    )
+    second = pipeline.load_snapshot_artifacts_handle(
+        "snap_cache",
+        snapshot_id="snap:1",
+    )
+
+    assert first is second
+    assert vector_loads == ["snap_cache"]
+    assert bm25_loads == ["snap_cache"]

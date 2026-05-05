@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -46,6 +47,7 @@ def _build_shared_pipeline(
     p.snapshot_symbol_index.has_snapshot.return_value = True
     p.is_repo_indexed = lambda: True
     p.load_artifacts_by_key = fake_load
+    p.load_snapshot_artifacts = None
     p.query = fake_query
     p.semantic_escalation_cb = None
     p._snapshot_query_lock = threading.Lock()
@@ -182,3 +184,60 @@ def test_forced_interleaving_without_lock_causes_cross_contamination() -> None:
     # A sees B's artifact — proving the race the lock prevents.
     assert results["snap_A"]["_loaded_key"] == "art_snap_B"
     assert results["snap_B"]["_loaded_key"] == "art_snap_B"
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("n_threads", [2, 3])
+def test_concurrent_snapshot_queries_isolate_handle_artifacts_without_query_lock(
+    n_threads: int,
+) -> None:
+    """Handle-based snapshot queries should isolate retriever state without
+    serializing the whole load+query flow behind QueryPipeline._snapshot_query_lock.
+    """
+    results: dict[str, dict[str, Any]] = {}
+    errors: list[Exception] = []
+    barrier = threading.Barrier(n_threads, timeout=5)
+
+    p = _build_shared_pipeline(
+        fake_load=lambda _artifact_key: (_ for _ in ()).throw(
+            AssertionError("legacy artifact loader should not run")
+        ),
+        fake_query=lambda **kwargs: {
+            "answer": "ok",
+            "query": kwargs.get("question", ""),
+            "context_elements": 1,
+            "sources": [],
+            "_loaded_key": kwargs["retriever"].loaded_key,
+        },
+    )
+    p.snapshot_store.get_snapshot_record.side_effect = _snapshot_record_for
+    p.load_snapshot_artifacts = lambda artifact_key, snapshot_id=None: SimpleNamespace(
+        artifact_key=artifact_key,
+        retriever=SimpleNamespace(
+            enable_agency_mode=False,
+            iterative_agent=None,
+            loaded_key=artifact_key,
+        ),
+        graph_builder=SimpleNamespace(),
+    )
+    p._snapshot_query_lock = _NoOpContext()
+
+    def run_query(sid: str) -> None:
+        try:
+            barrier.wait(timeout=5)
+            results[sid] = p.query_snapshot(question="test", snapshot_id=sid)
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=run_query, args=(f"snap_{i}",))
+        for i in range(n_threads)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not errors, f"threads raised: {errors}"
+    for i in range(n_threads):
+        assert results[f"snap_{i}"]["_loaded_key"] == f"art_snap_{i}"

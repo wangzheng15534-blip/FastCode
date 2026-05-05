@@ -262,6 +262,7 @@ class FastCode:
             snapshot_symbol_index=self.snapshot_symbol_index,
             is_repo_indexed=lambda: self.repo_indexed,
             load_artifacts_by_key=self.pipeline._load_artifacts_by_key,
+            load_snapshot_artifacts=self.pipeline.load_snapshot_artifacts_handle,
             semantic_escalation_cb=self._escalate_query_semantics,
         )
 
@@ -992,6 +993,8 @@ class FastCode:
         retrieved: list[dict[str, Any]],
         processed_query: Any,
         budget: str,
+        retriever: HybridRetriever | None = None,
+        graph_builder: CodeGraphBuilder | None = None,
     ) -> dict[str, Any]:
         snapshot = self.snapshot_store.load_snapshot(snapshot_id)
         if snapshot is None:
@@ -1022,19 +1025,21 @@ class FastCode:
                 "rerun_retrieval": False,
             }
 
-        elements = list(self.graph_builder.element_by_id.values())
+        active_retriever = retriever or self.retriever
+        active_graph_builder = graph_builder or self.graph_builder
+        elements = list(active_graph_builder.element_by_id.values())
         warnings: list[str] = []
         upgraded_snapshot = self._apply_semantic_resolvers(
             snapshot=snapshot,
             elements=elements,
-            legacy_graph_builder=self.graph_builder,
+            legacy_graph_builder=active_graph_builder,
             target_paths=target_paths,
             warnings=warnings,
             budget=budget,
         )
         self.snapshot_symbol_index.register_snapshot(upgraded_snapshot)
         upgraded_ir_graphs = self.ir_graph_builder.build_graphs(upgraded_snapshot)
-        self.retriever.set_ir_graphs(upgraded_ir_graphs, snapshot_id=snapshot_id)
+        active_retriever.set_ir_graphs(upgraded_ir_graphs, snapshot_id=snapshot_id)
 
         semantic_runs = list(
             (upgraded_snapshot.metadata or {}).get("semantic_resolver_runs", [])

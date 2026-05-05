@@ -43,6 +43,7 @@ class QueryPipeline:
         snapshot_symbol_index: SnapshotSymbolIndex,
         is_repo_indexed: Callable[[], bool],
         load_artifacts_by_key: Callable[[str], bool],
+        load_snapshot_artifacts: Callable[..., Any | None] | None = None,
         semantic_escalation_cb: SemanticEscalationCallback | None = None,
     ) -> None:
         self.config = config
@@ -56,6 +57,7 @@ class QueryPipeline:
         self.snapshot_symbol_index = snapshot_symbol_index
         self.is_repo_indexed = is_repo_indexed
         self.load_artifacts_by_key = load_artifacts_by_key
+        self.load_snapshot_artifacts = load_snapshot_artifacts
         self.semantic_escalation_cb = semantic_escalation_cb
         self._snapshot_query_lock = threading.Lock()
 
@@ -105,6 +107,8 @@ class QueryPipeline:
         processed_query: ProcessedQuery,
         filters: dict[str, Any] | None,
         retrieved: list[dict[str, Any]],
+        retriever: HybridRetriever | None = None,
+        graph_builder: Any | None = None,
     ) -> dict[str, Any] | None:
         budget = self._semantic_escalation_budget(
             question=question,
@@ -121,6 +125,8 @@ class QueryPipeline:
             retrieved=retrieved,
             processed_query=processed_query,
             budget=budget,
+            retriever=retriever,
+            graph_builder=graph_builder,
         )
 
     def query_snapshot(
@@ -150,6 +156,40 @@ class QueryPipeline:
             raise RuntimeError(f"snapshot not found: {snapshot_id}")
 
         artifact_key = snapshot_record.artifact_key
+        if self.load_snapshot_artifacts is not None:
+            loaded_artifacts = self.load_snapshot_artifacts(
+                artifact_key,
+                snapshot_id=snapshot_id,
+            )
+            if loaded_artifacts is None:
+                raise RuntimeError(
+                    f"failed to load artifacts for snapshot: {snapshot_id}"
+                )
+            if not self.snapshot_symbol_index.has_snapshot(snapshot_id):
+                loaded_snapshot = self.snapshot_store.load_snapshot(snapshot_id)
+                if loaded_snapshot:
+                    self.snapshot_symbol_index.register_snapshot(loaded_snapshot)
+
+            merged_filters = dict(filters or {})
+            merged_filters["snapshot_id"] = snapshot_id
+
+            result = self.query(
+                question=question,
+                filters=merged_filters,
+                repo_filter=None,
+                session_id=session_id,
+                enable_multi_turn=enable_multi_turn,
+                retriever=loaded_artifacts.retriever,
+                graph_builder=loaded_artifacts.graph_builder,
+            )
+            result["snapshot_id"] = snapshot_id
+            result["artifact_key"] = getattr(
+                loaded_artifacts,
+                "artifact_key",
+                artifact_key,
+            )
+            return result
+
         with self._snapshot_query_lock:
             if not self.load_artifacts_by_key(artifact_key):
                 raise RuntimeError(
@@ -186,6 +226,8 @@ class QueryPipeline:
             [str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str
         ]
         | None = None,
+        retriever: HybridRetriever | None = None,
+        graph_builder: Any | None = None,
     ) -> dict[str, Any]:
         """
         Query the repository (or multiple repositories)
@@ -202,6 +244,8 @@ class QueryPipeline:
         Returns:
             Dictionary with answer and metadata (including summary if multi-turn)
         """
+        active_retriever = retriever or self.retriever
+
         if not self.is_repo_indexed():
             raise RuntimeError("Repository not indexed. Call index_repository() first.")
 
@@ -256,8 +300,8 @@ class QueryPipeline:
             if result is None:
                 # Determine if iterative enhancement should be used
                 use_iterative_enhancement = (
-                    self.retriever.enable_agency_mode
-                    and self.retriever.iterative_agent is not None
+                    active_retriever.enable_agency_mode
+                    and active_retriever.iterative_agent is not None
                 )
 
                 # Process query: skip query_processor entirely in iterative mode
@@ -297,7 +341,7 @@ class QueryPipeline:
                 # Retrieve relevant code (with repository filter and agency mode)
                 # Pass ProcessedQuery object for enhanced retrieval
                 # Pass dialogue_history for multi-turn context in iterative mode
-                retrieved = self.retriever.retrieve(
+                retrieved = active_retriever.retrieve(
                     processed_query,  # Pass full ProcessedQuery object for multi-repo support
                     filters=filters,
                     repo_filter=repo_filter,
@@ -309,9 +353,11 @@ class QueryPipeline:
                     processed_query=processed_query,
                     filters=filters,
                     retrieved=retrieved,
+                    retriever=active_retriever,
+                    graph_builder=graph_builder,
                 )
                 if semantic_escalation and semantic_escalation.get("rerun_retrieval"):
-                    retrieved = self.retriever.retrieve(
+                    retrieved = active_retriever.retrieve(
                         processed_query,
                         filters=filters,
                         repo_filter=repo_filter,

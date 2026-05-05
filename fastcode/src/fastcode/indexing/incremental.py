@@ -10,7 +10,8 @@ and embeddings while replacing changed-file content with fresh extraction.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field, replace as dc_replace
+from dataclasses import dataclass, field
+from dataclasses import replace as dc_replace
 
 from ..ir.types import (
     IRCodeUnit,

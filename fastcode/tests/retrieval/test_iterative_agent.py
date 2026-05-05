@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
+from fastcode.ir.element import CodeElement
 from fastcode.query.processor import ProcessedQuery
 from fastcode.retrieval.iterative import IterativeAgent
 
@@ -68,6 +70,34 @@ def _make_iterative_agent(
     return agent
 
 
+def _element(
+    relative_path: str,
+    *,
+    element_id: str,
+    element_type: str = "file",
+    name: str | None = None,
+    repo_name: str = "repo",
+    metadata: dict[str, Any] | None = None,
+) -> CodeElement:
+    return CodeElement(
+        id=element_id,
+        type=element_type,
+        name=name or relative_path,
+        file_path=f"/repo/{relative_path}",
+        relative_path=relative_path,
+        language="python",
+        start_line=1,
+        end_line=10,
+        code="pass\n",
+        signature=None,
+        docstring=None,
+        summary=None,
+        metadata=metadata or {},
+        repo_name=repo_name,
+        repo_url=None,
+    )
+
+
 def test_standard_retrieval_applies_filters_in_iterative_mode() -> None:
     agent = _make_iterative_agent()
     processed_query = ProcessedQuery(
@@ -112,3 +142,82 @@ def test_standard_retrieval_returns_empty_when_no_results() -> None:
     )
 
     assert results == []
+
+
+def test_retrieve_indexed_elements_for_file_avoids_code_element_to_dict() -> None:
+    agent = IterativeAgent.__new__(IterativeAgent)
+    agent.logger = SimpleNamespace(
+        debug=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+    )
+    agent.bm25_elements = [
+        _element(
+            "src/config.py",
+            element_id="file:config",
+            metadata={"stable_unit_id": "unit:file:config"},
+        )
+    ]
+
+    with patch.object(
+        CodeElement,
+        "to_dict",
+        autospec=True,
+        side_effect=AssertionError(
+            "iterative file retrieval must not call CodeElement.to_dict()"
+        ),
+    ):
+        results = agent._retrieve_indexed_elements_for_file("repo", "src/config.py")
+
+    assert len(results) == 1
+    assert results[0]["element"]["id"] == "file:config"
+    assert results[0]["element"]["metadata"] == {"stable_unit_id": "unit:file:config"}
+    assert results[0]["agent_found"] is True
+
+
+def test_convert_selections_to_elements_avoids_code_element_to_dict() -> None:
+    agent = IterativeAgent.__new__(IterativeAgent)
+    agent.logger = SimpleNamespace(
+        debug=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+    )
+    agent.path_utils = SimpleNamespace(
+        detect_repo_name_from_path=lambda path, known_repos: "repo",
+        normalize_path_with_repo=lambda candidate_path, repo_name: candidate_path,
+    )
+    agent.bm25_elements = [
+        _element(
+            "src/service.py",
+            element_id="func:load_config",
+            element_type="function",
+            name="load_config",
+            metadata={"class_name": None, "is_method": False},
+        )
+    ]
+
+    with patch.object(
+        CodeElement,
+        "to_dict",
+        autospec=True,
+        side_effect=AssertionError(
+            "iterative selection conversion must not call CodeElement.to_dict()"
+        ),
+    ):
+        results = agent._convert_selections_to_elements(
+            [
+                {
+                    "file_path": "src/service.py",
+                    "type": "function",
+                    "name": "load_config",
+                    "repo_name": "repo",
+                }
+            ],
+            [{"file_path": "src/service.py", "repo_name": "repo"}],
+        )
+
+    assert len(results) == 1
+    assert results[0]["element"]["id"] == "func:load_config"
+    assert results[0]["element"]["metadata"] == {
+        "class_name": None,
+        "is_method": False,
+    }
+    assert results[0]["selection_granularity"] == "function"

@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from typing import Any, cast
 
+from fastcode.ir.element import CodeElement, CodeElementMeta, serialize_code_element
 from fastcode.schemas.core_types import FusionConfig
 
 from .scoring import (
@@ -64,11 +65,11 @@ def _find_code_element_for_ir_unit(
     unit_id: str,
     bm25_elements: list[Any],
     repo_filter: list[str] | None = None,
-) -> dict[str, Any] | None:
+) -> CodeElementMeta | None:
     """Find a code element dict matching *unit_id* in *bm25_elements*.
 
     *bm25_elements* is a list of ``CodeElement`` objects (or anything with
-    ``type``, ``repo_name``, ``metadata``, and ``to_dict()`` attributes).
+    ``type``, ``repo_name``, and ``metadata`` attributes).
     """
     for elem in bm25_elements:
         if elem.type == "design_document":
@@ -77,7 +78,7 @@ def _find_code_element_for_ir_unit(
             continue
         meta = cast(dict[str, Any], elem.metadata or {})
         if meta.get("ir_symbol_id") == unit_id or meta.get("ir_node_id") == unit_id:
-            return elem.to_dict()
+            return serialize_code_element(cast(CodeElement, elem))
     return None
 
 

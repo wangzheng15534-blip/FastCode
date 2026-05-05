@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..ir.element import CodeElement
 from openai import OpenAI
 
+from ..ir.element import serialize_code_element
 from ..llm_utils import openai_chat_completion
 from ..path_utils import PathUtils
 from ..schemas.core_types import IterationConfig
@@ -93,9 +94,7 @@ class IterativeAgent:
         # LLM settings
         self.provider: str = self.gen_config.get("provider", "openai")
         self.api_key: str | None = self.gen_config.get("openai_api_key")
-        self.anthropic_api_key: str | None = self.gen_config.get(
-            "anthropic_api_key"
-        )
+        self.anthropic_api_key: str | None = self.gen_config.get("anthropic_api_key")
         self.base_url: str | None = self.gen_config.get("base_url")
         self.model: str | None = self.gen_config.get("model")
 
@@ -1415,16 +1414,11 @@ If confidence < 95:
                                 f"[SELECTION DEBUG]   ✓ Found exact match: {elem_type} '{elem_name}' in {elem_path}"
                             )
                             results.append(
-                                {
-                                    "element": bm25_elem.to_dict(),
-                                    "semantic_score": 0.0,
-                                    "keyword_score": 0.0,
-                                    "pseudocode_score": 0.0,
-                                    "graph_score": 0.0,
-                                    "total_score": 0.75,
-                                    "agent_found": True,
-                                    "selection_granularity": elem_type,
-                                }
+                                self._agent_found_result_row(
+                                    bm25_elem,
+                                    total_score=0.75,
+                                    selection_granularity=elem_type,
+                                )
                             )
                             found = True
                             break
@@ -3337,17 +3331,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
                 )
                 matches_found += 1
 
-                results.append(
-                    {
-                        "element": elem.to_dict(),
-                        "semantic_score": 0.0,
-                        "keyword_score": 0.0,
-                        "pseudocode_score": 0.0,
-                        "graph_score": 0.0,
-                        "total_score": 0.8,  # Agent-found score
-                        "agent_found": True,
-                    }
-                )
+                results.append(self._agent_found_result_row(elem, total_score=0.8))
 
         if matches_found == 0:
             self.logger.debug(
@@ -3374,6 +3358,26 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             )
 
         return results
+
+    @staticmethod
+    def _agent_found_result_row(
+        element: CodeElement,
+        *,
+        total_score: float,
+        selection_granularity: str | None = None,
+    ) -> dict[str, Any]:
+        row: dict[str, Any] = {
+            "element": serialize_code_element(element),
+            "semantic_score": 0.0,
+            "keyword_score": 0.0,
+            "pseudocode_score": 0.0,
+            "graph_score": 0.0,
+            "total_score": total_score,
+            "agent_found": True,
+        }
+        if selection_granularity is not None:
+            row["selection_granularity"] = selection_granularity
+        return row
 
     def _get_indexed_class_function_elements(
         self, repo_name: str, file_path: str

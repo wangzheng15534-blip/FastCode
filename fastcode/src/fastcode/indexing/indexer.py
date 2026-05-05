@@ -12,13 +12,13 @@ from typing import Any
 
 from tqdm import tqdm
 
-from ..ir.element import CodeElement
+from ..ir.element import CodeElement, CodeElementMeta
 from ..store.vector import VectorStore
 from ..utils import normalize_path
 from .embedder import CodeEmbedder
 from .loader import RepositoryLoader
 from .overview import RepositoryOverviewGenerator
-from .parser import CodeParser, FileParseResult
+from .parser import CodeParser, FileParseResult, ImportInfo
 
 
 class CodeIndexer:
@@ -146,21 +146,7 @@ class CodeIndexer:
 
         # Generate embeddings
         self.logger.info("Generating embeddings for code elements")
-        element_dicts = [elem.to_dict() for elem in self.elements]
-        elements_with_embeddings = self.embedder.embed_code_elements(element_dicts)
-
-        # Update elements with embeddings
-        for elem, elem_dict in zip(
-            self.elements, elements_with_embeddings, strict=True
-        ):
-            elem.metadata["embedding"] = elem_dict.get("embedding")
-            elem.metadata["embedding_text"] = elem_dict.get("embedding_text")
-            elem.metadata["embedding_text_hash"] = (
-                elem_dict.get("metadata", {}) or {}
-            ).get("embedding_text_hash")
-            elem.metadata["embedding_artifact_ref"] = elem_dict.get(
-                "embedding_artifact_ref"
-            )
+        self._embed_indexed_elements()
 
         self.logger.info(
             f"✓ Repository extraction completed for {repo_name or 'Unknown'}: "
@@ -211,20 +197,7 @@ class CodeIndexer:
 
         # Generate embeddings for new elements only
         if self.elements:
-            element_dicts = [elem.to_dict() for elem in self.elements]
-            elements_with_embeddings = self.embedder.embed_code_elements(element_dicts)
-
-            for elem, elem_dict in zip(
-                self.elements, elements_with_embeddings, strict=True
-            ):
-                elem.metadata["embedding"] = elem_dict.get("embedding")
-                elem.metadata["embedding_text"] = elem_dict.get("embedding_text")
-                elem.metadata["embedding_text_hash"] = (
-                    elem_dict.get("metadata", {}) or {}
-                ).get("embedding_text_hash")
-                elem.metadata["embedding_artifact_ref"] = elem_dict.get(
-                    "embedding_artifact_ref"
-                )
+            self._embed_indexed_elements()
 
         return self.elements
 
@@ -293,22 +266,19 @@ class CodeIndexer:
 
         # Generate file summary
         summary = self._generate_file_summary(parse_result)
+        serialized_imports = (
+            self._serialize_imports(parse_result.imports)
+            if self.include_imports
+            else []
+        )
 
         stable_unit_id = self._stable_unit_id("file", relative_path)
         signature_hash = self._hash_payload(None)
-        edge_surface_hash = self._hash_payload(
-            {
-                "imports": [imp.to_dict() for imp in parse_result.imports]
-                if self.include_imports
-                else []
-            }
-        )
+        edge_surface_hash = self._hash_payload({"imports": serialized_imports})
         api_surface_hash = self._hash_payload(
             {
                 "path": relative_path,
-                "imports": [imp.to_dict() for imp in parse_result.imports]
-                if self.include_imports
-                else [],
+                "imports": serialized_imports,
                 "language": parse_result.language,
                 "classes": [
                     {
@@ -385,9 +355,7 @@ class CodeIndexer:
                 "signature_hash": signature_hash,
                 "edge_surface_hash": edge_surface_hash,
                 "api_surface_hash": api_surface_hash,
-                "imports": [imp.to_dict() for imp in parse_result.imports]
-                if self.include_imports
-                else [],
+                "imports": serialized_imports,
             },
             repo_name=self.current_repo_name,
             repo_url=self.current_repo_url,
@@ -713,6 +681,60 @@ class CodeIndexer:
             payload, sort_keys=True, ensure_ascii=False, default=str
         )
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    def _embed_indexed_elements(self) -> None:
+        element_payloads = [
+            self._serialize_element_for_embedding(element) for element in self.elements
+        ]
+        elements_with_embeddings = self.embedder.embed_code_elements(element_payloads)
+
+        for element, embedded_payload in zip(
+            self.elements, elements_with_embeddings, strict=True
+        ):
+            element.metadata["embedding"] = embedded_payload.get("embedding")
+            element.metadata["embedding_text"] = embedded_payload.get("embedding_text")
+            element.metadata["embedding_text_hash"] = (
+                embedded_payload.get("metadata", {}) or {}
+            ).get("embedding_text_hash")
+            element.metadata["embedding_artifact_ref"] = embedded_payload.get(
+                "embedding_artifact_ref"
+            )
+
+    @staticmethod
+    def _serialize_element_for_embedding(element: CodeElement) -> CodeElementMeta:
+        # The embedder only needs the textual fields used to prepare embedding text.
+        # Keeping metadata empty avoids deep-copying large per-element metadata trees.
+        return {
+            "id": element.id,
+            "type": element.type,
+            "name": element.name,
+            "file_path": element.file_path,
+            "relative_path": element.relative_path,
+            "language": element.language,
+            "start_line": element.start_line,
+            "end_line": element.end_line,
+            "code": element.code,
+            "signature": element.signature,
+            "docstring": element.docstring,
+            "summary": element.summary,
+            "metadata": {},
+            "repo_name": element.repo_name,
+            "repo_url": element.repo_url,
+        }
+
+    @staticmethod
+    def _serialize_import(import_info: ImportInfo) -> dict[str, Any]:
+        return {
+            "module": import_info.module,
+            "names": list(import_info.names),
+            "is_from": import_info.is_from,
+            "line": import_info.line,
+            "level": import_info.level,
+        }
+
+    @classmethod
+    def _serialize_imports(cls, imports: list[ImportInfo]) -> list[dict[str, Any]]:
+        return [cls._serialize_import(import_info) for import_info in imports]
 
     def get_elements_by_type(self, element_type: str) -> list[CodeElement]:
         """Get all elements of a specific type"""

@@ -8,19 +8,27 @@ from __future__ import annotations
 import logging
 import os
 import pickle
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import networkx as nx
 import tqdm
 
-from ..indexing.call_extractor import CallExtractor
-from ..ir.element import CodeElement
-from ..module_resolver import ModuleResolver
-from ..path_utils import file_path_to_module_path
-from ..utils import ensure_dir
+from fastcode.indexing.call_extractor import CallExtractor
+from fastcode.ir.element import (
+    CodeElement,
+    deserialize_code_element,
+    serialize_code_element,
+)
+from fastcode.module_resolver import ModuleResolver
+from fastcode.path_utils import file_path_to_module_path
+from fastcode.utils import ensure_dir
 
 if TYPE_CHECKING:
-    from ..scip.symbol_resolver import SymbolResolver
+    from fastcode.scip.symbol_resolver import SymbolResolver
+
+    _DiGraphStr: TypeAlias = nx.DiGraph[str]
+else:
+    _DiGraphStr = Any
 
 
 class CodeGraphBuilder:
@@ -672,10 +680,12 @@ class CodeGraphBuilder:
                         "dependency_graph": self.dependency_graph,
                         "inheritance_graph": self.inheritance_graph,
                         "element_by_name": {
-                            k: v.to_dict() for k, v in self.element_by_name.items()
+                            k: serialize_code_element(v)
+                            for k, v in self.element_by_name.items()
                         },
                         "element_by_id": {
-                            k: v.to_dict() for k, v in self.element_by_id.items()
+                            k: serialize_code_element(v)
+                            for k, v in self.element_by_id.items()
                         },
                         "imports_by_file": self.imports_by_file,
                     },
@@ -722,16 +732,12 @@ class CodeGraphBuilder:
                     )
                 # ------------------------------------------------------------
 
-                self.call_graph = cast(nx.DiGraph[str], data["call_graph"])
-                self.dependency_graph = cast(nx.DiGraph[str], data["dependency_graph"])
-                self.inheritance_graph = cast(
-                    nx.DiGraph[str], data["inheritance_graph"]
-                )
+                self.call_graph = cast(_DiGraphStr, data["call_graph"])
+                self.dependency_graph = cast(_DiGraphStr, data["dependency_graph"])
+                self.inheritance_graph = cast(_DiGraphStr, data["inheritance_graph"])
                 self.imports_by_file = data["imports_by_file"]
 
                 # Reconstruct indices with CodeElement objects
-                from ..ir.element import CodeElement
-
                 self.element_by_name = {}
                 self.element_by_id = {}
 
@@ -750,7 +756,7 @@ class CodeGraphBuilder:
                     source_data = data["element_by_name"]
 
                 for _k, v in source_data.items():
-                    elem = CodeElement(**v)
+                    elem = deserialize_code_element(v)
                     # Populate both maps
                     self.element_by_id[elem.id] = elem
                     self.element_by_name[elem.name] = elem
@@ -787,11 +793,9 @@ class CodeGraphBuilder:
         try:
             with open(graph_path, "rb") as f:
                 data = pickle.load(f)
-                other_call_graph = cast(nx.DiGraph[str], data["call_graph"])
-                other_dependency_graph = cast(nx.DiGraph[str], data["dependency_graph"])
-                other_inheritance_graph = cast(
-                    nx.DiGraph[str], data["inheritance_graph"]
-                )
+                other_call_graph = cast(_DiGraphStr, data["call_graph"])
+                other_dependency_graph = cast(_DiGraphStr, data["dependency_graph"])
+                other_inheritance_graph = cast(_DiGraphStr, data["inheritance_graph"])
                 other_imports_by_file = data["imports_by_file"]
 
                 # --- FIX: Use element_by_id to avoid data loss from duplicate names ---
@@ -819,10 +823,8 @@ class CodeGraphBuilder:
             )
 
             # Merge elements from source file
-            from ..ir.element import CodeElement
-
             for v in other_elements.values():
-                elem = CodeElement(**v)
+                elem = deserialize_code_element(v)
 
                 # Avoid duplicates: only add if not already present
                 if elem.id not in self.element_by_id:

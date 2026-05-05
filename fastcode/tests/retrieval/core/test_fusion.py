@@ -1,10 +1,10 @@
 """Tests for fastcode.retrieval.core.fusion — pure fusion functions extracted from HybridRetriever."""
 
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from fastcode.ir.element import CodeElement
 from fastcode.retrieval.core.fusion import (
     adaptive_fuse_channels,
     apply_doc_projection_to_code,
@@ -354,17 +354,21 @@ def test_apply_doc_projection_adds_projected_only():
         )
     ]
 
-    # Create a mock CodeElement for ir:repo
-    mock_elem = SimpleNamespace(
+    mock_elem = CodeElement(
+        id="code:repo",
         type="class",
-        repo_name="myrepo",
+        name="Repository",
+        file_path="repo.py",
+        relative_path="repo.py",
+        language="python",
+        start_line=1,
+        end_line=10,
+        code="",
+        signature=None,
+        docstring=None,
+        summary=None,
         metadata={"ir_symbol_id": "ir:repo"},
-        to_dict=lambda: {
-            "id": "code:repo",
-            "type": "class",
-            "name": "Repository",
-            "metadata": {"ir_symbol_id": "ir:repo"},
-        },
+        repo_name="myrepo",
     )
 
     result = apply_doc_projection_to_code(

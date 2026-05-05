@@ -18,7 +18,12 @@ from rank_bm25 import BM25Okapi
 
 from ..graph.build import CodeGraphBuilder
 from ..indexing.embedder import CodeEmbedder
-from ..ir.element import CodeElement, CodeElementMeta
+from ..ir.element import (
+    CodeElement,
+    CodeElementMeta,
+    deserialize_code_element,
+    serialize_code_element,
+)
 from ..ir.graph import IRGraphs
 from ..query.processor import ProcessedQuery
 from ..query.selector import RepositorySelector
@@ -433,7 +438,7 @@ class HybridRetriever:
                 continue
             meta = elem.metadata or {}
             if meta.get("ir_symbol_id") == unit_id or meta.get("ir_node_id") == unit_id:
-                return elem.to_dict()
+                return serialize_code_element(elem)
         return None
 
     def _apply_doc_projection_to_code(
@@ -1083,7 +1088,7 @@ class HybridRetriever:
                 ):  # Only select file-level elements
                     results.append(
                         {
-                            "element": elem.to_dict(),
+                            "element": serialize_code_element(elem),
                             "semantic_score": 0.8,  # Give good base score for LLM selection
                             "keyword_score": 0.0,
                             "pseudocode_score": 0.0,
@@ -1323,7 +1328,7 @@ class HybridRetriever:
                         )
                     continue
 
-                metadata = elem.to_dict()
+                metadata = serialize_code_element(elem)
                 results.append((metadata, float(score)))
 
                 # Stop if we have enough results
@@ -1398,7 +1403,7 @@ class HybridRetriever:
                     continue
                 graph_score = result["total_score"] * 0.5 * self.graph_weight
                 expanded[related_id] = {
-                    "element": elem.to_dict(),
+                    "element": serialize_code_element(elem),
                     "semantic_score": 0.0,
                     "keyword_score": 0.0,
                     "pseudocode_score": 0.0,
@@ -1559,7 +1564,7 @@ class HybridRetriever:
             if elem.file_path == file_path or elem.relative_path == file_path:
                 results.append(
                     {
-                        "element": elem.to_dict(),
+                        "element": serialize_code_element(elem),
                         "semantic_score": 0.0,
                         "keyword_score": 0.0,
                         "graph_score": 0.0,
@@ -1586,7 +1591,7 @@ class HybridRetriever:
             if elem.type == element_type:
                 results.append(
                     {
-                        "element": elem.to_dict(),
+                        "element": serialize_code_element(elem),
                         "semantic_score": 0.0,
                         "keyword_score": 0.0,
                         "graph_score": 0.0,
@@ -1648,9 +1653,10 @@ class HybridRetriever:
                             data = pickle.load(f)
                             all_bm25_corpus.extend(data["bm25_corpus"])
 
-                            # Reconstruct CodeElement objects
-                            for elem_dict in data["bm25_elements"]:
-                                all_bm25_elements.append(CodeElement(**elem_dict))
+                            for elem_payload in data["bm25_elements"]:
+                                all_bm25_elements.append(
+                                    deserialize_code_element(elem_payload)
+                                )
 
                         self.logger.info(f"Loaded BM25 index for {repo_name}")
                     except Exception as e:
@@ -1721,7 +1727,8 @@ class HybridRetriever:
                     {
                         "bm25_corpus": self.full_bm25_corpus,
                         "bm25_elements": [
-                            elem.to_dict() for elem in self.full_bm25_elements
+                            serialize_code_element(elem)
+                            for elem in self.full_bm25_elements
                         ],
                     },
                     f,
@@ -1755,10 +1762,10 @@ class HybridRetriever:
                 data = pickle.load(f)
                 self.full_bm25_corpus = data["bm25_corpus"]
 
-                # Reconstruct CodeElement objects
-                self.full_bm25_elements = []
-                for elem_dict in data["bm25_elements"]:
-                    self.full_bm25_elements.append(CodeElement(**elem_dict))
+                self.full_bm25_elements = [
+                    deserialize_code_element(elem_payload)
+                    for elem_payload in data["bm25_elements"]
+                ]
 
             # Rebuild FULL BM25 index from corpus
             if self.full_bm25_corpus:

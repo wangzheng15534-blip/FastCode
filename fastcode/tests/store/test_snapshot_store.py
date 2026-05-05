@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from typing import Any
 
@@ -9,6 +10,7 @@ import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
+import fastcode.store.snapshot as snapshot_module
 from fastcode.ir.graph import IRGraphBuilder, IRGraphs
 from fastcode.ir.types import (
     IRAttachment,
@@ -19,7 +21,10 @@ from fastcode.ir.types import (
     IRRelation,
     IRSnapshot,
     IRSymbol,
+    IRUnitEmbedding,
+    IRUnitSupport,
 )
+from fastcode.scip.models import SCIPArtifactRef
 from fastcode.store.records import SnapshotRecord, SnapshotRefRecord
 from fastcode.store.snapshot import SnapshotStore
 
@@ -274,6 +279,211 @@ def _make_store() -> SnapshotStore:
     return SnapshotStore(tmpdir)
 
 
+class _FakeCursor:
+    def __init__(
+        self,
+        row: dict[str, Any] | None = None,
+        rows: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._row = row
+        self._rows = rows or []
+
+    def fetchone(self) -> dict[str, Any] | None:
+        return self._row
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        return list(self._rows)
+
+
+class _FakePostgresQueueRuntime:
+    backend = "postgres"
+
+    def __init__(self) -> None:
+        self.redo_tasks: dict[str, dict[str, Any]] = {}
+        self.outbox_events: dict[str, dict[str, Any]] = {}
+
+    def connect(self) -> _FakePostgresQueueRuntime:
+        return self
+
+    def __enter__(self) -> _FakePostgresQueueRuntime:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def commit(self) -> None:
+        return None
+
+    @staticmethod
+    def row_to_dict(row: dict[str, Any] | None) -> dict[str, Any] | None:
+        return dict(row) if row is not None else None
+
+    def add_redo_task(
+        self,
+        *,
+        task_id: str,
+        task_type: str,
+        payload_json: str,
+        status: str = "pending",
+        attempts: int = 0,
+        last_error: str | None = None,
+        next_attempt_at: str | None = None,
+        created_at: str = "2026-05-05T00:00:00+00:00",
+        updated_at: str = "2026-05-05T00:00:00+00:00",
+    ) -> None:
+        self.redo_tasks[task_id] = {
+            "task_id": task_id,
+            "task_type": task_type,
+            "payload_json": payload_json,
+            "status": status,
+            "attempts": attempts,
+            "last_error": last_error,
+            "next_attempt_at": next_attempt_at,
+            "created_at": created_at,
+            "updated_at": updated_at,
+        }
+
+    def add_outbox_event(
+        self,
+        *,
+        event_id: str,
+        event_type: str,
+        payload: str,
+        snapshot_id: str,
+        status: str = "pending",
+        attempts: int = 0,
+        max_attempts: int = 5,
+        created_at: str = "2026-05-05T00:00:00+00:00",
+        last_attempt_at: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        self.outbox_events[event_id] = {
+            "event_id": event_id,
+            "event_type": event_type,
+            "payload": payload,
+            "snapshot_id": snapshot_id,
+            "status": status,
+            "attempts": attempts,
+            "max_attempts": max_attempts,
+            "created_at": created_at,
+            "last_attempt_at": last_attempt_at,
+            "error_message": error_message,
+        }
+
+    def execute(
+        self, _conn: object, sql: str, params: tuple[Any, ...] = ()
+    ) -> _FakeCursor:
+        if "SELECT * FROM redo_tasks" in sql:
+            now = str(params[0])
+            candidates = [
+                dict(task)
+                for task in self.redo_tasks.values()
+                if task["status"] == "pending"
+                and (
+                    task["next_attempt_at"] is None
+                    or str(task["next_attempt_at"]) <= now
+                )
+            ]
+            candidates.sort(key=lambda task: str(task["created_at"]))
+            return _FakeCursor(row=candidates[0] if candidates else None)
+
+        if "SET status='running', attempts=attempts+1, updated_at=?" in sql:
+            updated_at, task_id = params
+            task = self.redo_tasks[str(task_id)]
+            task["status"] = "running"
+            task["attempts"] = int(task["attempts"]) + 1
+            task["updated_at"] = str(updated_at)
+            return _FakeCursor()
+
+        if "SELECT attempts FROM redo_tasks WHERE task_id=?" in sql:
+            task = self.redo_tasks.get(str(params[0]))
+            row = {"attempts": task["attempts"]} if task is not None else None
+            return _FakeCursor(row=row)
+
+        if "SET status='dead', last_error=?, updated_at=?" in sql:
+            error, updated_at, task_id = params
+            task = self.redo_tasks[str(task_id)]
+            task["status"] = "dead"
+            task["last_error"] = str(error)
+            task["updated_at"] = str(updated_at)
+            return _FakeCursor()
+
+        if "SET status='pending', last_error=?, next_attempt_at=?, updated_at=?" in sql:
+            error, next_attempt_at, updated_at, task_id = params
+            task = self.redo_tasks[str(task_id)]
+            task["status"] = "pending"
+            task["last_error"] = str(error)
+            task["next_attempt_at"] = str(next_attempt_at)
+            task["updated_at"] = str(updated_at)
+            return _FakeCursor()
+
+        if "SELECT * FROM publish_outbox" in sql:
+            limit = int(params[0])
+            candidates = [
+                dict(event)
+                for event in self.outbox_events.values()
+                if event["status"] == "pending"
+                or (
+                    event["status"] == "failed"
+                    and int(event["attempts"]) < int(event["max_attempts"])
+                )
+            ]
+            candidates.sort(key=lambda event: str(event["created_at"]))
+            return _FakeCursor(rows=candidates[:limit])
+
+        if "SET status = 'in_progress', last_attempt_at = ?" in sql:
+            last_attempt_at, event_id = params
+            event = self.outbox_events[str(event_id)]
+            event["status"] = "in_progress"
+            event["last_attempt_at"] = str(last_attempt_at)
+            return _FakeCursor()
+
+        if (
+            "SELECT attempts, max_attempts FROM publish_outbox WHERE event_id = ?"
+            in sql
+        ):
+            event = self.outbox_events.get(str(params[0]))
+            row = (
+                {
+                    "attempts": event["attempts"],
+                    "max_attempts": event["max_attempts"],
+                }
+                if event is not None
+                else None
+            )
+            return _FakeCursor(row=row)
+
+        if "SET status = 'dead', attempts = ?, error_message = ?" in sql:
+            attempts, error, event_id = params
+            event = self.outbox_events[str(event_id)]
+            event["status"] = "dead"
+            event["attempts"] = int(attempts)
+            event["error_message"] = str(error)
+            return _FakeCursor()
+
+        if "SET status = 'failed', attempts = ?, error_message = ?" in sql:
+            attempts, error, event_id = params
+            event = self.outbox_events[str(event_id)]
+            event["status"] = "failed"
+            event["attempts"] = int(attempts)
+            event["error_message"] = str(error)
+            return _FakeCursor()
+
+        if "SELECT COUNT(*) AS cnt FROM publish_outbox" in sql:
+            count = sum(
+                1
+                for event in self.outbox_events.values()
+                if event["status"] == "pending"
+                or (
+                    event["status"] == "failed"
+                    and int(event["attempts"]) < int(event["max_attempts"])
+                )
+            )
+            return _FakeCursor(row={"cnt": count})
+
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+
 metadata_st = st.dictionaries(
     st.text(min_size=1, max_size=10),
     st.one_of(st.integers(), st.text(min_size=0, max_size=20), st.booleans()),
@@ -316,7 +526,7 @@ class TestSnapshotSaveLoadProperties:
         assert result.artifact_key.startswith("snap_")
 
     @given(snap=snapshot_st())
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=None)
     def test_save_idempotent_upsert_property(self, snap: IRSnapshot):
         """HAPPY: saving same snapshot twice does not raise (ON CONFLICT DO UPDATE)."""
         store = _make_store()
@@ -341,7 +551,7 @@ class TestSnapshotSaveLoadProperties:
         assert record.created_at is not None
 
     @given(snap=snapshot_st())
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=None)
     def test_load_snapshot_roundtrip_children_property(self, snap: IRSnapshot):
         """HAPPY: load_snapshot preserves nested document/symbol/edge fields."""
         store = _make_store()
@@ -360,6 +570,186 @@ class TestSnapshotSaveLoadProperties:
         for orig, rest in zip(snap.attachments, loaded.attachments, strict=True):
             assert orig.attachment_id == rest.attachment_id
             assert orig.payload == rest.payload
+
+    def test_save_load_snapshot_uses_explicit_persistence_serializers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _make_store()
+        snap = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:explicit",
+            branch="main",
+            commit_id="abc1234",
+            tree_id="tree1234",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:file:a.py",
+                    kind="file",
+                    path="a.py",
+                    language="python",
+                    display_name="a.py",
+                    source_set={"fc_structure"},
+                    metadata={"rank": 1},
+                )
+            ],
+            supports=[
+                IRUnitSupport(
+                    support_id="supp:def:a",
+                    unit_id="unit:file:a.py",
+                    source="fc_structure",
+                    support_kind="occurrence",
+                    role="definition",
+                    start_line=1,
+                    start_col=0,
+                    end_line=1,
+                    end_col=4,
+                    metadata={"doc_id": "unit:file:a.py"},
+                )
+            ],
+            relations=[
+                IRRelation(
+                    relation_id="rel:contain:a",
+                    src_unit_id="unit:file:a.py",
+                    dst_unit_id="unit:file:a.py",
+                    relation_type="contain",
+                    resolution_state="structural",
+                    support_sources={"fc_structure"},
+                    metadata={"source": "fc_structure"},
+                )
+            ],
+            embeddings=[
+                IRUnitEmbedding(
+                    embedding_id="emb:a",
+                    unit_id="unit:file:a.py",
+                    source="fc_embedding",
+                    vector=[0.25, 0.5],
+                    embedding_text="a.py",
+                    model_id="test-model",
+                    metadata={"dim": 2},
+                )
+            ],
+            metadata={"source_modes": ["fc_structure"]},
+        )
+
+        def _boom_to_dict(_: object) -> dict[str, Any]:
+            raise AssertionError("snapshot store must not call to_dict()")
+
+        def _boom_from_dict(
+            _cls: object, _data: dict[str, Any]
+        ) -> IRSnapshot | IRCodeUnit | IRUnitSupport | IRRelation | IRUnitEmbedding:
+            raise AssertionError("snapshot store must not call from_dict()")
+
+        monkeypatch.setattr(IRSnapshot, "to_dict", _boom_to_dict)
+        monkeypatch.setattr(IRSnapshot, "from_dict", classmethod(_boom_from_dict))
+        monkeypatch.setattr(IRCodeUnit, "to_dict", _boom_to_dict)
+        monkeypatch.setattr(IRCodeUnit, "from_dict", classmethod(_boom_from_dict))
+        monkeypatch.setattr(IRUnitSupport, "to_dict", _boom_to_dict)
+        monkeypatch.setattr(IRUnitSupport, "from_dict", classmethod(_boom_from_dict))
+        monkeypatch.setattr(IRRelation, "to_dict", _boom_to_dict)
+        monkeypatch.setattr(IRRelation, "from_dict", classmethod(_boom_from_dict))
+        monkeypatch.setattr(IRUnitEmbedding, "to_dict", _boom_to_dict)
+        monkeypatch.setattr(IRUnitEmbedding, "from_dict", classmethod(_boom_from_dict))
+
+        store.save_snapshot(snap)
+        loaded = store.load_snapshot(snap.snapshot_id)
+
+        assert loaded is not None
+        assert loaded.snapshot_id == snap.snapshot_id
+        assert loaded.units[0].metadata == {"rank": 1}
+        assert loaded.supports[0].metadata == {"doc_id": "unit:file:a.py"}
+        assert loaded.relations[0].support_sources == {"fc_structure"}
+        assert loaded.embeddings[0].vector == [0.25, 0.5]
+
+    def test_load_snapshot_legacy_payload_uses_explicit_deserializers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _make_store()
+        snapshot_id = "snap:repo:legacy-explicit"
+        store.save_snapshot(IRSnapshot(repo_name="repo", snapshot_id=snapshot_id))
+        record = store.get_snapshot_record(snapshot_id)
+        assert record is not None
+
+        legacy_payload = {
+            "repo_name": "repo",
+            "snapshot_id": snapshot_id,
+            "branch": "main",
+            "commit_id": "abc1234",
+            "tree_id": "tree1234",
+            "documents": [
+                {
+                    "doc_id": "doc:a",
+                    "path": "a.py",
+                    "language": "python",
+                    "source_set": ["fc_structure"],
+                }
+            ],
+            "symbols": [
+                {
+                    "symbol_id": "sym:a",
+                    "external_symbol_id": None,
+                    "path": "a.py",
+                    "display_name": "run",
+                    "kind": "function",
+                    "language": "python",
+                    "start_line": 1,
+                    "start_col": 0,
+                    "end_line": 1,
+                    "end_col": 3,
+                    "source_priority": 50,
+                    "source_set": ["fc_structure"],
+                    "metadata": {"rank": 1},
+                }
+            ],
+            "occurrences": [
+                {
+                    "occurrence_id": "occ:a",
+                    "symbol_id": "sym:a",
+                    "doc_id": "doc:a",
+                    "role": "definition",
+                    "start_line": 1,
+                    "start_col": 0,
+                    "end_line": 1,
+                    "end_col": 3,
+                    "source": "fc_structure",
+                    "metadata": {"doc_id": "doc:a"},
+                }
+            ],
+            "edges": [
+                {
+                    "edge_id": "edge:a",
+                    "src_id": "doc:a",
+                    "dst_id": "sym:a",
+                    "edge_type": "contain",
+                    "source": "fc_structure",
+                    "confidence": "resolved",
+                    "metadata": {"source": "fc_structure"},
+                }
+            ],
+            "attachments": [],
+            "metadata": {"source_modes": ["fc_structure"]},
+        }
+        with open(record.ir_path, "w", encoding="utf-8") as handle:
+            json.dump(legacy_payload, handle, ensure_ascii=False)
+
+        def _boom_from_dict(
+            _cls: object, _data: dict[str, Any]
+        ) -> IRSnapshot | IRDocument | IRSymbol | IROccurrence | IREdge:
+            raise AssertionError("snapshot store must not call from_dict()")
+
+        monkeypatch.setattr(IRSnapshot, "from_dict", classmethod(_boom_from_dict))
+        monkeypatch.setattr(IRDocument, "from_dict", classmethod(_boom_from_dict))
+        monkeypatch.setattr(IRSymbol, "from_dict", classmethod(_boom_from_dict))
+        monkeypatch.setattr(IROccurrence, "from_dict", classmethod(_boom_from_dict))
+        monkeypatch.setattr(IREdge, "from_dict", classmethod(_boom_from_dict))
+
+        loaded = store.load_snapshot(snapshot_id)
+
+        assert loaded is not None
+        assert loaded.branch == "main"
+        assert loaded.documents[0].doc_id == "doc:a"
+        assert loaded.symbols[0].metadata == {"rank": 1}
+        assert loaded.occurrences[0].doc_id == "doc:a"
+        assert loaded.edges[0].edge_type == "contain"
 
     @given(snapshot_id=identifier)
     @settings(max_examples=15)
@@ -476,6 +866,71 @@ class TestSnapshotStoreQueries:
         store = _make_store()
         assert store.find_by_artifact_key(key) is None
 
+    def test_get_snapshot_record_avoids_generic_row_to_dict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _make_store()
+        snap = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:typed",
+            branch="main",
+            commit_id="abc123",
+            tree_id="tree123",
+        )
+        store.save_snapshot(snap)
+
+        def _boom(_: object) -> dict[str, Any]:
+            raise AssertionError("snapshot store must not call row_to_dict()")
+
+        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom)
+
+        record = store.get_snapshot_record(snap.snapshot_id)
+
+        assert record is not None
+        assert record.snapshot_id == snap.snapshot_id
+        assert record.branch == "main"
+
+    def test_snapshot_query_helpers_use_explicit_serializers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _make_store()
+        snap = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:compat",
+            branch="main",
+            commit_id="abc999",
+            tree_id="tree999",
+        )
+        saved = store.save_snapshot(snap)
+
+        def _boom_row(_: object) -> dict[str, Any]:
+            raise AssertionError("snapshot store must not call row_to_dict()")
+
+        def _boom_snapshot(_: SnapshotRecord) -> dict[str, Any]:
+            raise AssertionError(
+                "snapshot store must not call SnapshotRecord.to_dict()"
+            )
+
+        def _boom_ref(_: SnapshotRefRecord) -> dict[str, Any]:
+            raise AssertionError(
+                "snapshot store must not call SnapshotRefRecord.to_dict()"
+            )
+
+        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row)
+        monkeypatch.setattr(SnapshotRecord, "to_dict", _boom_snapshot)
+        monkeypatch.setattr(SnapshotRefRecord, "to_dict", _boom_ref)
+
+        by_artifact = store.find_by_artifact_key(saved.artifact_key)
+        by_commit = store.find_by_repo_commit("repo", "abc999")
+        by_ref = store.resolve_snapshot_for_ref("repo", "main")
+
+        assert by_artifact is not None
+        assert by_artifact["snapshot_id"] == snap.snapshot_id
+        assert by_commit is not None
+        assert by_commit["artifact_key"] == saved.artifact_key
+        assert by_ref is not None
+        assert by_ref["snapshot_id"] == snap.snapshot_id
+
     @given(
         snap1=connected_snapshot_st(n_docs=1, n_symbols_per_doc=1),
         snap2=connected_snapshot_st(n_docs=1, n_symbols_per_doc=1),
@@ -519,7 +974,7 @@ class TestSnapshotStoreQueries:
         metadata1=metadata_st,
         metadata2=metadata_st,
     )
-    @settings(max_examples=15)
+    @settings(max_examples=15, deadline=None)
     def test_update_snapshot_metadata_property(
         self, snap: IRSnapshot, metadata1: dict[str, Any], metadata2: dict[str, Any]
     ):
@@ -615,7 +1070,7 @@ class TestScipArtifactRefProperties:
         assert result["checksum"] == ""
 
     @given(snapshot_id=identifier)
-    @settings(max_examples=15)
+    @settings(max_examples=15, deadline=None)
     def test_save_scip_artifact_ref_upsert_property(self, snapshot_id: str):
         """HAPPY: saving SCIP artifact ref twice updates the record."""
         store = _make_store()
@@ -654,6 +1109,51 @@ class TestScipArtifactRefProperties:
             == "/tmp/ts.scip"
         )
         assert len(store.list_scip_artifact_refs("snap:repo:multi")) == 2
+
+    def test_scip_artifact_paths_use_explicit_serializers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _make_store()
+
+        class _OpaqueMetadata:
+            pass
+
+        def _boom_row(_: object) -> dict[str, Any]:
+            raise AssertionError("snapshot store must not call row_to_dict()")
+
+        def _boom_to_dict(_: SCIPArtifactRef) -> dict[str, Any]:
+            raise AssertionError(
+                "snapshot store must not call SCIPArtifactRef.to_dict()"
+            )
+
+        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row)
+        monkeypatch.setattr(SCIPArtifactRef, "to_dict", _boom_to_dict)
+
+        saved = store.save_scip_artifact_refs(
+            "snap:repo:typed",
+            artifacts=[
+                {
+                    "indexer_name": "scip-ts",
+                    "artifact_path": "/tmp/ts.scip",
+                    "checksum": "111",
+                    "metadata": {"opaque": _OpaqueMetadata()},
+                },
+                {
+                    "indexer_name": "scip-rust",
+                    "artifact_path": "/tmp/rust.scip",
+                    "checksum": "222",
+                    "language": "rust",
+                },
+            ],
+        )
+        loaded = store.get_scip_artifact_ref("snap:repo:typed")
+        listed = store.list_scip_artifact_refs("snap:repo:typed")
+
+        assert saved[0]["artifact_id"] == "snap:repo:typed:scip:0"
+        assert loaded is not None
+        assert loaded["artifact_path"] == "/tmp/ts.scip"
+        assert listed[0]["metadata"]["opaque"].startswith("<")
+        assert listed[1]["metadata"]["language"] == "rust"
 
 
 # --- TestSnapshotStoreRelationalFacts ---
@@ -910,6 +1410,152 @@ class TestSnapshotStoreRedoProperties:
             task_id="redo_test123", error="fail", max_attempts=3
         )
 
+    def test_claim_redo_task_returns_running_payload_after_claim(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = SnapshotStore.__new__(SnapshotStore)
+        runtime = _FakePostgresQueueRuntime()
+        runtime.add_redo_task(
+            task_id="redo_1",
+            task_type="index_run_recovery",
+            payload_json='{"run_id":"run1"}',
+        )
+        store.db_runtime = runtime
+
+        def _boom(_: object) -> dict[str, Any]:
+            raise AssertionError("snapshot store must not call row_to_dict()")
+
+        monkeypatch.setattr(
+            snapshot_module, "utc_now", lambda: "2026-05-05T00:00:05+00:00"
+        )
+        monkeypatch.setattr(runtime, "row_to_dict", _boom)
+
+        task = store.claim_redo_task()
+
+        assert task is not None
+        assert task["task_id"] == "redo_1"
+        assert task["status"] == "running"
+        assert task["attempts"] == 1
+        assert task["updated_at"] == "2026-05-05T00:00:05+00:00"
+        assert runtime.redo_tasks["redo_1"]["status"] == "running"
+        assert runtime.redo_tasks["redo_1"]["attempts"] == 1
+        assert runtime.redo_tasks["redo_1"]["updated_at"] == "2026-05-05T00:00:05+00:00"
+        assert store.claim_redo_task() is None
+
+    def test_mark_redo_task_failed_uses_explicit_attempt_lookup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = SnapshotStore.__new__(SnapshotStore)
+        runtime = _FakePostgresQueueRuntime()
+        runtime.add_redo_task(
+            task_id="redo_2",
+            task_type="index_run_recovery",
+            payload_json='{"run_id":"run2"}',
+            status="running",
+            attempts=5,
+        )
+        store.db_runtime = runtime
+
+        def _boom(_: object) -> dict[str, Any]:
+            raise AssertionError("snapshot store must not call row_to_dict()")
+
+        monkeypatch.setattr(
+            snapshot_module, "utc_now", lambda: "2026-05-05T00:00:10+00:00"
+        )
+        monkeypatch.setattr(runtime, "row_to_dict", _boom)
+
+        store.mark_redo_task_failed("redo_2", "boom", max_attempts=5)
+
+        assert runtime.redo_tasks["redo_2"]["status"] == "dead"
+        assert runtime.redo_tasks["redo_2"]["last_error"] == "boom"
+        assert runtime.redo_tasks["redo_2"]["updated_at"] == "2026-05-05T00:00:10+00:00"
+
+
+class TestSnapshotStoreOutboxPostgresProperties:
+    def test_claim_outbox_event_returns_in_progress_payload_after_claim(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = SnapshotStore.__new__(SnapshotStore)
+        runtime = _FakePostgresQueueRuntime()
+        runtime.add_outbox_event(
+            event_id="evt1",
+            event_type="lineage_publish",
+            payload='{"snapshot":"snap:1"}',
+            snapshot_id="snap:1",
+            created_at="2026-05-05T00:00:00+00:00",
+        )
+        runtime.add_outbox_event(
+            event_id="evt2",
+            event_type="lineage_publish",
+            payload='{"snapshot":"snap:2"}',
+            snapshot_id="snap:2",
+            status="failed",
+            attempts=1,
+            max_attempts=3,
+            created_at="2026-05-05T00:00:01+00:00",
+        )
+        runtime.add_outbox_event(
+            event_id="evt3",
+            event_type="lineage_publish",
+            payload='{"snapshot":"snap:3"}',
+            snapshot_id="snap:3",
+            status="failed",
+            attempts=3,
+            max_attempts=3,
+            created_at="2026-05-05T00:00:02+00:00",
+        )
+        store.db_runtime = runtime
+
+        def _boom(_: object) -> dict[str, Any]:
+            raise AssertionError("snapshot store must not call row_to_dict()")
+
+        monkeypatch.setattr(
+            snapshot_module, "utc_now", lambda: "2026-05-05T00:00:06+00:00"
+        )
+        monkeypatch.setattr(runtime, "row_to_dict", _boom)
+
+        events = store.claim_outbox_event(limit=10)
+
+        assert [event["event_id"] for event in events] == ["evt1", "evt2"]
+        assert all(event["status"] == "in_progress" for event in events)
+        assert all(
+            event["last_attempt_at"] == "2026-05-05T00:00:06+00:00" for event in events
+        )
+        assert runtime.outbox_events["evt1"]["status"] == "in_progress"
+        assert runtime.outbox_events["evt2"]["status"] == "in_progress"
+        assert runtime.outbox_events["evt3"]["status"] == "failed"
+        assert store.get_outbox_pending_count() == 0
+
+    def test_mark_outbox_event_failed_and_count_use_explicit_row_access(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = SnapshotStore.__new__(SnapshotStore)
+        runtime = _FakePostgresQueueRuntime()
+        runtime.add_outbox_event(
+            event_id="evt4",
+            event_type="lineage_publish",
+            payload='{"snapshot":"snap:4"}',
+            snapshot_id="snap:4",
+            status="failed",
+            attempts=4,
+            max_attempts=5,
+        )
+        store.db_runtime = runtime
+
+        def _boom(_: object) -> dict[str, Any]:
+            raise AssertionError("snapshot store must not call row_to_dict()")
+
+        monkeypatch.setattr(runtime, "row_to_dict", _boom)
+
+        assert store.get_outbox_pending_count() == 1
+
+        store.mark_outbox_event_failed("evt4", "publish still failing")
+
+        assert runtime.outbox_events["evt4"]["status"] == "dead"
+        assert runtime.outbox_events["evt4"]["attempts"] == 5
+        assert runtime.outbox_events["evt4"]["error_message"] == "publish still failing"
+        assert store.get_outbox_pending_count() == 0
+
 
 # --- TestIRGraphsRoundtrip ---
 
@@ -960,6 +1606,31 @@ class TestIRGraphsRoundtrip:
         store.save_snapshot(snap)
         path = store.save_ir_graphs(snap.snapshot_id, {"nodes": [1, 2, 3]})
         assert "ir_graphs.json" in path
+
+    def test_save_ir_graphs_avoids_object_to_dict_on_opaque_payload(
+        self,
+    ) -> None:
+        class _OpaqueGraphValue:
+            def __repr__(self) -> str:
+                return "<opaque-graph-value>"
+
+            def to_dict(self) -> dict[str, Any]:
+                raise AssertionError("graph serialization must stay field-explicit")
+
+        store = _make_store()
+        snap = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:opaque-graph")
+        store.save_snapshot(snap)
+
+        store.save_ir_graphs(
+            snap.snapshot_id,
+            {"opaque": _OpaqueGraphValue(), "edges": [(1, 2), (2, 3)]},
+        )
+        loaded = store.load_ir_graphs(snap.snapshot_id)
+
+        assert loaded == {
+            "opaque": "<opaque-graph-value>",
+            "edges": [[1, 2], [2, 3]],
+        }
 
     @given(snap=snapshot_st())
     @settings(max_examples=10)

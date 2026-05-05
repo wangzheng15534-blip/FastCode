@@ -15,7 +15,7 @@ import re
 import shutil
 import tempfile
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace as dc_replace
 from datetime import datetime
 from time import perf_counter
@@ -26,7 +26,7 @@ import numpy as np
 from git import GitCommandError, Repo
 
 from ..graph.build import CodeGraphBuilder
-from ..ir.element import CodeElement, CodeElementMeta
+from ..ir.element import CodeElement, CodeElementMeta, serialize_code_element
 from ..ir.graph import IRGraphBuilder
 from ..ir.merge import merge_ir
 from ..ir.types import IRRelation, IRSnapshot, IRUnitSupport
@@ -365,11 +365,7 @@ class IndexPipeline:
             {normalize_path(path) for path in target_paths} if target_paths else None
         )
         for elem in elements:
-            row_data: Any = elem
-            to_dict = getattr(elem, "to_dict", None)
-            if callable(to_dict):
-                row_data = to_dict()
-            row = cast(dict[str, Any], row_data)
+            row = self._unit_artifact_row_payload(elem)
             rel_path = normalize_path(
                 row.get("relative_path") or row.get("file_path") or ""
             )
@@ -384,9 +380,13 @@ class IndexPipeline:
             if embedding_artifact_ref is None:
                 embedding_artifact_ref = metadata.get("embedding_artifact_ref")
             if embedding_artifact_ref is None and row.get("embedding_text"):
-                embedding_artifact_ref = self.embedder.embedding_artifact_ref(
-                    str(row["embedding_text"])
+                embedding_artifact_ref_factory = getattr(
+                    self.embedder, "embedding_artifact_ref", None
                 )
+                if callable(embedding_artifact_ref_factory):
+                    embedding_artifact_ref = embedding_artifact_ref_factory(
+                        str(row["embedding_text"])
+                    )
             if embedding_artifact_ref is not None:
                 metadata["embedding_artifact_ref"] = embedding_artifact_ref
             if scoped_tool_ref is not None:
@@ -408,6 +408,245 @@ class IndexPipeline:
                 row["repair_frontier_summary"] = metadata["repair_frontier_summary"]
             rows.append(row)
         return rows
+
+    @staticmethod
+    def _unit_artifact_metadata_payload(value: Any) -> dict[str, Any]:
+        if not isinstance(value, Mapping):
+            return {}
+        return dict(cast(Mapping[str, Any], value))
+
+    @classmethod
+    def _legacy_element_mapping(cls, element: Any) -> Mapping[str, Any] | None:
+        to_dict = getattr(element, "to_dict", None)
+        if not callable(to_dict):
+            return None
+        try:
+            payload = to_dict()
+        except Exception:
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        return cast(Mapping[str, Any], payload)
+
+    @classmethod
+    def _unit_artifact_row_payload(cls, element: Any) -> dict[str, Any]:
+        if isinstance(element, CodeElement):
+            payload = cast(dict[str, Any], serialize_code_element(element))
+        elif isinstance(element, Mapping):
+            mapping = cast(Mapping[str, Any], element)
+            payload = {
+                field_name: mapping.get(field_name)
+                for field_name in (
+                    "id",
+                    "type",
+                    "name",
+                    "file_path",
+                    "relative_path",
+                    "language",
+                    "start_line",
+                    "end_line",
+                    "code",
+                    "signature",
+                    "docstring",
+                    "summary",
+                    "repo_name",
+                    "repo_url",
+                    "embedding_text",
+                    "embedding_artifact_ref",
+                    "scoped_tool_ref",
+                    "package_root",
+                    "repair_frontier_summary",
+                    "stable_unit_id",
+                    "content_hash",
+                    "syntax_hash",
+                    "signature_hash",
+                    "edge_surface_hash",
+                    "embedding_text_hash",
+                    "api_surface_hash",
+                )
+            }
+            payload["metadata"] = cls._unit_artifact_metadata_payload(
+                mapping.get("metadata")
+            )
+        else:
+            payload = {
+                "id": getattr(element, "id", None),
+                "type": getattr(element, "type", None),
+                "name": getattr(element, "name", None),
+                "file_path": getattr(element, "file_path", None),
+                "relative_path": getattr(element, "relative_path", None),
+                "language": getattr(element, "language", None),
+                "start_line": getattr(element, "start_line", None),
+                "end_line": getattr(element, "end_line", None),
+                "code": getattr(element, "code", None),
+                "signature": getattr(element, "signature", None),
+                "docstring": getattr(element, "docstring", None),
+                "summary": getattr(element, "summary", None),
+                "repo_name": getattr(element, "repo_name", None),
+                "repo_url": getattr(element, "repo_url", None),
+                "embedding_text": getattr(element, "embedding_text", None),
+                "embedding_artifact_ref": getattr(
+                    element, "embedding_artifact_ref", None
+                ),
+                "scoped_tool_ref": getattr(element, "scoped_tool_ref", None),
+                "package_root": getattr(element, "package_root", None),
+                "repair_frontier_summary": getattr(
+                    element, "repair_frontier_summary", None
+                ),
+                "stable_unit_id": getattr(element, "stable_unit_id", None),
+                "content_hash": getattr(element, "content_hash", None),
+                "syntax_hash": getattr(element, "syntax_hash", None),
+                "signature_hash": getattr(element, "signature_hash", None),
+                "edge_surface_hash": getattr(element, "edge_surface_hash", None),
+                "embedding_text_hash": getattr(
+                    element, "embedding_text_hash", None
+                ),
+                "api_surface_hash": getattr(element, "api_surface_hash", None),
+                "metadata": cls._unit_artifact_metadata_payload(
+                    getattr(element, "metadata", None)
+                ),
+            }
+            legacy_payload = cls._legacy_element_mapping(element)
+            if legacy_payload is not None:
+                for field_name in (
+                    "id",
+                    "type",
+                    "name",
+                    "file_path",
+                    "relative_path",
+                    "language",
+                    "start_line",
+                    "end_line",
+                    "code",
+                    "signature",
+                    "docstring",
+                    "summary",
+                    "repo_name",
+                    "repo_url",
+                    "embedding_text",
+                    "embedding_artifact_ref",
+                    "scoped_tool_ref",
+                    "package_root",
+                    "repair_frontier_summary",
+                    "stable_unit_id",
+                    "content_hash",
+                    "syntax_hash",
+                    "signature_hash",
+                    "edge_surface_hash",
+                    "embedding_text_hash",
+                    "api_surface_hash",
+                ):
+                    if payload.get(field_name) is None and legacy_payload.get(
+                        field_name
+                    ) is not None:
+                        payload[field_name] = legacy_payload.get(field_name)
+                if not payload["metadata"]:
+                    payload["metadata"] = cls._unit_artifact_metadata_payload(
+                        legacy_payload.get("metadata")
+                    )
+        payload = cast(dict[str, Any], payload)
+        metadata = cls._unit_artifact_metadata_payload(payload.get("metadata"))
+        payload["metadata"] = metadata
+        if payload.get("embedding_text") is None:
+            payload["embedding_text"] = metadata.get("embedding_text")
+        return payload
+
+    @classmethod
+    def _code_element_like_payload(cls, element: Any) -> CodeElementMeta:
+        if isinstance(element, CodeElement):
+            return serialize_code_element(element)
+        if isinstance(element, Mapping):
+            mapping = cast(Mapping[str, Any], element)
+            metadata = cls._unit_artifact_metadata_payload(mapping.get("metadata"))
+            return {
+                "id": str(mapping.get("id") or ""),
+                "type": str(mapping.get("type") or ""),
+                "name": str(mapping.get("name") or ""),
+                "file_path": str(mapping.get("file_path") or ""),
+                "relative_path": str(mapping.get("relative_path") or ""),
+                "language": str(mapping.get("language") or ""),
+                "start_line": int(mapping.get("start_line") or 0),
+                "end_line": int(mapping.get("end_line") or 0),
+                "code": str(mapping.get("code") or ""),
+                "signature": (
+                    None
+                    if mapping.get("signature") is None
+                    else str(mapping.get("signature"))
+                ),
+                "docstring": (
+                    None
+                    if mapping.get("docstring") is None
+                    else str(mapping.get("docstring"))
+                ),
+                "summary": (
+                    None if mapping.get("summary") is None else str(mapping.get("summary"))
+                ),
+                "metadata": metadata,
+                "repo_name": (
+                    None
+                    if mapping.get("repo_name") is None
+                    else str(mapping.get("repo_name"))
+                ),
+                "repo_url": (
+                    None
+                    if mapping.get("repo_url") is None
+                    else str(mapping.get("repo_url"))
+                ),
+            }
+        metadata = cls._unit_artifact_metadata_payload(getattr(element, "metadata", None))
+        signature = getattr(element, "signature", None)
+        docstring = getattr(element, "docstring", None)
+        summary = getattr(element, "summary", None)
+        repo_name = getattr(element, "repo_name", None)
+        repo_url = getattr(element, "repo_url", None)
+        payload: CodeElementMeta = {
+            "id": str(getattr(element, "id", "") or ""),
+            "type": str(getattr(element, "type", "") or ""),
+            "name": str(getattr(element, "name", "") or ""),
+            "file_path": str(getattr(element, "file_path", "") or ""),
+            "relative_path": str(getattr(element, "relative_path", "") or ""),
+            "language": str(getattr(element, "language", "") or ""),
+            "start_line": int(getattr(element, "start_line", 0) or 0),
+            "end_line": int(getattr(element, "end_line", 0) or 0),
+            "code": str(getattr(element, "code", "") or ""),
+            "signature": None if signature is None else str(signature),
+            "docstring": None if docstring is None else str(docstring),
+            "summary": None if summary is None else str(summary),
+            "metadata": metadata,
+            "repo_name": None if repo_name is None else str(repo_name),
+            "repo_url": None if repo_url is None else str(repo_url),
+        }
+        legacy_payload = cls._legacy_element_mapping(element)
+        if legacy_payload is None:
+            return payload
+        if not payload["metadata"]:
+            payload["metadata"] = cls._unit_artifact_metadata_payload(
+                legacy_payload.get("metadata")
+            )
+        for field_name in (
+            "id",
+            "type",
+            "name",
+            "file_path",
+            "relative_path",
+            "language",
+            "code",
+        ):
+            if not payload[field_name] and legacy_payload.get(field_name) is not None:
+                payload[field_name] = str(legacy_payload.get(field_name) or "")
+        for field_name in ("start_line", "end_line"):
+            if not payload[field_name] and legacy_payload.get(field_name) is not None:
+                payload[field_name] = int(legacy_payload.get(field_name) or 0)
+        for field_name in (
+            "signature",
+            "docstring",
+            "summary",
+            "repo_name",
+            "repo_url",
+        ):
+            if payload[field_name] is None and legacy_payload.get(field_name) is not None:
+                payload[field_name] = str(legacy_payload.get(field_name))
+        return payload
 
     def _has_active_doc_persistence(self, graph_runtime: Any) -> bool:
         """Return True when doc ingestion has at least one active sink."""
@@ -1086,6 +1325,41 @@ class IndexPipeline:
         except Exception as e:
             self.logger.warning(f"Failed to reconstruct cached code element: {e}")
             return None
+
+    @classmethod
+    def _materialize_indexed_element_payload(
+        cls,
+        element: Any,
+        *,
+        snapshot_id: str,
+    ) -> CodeElementMeta:
+        payload = cls._code_element_like_payload(element)
+        payload["snapshot_id"] = snapshot_id
+        return payload
+
+    @classmethod
+    def _materialize_indexed_elements_for_storage(
+        cls,
+        elements: Sequence[CodeElement],
+        *,
+        snapshot_id: str,
+    ) -> tuple[list[Any], list[CodeElementMeta], list[CodeElementMeta]]:
+        vectors: list[Any] = []
+        metadata: list[CodeElementMeta] = []
+        all_payloads: list[CodeElementMeta] = []
+
+        for element in elements:
+            payload = cls._materialize_indexed_element_payload(
+                element, snapshot_id=snapshot_id
+            )
+            all_payloads.append(payload)
+            embedding = element.metadata.get("embedding")
+            if embedding is None:
+                continue
+            vectors.append(embedding)
+            metadata.append(payload)
+
+        return vectors, metadata, all_payloads
 
     def _plan_incremental_elements(
         self,
@@ -1870,10 +2144,25 @@ class IndexPipeline:
             commit_id=snapshot_ref.get("commit_id"),
             idempotency_key=idempotency_key,
         )
-        existing_run = self.index_run_store.get_run(run_id)
+        get_run_record = getattr(self.index_run_store, "get_run_record", None)
+        existing_run = (
+            get_run_record(run_id)
+            if callable(get_run_record)
+            else self.index_run_store.get_run(run_id)
+        )
+        existing_run_status = (
+            existing_run.get("status")
+            if isinstance(existing_run, dict)
+            else getattr(existing_run, "status", None)
+        )
+        existing_run_warnings_json = (
+            existing_run.get("warnings_json")
+            if isinstance(existing_run, dict)
+            else getattr(existing_run, "warnings_json", None)
+        )
         if (
             existing_run
-            and existing_run.get("status")
+            and existing_run_status
             in {"published", "succeeded", "degraded", "publish_pending"}
             and not force
         ):
@@ -1884,15 +2173,13 @@ class IndexPipeline:
                     snapshot_id=snapshot_id,
                     enable_scip=enable_scip,
                     result={
-                        "status": existing_run.get("status"),
+                        "status": existing_run_status,
                         "run_id": run_id,
                         "repo_name": repo_name,
                         "snapshot_id": snapshot_id,
                         "artifact_key": existing_snapshot.artifact_key,
                         "loaded": loaded,
-                        "warnings": json.loads(
-                            existing_run.get("warnings_json") or "[]"
-                        ),
+                        "warnings": json.loads(existing_run_warnings_json or "[]"),
                     },
                 )
         self.index_run_store.mark_started(run_id)
@@ -1939,19 +2226,11 @@ class IndexPipeline:
             self.index_run_store.mark_status(run_id, "materializing")
             temp_store = VectorStore(self.config)
             temp_store.initialize(self.embedder.embedding_dim)
-            vectors: list[list[float]] = []
-            metadata: list[CodeElementMeta] = []
-            all_elem_dicts: list[dict[str, Any]] = []
-            for elem in elements:
-                elem_dict = elem.to_dict()
-                elem_dict["snapshot_id"] = snapshot_id
-                all_elem_dicts.append(cast(dict[str, Any], elem_dict))
-                embedding = elem.metadata.get("embedding")
-                if embedding is not None:
-                    elem.metadata["snapshot_id"] = snapshot_id
-                    elem.metadata["source_priority"] = 10
-                    vectors.append(embedding)
-                    metadata.append(cast(CodeElementMeta, elem_dict))
+            vectors, metadata, all_elem_payloads = (
+                self._materialize_indexed_elements_for_storage(
+                    elements, snapshot_id=snapshot_id
+                )
+            )
             if not vectors:
                 raise RuntimeError("No embeddings produced during indexing")
             temp_store.add_vectors(np.array(vectors), metadata)
@@ -2591,7 +2870,9 @@ class IndexPipeline:
                 merged_snapshot,
                 metadata={"run_id": run_id, "artifact_key": artifact_key},
             )
-            all_pg_elements: list[dict[str, Any]] = list(all_elem_dicts)
+            all_pg_elements: list[dict[str, Any]] = cast(
+                list[dict[str, Any]], list(all_elem_payloads)
+            )
             if doc_elements_payload:
                 all_pg_elements.extend(doc_elements_payload)
             if not self.pg_retrieval_store:

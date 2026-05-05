@@ -5,8 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any, cast
 
+import pytest
+
 from fastcode.indexing.publishing import PublishingService
 from fastcode.ir.types import IRSnapshot
+from fastcode.store.records import IndexRunRecord
 
 
 class NoDictSnapshot(IRSnapshot):
@@ -25,16 +28,7 @@ class ManifestDouble:
     status = "published"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "manifest_id": self.manifest_id,
-            "repo_name": self.repo_name,
-            "ref_name": self.ref_name,
-            "snapshot_id": self.snapshot_id,
-            "index_run_id": self.index_run_id,
-            "published_at": self.published_at,
-            "previous_manifest_id": self.previous_manifest_id,
-            "status": self.status,
-        }
+        raise AssertionError("PublishingService must not call manifest.to_dict()")
 
 
 class IndexRunStoreDouble:
@@ -52,6 +46,24 @@ class IndexRunStoreDouble:
             "commit_id": "abc",
             "snapshot_id": "snap1",
         }
+
+    def get_run_record(self, run_id: str) -> IndexRunRecord | None:
+        if run_id != "run1":
+            return None
+        return IndexRunRecord(
+            run_id="run1",
+            repo_name="repo",
+            snapshot_id="snap1",
+            branch="main",
+            commit_id="abc",
+            idempotency_key=None,
+            status="queued",
+            error_message=None,
+            warnings_json=None,
+            created_at="2026-01-01T00:00:00Z",
+            started_at=None,
+            completed_at=None,
+        )
 
     def enqueue_publish_retry(self, **kwargs: Any) -> None:
         self.retries.append(dict(kwargs))
@@ -121,7 +133,9 @@ class TerminusPublisherDouble:
         }
 
 
-def test_publish_index_run_uses_typed_lineage_boundary() -> None:
+def test_publish_index_run_uses_typed_lineage_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     snapshot = NoDictSnapshot(
         repo_name="repo",
         snapshot_id="snap1",
@@ -131,6 +145,13 @@ def test_publish_index_run_uses_typed_lineage_boundary() -> None:
     manifest = ManifestDouble()
     index_run_store = IndexRunStoreDouble()
     publisher = TerminusPublisherDouble()
+    monkeypatch.setattr(
+        index_run_store,
+        "get_run",
+        lambda _run_id: (_ for _ in ()).throw(
+            AssertionError("PublishingService should prefer get_run_record()")
+        ),
+    )
     service = PublishingService(
         config={},
         logger=logging.getLogger(__name__),
@@ -151,6 +172,8 @@ def test_publish_index_run_uses_typed_lineage_boundary() -> None:
     result = service.publish_index_run("run1")
 
     assert result["status"] == "published"
+    assert result["manifest"]["manifest_id"] == "manifest1"
+    assert result["manifest"]["ref_name"] == "main"
     assert index_run_store.completed == ("run1", "published")
     assert publisher.published is not None
     assert publisher.published["snapshot"] is snapshot

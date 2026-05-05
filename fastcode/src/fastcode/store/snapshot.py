@@ -10,24 +10,99 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ..db_runtime import DBRuntime
 from ..ir.types import (
     IRAttachment,
+    IRCodeUnit,
     IRDocument,
     IREdge,
     IROccurrence,
+    IRRelation,
     IRSnapshot,
     IRSymbol,
+    IRUnitEmbedding,
+    IRUnitSupport,
 )
-from ..scip.models import SCIPArtifactRef
 from ..utils import ensure_dir, safe_jsonable, utc_now
-from .records import SnapshotRecord, SnapshotRefRecord
+from .records import (
+    OutboxEventRecord,
+    RedoTaskRecord,
+    SCIPArtifactRecord,
+    SnapshotRecord,
+    SnapshotRefRecord,
+)
 
 
 class SnapshotStore:
+    _SNAPSHOT_FIELDS = (
+        "snapshot_id",
+        "repo_name",
+        "branch",
+        "commit_id",
+        "tree_id",
+        "artifact_key",
+        "ir_path",
+        "ir_graphs_path",
+        "created_at",
+        "metadata_json",
+    )
+    _SNAPSHOT_REF_FIELDS = (
+        "ref_id",
+        "repo_name",
+        "branch",
+        "commit_id",
+        "tree_id",
+        "snapshot_id",
+        "created_at",
+    )
+    _SCIP_ARTIFACT_FIELDS = (
+        "snapshot_id",
+        "indexer_name",
+        "indexer_version",
+        "artifact_path",
+        "checksum",
+        "created_at",
+    )
+    _SCIP_ARTIFACT_ENTRY_FIELDS = (
+        "artifact_id",
+        "snapshot_id",
+        "sequence_no",
+        "role",
+        "indexer_name",
+        "indexer_version",
+        "artifact_path",
+        "checksum",
+        "created_at",
+        "metadata_json",
+    )
+    _REDO_TASK_FIELDS = (
+        "task_id",
+        "task_type",
+        "payload_json",
+        "status",
+        "attempts",
+        "last_error",
+        "next_attempt_at",
+        "created_at",
+        "updated_at",
+    )
+    _OUTBOX_EVENT_FIELDS = (
+        "event_id",
+        "event_type",
+        "payload",
+        "snapshot_id",
+        "status",
+        "attempts",
+        "max_attempts",
+        "created_at",
+        "last_attempt_at",
+        "error_message",
+    )
+
     def __init__(
         self, persist_dir: str, storage_cfg: dict[str, Any] | None = None
     ) -> None:
@@ -116,6 +191,415 @@ class SnapshotStore:
             "payload": dict(attachment.payload) if attachment.payload else {},
             "metadata": dict(attachment.metadata) if attachment.metadata else {},
         }
+
+    @staticmethod
+    def _payload_mapping(value: Any) -> Mapping[str, Any]:
+        if isinstance(value, Mapping):
+            return value
+        return {}
+
+    @staticmethod
+    def _required_text(payload: Mapping[str, Any], field_name: str) -> str:
+        value = payload.get(field_name)
+        if value is None:
+            raise KeyError(field_name)
+        return str(value)
+
+    @staticmethod
+    def _string_or_none(value: Any) -> str | None:
+        if value is None:
+            return None
+        return str(value)
+
+    @staticmethod
+    def _int_or_none(value: Any) -> int | None:
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _float_or_default(value: Any, *, default: float = 0.0) -> float:
+        if value is None or isinstance(value, bool):
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _sequence_items(value: Any) -> Sequence[Any]:
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray, memoryview)
+        ):
+            return value
+        if isinstance(value, (set, frozenset)):
+            return tuple(value)
+        return ()
+
+    @classmethod
+    def _string_list_payload(cls, values: Any) -> list[str]:
+        return [str(value) for value in cls._sequence_items(values) if value]
+
+    @classmethod
+    def _string_set_payload(cls, values: Any) -> set[str]:
+        return {str(value) for value in cls._sequence_items(values) if value}
+
+    @staticmethod
+    def _json_mapping_payload(value: Any) -> dict[str, Any]:
+        if not isinstance(value, Mapping):
+            return {}
+        normalized = {str(key): nested for key, nested in value.items()}
+        jsonable = safe_jsonable(normalized)
+        return jsonable if isinstance(jsonable, dict) else {}
+
+    @staticmethod
+    def _json_list_payload(value: Any) -> list[Any] | None:
+        if value is None:
+            return None
+        jsonable = safe_jsonable(value)
+        return jsonable if isinstance(jsonable, list) else None
+
+    @classmethod
+    def _code_unit_payload(cls, unit: IRCodeUnit) -> dict[str, Any]:
+        return {
+            "unit_id": unit.unit_id,
+            "kind": unit.kind,
+            "path": unit.path,
+            "language": unit.language,
+            "display_name": unit.display_name,
+            "qualified_name": unit.qualified_name,
+            "signature": unit.signature,
+            "docstring": unit.docstring,
+            "summary": unit.summary,
+            "start_line": unit.start_line,
+            "start_col": unit.start_col,
+            "end_line": unit.end_line,
+            "end_col": unit.end_col,
+            "parent_unit_id": unit.parent_unit_id,
+            "primary_anchor_symbol_id": unit.primary_anchor_symbol_id,
+            "anchor_symbol_ids": cls._string_list_payload(unit.anchor_symbol_ids),
+            "candidate_anchor_symbol_ids": cls._string_list_payload(
+                unit.candidate_anchor_symbol_ids
+            ),
+            "anchor_coverage": float(unit.anchor_coverage),
+            "source_set": cls._source_set_payload(unit.source_set),
+            "metadata": cls._json_mapping_payload(unit.metadata),
+        }
+
+    @classmethod
+    def _unit_support_payload(cls, support: IRUnitSupport) -> dict[str, Any]:
+        return {
+            "support_id": support.support_id,
+            "unit_id": support.unit_id,
+            "source": support.source,
+            "support_kind": support.support_kind,
+            "external_id": support.external_id,
+            "role": support.role,
+            "path": support.path,
+            "display_name": support.display_name,
+            "qualified_name": support.qualified_name,
+            "signature": support.signature,
+            "enclosing_external_id": support.enclosing_external_id,
+            "start_line": support.start_line,
+            "start_col": support.start_col,
+            "end_line": support.end_line,
+            "end_col": support.end_col,
+            "metadata": cls._json_mapping_payload(support.metadata),
+        }
+
+    @classmethod
+    def _relation_payload(cls, relation: IRRelation) -> dict[str, Any]:
+        return {
+            "relation_id": relation.relation_id,
+            "src_unit_id": relation.src_unit_id,
+            "dst_unit_id": relation.dst_unit_id,
+            "relation_type": relation.relation_type,
+            "resolution_state": relation.resolution_state,
+            "support_sources": cls._source_set_payload(relation.support_sources),
+            "support_ids": cls._string_list_payload(relation.support_ids),
+            "pending_capabilities": cls._source_set_payload(
+                relation.pending_capabilities
+            ),
+            "metadata": cls._json_mapping_payload(relation.metadata),
+        }
+
+    @classmethod
+    def _embedding_payload(cls, embedding: IRUnitEmbedding) -> dict[str, Any]:
+        return {
+            "embedding_id": embedding.embedding_id,
+            "unit_id": embedding.unit_id,
+            "source": embedding.source,
+            "vector": cls._json_list_payload(embedding.vector),
+            "embedding_text": embedding.embedding_text,
+            "model_id": embedding.model_id,
+            "metadata": cls._json_mapping_payload(embedding.metadata),
+        }
+
+    @classmethod
+    def _snapshot_file_payload(cls, snapshot: IRSnapshot) -> dict[str, Any]:
+        return {
+            "schema_version": "ir.v2",
+            "repo_name": snapshot.repo_name,
+            "snapshot_id": snapshot.snapshot_id,
+            "branch": snapshot.branch,
+            "commit_id": snapshot.commit_id,
+            "tree_id": snapshot.tree_id,
+            "units": [cls._code_unit_payload(unit) for unit in snapshot.units],
+            "supports": [
+                cls._unit_support_payload(support) for support in snapshot.supports
+            ],
+            "relations": [
+                cls._relation_payload(relation) for relation in snapshot.relations
+            ],
+            "embeddings": [
+                cls._embedding_payload(embedding) for embedding in snapshot.embeddings
+            ],
+            "metadata": cls._json_mapping_payload(snapshot.metadata),
+        }
+
+    @classmethod
+    def _code_unit_from_payload(cls, data: Any) -> IRCodeUnit:
+        payload = cls._payload_mapping(data)
+        return IRCodeUnit(
+            unit_id=cls._required_text(payload, "unit_id"),
+            kind=cls._required_text(payload, "kind"),
+            path=cls._required_text(payload, "path"),
+            language=cls._required_text(payload, "language"),
+            display_name=cls._required_text(payload, "display_name"),
+            qualified_name=cls._string_or_none(payload.get("qualified_name")),
+            signature=cls._string_or_none(payload.get("signature")),
+            docstring=cls._string_or_none(payload.get("docstring")),
+            summary=cls._string_or_none(payload.get("summary")),
+            start_line=cls._int_or_none(payload.get("start_line")),
+            start_col=cls._int_or_none(payload.get("start_col")),
+            end_line=cls._int_or_none(payload.get("end_line")),
+            end_col=cls._int_or_none(payload.get("end_col")),
+            parent_unit_id=cls._string_or_none(payload.get("parent_unit_id")),
+            primary_anchor_symbol_id=cls._string_or_none(
+                payload.get("primary_anchor_symbol_id")
+            ),
+            anchor_symbol_ids=cls._string_list_payload(
+                payload.get("anchor_symbol_ids")
+            ),
+            candidate_anchor_symbol_ids=cls._string_list_payload(
+                payload.get("candidate_anchor_symbol_ids")
+            ),
+            anchor_coverage=cls._float_or_default(payload.get("anchor_coverage")),
+            source_set=cls._string_set_payload(payload.get("source_set")),
+            metadata=cls._json_mapping_payload(payload.get("metadata")),
+        )
+
+    @classmethod
+    def _unit_support_from_payload(cls, data: Any) -> IRUnitSupport:
+        payload = cls._payload_mapping(data)
+        return IRUnitSupport(
+            support_id=cls._required_text(payload, "support_id"),
+            unit_id=cls._required_text(payload, "unit_id"),
+            source=cls._required_text(payload, "source"),
+            support_kind=cls._required_text(payload, "support_kind"),
+            external_id=cls._string_or_none(payload.get("external_id")),
+            role=cls._string_or_none(payload.get("role")),
+            path=cls._string_or_none(payload.get("path")),
+            display_name=cls._string_or_none(payload.get("display_name")),
+            qualified_name=cls._string_or_none(payload.get("qualified_name")),
+            signature=cls._string_or_none(payload.get("signature")),
+            enclosing_external_id=cls._string_or_none(
+                payload.get("enclosing_external_id")
+            ),
+            start_line=cls._int_or_none(payload.get("start_line")),
+            start_col=cls._int_or_none(payload.get("start_col")),
+            end_line=cls._int_or_none(payload.get("end_line")),
+            end_col=cls._int_or_none(payload.get("end_col")),
+            metadata=cls._json_mapping_payload(payload.get("metadata")),
+        )
+
+    @classmethod
+    def _relation_from_payload(cls, data: Any) -> IRRelation:
+        payload = cls._payload_mapping(data)
+        return IRRelation(
+            relation_id=cls._required_text(payload, "relation_id"),
+            src_unit_id=cls._required_text(payload, "src_unit_id"),
+            dst_unit_id=cls._required_text(payload, "dst_unit_id"),
+            relation_type=cls._required_text(payload, "relation_type"),
+            resolution_state=cls._required_text(payload, "resolution_state"),
+            support_sources=cls._string_set_payload(payload.get("support_sources")),
+            support_ids=cls._string_list_payload(payload.get("support_ids")),
+            pending_capabilities=cls._string_set_payload(
+                payload.get("pending_capabilities")
+            ),
+            metadata=cls._json_mapping_payload(payload.get("metadata")),
+        )
+
+    @classmethod
+    def _embedding_from_payload(cls, data: Any) -> IRUnitEmbedding:
+        payload = cls._payload_mapping(data)
+        return IRUnitEmbedding(
+            embedding_id=cls._required_text(payload, "embedding_id"),
+            unit_id=cls._required_text(payload, "unit_id"),
+            source=cls._required_text(payload, "source"),
+            vector=cls._json_list_payload(payload.get("vector")),
+            embedding_text=cls._string_or_none(payload.get("embedding_text")),
+            model_id=cls._string_or_none(payload.get("model_id")),
+            metadata=cls._json_mapping_payload(payload.get("metadata")),
+        )
+
+    @classmethod
+    def _document_from_payload(cls, data: Any) -> IRDocument:
+        payload = cls._payload_mapping(data)
+        return IRDocument(
+            doc_id=cls._required_text(payload, "doc_id"),
+            path=cls._required_text(payload, "path"),
+            language=cls._required_text(payload, "language"),
+            blob_oid=cls._string_or_none(payload.get("blob_oid")),
+            content_hash=cls._string_or_none(payload.get("content_hash")),
+            source_set=cls._string_set_payload(payload.get("source_set")),
+        )
+
+    @classmethod
+    def _symbol_from_payload(cls, data: Any) -> IRSymbol:
+        payload = cls._payload_mapping(data)
+        return IRSymbol(
+            symbol_id=cls._required_text(payload, "symbol_id"),
+            external_symbol_id=cls._string_or_none(payload.get("external_symbol_id")),
+            path=cls._required_text(payload, "path"),
+            display_name=cls._required_text(payload, "display_name"),
+            kind=cls._required_text(payload, "kind"),
+            language=cls._required_text(payload, "language"),
+            qualified_name=cls._string_or_none(payload.get("qualified_name")),
+            signature=cls._string_or_none(payload.get("signature")),
+            start_line=cls._int_or_none(payload.get("start_line")),
+            start_col=cls._int_or_none(payload.get("start_col")),
+            end_line=cls._int_or_none(payload.get("end_line")),
+            end_col=cls._int_or_none(payload.get("end_col")),
+            source_priority=cls._int_or_none(payload.get("source_priority")) or 0,
+            source_set=cls._string_set_payload(payload.get("source_set")),
+            metadata=cls._json_mapping_payload(payload.get("metadata")),
+        )
+
+    @classmethod
+    def _occurrence_from_payload(cls, data: Any) -> IROccurrence:
+        payload = cls._payload_mapping(data)
+        return IROccurrence(
+            occurrence_id=cls._required_text(payload, "occurrence_id"),
+            symbol_id=cls._required_text(payload, "symbol_id"),
+            doc_id=cls._required_text(payload, "doc_id"),
+            role=cls._required_text(payload, "role"),
+            start_line=cls._int_or_none(payload.get("start_line")) or 0,
+            start_col=cls._int_or_none(payload.get("start_col")) or 0,
+            end_line=cls._int_or_none(payload.get("end_line")) or 0,
+            end_col=cls._int_or_none(payload.get("end_col")) or 0,
+            source=cls._required_text(payload, "source"),
+            metadata=cls._json_mapping_payload(payload.get("metadata")),
+        )
+
+    @classmethod
+    def _edge_from_payload(cls, data: Any) -> IREdge:
+        payload = cls._payload_mapping(data)
+        return IREdge(
+            edge_id=cls._required_text(payload, "edge_id"),
+            src_id=cls._required_text(payload, "src_id"),
+            dst_id=cls._required_text(payload, "dst_id"),
+            edge_type=cls._required_text(payload, "edge_type"),
+            source=cls._required_text(payload, "source"),
+            confidence=cls._required_text(payload, "confidence"),
+            doc_id=cls._string_or_none(payload.get("doc_id")),
+            metadata=cls._json_mapping_payload(payload.get("metadata")),
+        )
+
+    @classmethod
+    def _attachment_from_payload(cls, data: Any) -> IRAttachment:
+        payload = cls._payload_mapping(data)
+        return IRAttachment(
+            attachment_id=cls._required_text(payload, "attachment_id"),
+            target_id=cls._required_text(payload, "target_id"),
+            target_type=cls._required_text(payload, "target_type"),
+            attachment_type=cls._required_text(payload, "attachment_type"),
+            source=cls._required_text(payload, "source"),
+            confidence=cls._required_text(payload, "confidence"),
+            payload=cls._json_mapping_payload(payload.get("payload")),
+            metadata=cls._json_mapping_payload(payload.get("metadata")),
+        )
+
+    @classmethod
+    def _snapshot_from_payload(cls, data: Any) -> IRSnapshot:
+        payload = cls._payload_mapping(data)
+        repo_name = cls._required_text(payload, "repo_name")
+        snapshot_id = cls._required_text(payload, "snapshot_id")
+        branch = cls._string_or_none(payload.get("branch"))
+        commit_id = cls._string_or_none(payload.get("commit_id"))
+        tree_id = cls._string_or_none(payload.get("tree_id"))
+        metadata = cls._json_mapping_payload(payload.get("metadata"))
+        if payload.get("units") is not None or payload.get("supports") is not None:
+            return IRSnapshot(
+                repo_name=repo_name,
+                snapshot_id=snapshot_id,
+                branch=branch,
+                commit_id=commit_id,
+                tree_id=tree_id,
+                units=[
+                    cls._code_unit_from_payload(unit)
+                    for unit in cls._sequence_items(payload.get("units"))
+                ],
+                supports=[
+                    cls._unit_support_from_payload(support)
+                    for support in cls._sequence_items(payload.get("supports"))
+                ],
+                relations=[
+                    cls._relation_from_payload(relation)
+                    for relation in cls._sequence_items(payload.get("relations"))
+                ],
+                embeddings=[
+                    cls._embedding_from_payload(embedding)
+                    for embedding in cls._sequence_items(payload.get("embeddings"))
+                ],
+                metadata=metadata,
+            )
+        return IRSnapshot(
+            repo_name=repo_name,
+            snapshot_id=snapshot_id,
+            branch=branch,
+            commit_id=commit_id,
+            tree_id=tree_id,
+            documents=[
+                cls._document_from_payload(document)
+                for document in cls._sequence_items(payload.get("documents"))
+            ],
+            symbols=[
+                cls._symbol_from_payload(symbol)
+                for symbol in cls._sequence_items(payload.get("symbols"))
+            ],
+            occurrences=[
+                cls._occurrence_from_payload(occurrence)
+                for occurrence in cls._sequence_items(payload.get("occurrences"))
+            ],
+            edges=[
+                cls._edge_from_payload(edge)
+                for edge in cls._sequence_items(payload.get("edges"))
+            ],
+            attachments=[
+                cls._attachment_from_payload(attachment)
+                for attachment in cls._sequence_items(payload.get("attachments"))
+            ],
+            metadata=metadata,
+        )
+
+    @classmethod
+    def _graph_json_payload(cls, value: Any, *, _depth: int = 0) -> Any:
+        if _depth > 12:
+            return repr(value)
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        if isinstance(value, Mapping):
+            return {
+                str(key): cls._graph_json_payload(nested, _depth=_depth + 1)
+                for key, nested in value.items()
+            }
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return [cls._graph_json_payload(item, _depth=_depth + 1) for item in value]
+        return repr(value)
 
     def _init_db(self) -> None:
         with self.db_runtime.connect() as conn:
@@ -483,7 +967,12 @@ class SnapshotStore:
         ir_path = os.path.join(snap_dir, "ir_snapshot.json")
         tmp_ir_path = f"{ir_path}.tmp"
         with open(tmp_ir_path, "w", encoding="utf-8") as f:
-            json.dump(snapshot.to_dict(), f, ensure_ascii=False, indent=2)
+            json.dump(
+                self._snapshot_file_payload(snapshot),
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_ir_path, ir_path)
@@ -587,9 +1076,9 @@ class SnapshotStore:
             if isinstance(graph, nx.Graph):
                 serializable[name] = nx.node_link_data(graph)
             else:
-                serializable[name] = safe_jsonable(graph)
+                serializable[name] = self._graph_json_payload(graph)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({"graphs": serializable}, f)
+            json.dump({"graphs": serializable}, f, ensure_ascii=False)
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,
@@ -661,7 +1150,7 @@ class SnapshotStore:
             return None
         with open(ir_path, encoding="utf-8") as f:
             data = json.load(f)
-        return IRSnapshot.from_dict(data)
+        return self._snapshot_from_payload(data)
 
     def get_snapshot_record(self, snapshot_id: str) -> SnapshotRecord | None:
         with self.db_runtime.connect() as conn:
@@ -686,7 +1175,8 @@ class SnapshotStore:
                 """,
                 (repo_name, commit_id),
             ).fetchone()
-        return self.db_runtime.row_to_dict(row)
+        record = self._row_to_snapshot_record(row)
+        return self._snapshot_payload(record) if record is not None else None
 
     def find_by_artifact_key(self, artifact_key: str) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
@@ -700,13 +1190,14 @@ class SnapshotStore:
                 """,
                 (artifact_key,),
             ).fetchone()
-        return self.db_runtime.row_to_dict(row)
+        record = self._row_to_snapshot_record(row)
+        return self._snapshot_payload(record) if record is not None else None
 
     def resolve_snapshot_for_ref(
         self, repo_name: str, branch: str
     ) -> dict[str, Any] | None:
         record = self.resolve_snapshot_for_ref_record(repo_name, branch)
-        return record.to_dict() if record is not None else None
+        return self._snapshot_ref_payload(record) if record is not None else None
 
     def resolve_snapshot_for_ref_record(
         self, repo_name: str, branch: str
@@ -794,24 +1285,30 @@ class SnapshotStore:
             return []
 
         created_at = utc_now()
-        normalized_artifacts: list[dict[str, Any]] = []
+        normalized_artifacts: list[SCIPArtifactRecord] = []
         for sequence_no, artifact in enumerate(artifacts):
-            metadata = dict(artifact.get("metadata") or {})
+            metadata = self._scip_metadata_mapping(artifact)
             if artifact.get("language"):
                 metadata.setdefault("language", artifact.get("language"))
-            normalized_ref = SCIPArtifactRef(
-                snapshot_id=snapshot_id,
-                indexer_name=str(artifact.get("indexer_name") or "unknown"),
-                indexer_version=artifact.get("indexer_version"),
-                artifact_path=str(artifact.get("artifact_path") or ""),
-                checksum=str(artifact.get("checksum") or ""),
-                created_at=created_at,
-            ).to_dict()
-            normalized_ref["artifact_id"] = f"{snapshot_id}:scip:{sequence_no}"
-            normalized_ref["sequence_no"] = sequence_no
-            normalized_ref["role"] = "primary" if sequence_no == 0 else "secondary"
-            normalized_ref["metadata"] = metadata
-            normalized_artifacts.append(normalized_ref)
+            normalized_artifacts.append(
+                SCIPArtifactRecord(
+                    artifact_id=f"{snapshot_id}:scip:{sequence_no}",
+                    snapshot_id=snapshot_id,
+                    sequence_no=sequence_no,
+                    role="primary" if sequence_no == 0 else "secondary",
+                    indexer_name=str(artifact.get("indexer_name") or "unknown"),
+                    indexer_version=(
+                        str(indexer_version)
+                        if (indexer_version := artifact.get("indexer_version"))
+                        is not None
+                        else None
+                    ),
+                    artifact_path=str(artifact.get("artifact_path") or ""),
+                    checksum=str(artifact.get("checksum") or ""),
+                    created_at=created_at,
+                    metadata_json=self._serialize_scip_metadata_json(metadata),
+                )
+            )
 
         primary_artifact = normalized_artifacts[0]
         with self.db_runtime.connect() as conn:
@@ -830,11 +1327,11 @@ class SnapshotStore:
                     created_at=excluded.created_at
                 """,
                 (
-                    primary_artifact["snapshot_id"],
-                    primary_artifact["indexer_name"],
-                    primary_artifact["indexer_version"],
-                    primary_artifact["artifact_path"],
-                    primary_artifact["checksum"],
+                    primary_artifact.snapshot_id,
+                    primary_artifact.indexer_name,
+                    primary_artifact.indexer_version,
+                    primary_artifact.artifact_path,
+                    primary_artifact.checksum,
                     created_at,
                 ),
             )
@@ -853,20 +1350,22 @@ class SnapshotStore:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        artifact["artifact_id"],
-                        artifact["snapshot_id"],
-                        artifact["sequence_no"],
-                        artifact["role"],
-                        artifact["indexer_name"],
-                        artifact["indexer_version"],
-                        artifact["artifact_path"],
-                        artifact["checksum"],
-                        artifact["created_at"],
-                        json.dumps(artifact.get("metadata") or {}, ensure_ascii=False),
+                        artifact.artifact_id,
+                        artifact.snapshot_id,
+                        artifact.sequence_no,
+                        artifact.role,
+                        artifact.indexer_name,
+                        artifact.indexer_version,
+                        artifact.artifact_path,
+                        artifact.checksum,
+                        artifact.created_at,
+                        artifact.metadata_json,
                     ),
                 )
             conn.commit()
-        return normalized_artifacts
+        return [
+            self._scip_artifact_entry_payload(record) for record in normalized_artifacts
+        ]
 
     def get_scip_artifact_ref(self, snapshot_id: str) -> dict[str, Any] | None:
         with self.db_runtime.connect() as conn:
@@ -875,9 +1374,9 @@ class SnapshotStore:
                 "SELECT * FROM scip_artifacts WHERE snapshot_id=?",
                 (snapshot_id,),
             ).fetchone()
-        primary = self.db_runtime.row_to_dict(row)
-        if primary is not None:
-            return primary
+        primary_record = self._row_to_scip_artifact_record(row)
+        if primary_record is not None:
+            return self._scip_artifact_payload(primary_record)
         artifacts = self.list_scip_artifact_refs(snapshot_id)
         return artifacts[0] if artifacts else None
 
@@ -893,36 +1392,234 @@ class SnapshotStore:
                 """,
                 (snapshot_id,),
             ).fetchall()
-        artifacts: list[dict[str, Any]] = []
-        for row in rows:
-            payload = self.db_runtime.row_to_dict(row) or {}
-            metadata_json = payload.pop("metadata_json", None)
-            if metadata_json:
-                try:
-                    payload["metadata"] = json.loads(metadata_json)
-                except (TypeError, json.JSONDecodeError):
-                    payload["metadata"] = {}
-            else:
-                payload["metadata"] = {}
-            artifacts.append(payload)
-        if artifacts:
-            return artifacts
+        artifact_records = [
+            record
+            for row in rows
+            if (record := self._row_to_scip_artifact_entry_record(row)) is not None
+        ]
+        if artifact_records:
+            return [
+                self._scip_artifact_entry_payload(record) for record in artifact_records
+            ]
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
                 "SELECT * FROM scip_artifacts WHERE snapshot_id=?",
                 (snapshot_id,),
             ).fetchone()
-        primary = self.db_runtime.row_to_dict(row)
-        return [primary] if primary else []
+        primary_record = self._row_to_scip_artifact_record(row)
+        return [self._scip_artifact_payload(primary_record)] if primary_record else []
+
+    @classmethod
+    def _scip_metadata_mapping(cls, artifact: dict[str, Any]) -> dict[str, Any]:
+        raw_metadata = artifact.get("metadata")
+        if not isinstance(raw_metadata, Mapping):
+            return {}
+        return {str(key): value for key, value in raw_metadata.items()}
+
+    @classmethod
+    def _json_safe_value(cls, value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {str(key): cls._json_safe_value(item) for key, item in value.items()}
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            return [cls._json_safe_value(item) for item in value]
+        if isinstance(value, set):
+            return [cls._json_safe_value(item) for item in value]
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        return repr(value)
+
+    @classmethod
+    def _serialize_scip_metadata_json(cls, metadata: dict[str, Any]) -> str:
+        return json.dumps(
+            cls._json_safe_value(metadata),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+    @staticmethod
+    def _deserialize_scip_metadata_json(raw_metadata: str | None) -> dict[str, Any]:
+        if raw_metadata is None:
+            return {}
+        try:
+            metadata = json.loads(raw_metadata)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return metadata if isinstance(metadata, dict) else {}
+
+    def _row_to_scip_artifact_record(self, row: Any) -> SCIPArtifactRecord | None:
+        snapshot_id = self._row_value(row, 0, "snapshot_id")
+        if snapshot_id is None:
+            return None
+        return SCIPArtifactRecord(
+            snapshot_id=str(snapshot_id),
+            indexer_name=str(self._row_value(row, 1, "indexer_name") or ""),
+            indexer_version=(
+                str(indexer_version)
+                if (indexer_version := self._row_value(row, 2, "indexer_version"))
+                is not None
+                else None
+            ),
+            artifact_path=str(self._row_value(row, 3, "artifact_path") or ""),
+            checksum=str(self._row_value(row, 4, "checksum") or ""),
+            created_at=str(self._row_value(row, 5, "created_at") or ""),
+        )
+
+    def _row_to_scip_artifact_entry_record(self, row: Any) -> SCIPArtifactRecord | None:
+        snapshot_id = self._row_value(row, 1, "snapshot_id")
+        if snapshot_id is None:
+            return None
+        raw_sequence_no = self._row_value(row, 2, "sequence_no")
+        return SCIPArtifactRecord(
+            artifact_id=(
+                str(artifact_id)
+                if (artifact_id := self._row_value(row, 0, "artifact_id")) is not None
+                else None
+            ),
+            snapshot_id=str(snapshot_id),
+            sequence_no=int(raw_sequence_no) if raw_sequence_no is not None else None,
+            role=(
+                str(role)
+                if (role := self._row_value(row, 3, "role")) is not None
+                else None
+            ),
+            indexer_name=str(self._row_value(row, 4, "indexer_name") or ""),
+            indexer_version=(
+                str(indexer_version)
+                if (indexer_version := self._row_value(row, 5, "indexer_version"))
+                is not None
+                else None
+            ),
+            artifact_path=str(self._row_value(row, 6, "artifact_path") or ""),
+            checksum=str(self._row_value(row, 7, "checksum") or ""),
+            created_at=str(self._row_value(row, 8, "created_at") or ""),
+            metadata_json=(
+                str(metadata_json)
+                if (metadata_json := self._row_value(row, 9, "metadata_json"))
+                is not None
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _scip_artifact_payload(record: SCIPArtifactRecord) -> dict[str, Any]:
+        return {
+            "snapshot_id": record.snapshot_id,
+            "indexer_name": record.indexer_name,
+            "indexer_version": record.indexer_version,
+            "artifact_path": record.artifact_path,
+            "checksum": record.checksum,
+            "created_at": record.created_at,
+        }
+
+    @classmethod
+    def _scip_artifact_entry_payload(cls, record: SCIPArtifactRecord) -> dict[str, Any]:
+        payload = cls._scip_artifact_payload(record)
+        payload.update(
+            {
+                "artifact_id": record.artifact_id,
+                "sequence_no": record.sequence_no,
+                "role": record.role,
+                "metadata": cls._deserialize_scip_metadata_json(record.metadata_json),
+            }
+        )
+        return payload
 
     def _row_to_snapshot_record(self, row: Any) -> SnapshotRecord | None:
-        payload = self.db_runtime.row_to_dict(row)
-        return SnapshotRecord.from_dict(payload) if payload is not None else None
+        snapshot_id = self._row_value(row, 0, "snapshot_id")
+        if snapshot_id is None:
+            return None
+        return SnapshotRecord(
+            snapshot_id=str(snapshot_id),
+            repo_name=str(self._row_value(row, 1, "repo_name") or ""),
+            branch=(
+                str(branch)
+                if (branch := self._row_value(row, 2, "branch")) is not None
+                else None
+            ),
+            commit_id=(
+                str(commit_id)
+                if (commit_id := self._row_value(row, 3, "commit_id")) is not None
+                else None
+            ),
+            tree_id=(
+                str(tree_id)
+                if (tree_id := self._row_value(row, 4, "tree_id")) is not None
+                else None
+            ),
+            artifact_key=str(self._row_value(row, 5, "artifact_key") or ""),
+            ir_path=str(self._row_value(row, 6, "ir_path") or ""),
+            ir_graphs_path=(
+                str(ir_graphs_path)
+                if (ir_graphs_path := self._row_value(row, 7, "ir_graphs_path"))
+                is not None
+                else None
+            ),
+            created_at=str(self._row_value(row, 8, "created_at") or ""),
+            metadata_json=(
+                str(metadata_json)
+                if (metadata_json := self._row_value(row, 9, "metadata_json"))
+                is not None
+                else None
+            ),
+        )
 
     def _row_to_snapshot_ref_record(self, row: Any) -> SnapshotRefRecord | None:
-        payload = self.db_runtime.row_to_dict(row)
-        return SnapshotRefRecord.from_dict(payload) if payload is not None else None
+        snapshot_id = self._row_value(row, 5, "snapshot_id")
+        if snapshot_id is None:
+            return None
+        ref_id_value = self._row_value(row, 0, "ref_id")
+        return SnapshotRefRecord(
+            ref_id=int(ref_id_value) if ref_id_value is not None else None,
+            repo_name=str(self._row_value(row, 1, "repo_name") or ""),
+            branch=(
+                str(branch)
+                if (branch := self._row_value(row, 2, "branch")) is not None
+                else None
+            ),
+            commit_id=(
+                str(commit_id)
+                if (commit_id := self._row_value(row, 3, "commit_id")) is not None
+                else None
+            ),
+            tree_id=(
+                str(tree_id)
+                if (tree_id := self._row_value(row, 4, "tree_id")) is not None
+                else None
+            ),
+            snapshot_id=str(snapshot_id),
+            created_at=str(self._row_value(row, 6, "created_at") or ""),
+        )
+
+    @staticmethod
+    def _row_value(row: Any, index: int, key: str) -> Any:
+        if row is None:
+            return None
+        if isinstance(row, dict):
+            return row.get(key)
+        try:
+            return row[key]
+        except (IndexError, KeyError, TypeError):
+            try:
+                return row[index]
+            except (IndexError, KeyError, TypeError):
+                return None
+
+    @classmethod
+    def _snapshot_payload(cls, record: SnapshotRecord) -> dict[str, Any]:
+        return {
+            field_name: getattr(record, field_name)
+            for field_name in cls._SNAPSHOT_FIELDS
+        }
+
+    @classmethod
+    def _snapshot_ref_payload(cls, record: SnapshotRefRecord) -> dict[str, Any]:
+        return {
+            field_name: getattr(record, field_name)
+            for field_name in cls._SNAPSHOT_REF_FIELDS
+        }
 
     def import_git_backbone(
         self, snapshot: IRSnapshot, git_meta: dict[str, Any] | None = None
@@ -1361,7 +2058,10 @@ class SnapshotStore:
             if not row:
                 conn.commit()
                 return None
-            task = self.db_runtime.row_to_dict(row) or {}
+            task_record = self._row_to_redo_task_record(row)
+            if task_record is None:
+                conn.commit()
+                return None
             self.db_runtime.execute(
                 conn,
                 """
@@ -1369,11 +2069,13 @@ class SnapshotStore:
                 SET status='running', attempts=attempts+1, updated_at=?
                 WHERE task_id=?
                 """,
-                (now, task.get("task_id")),
+                (now, task_record.task_id),
             )
             conn.commit()
+        task = self._redo_task_payload(task_record)
         task["status"] = "running"
-        task["attempts"] = int(task.get("attempts") or 0) + 1
+        task["attempts"] = task_record.attempts + 1
+        task["updated_at"] = now
         return task
 
     def mark_redo_task_done(self, task_id: str) -> None:
@@ -1402,7 +2104,7 @@ class SnapshotStore:
                 "SELECT attempts FROM redo_tasks WHERE task_id=?",
                 (task_id,),
             ).fetchone()
-            attempts = int((row or {}).get("attempts") or 0)
+            attempts = int(self._row_value(row, 0, "attempts") or 0)
             if attempts >= max_attempts:
                 self.db_runtime.execute(
                     conn,
@@ -1461,6 +2163,7 @@ class SnapshotStore:
         """Claim pending or retryable failed events from the outbox."""
         if self.db_runtime.backend != "postgres":
             return []
+        now = utc_now()
         with self.db_runtime.connect() as conn:
             rows = self.db_runtime.execute(
                 conn,
@@ -1479,7 +2182,9 @@ class SnapshotStore:
                 return []
             claimed: list[dict[str, Any]] = []
             for row in rows:
-                event = self.db_runtime.row_to_dict(row) or {}
+                event_record = self._row_to_outbox_event_record(row)
+                if event_record is None:
+                    continue
                 self.db_runtime.execute(
                     conn,
                     """
@@ -1487,9 +2192,11 @@ class SnapshotStore:
                     SET status = 'in_progress', last_attempt_at = ?
                     WHERE event_id = ?
                     """,
-                    (utc_now(), event["event_id"]),
+                    (now, event_record.event_id),
                 )
+                event = self._outbox_event_payload(event_record)
                 event["status"] = "in_progress"
+                event["last_attempt_at"] = now
                 claimed.append(event)
             conn.commit()
         return claimed
@@ -1520,8 +2227,8 @@ class SnapshotStore:
                 "SELECT attempts, max_attempts FROM publish_outbox WHERE event_id = ?",
                 (event_id,),
             ).fetchone()
-            attempts = int((row or {}).get("attempts") or 0) + 1
-            max_attempts = int((row or {}).get("max_attempts") or 5)
+            attempts = int(self._row_value(row, 0, "attempts") or 0) + 1
+            max_attempts = int(self._row_value(row, 1, "max_attempts") or 5)
             if attempts >= max_attempts:
                 self.db_runtime.execute(
                     conn,
@@ -1557,4 +2264,85 @@ class SnapshotStore:
                    OR (status = 'failed' AND attempts < max_attempts)
                 """,
             ).fetchone()
-        return int((row or {}).get("cnt") or 0)
+        return int(self._row_value(row, 0, "cnt") or 0)
+
+    def _row_to_redo_task_record(self, row: Any) -> RedoTaskRecord | None:
+        task_id = self._row_value(row, 0, "task_id")
+        if task_id is None:
+            return None
+        return RedoTaskRecord(
+            task_id=str(task_id),
+            task_type=str(self._row_value(row, 1, "task_type") or ""),
+            payload_json=str(self._row_value(row, 2, "payload_json") or ""),
+            status=str(self._row_value(row, 3, "status") or ""),
+            attempts=int(self._row_value(row, 4, "attempts") or 0),
+            last_error=(
+                str(last_error)
+                if (last_error := self._row_value(row, 5, "last_error")) is not None
+                else None
+            ),
+            next_attempt_at=(
+                str(next_attempt_at)
+                if (next_attempt_at := self._row_value(row, 6, "next_attempt_at"))
+                is not None
+                else None
+            ),
+            created_at=str(self._row_value(row, 7, "created_at") or ""),
+            updated_at=str(self._row_value(row, 8, "updated_at") or ""),
+        )
+
+    @staticmethod
+    def _redo_task_payload(record: RedoTaskRecord) -> dict[str, Any]:
+        return {
+            "task_id": record.task_id,
+            "task_type": record.task_type,
+            "payload_json": record.payload_json,
+            "status": record.status,
+            "attempts": record.attempts,
+            "last_error": record.last_error,
+            "next_attempt_at": record.next_attempt_at,
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+        }
+
+    def _row_to_outbox_event_record(self, row: Any) -> OutboxEventRecord | None:
+        event_id = self._row_value(row, 0, "event_id")
+        if event_id is None:
+            return None
+        return OutboxEventRecord(
+            event_id=str(event_id),
+            event_type=str(self._row_value(row, 1, "event_type") or ""),
+            payload=str(self._row_value(row, 2, "payload") or ""),
+            snapshot_id=str(self._row_value(row, 3, "snapshot_id") or ""),
+            status=str(self._row_value(row, 4, "status") or ""),
+            attempts=int(self._row_value(row, 5, "attempts") or 0),
+            max_attempts=int(self._row_value(row, 6, "max_attempts") or 0),
+            created_at=str(self._row_value(row, 7, "created_at") or ""),
+            last_attempt_at=(
+                str(last_attempt_at)
+                if (last_attempt_at := self._row_value(row, 8, "last_attempt_at"))
+                is not None
+                else None
+            ),
+            error_message=(
+                str(error_message)
+                if (error_message := self._row_value(row, 9, "error_message"))
+                is not None
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _outbox_event_payload(record: OutboxEventRecord) -> dict[str, Any]:
+        return {
+            "event_id": record.event_id,
+            "event_type": record.event_type,
+            "payload": record.payload,
+            "snapshot_id": record.snapshot_id,
+            "status": record.status,
+            "attempts": record.attempts,
+            "max_attempts": record.max_attempts,
+            "created_at": record.created_at,
+            "last_attempt_at": record.last_attempt_at,
+            "error_message": record.error_message,
+        }

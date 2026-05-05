@@ -16,6 +16,7 @@ from fastcode.ir.types import (
     IRRelation,
     IRSnapshot,
     IRSymbol,
+    IRUnitEmbedding,
     IRUnitSupport,
 )
 
@@ -89,6 +90,69 @@ def _edge(
         source=source,
         confidence="heuristic",
     )
+
+
+def test_merge_clone_avoids_dict_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
+    snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:1",
+        units=[
+            IRCodeUnit(
+                unit_id="unit:file:a.py",
+                kind="file",
+                path="a.py",
+                language="python",
+                display_name="a.py",
+                source_set={"fc_structure"},
+                metadata={"blob_oid": "abc"},
+            )
+        ],
+        supports=[
+            IRUnitSupport(
+                support_id="sup:1",
+                unit_id="unit:file:a.py",
+                source="fc_structure",
+                support_kind="document",
+                metadata={"role": "file"},
+            )
+        ],
+        relations=[
+            IRRelation(
+                relation_id="rel:1",
+                src_unit_id="unit:file:a.py",
+                dst_unit_id="unit:file:a.py",
+                relation_type="contain",
+                resolution_state="structural",
+                support_sources={"fc_structure"},
+                metadata={"source": "fc_structure"},
+            )
+        ],
+        embeddings=[
+            IRUnitEmbedding(
+                embedding_id="emb:1",
+                unit_id="unit:file:a.py",
+                source="fc_embedding",
+                vector=[0.1, 0.2],
+                metadata={"model": "test"},
+            )
+        ],
+    )
+
+    def _boom(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise AssertionError("merge clone must not call to_dict()")
+
+    monkeypatch.setattr(IRCodeUnit, "to_dict", _boom)
+    monkeypatch.setattr(IRUnitSupport, "to_dict", _boom)
+    monkeypatch.setattr(IRRelation, "to_dict", _boom)
+    monkeypatch.setattr(IRUnitEmbedding, "to_dict", _boom)
+
+    result = merge_ir(snapshot, None)
+
+    assert result is not snapshot
+    assert result.units[0] is not snapshot.units[0]
+    assert result.supports[0] is not snapshot.supports[0]
+    assert result.relations[0] is not snapshot.relations[0]
+    assert result.embeddings[0] is not snapshot.embeddings[0]
 
 
 def _att(

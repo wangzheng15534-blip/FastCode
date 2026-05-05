@@ -10,7 +10,7 @@ and embeddings while replacing changed-file content with fresh extraction.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dc_replace
 
 from ..ir.types import (
     IRCodeUnit,
@@ -177,14 +177,17 @@ def _merge_supports(
             support.source, preserve_sources_for_modified_paths
         ):
             continue
-        payload = support.to_dict()
-        payload["unit_id"] = replacement_id
-        payload["support_id"] = f"relink:{support.support_id}"
-        metadata = dict(payload.get("metadata") or {})
+        metadata = dict(support.metadata or {})
         metadata["relinked_from_unit_id"] = support.unit_id
         metadata["relink_reason"] = "source_owned_incremental_preserve"
-        payload["metadata"] = metadata
-        merged.append(IRUnitSupport.from_dict(payload))
+        merged.append(
+            dc_replace(
+                support,
+                unit_id=replacement_id,
+                support_id=f"relink:{support.support_id}",
+                metadata=metadata,
+            )
+        )
 
     seen = {_support_key(support) for support in merged}
     for support in new_supports:

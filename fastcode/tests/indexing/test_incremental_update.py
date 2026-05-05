@@ -6,6 +6,8 @@ Each test is self-contained with its own factory functions.
 
 from __future__ import annotations
 
+import pytest
+
 from fastcode.indexing.incremental import (
     FileChangeSet,
     apply_incremental_update,
@@ -649,6 +651,58 @@ class TestApplyIncrementalUpdate:
             and relation.metadata["relink_reason"]
             == "source_owned_incremental_preserve"
             for relation in result.relations
+        )
+
+    def test_relinked_preserved_supports_do_not_round_trip_through_dicts(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        old_func = _make_symbol_unit(
+            "b.py",
+            "func",
+            unit_id="unit:sym:b.py:func:old",
+        )
+        new_func = _make_symbol_unit(
+            "b.py",
+            "func",
+            unit_id="unit:sym:b.py:func:new",
+        )
+        old = _build_simple_snapshot(
+            {"b.py": "h2"},
+            extra_units=[old_func],
+            supports=[
+                IRUnitSupport(
+                    support_id="sup:scip:old",
+                    unit_id="unit:sym:b.py:func:old",
+                    source="scip",
+                    support_kind="occurrence",
+                    role="definition",
+                    path="b.py",
+                )
+            ],
+        )
+        new = _build_simple_snapshot(
+            {"b.py": "h2_new"},
+            extra_units=[new_func],
+            snapshot_id="snap:test:new",
+            commit_id="new123",
+        )
+
+        def _boom(*_args: object, **_kwargs: object) -> dict[str, object]:
+            raise AssertionError("incremental relink must not call to_dict()")
+
+        monkeypatch.setattr(IRUnitSupport, "to_dict", _boom)
+
+        result = apply_incremental_update(
+            old,
+            new,
+            FileChangeSet(modified=["b.py"]),
+            preserve_sources_for_modified_paths={"scip"},
+        )
+
+        assert any(
+            support.source == "scip" and support.unit_id == "unit:sym:b.py:func:new"
+            for support in result.supports
         )
 
     def test_unlisted_source_owned_supports_are_not_preserved(self) -> None:

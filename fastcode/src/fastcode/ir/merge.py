@@ -6,6 +6,7 @@ Merge structure units and SCIP anchors into a canonical unit-grounded snapshot.
 from __future__ import annotations
 
 from collections import defaultdict
+from copy import deepcopy
 
 import networkx as nx
 
@@ -34,19 +35,19 @@ CONTAINER_KINDS = {"class", "interface", "enum"}
 
 
 def _clone_unit(unit: IRCodeUnit) -> IRCodeUnit:
-    return IRCodeUnit.from_dict(unit.to_dict())
+    return deepcopy(unit)
 
 
 def _clone_support(support: IRUnitSupport) -> IRUnitSupport:
-    return IRUnitSupport.from_dict(support.to_dict())
+    return deepcopy(support)
 
 
 def _clone_relation(relation: IRRelation) -> IRRelation:
-    return IRRelation.from_dict(relation.to_dict())
+    return deepcopy(relation)
 
 
 def _clone_embedding(embedding: IRUnitEmbedding) -> IRUnitEmbedding:
-    return IRUnitEmbedding.from_dict(embedding.to_dict())
+    return deepcopy(embedding)
 
 
 def _kind_compatible(ast_kind: str, scip_kind: str) -> bool:

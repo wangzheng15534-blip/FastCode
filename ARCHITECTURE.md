@@ -97,6 +97,9 @@ The repo currently enforces these rules in code, tests, and module-local
    - Shell packages must not mass-assign with `**model_dump()` or `**__dict__`.
    - Mapping between API payloads, runtime config, IR records, and store records
      must be visible in code.
+   - Active hot paths should prefer typed records or explicit field serializers
+     over generic `to_dict()`, `from_dict()`, `row_to_dict()`, or recursive
+     `safe_jsonable()` cleanup.
 
 5. Inner packages do not read environment directly.
    - `indexing`, `query`, `retrieval`, `store`, `mcp`, `schemas`, and related
@@ -146,6 +149,10 @@ Already-landed areas include:
 - frozen runtime config in `schemas/config.py`
 - typed snapshot and manifest records
 - typed store-facing record flows in parts of persistence
+- explicit `CodeElement` serializers for retrieval, graph persistence, and
+  index-storage boundaries
+- explicit snapshot-file serializers in `store/snapshot.py` instead of routing
+  persistence through `IRSnapshot.to_dict()` / `IRSnapshot.from_dict()`
 
 Still incomplete:
 
@@ -170,6 +177,8 @@ Current hardened properties:
 - persisted SCIP lineage metadata
 - helper-backed semantic upgrades with structural fallback
 - snapshot-level regression coverage around reuse and concurrency
+- explicit storage materialization for vector-store, PG retrieval, and
+  unit-artifact boundaries instead of generic `CodeElement.to_dict()` expansion
 
 ### Incrementality
 
@@ -255,6 +264,9 @@ Current design rule:
 
 - infrastructure returns typed records and primitives where possible
 - higher-level store code should not depend on API schemas or transport shells
+- compatibility dict-return helpers may remain for callers, but active internal
+  persistence and queue paths should reconstruct rows through explicit typed
+  adapters
 
 ## Shells and entrypoints
 

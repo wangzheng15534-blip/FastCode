@@ -92,6 +92,8 @@ Stable release should mean all of the following are true at once:
   - `SnapshotRecord` frozen dataclass with `to_dict()`/`from_dict()`
   - `get_snapshot_record()` and `save_snapshot()` return typed records instead of raw dicts
   - All call sites migrated from bracket access to attribute access
+  - `store.records` now also defines typed `SCIPArtifactRecord`, `RedoTaskRecord`, and `OutboxEventRecord` boundaries for active snapshot-store queue/artifact flows
+  - `store.records` now also defines typed `ProjectionBuildRecord` and `ProjectionDirtyScopeRecord` boundaries for active projection-store lookup/dirty-scope flows
 - Snapshot query concurrency safety:
   - `query_snapshot` serializes load+query with a `threading.Lock`
   - Thread-barrier regression tests (2 and 3 concurrent callers) verify artifact isolation
@@ -116,6 +118,36 @@ Stable release should mean all of the following are true at once:
   - `PublishingService` and the active index pipeline call the typed lineage publisher; the dict-based publisher API remains as a compatibility shim
 - API shell serialization hardening:
   - REST and web query/session endpoints now use explicit source and dialogue serializers from `api/serialization.py` instead of generic recursive `safe_jsonable()` conversion
+- Manifest/index-run boundary hardening:
+  - `store/manifest.py` now reconstructs and serializes manifest payloads through explicit field mappings instead of `row_to_dict() -> ManifestRecord.from_dict()/to_dict()` round-trips on hot paths
+  - `store/index_run.py` now materializes run/publish-task payloads through explicit row field extraction, and claimed publish tasks return the post-claim `running`/incremented-attempt state
+  - `store/index_run.py` now also exposes typed `IndexRunRecord` / `PublishTaskRecord` accessors, and active publishing/indexing callers prefer those record APIs instead of dict payloads
+- Unit-artifact boundary hardening:
+  - `store/unit_artifacts.py` now reconstructs listed unit payloads through explicit row field extraction instead of `row_to_dict()`, and metadata JSON serialization is bounded to the metadata subtree with opaque values falling back to stable `repr(...)` strings
+- Snapshot-record boundary hardening:
+  - `store/snapshot.py` now reconstructs snapshot and snapshot-ref records through explicit row field extraction and uses explicit compatibility serializers for `find_by_*` / `resolve_snapshot_for_ref` dict-return helpers instead of `row_to_dict() -> from_dict()/to_dict()` round-trips on those active paths
+  - `store/snapshot.py` now owns explicit snapshot-file serializers/deserializers for `save_snapshot()` / `load_snapshot()` instead of delegating the persistence boundary to `IRSnapshot.to_dict()` / `IRSnapshot.from_dict()`
+  - active SCIP artifact read/write paths now use explicit typed artifact records instead of `SCIPArtifactRef.to_dict()` and `row_to_dict()` round-trips, and lineage metadata JSON serialization is bounded to the metadata subtree with opaque values falling back to stable `repr(...)` strings
+  - redo-task and publish-outbox claim/failure paths now use explicit typed row extraction, and claimed payloads return the post-claim `running` / `in_progress` state with current timestamps and counters
+- Projection boundary hardening:
+  - `store/projection.py` now reconstructs dirty-scope and build payloads through explicit typed row adapters and explicit compatibility serializers instead of tuple-shaped row unpacking directly into ad hoc dict payloads
+  - `indexing/projection.py` now hashes scope parameters and materializes built projection payloads through explicit field serializers instead of `ProjectionScope.to_dict()` / `ProjectionBuildResult.to_dict()`
+- Cache boundary hardening:
+  - `store/cache.py` now persists dialogue turns and session indexes through typed `DialogueTurnRecord` / `DialogueSessionRecord` payload serializers and exposes typed record accessors alongside compatibility dict-return helpers
+  - active query/session callers now prefer typed cache session records where they only need turn counts or `multi_turn` flags
+- Indexer boundary hardening:
+  - `indexing/indexer.py` now serializes import payloads explicitly and reuses the serialized import list for file hash/metadata derivation instead of repeated `ImportInfo.to_dict()` expansion
+  - active extract/incremental embedding handoff now builds a minimal explicit element payload for the embedder instead of deep-copying full `CodeElement.to_dict()` payloads on the hot path
+- Index pipeline boundary hardening:
+  - `indexing/pipeline.py` now materializes vector-store and PG-upsert element payloads through explicit serializers on the active snapshot indexing path instead of `CodeElement.to_dict()` expansion plus in-place metadata mutation
+- Retrieval boundary hardening:
+  - `ir/element.py` now exposes explicit `serialize_code_element(...)` and `deserialize_code_element(...)` adapters so retrieval shells can materialize and rehydrate stable element payloads without recursive dataclass expansion or `CodeElement(**payload)` mass-assignment
+  - `retrieval/hybrid.py` and `retrieval/core/fusion.py` now build keyword/file/type/graph-expansion/doc-projection result payloads and BM25 persistence payloads through explicit `CodeElement` serialization instead of repeated `CodeElement.to_dict()` calls on active paths
+  - `retrieval/iterative.py` now serializes agent-selected class/function hits and file-level indexed lookups through explicit element payloads instead of `CodeElement.to_dict()` expansion on active agency-mode selection paths
+  - `retrieval/hybrid.py` and `main/fastcode.py` now reload persisted BM25 element payloads through the explicit deserializer instead of `CodeElement(**payload)` expansion on active cache/load paths
+- Legacy graph boundary hardening:
+  - `graph/build.py` now persists compatibility graph element indices through explicit element serializers instead of `CodeElement.to_dict()` calls
+  - `graph/build.py` now reloads and merges persisted graph element payloads through the explicit element deserializer instead of `CodeElement(**payload)` expansion, while preserving the existing duplicate-name recovery behavior via `element_by_id`
 - Object materialization hardening:
   - PostgreSQL semantic fallback now keeps candidate vectors in NumPy arrays and only JSON-decodes metadata for ranked results returned across the Python boundary
   - repository overview persistence now writes an explicit JSON manifest plus NumPy embedding archive, lets metadata-only callers skip the embedding archive entirely, and only JSON-decodes ranked overview metadata for returned rows
@@ -124,6 +156,13 @@ Stable release should mean all of the following are true at once:
   - REST API repository load/index/cache-load/multi-index/upload paths offload blocking work with `asyncio.to_thread`
   - web UI upload and upload+index paths offload ZIP extraction, repository load, and indexing
   - REST API and web UI delete/cache/refresh maintenance endpoints offload blocking mutations
+- API upload/CORS hardening:
+  - REST and web ZIP upload paths now validate archive members before extraction, rejecting traversal, absolute paths, symlinks/special files, oversized members, excessive file counts, and suspicious expansion ratios
+  - repository ZIP loading in `RepositoryLoader` uses the same safe extraction helper instead of raw `ZipFile.extractall()`
+  - CORS defaults are no longer wildcard; allowed origins and credentials are controlled by explicit environment settings
+- Service singleton lock hardening:
+  - `FastCode` now exposes a service-level reentrant state lock around repository load/index, snapshot pipeline, projection build, query/query-stream, multi-repo cache load, delete, cleanup, and shutdown flows
+  - REST and web load+index/upload+index helpers now execute the combined mutation under one service critical section, preventing interleaving between repository replacement and indexing
 - Lock fencing hardening:
   - PostgreSQL same-owner lock refresh preserves the current fencing token instead of invalidating in-flight work
 - Package-root import-boundary hardening:
@@ -452,9 +491,8 @@ The template philosophy remains correct for Python: use one importable package w
 Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 
 **Current gaps visible in code:**
-- `store/index_run.py` still returns raw dict payloads for claimed tasks and run lookups
 - `store/manifest.py` and `store/snapshot.py` still expose mixed record/dict APIs instead of converging on typed records
-- `store/projection.py`, `store/cache.py`, `store/vector.py`, and `store/pg_retrieval.py` remain heavily dict-oriented at public boundaries
+- `store/projection.py`, `store/cache.py`, `store/vector.py`, and `store/pg_retrieval.py` remain heavily dict-oriented at public compatibility boundaries even where active row materialization is now typed
 - query/retrieval paths still use dict-shaped rows as a primary interchange format instead of a small typed boundary model set
 - `schemas/__init__.py` and `schemas/api.py` correctly isolate Pydantic, but the rest of the system has not fully converged on explicit translation adapters
 
@@ -464,8 +502,7 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - `schemas.core_types` and `store.records` for frozen dataclass interchange
   - adapters that translate field-by-field between boundary, core, and persistence forms
 - eliminate mixed dict/record public APIs where possible:
-  - add typed `IndexRunRecord` / publish-task records
-  - add typed SCIP artifact ref records
+  - promote typed snapshot artifact/redo/outbox records into public `*_record()` accessors where those surfaces are stable
   - add typed projection/build/session/cache metadata records where those payloads are stable enough
 - make store modules prefer `*_record()` style APIs and treat dict-returning helpers as compatibility shims
 - keep retrieval-core purity strict:
@@ -489,20 +526,41 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 **Current audit findings:**
 - generic JSON normalization is now narrower, but still present in remaining shell/storage edges:
   - `utils/json.py:safe_jsonable()` recursively converts dict/list/set/object trees
-  - `store/snapshot.py` still relies on generic safe-json conversion for non-`networkx` graph persistence
   - `api/routes.py` and `api/web.py` now use explicit source/dialogue serializers, but other API payloads still pass through dict-shaped records
 - store persistence still serializes JSON payloads at DB boundaries, but some hot rows now avoid full object expansion:
-  - `store/snapshot.py` relational facts now use explicit field serializers instead of `json.dumps(obj.to_dict())`
-  - `store/pg_retrieval.py` now emits explicit typed element payloads for `metadata_json` instead of generic whole-element cleanup, but `store/manifest.py`, `store/index_run.py`, and `store/projection.py` still expose dict-shaped boundaries in places
+- `store/snapshot.py` relational facts now use explicit field serializers instead of `json.dumps(obj.to_dict())`
+- `store/snapshot.py` snapshot/snapshot-ref lookup helpers now use explicit typed row reconstruction and explicit compatibility serializers on active lookup paths
+- `store/snapshot.py` snapshot-file save/load paths now use store-owned explicit IR payload serializers instead of `IRSnapshot.to_dict()` / `IRSnapshot.from_dict()` round-trips, and non-`networkx` graph persistence now uses a narrow JSON walker instead of generic object normalization
+- active `store/snapshot.py` SCIP artifact, redo-task, and publish-outbox paths now materialize rows through explicit typed record adapters instead of `row_to_dict()`
+- `store/projection.py` now reconstructs active dirty-scope/build rows through typed record adapters and explicit compatibility serializers
+- `store/index_run.py` now exposes typed run/publish-task records and active publishing/indexing callers prefer those record APIs, but compatibility dict-return helpers still remain
+- `store/cache.py` now reconstructs active dialogue/session cache payloads through typed records and explicit compatibility serializers instead of mutating ad hoc dict payloads in place
+- `store/pg_retrieval.py` now emits explicit typed element payloads for `metadata_json`, and `store/manifest.py` now uses explicit row-field serializers on active paths, but compatibility dict-return APIs still expose dict-shaped boundaries in places
 - vector/cache paths copy embeddings through Python containers:
   - `indexing/embedder.py` now stores cached embeddings as native `float32` byte buffers
-  - `store/cache.py` now writes dialogue/session/query payloads as explicit JSON envelopes and embedding payloads as length-prefixed buffer envelopes; generic `get()/set()` remains for legacy or untyped callers
+  - `store/cache.py` now writes typed dialogue/session/query payloads as explicit JSON envelopes and embedding payloads as length-prefixed buffer envelopes; generic `get()/set()` remains for legacy or untyped callers
   - `store/vector.py` now persists repository overview metadata as an explicit JSON manifest plus NumPy embedding archive and lets metadata-only overview callers avoid loading embedding payloads
   - `store/pg_retrieval.py` no longer duplicates embeddings into JSON metadata, but still materializes `list[float]`/vector-literal form at the PG vector boundary
   - `store/pg_retrieval.py` still receives fallback search vectors through DB row arrays, but ranks them as a NumPy matrix before metadata inflation
+- unit artifact persistence is narrower, but still dict-shaped:
+  - `store/unit_artifacts.py` no longer uses generic row normalization on list/load paths and now serializes only the metadata subtree explicitly
+  - it still persists unit metadata as JSON text plus a dict-shaped compatibility payload for callers
 - publishing/integration edges are partially hardened:
   - Terminus lineage publishing now accepts typed `IRSnapshot` objects and avoids full snapshot `to_dict()` expansion in `PublishingService` and the active index pipeline
-  - remaining copy points include JSON outbox payload strings, dict-shaped manifest return payloads, and the legacy dict publisher API kept for compatibility
+  - `PublishingService` now also returns compatibility manifest payloads through an explicit field serializer instead of `manifest.to_dict()`
+  - remaining copy points include JSON outbox payload strings and the legacy dict publisher API kept for compatibility
+- indexing hot paths are narrower:
+  - `indexing/indexer.py` now serializes imports explicitly and reuses the serialized import list for file-level hashes/metadata instead of repeated `ImportInfo.to_dict()` calls
+  - active embedder handoff now passes a minimal explicit element payload instead of deep-copying full `CodeElement.to_dict()` payloads before embedding
+  - `indexing/pipeline.py` now materializes unit-artifact refresh/replace rows through explicit `CodeElement`/mapping serializers instead of a generic `to_dict()` fallback, and it no longer mutates input metadata while enriching those rows
+- snapshot indexing materialization is narrower:
+  - `indexing/pipeline.py` now stages vector-store and PG retrieval payloads from explicit serialized element views instead of expanding each `CodeElement` with `to_dict()` and mutating live element metadata for transport-only fields
+- retrieval result assembly is narrower:
+  - `retrieval/hybrid.py` and `retrieval/core/fusion.py` now materialize result elements through explicit `serialize_code_element(...)` payloads instead of repeated `CodeElement.to_dict()` calls for keyword hits, file/type helpers, graph expansion, projected-only doc backfill, and BM25 persistence
+  - `retrieval/iterative.py` now uses the same explicit serializer for agent-found file/class/function result rows instead of expanding full `CodeElement.to_dict()` payloads during selection-to-result conversion
+  - persisted BM25 reload paths in `retrieval/hybrid.py` and `main/fastcode.py` now rehydrate `CodeElement` objects through an explicit adapter instead of `CodeElement(**payload)` mass-assignment
+- graph artifact boundaries are narrower:
+  - `graph/build.py` now writes compatibility graph element indices through explicit `serialize_code_element(...)` payloads and rehydrates persisted `element_by_name` / `element_by_id` entries through `deserialize_code_element(...)` on load/merge instead of `CodeElement.to_dict()` / `CodeElement(**payload)` round-trips
 
 **Direction:** "Zero-copy" is only realistic where data remains in native buffers or immutable typed views end to end. In pure Python object graphs, the release target should be:
 - zero extra copies across native/vector boundaries where possible
@@ -542,6 +600,9 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 - embedding path:
   - `indexing/embedder.py` now writes cached vectors as `float32` byte buffers and reconstructs cache hits with `np.frombuffer(...)`
   - stale pre-buffer list payloads are treated as cache misses and overwritten with the current binary format
+  - `indexing/indexer.py` now hands the embedder a minimal explicit payload instead of materializing full `CodeElement.to_dict()` copies for every indexed element
+- retrieval result path:
+  - `retrieval/hybrid.py` and `retrieval/core/fusion.py` now defer `CodeElement` materialization to explicit final result serializers instead of expanding full dataclass payloads through `to_dict()` in keyword/graph/doc-projection helper paths
 - PostgreSQL retrieval path:
   - `store/pg_retrieval.py` now strips raw embedding arrays from `metadata_json` before insert so vector payloads are not duplicated in JSON storage
   - it still converts embeddings to Python lists/vector literals for the current pgvector/array insert path
@@ -593,15 +654,17 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 
 ### P0.7 API and file-upload security hardening
 
-**Gap:** Blocking upload/index work is now offloaded, but upload extraction is still not release-grade security.
+**Gap:** Upload extraction and CORS defaults are hardened, but mutation endpoint auth/deployment policy is still not stable-release complete.
+
+**Recently landed:**
+- Raw `ZipFile.extractall()` was replaced on active upload and repository ZIP load paths with safe member validation.
+- Archive validation rejects absolute paths, traversal, symlinks/special files, excessive member counts, oversized extracted payloads, and suspicious compression ratios.
+- CORS defaults are local-origin only and configurable through explicit environment settings.
+- Regression tests cover malicious archive entries, expansion limits, and non-wildcard CORS defaults.
 
 **Required work:**
-- Replace raw `ZipFile.extractall()` with safe member validation.
-- Reject absolute paths, `..` traversal, symlinks, device files, and zip bombs.
-- Enforce expanded-size, file-count, and per-file limits, not only compressed upload size.
-- Make CORS origins configurable; do not ship production defaults with unrestricted `allow_origins=["*"]`.
 - Define authentication/authorization expectations for mutation endpoints or clearly mark the server as trusted-local only.
-- Add tests for malicious ZIP entries and oversize expansion.
+- Add API-level malicious ZIP upload tests in addition to utility-level archive validation tests.
 
 **Exit criteria:**
 - Upload path traversal and zip-bomb regressions are tested.
@@ -609,13 +672,17 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 
 ### P0.8 Service-wide state isolation under concurrent traffic
 
-**Gap:** `query_snapshot` now serializes artifact load+query, but other global-state mutations can still race with query and load flows on the singleton service instance.
+**Gap:** Singleton global-state mutations are now serialized with a service-level lock, but stable release still needs broader concurrent endpoint evidence and a decision on whether singleton API/web mode is production-supported or trusted-local only.
+
+**Recently landed:**
+- Repository load/index, snapshot pipeline, projection build, query/query-stream, multi-repo cache load, delete, cleanup, and shutdown paths now acquire a shared reentrant service lock.
+- REST and web load+index/upload+index helpers hold that lock across the entire combined mutation, including scan-cache invalidation.
+- Regression coverage verifies the combined helpers use one critical section.
 
 **Required work:**
-- Audit every endpoint that mutates vector store, retriever, graph builder, cache, repository state, or loaded artifacts.
-- Add a service-level read/write lock or move toward request-local artifact handles for query paths.
 - Add concurrency tests for query vs load, query vs index, query vs delete, upload vs query, and refresh/unload vs query.
 - Decide whether API/web singleton mode is supported for production or only for trusted local use.
+- Longer term, move query serving toward request-local immutable artifact handles so reads do not serialize behind unrelated mutations.
 
 **Exit criteria:**
 - Concurrent mutation/query behavior is either serialized by design or explicitly rejected with clear errors.
@@ -769,13 +836,12 @@ These currently emit useful structured facts, but they are still narrower than f
 
 ### P1.5 Continue store-boundary typing
 
-Typed records now exist for manifests, snapshot refs, and snapshot records.
+Typed records now exist for manifests, snapshot refs, snapshot records, index runs, publish tasks, SCIP artifact refs, redo tasks, outbox events, dialogue turns, dialogue sessions, and active projection build/dirty-scope rows.
 
 Still raw-dict-heavy at boundaries:
 - API-facing manifest / artifact payload adapters
-- index run records
-- SCIP artifact record payloads
-- projection/cache session payloads
+- snapshot-store and projection-store compatibility payload adapters
+- cache/query result payloads
 - vector-store search/repo-overview payloads
 - pg-retrieval row/result payloads
 

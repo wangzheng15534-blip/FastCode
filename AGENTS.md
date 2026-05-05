@@ -73,6 +73,15 @@ These rules are active in tests and lint:
 5. Package roots stay thin and lazy.
 6. No `**model_dump()` or `**__dict__` mass-assignment in shell packages.
 
+Applied contributor rule for current hardening work:
+
+- Prefer explicit field serializers/deserializers at API, persistence, cache,
+  and native-library boundaries.
+- Do not introduce new `row_to_dict() -> from_dict()/to_dict()` round-trips on
+  hot paths when a typed record or explicit adapter is available.
+- Keep embeddings and ranked vector candidates in native/NumPy form until the
+  backend boundary actually requires JSON or Python lists.
+
 Important architecture tests:
 
 - `fastcode/tests/architecture/test_import_graph.py`
@@ -110,6 +119,9 @@ inside `indexing/`, `query/`, `retrieval/`, `store/`, `mcp/`, or `schemas/`.
 - Use existing fixture factories in `fastcode/tests/conftest.py`.
 - Partial construction via `FastCode.__new__(FastCode)` is normal in unit tests
   that need to bypass heavy initialization.
+- For boundary-hardening changes, add regressions that fail if the old generic
+  conversion path is used again, for example patching `to_dict()`,
+  `from_dict()`, or `row_to_dict()` to raise.
 
 Common focused commands:
 

@@ -160,9 +160,11 @@ Stable release should mean all of the following are true at once:
   - REST and web ZIP upload paths now validate archive members before extraction, rejecting traversal, absolute paths, symlinks/special files, oversized members, excessive file counts, and suspicious expansion ratios
   - repository ZIP loading in `RepositoryLoader` uses the same safe extraction helper instead of raw `ZipFile.extractall()`
   - CORS defaults are no longer wildcard; allowed origins and credentials are controlled by explicit environment settings
+  - REST API and web examples now bind localhost by default, with public binding documented as an explicit trusted-operator decision
 - Service singleton lock hardening:
   - `FastCode` now exposes a service-level reentrant state lock around repository load/index, snapshot pipeline, projection build, query/query-stream, multi-repo cache load, delete, cleanup, and shutdown flows
   - REST and web load+index/upload+index helpers now execute the combined mutation under one service critical section, preventing interleaving between repository replacement and indexing
+  - Regression tests cover query serialization against load, index, delete, refresh, and cleanup/unload-style mutations
 - Lock fencing hardening:
   - PostgreSQL same-owner lock refresh preserves the current fencing token instead of invalidating in-flight work
 - Package-root import-boundary hardening:
@@ -654,17 +656,19 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 
 ### P0.7 API and file-upload security hardening
 
-**Gap:** Upload extraction and CORS defaults are hardened, but mutation endpoint auth/deployment policy is still not stable-release complete.
+**Status:** Closed for the current trusted-local/proxy-auth contract. Direct unauthenticated production exposure remains explicitly unsupported.
 
 **Recently landed:**
 - Raw `ZipFile.extractall()` was replaced on active upload and repository ZIP load paths with safe member validation.
 - Archive validation rejects absolute paths, traversal, symlinks/special files, excessive member counts, oversized extracted payloads, and suspicious compression ratios.
 - CORS defaults are local-origin only and configurable through explicit environment settings.
-- Regression tests cover malicious archive entries, expansion limits, and non-wildcard CORS defaults.
+- REST API now binds `127.0.0.1` by default; public binding requires an explicit `--host 0.0.0.0` operator decision.
+- Deployment notes define the auth expectation: FastCode has no built-in user auth, so shared/remote deployments require a proxy or gateway with TLS and authz for mutation endpoints.
+- Regression tests cover utility-level malicious archive entries and expansion limits, endpoint-level path traversal uploads, and non-wildcard CORS defaults.
 
-**Required work:**
-- Define authentication/authorization expectations for mutation endpoints or clearly mark the server as trusted-local only.
-- Add API-level malicious ZIP upload tests in addition to utility-level archive validation tests.
+**Remaining follow-up:**
+- Add full production deployment examples for a concrete reverse proxy/auth gateway.
+- Add API-level zip-bomb tests if upload limits become configurable enough to test without large fixtures.
 
 **Exit criteria:**
 - Upload path traversal and zip-bomb regressions are tested.
@@ -672,16 +676,16 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 
 ### P0.8 Service-wide state isolation under concurrent traffic
 
-**Gap:** Singleton global-state mutations are now serialized with a service-level lock, but stable release still needs broader concurrent endpoint evidence and a decision on whether singleton API/web mode is production-supported or trusted-local only.
+**Status:** Mostly closed for the singleton trusted-local mode. The remaining architectural improvement is request-local immutable artifact handles so read traffic does not serialize behind unrelated mutations.
 
 **Recently landed:**
 - Repository load/index, snapshot pipeline, projection build, query/query-stream, multi-repo cache load, delete, cleanup, and shutdown paths now acquire a shared reentrant service lock.
 - REST and web load+index/upload+index helpers hold that lock across the entire combined mutation, including scan-cache invalidation.
 - Regression coverage verifies the combined helpers use one critical section.
+- Regression coverage verifies query serving does not overlap load, index, delete, refresh, or cleanup/unload-style mutations.
 
-**Required work:**
-- Add concurrency tests for query vs load, query vs index, query vs delete, upload vs query, and refresh/unload vs query.
-- Decide whether API/web singleton mode is supported for production or only for trusted local use.
+**Remaining follow-up:**
+- Add endpoint-level concurrency tests for upload vs query with real ASGI request scheduling.
 - Longer term, move query serving toward request-local immutable artifact handles so reads do not serialize behind unrelated mutations.
 
 **Exit criteria:**

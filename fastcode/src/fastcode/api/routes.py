@@ -1125,7 +1125,7 @@ async def unload_repository():
     return {"status": "success", "message": "Repository unloaded"}
 
 
-def start_api(host: str = "0.0.0.0", port: int = 8000, reload: bool = False):
+def start_api(host: str = "127.0.0.1", port: int = 8000, reload: bool = False):
     """Start the API server"""
     logger.info(f"Starting FastCode API at http://{host}:{port}")
     logger.info(f"API documentation available at http://{host}:{port}/docs")
@@ -1137,7 +1137,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="FastCode API Server")
     parser.add_argument(
-        "--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
+        "--host", default="127.0.0.1", help="Host to bind to (default: 127.0.0.1)"
     )
     parser.add_argument(
         "--port", type=int, default=8000, help="Port to bind to (default: 8000)"

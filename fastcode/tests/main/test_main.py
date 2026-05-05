@@ -9,6 +9,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
 from fastcode.ir.element import CodeElement
 from fastcode.main import FastCode
 from fastcode.schemas.config import config_from_mapping
@@ -374,3 +376,97 @@ def test_load_multi_repo_cache_uses_explicit_code_element_deserializer(
     assert calls == [payload]
     assert fc.retriever.full_bm25_elements[0].id == "file:service"
     assert fc.retriever.full_bm25_corpus == [["service"]]
+
+
+def _run_refresh_index_cache(fc: Any) -> None:
+    from fastcode.api.web import _refresh_index_cache_sync
+
+    _refresh_index_cache_sync(fc)
+
+
+@pytest.mark.parametrize(
+    ("mutation_name", "run_mutation"),
+    [
+        ("load", lambda fc: fc.load_repository("/tmp/repo", False)),
+        ("index", lambda fc: fc.index_repository(force=True)),
+        ("delete", lambda fc: fc.remove_repository("repo", delete_source=False)),
+        ("refresh", _run_refresh_index_cache),
+        ("cleanup", lambda fc: fc.cleanup()),
+    ],
+)
+def test_service_state_lock_serializes_query_with_mutations(
+    mutation_name: str,
+    run_mutation: Any,
+) -> None:
+    """Query serving must not overlap mutable singleton-state operations."""
+    import threading
+    import time
+
+    fc = FastCode.__new__(FastCode)
+    fc._service_state_lock = threading.RLock()
+    fc._redo_worker = None
+    fc.graph_runtime = None
+
+    concurrent_count = 0
+    max_concurrent = 0
+    calls: list[str] = []
+    count_lock = threading.Lock()
+    start_barrier = threading.Barrier(2, timeout=5)
+    errors: list[Exception] = []
+
+    def _enter_critical(name: str) -> None:
+        nonlocal concurrent_count, max_concurrent
+        with count_lock:
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+            calls.append(name)
+        time.sleep(0.05)
+        with count_lock:
+            concurrent_count -= 1
+
+    fc.query_handler = SimpleNamespace(
+        query=lambda **_kwargs: (
+            _enter_critical("query") or {"answer": "ok", "sources": []}
+        )
+    )
+    fc._load_repository_unlocked = lambda *_args, **_kwargs: _enter_critical("load")
+    fc._index_repository_unlocked = lambda **_kwargs: _enter_critical("index")
+    fc._remove_repository_unlocked = lambda *_args, **_kwargs: (
+        _enter_critical("delete") or {"deleted_files": [], "freed_mb": 0.0}
+    )
+    fc.vector_store = SimpleNamespace(
+        invalidate_scan_cache=lambda: _enter_critical("refresh"),
+        scan_available_indexes=lambda use_cache=True: [],
+    )
+    fc.loader = SimpleNamespace(cleanup=lambda: _enter_critical("cleanup"))
+    fc.logger = SimpleNamespace(info=lambda *_args, **_kwargs: None)
+
+    def _run_query() -> None:
+        try:
+            start_barrier.wait(timeout=5)
+            fc.query("Where is auth?")
+        except Exception as exc:
+            errors.append(exc)
+
+    def _run_mutation() -> None:
+        try:
+            start_barrier.wait(timeout=5)
+            run_mutation(fc)
+        except Exception as exc:
+            errors.append(exc)
+
+    query_thread = threading.Thread(target=_run_query)
+    mutation_thread = threading.Thread(target=_run_mutation)
+    query_thread.start()
+    mutation_thread.start()
+    query_thread.join(timeout=10)
+    mutation_thread.join(timeout=10)
+
+    assert not query_thread.is_alive()
+    assert not mutation_thread.is_alive()
+    assert not errors, f"Threads raised: {errors}"
+    assert max_concurrent <= 1, (
+        f"query overlapped with {mutation_name}; calls={calls}"
+    )
+    assert "query" in calls
+    assert mutation_name in calls

@@ -9,11 +9,15 @@ returning hardcoded mock data.
 from __future__ import annotations
 
 import asyncio
+import io
+import zipfile
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from fastcode.api import routes as api
 from fastcode.ir.types import IRSnapshot
@@ -23,6 +27,14 @@ from fastcode.store.snapshot import SnapshotStore
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _zip_bytes(entries: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zip_ref:
+        for name, payload in entries.items():
+            zip_ref.writestr(name, payload)
+    return buffer.getvalue()
 
 
 def _make_minimal_snapshot(
@@ -455,6 +467,41 @@ class TestBlockingEndpointOffloads:
             fake_fastcode.cache_manager.get_stats,
             api._refresh_index_cache_sync,
         ]
+
+
+class TestUploadSecurity:
+    @pytest.mark.parametrize("endpoint", ["/upload-zip", "/upload-and-index"])
+    def test_upload_endpoints_reject_path_traversal_zip(
+        self,
+        tmp_path: Any,
+        endpoint: str,
+    ) -> None:
+        fake_fastcode = SimpleNamespace(
+            loader=SimpleNamespace(
+                safe_repo_root=str(tmp_path / "repos"),
+                _backup_existing_repo=lambda _path: None,
+            )
+        )
+
+        with patch(
+            "fastcode.api.routes._ensure_fastcode_initialized",
+            return_value=fake_fastcode,
+        ):
+            client = TestClient(api.app)
+            response = client.post(
+                endpoint,
+                files={
+                    "file": (
+                        "repo.zip",
+                        _zip_bytes({"../escape.py": b"bad"}),
+                        "application/zip",
+                    )
+                },
+            )
+
+        assert response.status_code == 400
+        assert "unsafe path" in response.json()["detail"]
+        assert not (tmp_path / "escape.py").exists()
 
 
 class TestApiSerializationBoundaries:

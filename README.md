@@ -8,7 +8,7 @@
 
 | **⚡ High Performance** | **💰 Cost Efficient** | **🚀 Fast & Scalable** |
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 <p>
@@ -145,18 +145,18 @@ Get FastCode running in under 2 minutes:
 git clone https://github.com/HKUDS/FastCode.git
 cd FastCode
 
-# 2. Install dependencies
-pip install -r requirements.txt
+# 2. Install workspace dependencies
+uv sync
 
 # 3. Configure your API keys
 cp env.example .env
 # Edit .env with your API keys
 
 # 4. Launch the Web UI
-python web_app.py --host 0.0.0.0 --port 5000
+fastcode-web --host 127.0.0.1 --port 5777
 ```
 
-Open http://localhost:5000 and start asking questions about your code! 🎉
+Open http://localhost:5777 and start asking questions about your code! 🎉
 
 ---
 
@@ -170,8 +170,9 @@ FastCode supports **Linux**, **macOS**, and **Windows**. Choose your platform be
 <summary><b>🐧 Linux Installation</b></summary>
 
 ### Prerequisites
-- Python 3.12 or higher
+- Python 3.11 or higher
 - Git
+- [uv](https://github.com/astral-sh/uv) (recommended)
 
 ### Step-by-Step Guide
 
@@ -187,17 +188,17 @@ FastCode supports **Linux**, **macOS**, and **Windows**. Choose your platform be
    ```bash
    # Install uv
    pip install uv
-   # create new env with uv
-   uv venv --python=3.12
-   source .venv/bin/activate
 
-   # Install dependencies with uv
-   uv pip install -r requirements.txt
+   # Create the workspace environment and install FastCode
+   uv sync
    ```
 
    **Option B: Using pip**
    ```bash
+   python -m venv .venv
+   source .venv/bin/activate
    pip install -r requirements.txt
+   pip install -e ./fastcode
    ```
 
 3. **Configure Environment**
@@ -216,10 +217,10 @@ FastCode supports **Linux**, **macOS**, and **Windows**. Choose your platform be
 4. **Launch FastCode**
    ```bash
    # Web UI (Recommended)
-   python web_app.py --host 0.0.0.0 --port 5000
+   fastcode-web --host 127.0.0.1 --port 5777
 
    # Or use the CLI
-   python main.py query --repo-path /path/to/your/repo --query "Your question here"
+   fastcode query --repo-path /path/to/your/repo --query "Your question here"
    ```
 
 </details>
@@ -228,8 +229,9 @@ FastCode supports **Linux**, **macOS**, and **Windows**. Choose your platform be
 <summary><b>🍎 macOS Installation</b></summary>
 
 ### Prerequisites
-- Python 3.12 or higher
+- Python 3.11 or higher
 - Git
+- [uv](https://github.com/astral-sh/uv) (recommended)
 
 ### Step-by-Step Guide
 
@@ -245,17 +247,17 @@ FastCode supports **Linux**, **macOS**, and **Windows**. Choose your platform be
    ```bash
    # Install uv
    pip install uv
-   # create new env with uv
-   uv venv --python=3.12
-   source .venv/bin/activate
 
-   # Install dependencies with uv
-   uv pip install -r requirements.txt
+   # Create the workspace environment and install FastCode
+   uv sync
    ```
 
    **Option B: Using pip**
    ```bash
+   python -m venv .venv
+   source .venv/bin/activate
    pip install -r requirements.txt
+   pip install -e ./fastcode
    ```
 
 3. **Configure Environment**
@@ -274,10 +276,10 @@ FastCode supports **Linux**, **macOS**, and **Windows**. Choose your platform be
 4. **Launch FastCode**
    ```bash
    # Web UI (Recommended)
-   python web_app.py --host 0.0.0.0 --port 5000
+   fastcode-web --host 127.0.0.1 --port 5777
 
    # Or use the CLI
-   python main.py query --repo-path /path/to/your/repo --query "Your question here"
+   fastcode query --repo-path /path/to/your/repo --query "Your question here"
    ```
 
 **Note for Apple Silicon (M1/M2/M3):** All dependencies are compatible with ARM architecture.
@@ -288,8 +290,9 @@ FastCode supports **Linux**, **macOS**, and **Windows**. Choose your platform be
 <summary><b>💻 Windows Installation</b></summary>
 
 ### Prerequisites
-- Python 3.12 or higher
+- Python 3.11 or higher
 - Git
+- [uv](https://github.com/astral-sh/uv) (recommended)
 
 ### Step-by-Step Guide
 
@@ -305,17 +308,17 @@ FastCode supports **Linux**, **macOS**, and **Windows**. Choose your platform be
    ```cmd
    # Install uv
    pip install uv
-   # create new env with uv
-   uv venv --python=3.12
-   .venv\Scripts\activate
 
-   # Install dependencies with uv
-   uv pip install -r requirements.txt
+   # Create the workspace environment and install FastCode
+   uv sync
    ```
 
    **Option B: Using pip**
    ```cmd
+   python -m venv .venv
+   .venv\Scripts\activate
    pip install -r requirements.txt
+   pip install -e .\fastcode
    ```
 
 3. **Configure Environment**
@@ -334,10 +337,10 @@ FastCode supports **Linux**, **macOS**, and **Windows**. Choose your platform be
 4. **Launch FastCode**
    ```cmd
    # Web UI (Recommended)
-   python web_app.py --host 0.0.0.0 --port 5000
+   fastcode-web --host 127.0.0.1 --port 5777
 
    # Or use the CLI
-   python main.py query --repo-path C:\path\to\your\repo --query "Your question here"
+   fastcode query --repo-path C:\path\to\your\repo --query "Your question here"
    ```
 
 **Troubleshooting:**
@@ -358,10 +361,10 @@ The Web UI provides the most intuitive experience:
 
 1. **Launch the server:**
    ```bash
-   python web_app.py --host 0.0.0.0 --port 5000
+   fastcode-web --host 127.0.0.1 --port 5777
    ```
 
-2. **Open your browser:** Navigate to http://localhost:5000
+2. **Open your browser:** Navigate to http://localhost:5777
 
 3. **Load a repository:** Use the sidebar to index your codebase
 
@@ -377,13 +380,13 @@ For automation and scripting:
 
 ```bash
 # Single repository query
-python main.py query --repo-path /path/to/repo --query "Your question"
+fastcode query --repo-path /path/to/repo --query "Your question"
 
-# Multi-repository query
-python main.py query --repos /path/to/repo1 /path/to/repo2 --query "Your question"
+# Multi-repository query against cached indexes
+fastcode query-multiple --load-cache --repos repo1 --repos repo2 --query "Your question"
 
-# With custom model
-python main.py query --repo-path /path/to/repo --query "Your question" --model gpt-4-turbo
+# With a custom config file
+fastcode query --repo-path /path/to/repo --query "Your question" --config config/config.yaml
 ```
 
 <details>
@@ -393,10 +396,14 @@ Integrate FastCode into your tools with the comprehensive REST API:
 
 ```bash
 # Start the API server
-python api.py --host 0.0.0.0 --port 8000
+fastcode-api --host 127.0.0.1 --port 8000
 ```
 
 The API provides all features available in the Web UI. Visit http://localhost:8000/docs for interactive API documentation.
+
+FastCode's API and web servers are trusted-local by default. For shared or
+remote deployments, keep FastCode behind a proxy or gateway that provides TLS
+and authentication for mutation endpoints. See [Deployment Notes](DEPLOYMENT.md).
 
 **Key API Endpoints:**
 
@@ -560,20 +567,18 @@ Before configuring MCP, make sure FastCode dependencies are installed in the loc
 ```bash
 git clone https://github.com/HKUDS/FastCode.git
 cd FastCode
-uv venv --python=3.12
-source .venv/bin/activate
-uv pip install -r requirements.txt
+uv sync
 ```
 
-The MCP server should be launched with `.venv/bin/python`, and it needs `OPENAI_API_KEY`, `MODEL`, and `BASE_URL`.
+The MCP server should be launched with `.venv/bin/fastcode-mcp`, and it needs `OPENAI_API_KEY`, `MODEL`, and `BASE_URL`.
 
 **Cursor** (`~/.cursor/mcp.json`):
 ```json
 {
   "mcpServers": {
     "fastcode": {
-      "command": "/path/to/FastCode/.venv/bin/python",
-      "args": ["/path/to/FastCode/mcp_server.py"],
+      "command": "/path/to/FastCode/.venv/bin/fastcode-mcp",
+      "args": [],
       "env": {
         "MODEL": "gpt-5.2",
         "BASE_URL": "https://api.openai.com/v1",
@@ -589,8 +594,8 @@ The MCP server should be launched with `.venv/bin/python`, and it needs `OPENAI_
 {
   "mcpServers": {
     "fastcode": {
-      "command": "/path/to/FastCode/.venv/bin/python",
-      "args": ["/path/to/FastCode/mcp_server.py"],
+      "command": "/path/to/FastCode/.venv/bin/fastcode-mcp",
+      "args": [],
       "env": {
         "MODEL": "gpt-5.2",
         "BASE_URL": "https://api.openai.com/v1",
@@ -603,13 +608,13 @@ The MCP server should be launched with `.venv/bin/python`, and it needs `OPENAI_
 
 Or via `claude mcp add` (ensure the same env vars are available in your shell):
 ```bash
-claude mcp add fastcode -- /path/to/FastCode/.venv/bin/python /path/to/FastCode/mcp_server.py
+claude mcp add fastcode -- /path/to/FastCode/.venv/bin/fastcode-mcp
 ```
 
 **SSE transport** (for remote / shared deployments):
 ```bash
 OPENAI_API_KEY=sk-... MODEL=gpt-5.2 BASE_URL=https://api.openai.com/v1 \
-/path/to/FastCode/.venv/bin/python /path/to/FastCode/mcp_server.py --transport sse --port 8080
+/path/to/FastCode/.venv/bin/fastcode-mcp --transport sse --port 8080
 ```
 
 #### Available Tools

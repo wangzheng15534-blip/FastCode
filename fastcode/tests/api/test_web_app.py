@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import zipfile
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -7,6 +9,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fastcode.api import web as web_app
+
+
+def _zip_bytes(entries: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zip_ref:
+        for name, payload in entries.items():
+            zip_ref.writestr(name, payload)
+    return buffer.getvalue()
 
 
 class _NoDictSource:
@@ -406,6 +416,38 @@ def test_upload_zip_endpoint_offloads_blocking_zip_work(
     assert response.status_code == 200
     assert response.json()["repo_path"] == "/tmp/repo"
     assert offloaded == [fake_upload_sync]
+
+
+@pytest.mark.parametrize("endpoint", ["/api/upload-zip", "/api/upload-and-index"])
+def test_upload_endpoints_reject_path_traversal_zip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    endpoint: str,
+) -> None:
+    fake = _FakeFastCode()
+    fake.loader = SimpleNamespace(
+        safe_repo_root=str(tmp_path / "repos"),
+        _backup_existing_repo=lambda _path: None,
+    )
+    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
+
+    client = TestClient(web_app.app)
+    response = client.post(
+        endpoint,
+        files={
+            "file": (
+                "repo.zip",
+                _zip_bytes({"../escape.py": b"bad"}),
+                "application/zip",
+            )
+        },
+    )
+
+    assert response.status_code == 400
+    assert "unsafe path" in response.json()["detail"]
+    assert not (tmp_path / "escape.py").exists()
+    assert fake.calls == []
 
 
 def test_upload_and_index_endpoint_offloads_atomic_upload_and_index(

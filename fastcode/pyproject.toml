@@ -305,7 +305,7 @@ packages = ["src/fastcode"]                                               # pack
     "PLR2004", # design: HTTP status codes are domain literals, not magic numbers
     "RET504",  # design: variable assigned for debugging clarity before return
     "S101",    # design: assert for development-time checks in API validation
-    "S104",    # design: binding to 0.0.0.0 is intentional for API server
+    "S104",    # design: public bind remains an explicit operator option for API server
     "S311",    # design: random module for non-crypto session ID generation
     "S324",    # design: MD5 for non-crypto blob hash keys
     "S603",    # design: subprocess for git operations; shell=False is already used

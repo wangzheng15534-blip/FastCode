@@ -269,13 +269,15 @@ class TestLoadScipArtifactJson:
 
     @pytest.mark.negative
     def test_load_scip_extension_without_protobuf_raises_property(self):
-        """EDGE: .scip file without protobuf support or CLI raises error."""
+        """EDGE: invalid .scip bytes surface the fallback error contract."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "test.scip")
             with open(path, "wb") as f:
                 f.write(b"\x00\x01\x02")
-            # Will fail since protobuf can't parse random bytes and scip CLI not in PATH
-            with pytest.raises((ValueError, RuntimeError, ImportError, OSError)):
+            with (
+                patch("fastcode.scip.loader.shutil.which", return_value=None),
+                pytest.raises(ValueError, match=r"could not be parsed"),
+            ):
                 load_scip_artifact(path)
 
     @given(

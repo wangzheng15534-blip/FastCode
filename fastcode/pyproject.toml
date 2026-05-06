@@ -85,6 +85,7 @@ dev = [
     "pytest-subprocess",
     "mutmut",
     "schemathesis",
+    "protobuf>=6.0",
 ]
 scip = [
     "protobuf>=6.0",

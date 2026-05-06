@@ -10,6 +10,14 @@ import pytest
 from hypothesis import HealthCheck, settings
 from hypothesis import strategies as st
 
+# Schemathesis fuzzing is intentionally opt-in because it is slow and uses
+# separate pytest plugin wiring. Keep it out of default collection instead of
+# collecting and hard-skipping it.
+if os.getenv("FASTCODE_RUN_SCHEMATHESIS") == "1":
+    collect_ignore_glob: list[str] = []
+else:
+    collect_ignore_glob = ["api/test_schemathesis_api.py"]
+
 # mutmut calls pytest.main() in-process, causing hypothesis to see
 # "multiple executors"; safe to suppress since mutmut owns the process
 if os.getenv("MUTANT_UNDER_TEST"):

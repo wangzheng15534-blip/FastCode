@@ -17,6 +17,11 @@ from .models import SCIPIndex
 
 logger = logging.getLogger(__name__)
 
+try:
+    from google.protobuf.message import DecodeError as ProtobufDecodeError
+except Exception:  # pragma: no cover - optional dependency
+    ProtobufDecodeError = ValueError
+
 
 def load_scip_artifact(path: str) -> SCIPIndex:
     """
@@ -41,7 +46,7 @@ def load_scip_artifact(path: str) -> SCIPIndex:
             pb_index: Any = ProtobufIndex()  # type: ignore[call-arg]
             pb_index.ParseFromString(raw)  # type: ignore[attribute-access]
             return _protobuf_to_scip_index(pb_index)
-        except (ImportError, OSError, ValueError) as exc:
+        except (ImportError, OSError, ValueError, ProtobufDecodeError) as exc:
             logger.debug("Protobuf parsing failed, trying scip CLI: %s", exc)
             # Fallback to CLI
             scip_cli = shutil.which("scip")

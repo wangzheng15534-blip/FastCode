@@ -1,12 +1,13 @@
 """Schemathesis API fuzz tests — auto-generated from FastAPI schema.
 
-Run: uv run pytest fastcode/tests/test_schemathesis_api.py -v -p schemathesis
-Do NOT run with default pytest config (-p no:schemathesis is in addopts).
+Run:
+FASTCODE_RUN_SCHEMATHESIS=1 uv run pytest fastcode/tests/api/test_schemathesis_api.py -v -p schemathesis
+
+Do NOT run with default pytest config; collection is intentionally opt-in.
 """
 
 from __future__ import annotations
 
-import pytest
 import schemathesis
 from fastapi.testclient import TestClient
 
@@ -16,9 +17,6 @@ schema = schemathesis.openapi.from_asgi("/openapi.json", api.app)
 
 
 @schema.parametrize()
-@pytest.mark.skip(
-    reason="Run explicitly: uv run pytest fastcode/tests/test_schemathesis_api.py -p schemathesis"
-)
 def test_api_fuzz(case: schemathesis.Case) -> None:
     """Fuzz all API endpoints with auto-generated inputs."""
     client = TestClient(api.app)

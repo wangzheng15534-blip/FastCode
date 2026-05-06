@@ -220,6 +220,493 @@ Current hardened properties:
 - caller-filter handling is fixed after rerank
 - semantic escalation can drive real IR-graph expansion
 
+## Agent Context Integration
+
+FastCode's current shells expose repository intelligence through CLI, API, web,
+and MCP entrypoints. The next architecture step is deeper agent integration:
+FastCode should produce cacheable context artifacts that agents can budget,
+distill, reactivate, and expand, rather than only returning one-shot answers or
+raw retrieval rows.
+
+The design follows the existing source-of-truth rule:
+
+- authoritative repository facts remain in snapshots, IR, graph facts, vector
+  artifacts, manifests, and projection artifacts
+- agent-facing context is a derived artifact with explicit provenance and
+  invalidation metadata
+- lossy summaries are allowed only when they retain expandable source refs
+
+FastCode should model agent context as two coupled memory surfaces, not as one
+giant append-only prompt:
+
+- historical truth:
+  append-only, complete, external, and restorable
+- cognitive working memory:
+  small, recent, relevant, and cache-friendly
+
+In practice that means:
+
+- snapshots, projections, tool observations, verifier outputs, and artifact
+  refs live in the historical layer
+- the prompt-facing context window is a compiled working-memory view rebuilt
+  from typed state after meaningful observations
+- "rewrite" means replacing the compiled working-memory view, not mutating the
+  historical evidence journal
+
+The target context model has four record families:
+
+- `EvidenceRef`: pointer to a code fact, projection chunk, file range, symbol,
+  graph path, tool trace, or prior dialogue turn
+- `ContextBundle`: ranked, token-budgeted collection of evidence refs plus
+  rendered text, summaries, source refs, freshness, and expansion handles
+- `DistillationRecord`: model/prompt-fingerprinted summary of one or more
+  evidence refs, including covered refs and omitted refs
+- `ActivationRecord`: record that an agent actually used a bundle or evidence
+  item for a task, optionally with outcome signals such as edited files, tests
+  run, accepted/rejected sources, or follow-up expansions
+
+This split also matches the practical lessons from long-turn agents such as
+Manus:
+
+- keep `L0` and selected `L1` sections stable for provider prompt/KV caches
+- keep the execution/evidence trace append-only for replay and deterministic
+  cache behavior
+- keep large detail external and restorable through file/artifact/reference
+  handles rather than inline prompt carry-over
+- keep a rewritten tail working set near the end of the prompt so current goals,
+  hypotheses, and next actions stay in recent attention
+
+This is adjacent to, but stronger than, conversation-only dynamic context
+pruning. A pruning plugin can replace old messages with summaries and protect
+important tool outputs. FastCode can also use repository structure:
+
+- compress by symbol/file/module/cluster/path/change frontier
+- keep summaries expandable to source file, line range, symbol ID, snapshot, and
+  artifact key
+- key cached bundles by query/task fingerprint, snapshot artifact key,
+  projection algorithm version, embedding fingerprint, distillation prompt
+  fingerprint, and token budget
+- invalidate cached context when cited evidence, projection logic, embedding
+  identity, or source snapshot changes
+
+The projection system already provides the right shape for progressive
+disclosure:
+
+- `L0`: compact orientation and task framing
+- `L1`: navigation, clusters, relationships, and decision context
+- `L2`: cited chunks and raw evidence anchors
+
+Future MCP/API tools should expose context operations directly:
+
+- build a context bundle for a task/query/snapshot
+- expand an evidence ref to the next detail level
+- distill or recompress stale bundle sections
+- reactivate prior task bundles
+- record activation feedback from agent runs
+
+Open design questions:
+
+- how to fingerprint tasks enough to reuse useful context without overfitting
+- which bundle sections should be stable prompt-cache prefixes versus late
+  dynamic context
+- whether ranking should stay deterministic in v1 or learn from activation
+  records
+- how external memory systems should link to FastCode bundles without copying
+  code facts into a separate authoritative store
+
+### Context Package Placement
+
+The context-bundle work should fit the existing layer DAG instead of becoming a
+new composition root:
+
+- `retrieval/core/` owns pure scoring, budget selection, evidence-ref
+  normalization, bundle assembly, and text rendering helpers.
+- `query/` owns orchestration: query understanding, retrieval, optional
+  semantic escalation, bundle creation, answer generation, and activation
+  recording.
+- `store/` owns persistence of bundle, distillation, and activation records
+  through typed records plus explicit serializers.
+- `api/` and `mcp/` expose context operations as shell adapters only.
+- `indexing/projection.py` and `indexing/projection_transform.py` continue to
+  own L0/L1/L2 projection generation.
+
+The v1 implementation should not introduce Pydantic models inside
+`retrieval/core/`, should not make `store/` import API schemas, and should not
+route bundle persistence through generic `dict` or recursive JSON cleanup on hot
+paths.
+
+### Bundle Assembly Flow
+
+A request-local bundle should be built as a deterministic pipeline:
+
+1. Resolve snapshot and artifact handle.
+2. Run retrieval and optional graph/projection expansion.
+3. Convert retrieved rows, projection chunks, graph paths, and dialogue turns
+   into `EvidenceRef` records.
+4. Score evidence by relevance, graph support, source freshness, prior
+   activation, and citation density.
+5. Allocate a token budget across orientation, navigation, evidence, and raw
+   snippets.
+6. Reuse existing distillations when fingerprints match.
+7. Render a `ContextBundle` with expandable evidence handles.
+8. Persist only the derived bundle metadata and summaries; raw code facts remain
+   in the snapshot/projection stores.
+9. After the agent/model consumes the bundle, write an `ActivationRecord` with
+   outcome signals when available.
+
+The first implementation should keep ranking deterministic and treat activation
+records as telemetry. Learning from activation history should wait until there
+is enough evaluation data to avoid reinforcing accidental retrieval choices.
+
+### Turn-Centric Toolchain Integration
+
+The next rewrite should center the agent loop on typed turns, not on raw prompt
+history plus ad hoc tool outputs.
+
+Current code already exposes the right starting points:
+
+- `query/handler.py` owns session-aware orchestration
+- `retrieval/iterative.py` already models multi-round confidence, tool calls,
+  and keep/discard decisions
+- `retrieval/agent_tools.py` is the read-only repository boundary
+- `store/cache.py` persists dialogue turns and session indexes
+
+The gap is that these pieces are still joined mainly through prompt text,
+flat dict payloads, and saved summaries. The deeper integration model should
+make toolchain outputs first-class turn artifacts while clearly separating:
+
+- the append-only historical journal
+- the replaceable compiled working-memory view
+
+The target per-turn record model is:
+
+- `TurnIntent`: user goal, clarified task, repo/snapshot scope, and current
+  requested outcome
+- `TurnPlan`: current hypotheses, open questions, planned tool actions, stop
+  conditions, and token budget
+- `ToolObservation`: normalized result of one tool call, with:
+  - tool name
+  - parameters
+  - snapshot/artifact key
+  - structured payload
+  - evidence refs emitted
+  - cost
+  - warnings/failures
+- `ObservationJournal`: append-only turn-local or session-local sequence of tool
+  and verifier observations that remains replayable and restorable
+- `BeliefState`: current candidate explanations or edit plans, with support and
+  conflict edges
+- `RiskState`: bounded uncertainty state used for action selection, with
+  separate signals for evidence gaps, conflicts, freshness risk, requirement
+  ambiguity, execution risk, and verifier status
+- `AcceptanceContract`: current definition of done, required evidence classes,
+  required verifiers, allowed writes/tools, and ask/abstain thresholds
+- `RejectedHypothesisLedger`: append-only negative memory for killed
+  possibilities, including why they were rejected and what would justify
+  reopening them
+- `WorkingSet`: what must remain in the next prompt window
+- `HandoffArtifact`: compact external artifact for clean-context reset,
+  delegation, resume, or rollback
+- `TurnOutcome`: selected answer/edit recommendation, abstention, verifier
+  result, or next-turn carry-forward state
+
+This makes the agent loop explicit:
+
+1. Ingest user turn and resolve snapshot/session scope.
+2. Compile or refresh the current `AcceptanceContract`.
+3. Build or refresh the current `BeliefState`.
+4. Score a `RiskState` from explicit uncertainty signals, not only model
+   wording.
+5. Choose a `TurnPlan`:
+   retrieve, inspect, expand graph, verify, ask, answer, branch, or reset.
+6. Execute tool calls.
+7. Normalize each result into `ToolObservation` records and append it to the
+   `ObservationJournal`.
+8. Apply promotion and rejection rules to hypotheses, facts, and protected
+   constraints.
+9. Recompute `RiskState`.
+10. Recompile the next `WorkingSet` from typed state, not from the raw
+    transcript.
+11. Either commit, branch, verify further, reset from a handoff artifact, ask
+    the user, or abstain.
+
+The key point is that the working-memory rewrite happens after every meaningful
+tool observation, not only at coarse session-compaction points. The journal is
+append-only; only the prompt-facing working set is replaced.
+
+### Context Compiler
+
+The bundle renderer should behave like a context compiler for the next agent
+turn.
+
+Its inputs are:
+
+- current `TurnIntent`
+- active `BeliefState`
+- recent `ToolObservation` records
+- current `WorkingSet`
+- reusable `ContextBundle` / `DistillationRecord` artifacts
+- token budget and model constraints
+
+Its outputs are:
+
+- a stable prefix:
+  task, constraints, accepted facts, protected evidence
+- a dynamic working section:
+  active hypotheses, unresolved uncertainty, fresh tool observations
+- a recent journal slice:
+  only the few append-only observations still relevant to the current choice
+- expandable handles:
+  evidence refs, graph-path refs, projection refs, prior verified summaries
+- a next-action section:
+  what the model is allowed to do on this turn
+
+This is where FastCode should outperform generic compaction systems. Instead of
+compressing old text ranges, it can rewrite context around:
+
+- symbol frontiers
+- changed files
+- dependency neighborhoods
+- verification status
+- accepted versus rejected hypotheses
+
+The compiler should therefore target the cognitive working-memory surface:
+
+- keep the historical journal intact
+- emit a small cache-friendly stable block
+- emit a rewritten turn block and recent-observation slice
+- keep older detail behind `L3` or artifact/file refs so it is restorable but
+  not always resident in the prompt
+
+The model-facing output of the compiler should use the compact line-oriented
+DSL defined in [AGENT_CONTEXT_DSL.md](./AGENT_CONTEXT_DSL.md). That DSL is only
+a prompt/rendering format. The canonical state remains typed records and
+explicit serializers.
+
+### Execution Regimes
+
+FastCode should use one truth model with two execution regimes rather than many
+informal memory modes:
+
+- short-horizon direct mode:
+  low ambiguity, low execution risk, narrow scope, and minimal need for
+  branching or reset; the compiler emits `L0`, selected `L1`, the current
+  contract, a small working set, and only the most relevant observations
+- long-horizon managed mode:
+  planning, debugging, research, multi-file edits, or repeated verification;
+  the compiler emits explicit hypotheses, risk state, rejected-hypothesis
+  memory, and reset/handoff support
+
+Promotion from direct mode to managed mode should be deterministic. Typical
+triggers:
+
+- token pressure forces multiple rewrites in one task
+- more than one plausible hypothesis remains active
+- verifier failures or contradictory evidence appear
+- write frontier expands beyond one file or one local symbol neighborhood
+- user intent is inherently long-running:
+  debugging, planning, research, architecture, or orchestrated editing
+
+Demotion back to direct mode is allowed only after the contract narrows,
+uncertainty drops, and the remaining action is local.
+
+### Possibility Management
+
+Academic uncertainty handling should map to explicit runtime objects.
+
+Instead of one implicit chain of thought, maintain a bounded set of candidate
+possibilities:
+
+- `Hypothesis`: a candidate answer, root cause, or edit plan
+- `SupportRef`: evidence refs supporting it
+- `ConflictRef`: evidence refs or verifier results against it
+- `ConfidenceSignals`: retrieval margin, branch agreement, verifier status,
+  tool failure, missing evidence, and model confidence as a weak signal
+
+Turn planning then becomes possibility management:
+
+- if one hypothesis dominates and verifier signals are clean, answer or edit
+- if multiple hypotheses remain plausible, branch search or ask a question
+- if evidence is stale or weak, retrieve or inspect more
+- if verifier results contradict the leading hypothesis, rewrite the working set
+  around the surviving alternatives
+
+This is closer to belief-state planning than to plain retrieval-plus-generation.
+
+### Decision Control Objects
+
+The current design needs stronger control objects than `Hypothesis` plus a
+summary rewrite.
+
+`RiskState` should be a vector, not one scalar confidence value. Suggested
+fields:
+
+- `evidence_gap`: how much required evidence is still missing
+- `conflict_level`: how much strong evidence disagrees
+- `freshness_risk`: whether cited support may be stale against the current
+  snapshot or runtime
+- `requirement_ambiguity`: whether the user intent or success condition is
+  under-specified
+- `execution_risk`: whether emitting an answer/edit now could cause expensive
+  or hard-to-revert mistakes
+- `verifier_status`: `clean`, `pending`, `mixed`, `failed`, or `blocked`
+- `action_bias`: current preferred next move:
+  answer, edit, retrieve, verify, ask, branch, reset, or abstain
+
+`AcceptanceContract` should make "done" explicit instead of leaving it inside
+prompt prose. Suggested fields:
+
+- `requested_outcome`
+- `required_evidence_kinds`
+- `required_verifiers`
+- `allowed_tools`
+- `allowed_write_scope`
+- `must_ask_before`
+- `must_abstain_when`
+- `done_condition`
+
+`PromotionRuleSet` should be harness-owned, deterministic, and versioned. The
+model may suggest a rewrite or hypothesis update, but it should not directly
+promote observations into authoritative facts.
+
+`RejectedHypothesisLedger` is the negative-memory complement to the working set.
+Without it, rewritten prompts tend to reintroduce already-killed ideas. Each
+ledger entry should record:
+
+- killed hypothesis ID
+- killer evidence or verifier refs
+- rejection reason code
+- snapshot/version basis
+- reopen condition
+
+`HandoffArtifact` is the clean-context transfer unit. It should be external,
+restorable, and stable enough for caching. A handoff artifact should contain:
+
+- normalized task intent
+- current acceptance contract
+- accepted facts and protected constraints
+- surviving hypotheses
+- rejected-hypothesis ledger slice
+- unresolved questions
+- allowed tools and write scope
+- current code/change frontier
+- recommended first action for the next agent turn
+
+`ResetPolicy` decides when the current working memory should be rewritten in
+place and when a fresh context should start from a handoff artifact. Typical
+reset triggers:
+
+- repeated non-progress across several turns
+- prompt drift where the recent working set no longer reflects the contract
+- too many unresolved hypotheses for the remaining budget
+- verifier churn without convergence
+- large write frontier that now needs a specialized clean-context worker
+
+### Promotion And State Transitions
+
+FastCode should treat state promotion as an explicit lattice, not as free-form
+summary replacement.
+
+Recommended transitions:
+
+- `ToolObservation` -> cited note:
+  a normalized observation with explicit refs enters the append-only journal
+- cited note -> hypothesis support/conflict:
+  observations and distillations update support or conflict edges on one or
+  more hypotheses
+- `Hypothesis(state=open)` -> `Hypothesis(state=favored)`:
+  at least one fresh supporting ref exists and no stronger conflicting verifier
+  result is present
+- `Hypothesis(state=favored)` -> accepted fact:
+  support comes from an authoritative repo fact, explicit source inspection, or
+  verifier/tool result that satisfies the current acceptance contract
+- accepted fact -> protected constraint:
+  the fact is required for safety, correctness, or contract fulfillment and
+  must remain pinned in the stable prefix or working set
+- `Hypothesis(*)` -> `Hypothesis(state=rejected)`:
+  a verifier fails, stronger contradictory evidence appears, the cited basis
+  goes stale, or the contract rules the path invalid
+- rejected hypothesis -> reopened hypothesis:
+  only when new evidence, a new snapshot, or a changed contract invalidates the
+  rejection basis
+
+The model may emit rewrite candidates and action requests. The compiler owns
+promotion, rejection, and reopening.
+
+### Decision Policy
+
+The runtime should choose actions from typed state, not from a single prose
+self-assessment.
+
+Suggested policy defaults:
+
+- answer or edit only when the acceptance contract is satisfied and
+  `RiskState` is bounded
+- ask the user when requirement ambiguity is high and execution risk is not
+  trivial
+- branch only when multiple live hypotheses remain and the branches are
+  independently testable
+- reset or hand off when context drift or role isolation matters more than
+  transcript continuity
+- abstain when required evidence or required verifiers cannot be obtained under
+  current permissions or budget
+
+### Tool Boundary Rules
+
+Every tool integrated into the loop should follow the same contract:
+
+- return a structured payload, not only display text
+- emit zero or more `EvidenceRef` records
+- declare whether it is:
+  - retrieval
+  - graph expansion
+  - filesystem inspection
+  - verification
+  - environment/runtime inspection
+- include cost and freshness metadata
+- be replayable or cacheable when snapshot/artifact inputs are unchanged
+
+Tool output text for human readability can still exist, but the agent loop
+should consume typed observations first and rendered text second.
+
+### Cache And Invalidation
+
+Bundle cache keys should include all inputs that can change meaning:
+
+- snapshot ID and artifact key
+- query or task fingerprint
+- selected repositories, filters, and requested budget
+- retrieval policy version
+- projection algorithm version
+- embedding fingerprint
+- distillation model, prompt, and renderer fingerprint
+
+Invalidation should be conservative:
+
+- source snapshot or artifact mismatch is a hard miss
+- projection or renderer mismatch rebuilds the bundle text
+- embedding mismatch reruns evidence ranking that depends on vector scores
+- distillation fingerprint mismatch keeps evidence refs but rewrites summaries
+- changed cited files/symbols invalidate directly citing bundles
+- changed dependency frontiers invalidate impact/path bundles that depend on
+  affected graph neighborhoods
+
+Summaries are never authoritative. A stale summary can be discarded and rebuilt
+as long as the underlying `EvidenceRef` targets remain valid.
+
+### Non-Goals
+
+This track should not:
+
+- turn FastCode into the authoritative store for general agent/user memory
+- copy all code facts into an external memory graph
+- mutate external agent session history as its primary integration mechanism
+- replace current query/retrieval APIs before the context bundle path proves
+  useful
+- reuse third-party pruning implementation code without license review
+- treat free-form dialogue summaries as the primary state carrier once typed
+  turn artifacts exist
+
 ## Semantic upgrade flow
 
 Semantic upgrade is a separate stage from basic parsing.

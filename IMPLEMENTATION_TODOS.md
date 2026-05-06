@@ -231,6 +231,241 @@ The current release bar is aligned to the repo-template functional-core guidance
 
 This contract is only partially complete today. The architecture tests now enforce parts of it, including package-root purity, but large store and shell surfaces are still dict-heavy.
 
+## Next Research Track: Agent Context Integration
+
+**Problem statement:** FastCode should not stop at "API plus CLI/MCP tools for code
+search." The next design task is to make FastCode useful as an agent context
+engineering substrate: cacheable, budget-aware, provenance-preserving code
+evidence that agents can retrieve, compress, reactivate, and cite without
+re-reading or re-summarizing the same repository facts.
+
+**Why this is now the right research target:** The original March design notes
+framed FastCode as the code-intelligence provider beside a dynamic memory/core
+agent system. Most of the needed FastCode-side foundations now exist:
+- canonical IR/SCIP merge and semantic fallback
+- snapshot and manifest lineage
+- L0/L1/L2 projection generation
+- typed cache/session records
+- MCP graph tools for paths, impact, callers, and clusters
+- query-time semantic escalation
+- incremental/cache hardening that can eventually make context refresh cheap
+
+**Reference pattern:** [OpenCode DCP](https://github.com/Opencode-DCP/opencode-dynamic-context-pruning)
+is a useful example of session-local context pruning: it injects compression
+guidance, lets the model choose compression ranges/messages, protects important
+tool outputs, deduplicates repeated tool calls, and replaces stale messages with
+summary placeholders instead of modifying the original session history. FastCode
+should borrow the *context lifecycle idea*, not its exact implementation. DCP is
+AGPL-licensed, so any direct code reuse needs explicit license review. FastCode
+can do more because it owns structured repository facts, symbol/edge provenance,
+embeddings, projections, and snapshot lineage.
+
+**Core design thesis:** Keep authoritative code facts in FastCode and expose
+agent-facing context as derived artifacts:
+- `EvidenceRef`: immutable pointer to code facts, projection chunks, tool
+  traces, or prior session turns
+- `ContextBundle`: ranked, token-budgeted set of evidence refs with text
+  renderings, summaries, citations, freshness, and invalidation metadata
+- `DistillationRecord`: lossy summary of one or more evidence refs, with
+  coverage, omitted refs, source snapshot, model/prompt fingerprint, and
+  token-cost metadata
+- `ActivationRecord`: record of which bundle/distillation an agent actually
+  consumed for a task, so future retrieval can reuse proven context rather than
+  recomputing from raw snippets
+
+**Two-surface memory model:** The context system should explicitly separate:
+- historical truth:
+  append-only, complete, external, and restorable
+- cognitive working memory:
+  small, recent, relevant, and cache-friendly
+
+The rewrite target is the second surface. FastCode should preserve the
+historical evidence/observation journal and continuously recompile the
+prompt-facing working-memory view from typed state.
+
+**What FastCode should do beyond DCP:**
+- code-aware compression:
+  - summarize by symbols, files, call paths, dependency frontiers, clusters, and
+    changed shards instead of only by message ranges
+  - never summarize away citations; every summary must remain expandable to
+    source files/symbols/ranges/snapshots
+- cacheable context bundles:
+  - key bundle reuse by query/task fingerprint, snapshot/artifact key,
+    projection algorithm version, embedding fingerprint, distillation prompt
+    fingerprint, and token budget
+  - invalidate bundles when source snapshot, projection method, model/prep
+    schema, or cited evidence changes
+- progressive disclosure:
+  - L0 for orientation, L1 for navigation and relationships, L2 chunks for
+    evidence, raw source only when needed
+  - include explicit "expand handles" so agents can ask for the next level
+    without a fresh broad search
+- agent feedback loop:
+  - record accepted/rejected evidence, files actually edited, tests run, and
+    whether retrieved context was sufficient
+  - use those activation records as ranking signals for future similar tasks
+- protected evidence:
+  - preserve high-value outputs such as subagent findings, architecture
+    decisions, failing test logs, user constraints, and write-set summaries
+  - prune or distill duplicate/error-heavy tool output after it is superseded
+- budget policy:
+  - distinguish prompt-cache-sensitive stable prefixes from late dynamic context
+  - prefer stable IDs/placeholders plus expandable summaries over repeatedly
+    injecting large raw snippets
+
+**Proposed staged roadmap:**
+1. Define frozen core records for `EvidenceRef`, `ContextBundle`,
+   `DistillationRecord`, and `ActivationRecord` outside Pydantic-heavy shells.
+2. Add explicit serializers and cache keys for those records in `store/cache.py`
+   or a dedicated context store.
+3. Add a read-only context-bundle builder that consumes current retrieval
+   results and projection artifacts, enforces a token budget, and emits
+   provenance-preserving L0/L1/L2 sections.
+4. Expose bundle tools through MCP/API:
+   - build bundle for task/query/snapshot
+   - expand evidence ref
+   - compress/distill old bundle
+   - list/reactivate prior task bundles
+   - record activation feedback
+5. Add DCP-style pruning policies for FastCode session/tool history, but make
+   code evidence protected by default and replace only the prompt-facing
+   working-memory view with stable expandable refs; do not destructively rewrite
+   the historical journal.
+6. Add evaluation fixtures for agent tasks:
+   - context tokens consumed
+   - answer/edit correctness
+   - citation coverage
+   - repeated-query reuse
+   - source-change invalidation correctness
+
+**Research questions to resolve before implementation:**
+- What is the minimal task fingerprint that reuses useful context without
+  leaking stale or irrelevant evidence?
+- Which context should be prefix-stable for provider prompt caching, and which
+  should stay late/dynamic?
+- How much lossy distillation is acceptable before code-edit accuracy drops?
+- Should bundle ranking be learned from activation records or remain
+  deterministic for v1?
+- How should external agent memories such as MemOS link to FastCode bundles:
+  copied summaries, refs only, or hybrid refs plus selected summaries?
+
+**Acceptance bar for this track:**
+- A repeated agent task can reuse an existing context bundle without rerunning
+  broad retrieval or re-summarizing unchanged evidence.
+- A source edit invalidates only bundles that cite changed/affected evidence.
+- Agents can expand any summarized item back to file/symbol/range/snapshot
+  evidence.
+- Metrics report bundle cache hit/miss, distillation reuse, context token
+  savings, citation coverage, and stale-evidence invalidations.
+- Regression tests fail if a bundle summary loses all source refs or silently
+  survives an incompatible snapshot/projection/model fingerprint change.
+
+**v1 implementation slice, when this moves from research to code:**
+- Keep it read-only with respect to repository facts:
+  - no new indexing behavior
+  - no mutation of source files
+  - no external memory-store dependency
+- Add pure context records and helpers in an inner package:
+  - evidence normalization from retrieval rows and projection chunks
+  - deterministic token-budget allocation
+  - bundle rendering with stable expansion handles
+  - explicit source-ref coverage checks
+- Add a typed context cache/store boundary:
+  - bundle metadata
+  - distillation metadata
+  - activation metadata
+  - explicit serializers keyed by snapshot/artifact/projection/model
+    fingerprints
+- Add MCP/API shell tools only after the pure bundle builder has focused tests:
+  - `build_context_bundle`
+  - `expand_context_ref`
+  - `list_context_bundles`
+  - `record_context_activation`
+- Add regressions before adding agent-facing defaults:
+  - stale snapshot rejects cached bundle reuse
+  - changed projection algorithm rejects cached text reuse
+  - summary without source refs is rejected
+  - bundle token budget is enforced deterministically
+  - repeated identical request reuses cached distillation
+
+**Layering guardrails:**
+- `retrieval/core/` can own pure evidence scoring and budget logic.
+- `query/` can orchestrate retrieval plus bundle assembly.
+- `store/` can persist typed bundle/distillation/activation records.
+- `api/` and `mcp/` should remain transport adapters.
+- Do not introduce Pydantic, direct env reads, generic `safe_jsonable()` walks,
+  or recursive `to_dict()` round-trips in the new inner bundle path.
+
+**Turn-centric rewrite target:**
+- Rewrite agent integration around typed turn artifacts instead of raw prompt
+  carry-over plus saved summaries.
+- Split turn memory into two layers:
+  - append-only turn/evidence journal
+  - replaceable compiled working-memory artifact
+- Introduce a turn journal model:
+  - `TurnIntent`
+  - `TurnPlan`
+  - `ToolObservation`
+  - `BeliefState`
+  - `WorkingSet`
+  - `TurnOutcome`
+- Treat each tool call as an observation update:
+  - normalize the result
+  - extract evidence refs
+  - update active hypotheses
+  - append the observation to the journal
+  - rewrite the next prompt/context section
+- Keep the stable prompt prefix byte-stable when snapshot/task invariants match:
+  - `L0`
+  - selected `L1`
+  - accepted facts
+  - protected constraints
+- Keep the dynamic tail small and recent:
+  - active hypotheses
+  - unresolved questions
+  - recent observations
+  - next actions
+- Keep human-readable tool output as a rendering layer, not the authoritative
+  agent state.
+
+**Concrete v1 rewrite path against current code:**
+1. Keep `query/handler.py` as the outer turn orchestrator, but stop treating
+   session history plus `get_recent_summaries()` as the main carry-forward
+   state.
+2. Refactor `retrieval/iterative.py` round state into explicit typed
+   plan/observation/history records so confidence, keep-files, and tool-call
+   history stop living mainly in prompt-local dicts.
+3. Wrap `retrieval/agent_tools.py` outputs in normalized observation adapters
+   with evidence refs, cost, warnings, and freshness metadata.
+4. Extend `store/cache.py` or a sibling store with typed persistence for the
+   turn journal and working-set artifacts, not only dialogue turns.
+5. Add a context compiler that renders the next-turn prompt from:
+   accepted facts, active hypotheses, unresolved uncertainty, protected
+   evidence, and reusable bundle refs.
+6. Add verifier-aware turn transitions:
+   retrieval -> inspect -> verify -> commit
+   retrieval -> inspect -> uncertainty persists -> branch or ask
+   retrieval/tool failure -> degraded evidence -> abstain or widen search
+
+**Acceptance criteria for the rewrite:**
+- A tool result can update turn state without forcing the next model call to
+  reread the full raw transcript.
+- The next-turn context is reproducible from typed state plus bundle refs.
+- Accepted and rejected hypotheses are explicit in the carried-forward state.
+- Verification failures remove or downgrade conflicting hypotheses in the next
+  prompt rewrite.
+- Replaying the same turn against the same snapshot/artifact inputs yields the
+  same working set and bundle handles, modulo model nondeterminism in optional
+  summary text.
+
+**Model-facing DSL:**
+- Use the line-oriented FCX DSL defined in
+  [AGENT_CONTEXT_DSL.md](./AGENT_CONTEXT_DSL.md) for compact prompt rendering.
+- Treat FCX as a rendering/parsing layer over typed records, not as storage
+  truth.
+- Compare FCX token counts against pretty JSON, minified JSON, and prose before
+  making it the default agent prompt format.
+
 ## Stable Release Gap
 
 ### P0: Must Close Before Stable Release
@@ -957,6 +1192,134 @@ This item should be treated as the implementation slice of the broader P0.6a sch
 **Exit criteria:**
 - The stable dependency set is intentionally minimal for the hot path.
 - Performance-sensitive libraries are selected based on measured workload evidence and documented tradeoffs.
+
+### P1.10 Agent context bundle v0
+
+**Status:** Research/design track. This is not a stable-release P0 blocker for
+the current API/CLI/MCP product shape, but it is required before FastCode should
+claim to be an agent-native context engineering system.
+
+**Gap:** Current agent integration still mostly exposes tools that answer a
+question, search symbols, inspect graph paths, or return session history.
+Agents do not yet get durable, cacheable, expandable context bundles with
+source-ref preserving distillation and reuse metadata.
+
+**Required work:**
+- Add frozen context records for:
+  - evidence refs
+  - context bundles
+  - distillation records
+  - activation records
+- Build a read-only context-bundle path over existing retrieval/projection
+  outputs.
+- Make bundle cache keys include snapshot/artifact, projection, embedding,
+  retrieval-policy, distillation-prompt, and budget fingerprints.
+- Add an expansion path from any summary item back to source evidence.
+- Add a basic activation API so agent adapters can record which evidence was
+  actually useful.
+- Keep DCP-style pruning as an adapter/policy layer, not the source of truth for
+  code facts.
+
+**Exit criteria:**
+- A repeated task can reuse an existing bundle/distillation without broad
+  retrieval or re-summarization when fingerprints match.
+- Cached bundles are rejected when cited source snapshots, projection versions,
+  or distillation fingerprints are incompatible.
+- Bundle rendering enforces a token budget deterministically.
+- Every bundle item has at least one source ref or an explicit non-code
+  provenance reason.
+- MCP/API tools expose build, expand, list, and activation-record operations
+  without importing Pydantic into inner packages.
+
+### P1.11 Turn journal and context compiler
+
+**Status:** Not started.
+
+**Gap:** The current iterative agent already has multi-round control, but turn
+state is still mostly transient prompt data plus flat cache summaries. Tool
+calls are not yet persisted and reused as typed observations that can drive the
+next-turn rewrite deterministically. The code also does not yet clearly
+separate append-only historical truth from the replaceable working-memory view.
+
+**Required work:**
+- Add typed turn-journal records and explicit serializers.
+- Split persistence and compilation responsibilities:
+  - append-only journal for observations, verifier outputs, and outcomes
+  - compiled working-memory artifact for stable prefix, active turn state, and
+    recent relevant observation slice
+- Normalize tool outputs from `agent_tools` and future verifier tools into
+  observation records with evidence refs and freshness metadata.
+- Add a context compiler that renders next-turn prompt state from typed turn
+  state instead of replaying broad dialogue history.
+- Keep raw tool output and deep context external/restorable by reference rather
+  than inline in the compiled prompt.
+- Add a strict FCX serializer/parser for compact model-facing prompt state.
+- Add possibility-management fields:
+  - hypotheses
+  - supporting refs
+  - conflicting refs
+  - verifier status
+  - unresolved questions
+- Add explicit decision-control objects:
+  - `RiskState`
+  - `AcceptanceContract`
+  - `RejectedHypothesisLedger`
+  - `HandoffArtifact`
+- Add a versioned promotion/rejection policy:
+  - observation -> cited note
+  - cited note -> hypothesis support/conflict
+  - favored hypothesis -> accepted fact
+  - accepted fact -> protected constraint
+  - failed or contradicted hypothesis -> rejected ledger entry
+  - rejected hypothesis -> reopened only with new evidence, snapshot change, or
+    contract change
+- Add deterministic action policy gates for:
+  - answer/edit
+  - retrieve/expand
+  - verify
+  - ask user
+  - branch
+  - reset/handoff
+  - abstain
+- Add execution-regime switching:
+  - short-horizon direct mode
+  - long-horizon managed mode
+  - documented trigger thresholds for promotion/demotion between them
+- Add tail-recitation rendering for current goal, current plan, and stop
+  condition without replaying old narration.
+- Integrate verifier outcomes into next-turn state transitions.
+- Add rejected-hypothesis persistence so rewrites do not reintroduce killed
+  paths.
+- Add handoff-artifact generation for clean-context reset, reviewer delegation,
+  and rollback.
+- Add replay tests for same-turn deterministic working-set reconstruction.
+- Add cache-stability tests proving the stable FCX prefix remains byte-stable
+  when snapshot, task, and protected constraints are unchanged.
+- Add tests proving model-proposed rewrites cannot directly promote facts,
+  constraints, or risk/contract state.
+- Add tests for reset triggers, handoff reconstruction, and reopened-hypothesis
+  rules.
+
+**Exit criteria:**
+- The active agent loop can be inspected as a turn journal, not only as prompt
+  text.
+- Tool observations can be cached and reused across turns when snapshot inputs
+  are unchanged.
+- Context rewrite after each tool observation is visible and testable.
+- The compiled working-memory view can be replaced without mutating historical
+  observations.
+- FCX output is generated from typed state and can be parsed back into refs,
+  hypotheses, observations, contracts, risk state, rejected hypotheses, and
+  working-set directives.
+- The loop can branch, verify, downgrade, or abstain based on explicit typed
+  uncertainty signals rather than prompt text alone.
+- The runtime can explain why it answered, edited, asked, branched, reset, or
+  abstained from typed `RiskState` plus `AcceptanceContract`, not only from
+  prose summaries.
+- Killed hypotheses remain suppressed across rewrites until the reopen rule is
+  satisfied.
+- Clean-context reset and delegation both run from a typed handoff artifact
+  rather than transcript replay.
 
 ### P2: Post-Stable Quality Improvements
 

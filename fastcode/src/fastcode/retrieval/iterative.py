@@ -110,6 +110,8 @@ class IterativeAgent:
 
         # Dialogue history (set per query)
         self.dialogue_history: list[dict[str, Any]] | None = None
+        self.compiled_context: str | None = None
+        self.agent_context_tool_observations: list[dict[str, Any]] = []
 
     def _initialize_client(self) -> OpenAI | Anthropic | None:
         """Initialize LLM client based on provider"""
@@ -169,6 +171,7 @@ class IterativeAgent:
         query_info: dict[str, Any],
         repo_filter: list[str] | None = None,
         dialogue_history: list[dict[str, Any]] | None = None,
+        compiled_context: str | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """
         Main entry point for iterative retrieval
@@ -179,6 +182,7 @@ class IterativeAgent:
             query_info: Query information dict
             repo_filter: Optional list of repository names to filter
             dialogue_history: Previous dialogue summaries for multi-turn context
+            compiled_context: Optional FCX working context from prior turns
 
         Returns:
             Tuple of (final_results, iteration_metadata)
@@ -186,9 +190,11 @@ class IterativeAgent:
         self.logger.info("Starting iterative retrieval")
         self.iteration_history = []
         self.tool_call_history = []
+        self.agent_context_tool_observations = []
 
         # Store dialogue_history for use in prompts
         self.dialogue_history = dialogue_history
+        self.compiled_context = compiled_context
 
         # Round 1: Initial assessment and retrieval (with dialogue context)
         round1_result = self._round_one(
@@ -347,7 +353,11 @@ class IterativeAgent:
 
             # Execute tool calls for next round
             new_elements = self._execute_tool_calls_round_n(
-                query, round_result["tool_calls"], repo_filter, current_elements
+                query,
+                round_result["tool_calls"],
+                repo_filter,
+                current_elements,
+                current_round,
             )
 
             if not new_elements:
@@ -440,6 +450,13 @@ class IterativeAgent:
             line_budget=self.adaptive_line_budget,
             min_confidence_gain=self.min_confidence_gain,
         )
+        recommended_action = "answer"
+        if final_confidence < self.confidence_threshold:
+            recommended_action = (
+                "reset"
+                if stopping_reason in {"max_iterations", "line_budget_exceeded"}
+                else "expand"
+            )
 
         metadata = {
             # Basic info
@@ -466,6 +483,7 @@ class IterativeAgent:
             },
             # Analysis
             "stopping_reason": stopping_reason,
+            "recommended_action": recommended_action,
             "efficiency_rating": _iteration.rate_efficiency(
                 overall_roi, budget_used_pct
             ),
@@ -572,8 +590,15 @@ IMPORTANT: At this stage, you have NOT seen any code files yet. Base your confid
                     dialogue_context += f"  Summary: {summary_preview}\n"
             dialogue_context += "\n**IMPORTANT**: Use this context to understand references in the current query (e.g., 'this function', 'that class'). The current query may refer to entities discussed in previous turns.\n"
 
+        compiled_context_section = ""
+        if self.compiled_context:
+            compiled_context_section = (
+                f"\n**Structured Working Context (FCX)**:\n{self.compiled_context}\n"
+            )
+
         prompt = f"""You are a code analysis agent performing initial query assessment. You have NOT seen any code files yet.
 {dialogue_context}
+{compiled_context_section}
 **Current User Query**: {query}
 
 **Repository Structure**:
@@ -976,7 +1001,10 @@ If confidence < 95:
         tool_results: list[dict[str, Any]] = []
         if round1_result.get("tool_calls"):
             tool_results = self._execute_tool_calls_with_selection(
-                query, round1_result["tool_calls"], repo_filter
+                query,
+                round1_result["tool_calls"],
+                repo_filter,
+                round_num=1,
             )
             self.logger.info(
                 f"Tool calls found {len(tool_results)} additional elements"
@@ -1023,6 +1051,7 @@ If confidence < 95:
         query: str,
         tool_calls: list[dict[str, Any]],
         repo_filter: list[str] | None = None,
+        round_num: int = 0,
     ) -> list[dict[str, Any]]:
         """
         Execute tool calls and let LLM select specific elements (file/class/function level)
@@ -1047,6 +1076,20 @@ If confidence < 95:
                 self.logger.info(
                     f"search_codebase returned {len(candidates)} candidates"
                 )
+                self.agent_context_tool_observations.append(
+                    {
+                        "tool": tool_name,
+                        "ok": bool(candidates),
+                        "parameters": dict(parameters),
+                        "round_number": round_num,
+                        "candidate_count": len(candidates),
+                        "sample_paths": [
+                            str(item.get("file_path") or "")
+                            for item in candidates[:4]
+                            if item.get("file_path")
+                        ],
+                    }
+                )
                 if not candidates:
                     self.logger.warning(
                         f"No candidates returned from search_codebase in iterative agent, params: {parameters}, selected_repos: {selected_repos}"
@@ -1060,6 +1103,20 @@ If confidence < 95:
                 candidates = self._execute_list_directory(parameters, selected_repos)
                 self.logger.info(
                     f"list_directory returned {len(candidates)} candidates"
+                )
+                self.agent_context_tool_observations.append(
+                    {
+                        "tool": tool_name,
+                        "ok": bool(candidates),
+                        "parameters": dict(parameters),
+                        "round_number": round_num,
+                        "candidate_count": len(candidates),
+                        "sample_paths": [
+                            str(item.get("file_path") or "")
+                            for item in candidates[:4]
+                            if item.get("file_path")
+                        ],
+                    }
                 )
                 if not candidates:
                     self.logger.warning(
@@ -1635,8 +1692,15 @@ Base your confidence on:
                     dialogue_context += f"  Summary: {summary_preview}\n"
             dialogue_context += "\n**NOTE**: The current query may reference entities from previous turns. Use this context to understand what the user is asking about.\n"
 
+        compiled_context_section = ""
+        if self.compiled_context:
+            compiled_context_section = (
+                f"\n**Structured Working Context (FCX)**:\n{self.compiled_context}\n"
+            )
+
         prompt = f"""You are a cost-aware code analysis agent in round {round_num} of iterative retrieval.
 {dialogue_context}
+{compiled_context_section}
 **Current User Query**: {query}
 
 **Repository Structure**:
@@ -2371,10 +2435,14 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         tool_calls: list[dict[str, Any]],
         repo_filter: list[str] | None,
         existing_elements: list[dict[str, Any]],
+        round_num: int,
     ) -> list[dict[str, Any]]:
         """Execute tool calls in round N and return new elements"""
         new_elements = self._execute_tool_calls_with_selection(
-            query, tool_calls, repo_filter
+            query,
+            tool_calls,
+            repo_filter,
+            round_num=round_num,
         )
         self.logger.info(f"Tool calls found {len(new_elements)} additional elements")
         self.logger.info(

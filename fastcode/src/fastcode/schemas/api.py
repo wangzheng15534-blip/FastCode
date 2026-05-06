@@ -101,6 +101,23 @@ class QueryResponse(BaseModel):
     completion_tokens: int | None = None
     total_tokens: int | None = None
     session_id: str | None = None
+    turn_number: int | None = None
+
+
+class AgentContextHandoffRequest(BaseModel):
+    session_id: str = Field(..., description="Session ID containing working memory")
+    turn_number: int | None = Field(
+        None,
+        description="Optional turn number; defaults to the latest turn in the session",
+    )
+    mode: str = Field("delegate", description="Handoff mode, for example delegate")
+
+
+class ExpandContextRefRequest(BaseModel):
+    session_id: str = Field(..., description="Session ID containing working memory")
+    turn_number: int = Field(..., description="Turn number to inspect")
+    ref_id: str = Field(..., description="Evidence ref ID, such as e1")
+    depth: str = Field("L2", description="Requested expansion depth")
 
 
 class LoadRepositoriesRequest(BaseModel):

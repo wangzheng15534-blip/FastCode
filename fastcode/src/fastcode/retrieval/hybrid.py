@@ -167,6 +167,10 @@ class HybridRetriever:
         self.pg_retrieval_store: PgRetrievalStore | None = None
         self._active_snapshot_id: str | None = None
         self._last_fusion_debug: dict[str, Any] | None = None
+        self.last_iteration_metadata: dict[str, Any] | None = None
+        self.last_tool_observations: list[dict[str, Any]] = []
+        self.last_handoff_artifact: dict[str, Any] | None = None
+        self.last_reset_recommended: bool = False
 
     def index_for_bm25(self, elements: list[CodeElement]):
         """
@@ -477,6 +481,7 @@ class HybridRetriever:
         enable_file_selection: bool = True,
         use_agency_mode: bool | None = None,
         dialogue_history: list[dict[str, Any]] | None = None,
+        compiled_context: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Retrieve relevant code elements using hybrid approach with LLM-enhanced queries
@@ -490,11 +495,16 @@ class HybridRetriever:
             enable_file_selection: Whether to use LLM for file selection (multi-repo only)
             use_agency_mode: Whether to use agency mode (None = auto-decide based on intent)
             dialogue_history: Previous dialogue summaries for multi-turn context
+            compiled_context: Optional typed FCX context from prior turns
 
         Returns:
             List of retrieved elements with metadata
         """
         # Handle both string and ProcessedQuery inputs
+        self.last_iteration_metadata = None
+        self.last_tool_observations = []
+        self.last_handoff_artifact = None
+        self.last_reset_recommended = False
         self._active_snapshot_id = (filters or {}).get(
             "snapshot_id"
         ) or self.ir_snapshot_id
@@ -607,7 +617,12 @@ class HybridRetriever:
 
             # Go directly to iterative agency mode with dialogue_history
             final_results = self._apply_agency_mode(
-                query_str, [], query_info, repo_filter, dialogue_history
+                query_str,
+                [],
+                query_info,
+                repo_filter,
+                dialogue_history,
+                compiled_context,
             )
 
             # Final safety check
@@ -1896,6 +1911,7 @@ class HybridRetriever:
         query_info: dict[str, Any],
         repo_filter: list[str] | None = None,
         dialogue_history: list[dict[str, Any]] | None = None,
+        compiled_context: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Apply agency mode: iterative retrieval with confidence and cost control
@@ -1937,9 +1953,21 @@ class HybridRetriever:
                         query_info,
                         repo_filter,
                         dialogue_history,
+                        compiled_context,
                     )
                 )
 
+                self.last_iteration_metadata = iteration_metadata
+                self.last_tool_observations = list(
+                    getattr(
+                        self.iterative_agent,
+                        "agent_context_tool_observations",
+                        [],
+                    )
+                )
+                self.last_reset_recommended = bool(
+                    iteration_metadata.get("recommended_action") == "reset"
+                )
                 self.logger.info(f"Iterative agent completed: {iteration_metadata}")
 
                 return final_results

@@ -4,6 +4,7 @@ QueryPipeline — query, query_stream, and query_snapshot extracted from FastCod
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import traceback
@@ -11,10 +12,26 @@ from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Any, cast
 
 from ..retrieval.core import snapshot as _snapshot
+from ..retrieval.core.agent_context import (
+    ToolObservation,
+    TurnIntent,
+    build_acceptance_contract,
+    compute_risk_state,
+    promote_observations,
+)
+from ..retrieval.core.context_compiler import (
+    COMPILER_FINGERPRINT,
+    build_evidence_refs_from_sources,
+    build_tool_observation,
+    build_turn_journal,
+    build_turn_plan,
+    compile_working_memory,
+)
 from ..retrieval.hybrid import HybridRetriever
 from ..semantic.symbol_index import SnapshotSymbolIndex
 from ..store.cache import CacheManager
 from ..store.manifest import ManifestStore
+from ..store.records import TurnJournalRecord, WorkingMemoryRecord
 from ..store.snapshot import SnapshotStore
 from .answer import AnswerGenerator
 from .processor import QueryProcessor
@@ -44,6 +61,7 @@ class QueryPipeline:
         is_repo_indexed: Callable[[], bool],
         load_artifacts_by_key: Callable[[str], bool],
         load_snapshot_artifacts: Callable[..., Any | None] | None = None,
+        get_session_prefix: Callable[[str], dict[str, Any]] | None = None,
         semantic_escalation_cb: SemanticEscalationCallback | None = None,
     ) -> None:
         self.config = config
@@ -58,6 +76,7 @@ class QueryPipeline:
         self.is_repo_indexed = is_repo_indexed
         self.load_artifacts_by_key = load_artifacts_by_key
         self.load_snapshot_artifacts = load_snapshot_artifacts
+        self.get_session_prefix = get_session_prefix
         self.semantic_escalation_cb = semantic_escalation_cb
         self._snapshot_query_lock = threading.Lock()
 
@@ -172,6 +191,11 @@ class QueryPipeline:
 
             merged_filters = dict(filters or {})
             merged_filters["snapshot_id"] = snapshot_id
+            merged_filters["artifact_key"] = getattr(
+                loaded_artifacts,
+                "artifact_key",
+                artifact_key,
+            )
 
             result = self.query(
                 question=question,
@@ -202,6 +226,7 @@ class QueryPipeline:
 
             merged_filters = dict(filters or {})
             merged_filters["snapshot_id"] = snapshot_id
+            merged_filters["artifact_key"] = artifact_key
 
             result = self.query(
                 question=question,
@@ -295,6 +320,8 @@ class QueryPipeline:
         result = None  # Always process through full flow
         processed_query = None
         retrieved: list[dict[str, Any]] = []
+        turn_bundle: dict[str, Any] | None = None
+        prior_compiled_context = self._load_prior_compiled_context(session_id)
 
         try:
             if result is None:
@@ -347,6 +374,7 @@ class QueryPipeline:
                     repo_filter=repo_filter,
                     use_agency_mode=use_agency_mode,
                     dialogue_history=dialogue_history if enable_multi_turn else None,
+                    compiled_context=prior_compiled_context,
                 )
                 semantic_escalation = self._maybe_escalate_query_semantics(
                     question=question,
@@ -365,7 +393,18 @@ class QueryPipeline:
                         dialogue_history=(
                             dialogue_history if enable_multi_turn else None
                         ),
+                        compiled_context=prior_compiled_context,
                     )
+
+                turn_bundle = self._build_turn_artifact_bundle(
+                    question=question,
+                    processed_query=processed_query,
+                    retrieved=retrieved,
+                    session_id=session_id,
+                    filters=filters,
+                    repo_filter=repo_filter,
+                    retriever=active_retriever,
+                )
 
                 # Generate answer (with dialogue history for multi-turn)
                 result = self.answer_generator.generate(
@@ -375,40 +414,35 @@ class QueryPipeline:
                     dialogue_history=self._get_full_dialogue_history(
                         session_id, enable_multi_turn or False
                     ),
+                    compiled_context=cast(str, turn_bundle["compiled_context"]),
                     prompt_builder=prompt_builder,
                 )
                 if semantic_escalation is not None:
                     result["semantic_escalation"] = semantic_escalation
+                result["turn_number"] = cast(int, turn_bundle["turn_number"])
+                if session_id:
+                    result["session_id"] = session_id
 
             # Add repository information to result
             if repo_filter:
                 result["searched_repositories"] = repo_filter
 
-            # Persist dialogue for any session (even single-turn) so users keep history
-            if session_id:
-                turn_number = self._get_next_turn_number(session_id)
-                summary = result.get("summary", "")
-                sources = result.get("sources", [])
-
-                metadata = {
-                    "intent": getattr(processed_query, "intent", None),
-                    "keywords": getattr(processed_query, "keywords", None),
-                    "repo_filter": repo_filter,
-                    "multi_turn": enable_multi_turn,
-                }
-
-                self.cache_manager.save_dialogue_turn(
+            if processed_query is not None and turn_bundle is not None:
+                self._persist_turn_artifacts(
                     session_id=session_id,
-                    turn_number=turn_number,
-                    query=question,
-                    answer=result.get("answer", ""),
-                    summary=summary,
-                    retrieved_elements=sources,
-                    metadata=metadata,
-                )
-
-                self.logger.info(
-                    f"Saved dialogue turn {turn_number} for session {session_id}"
+                    question=question,
+                    answer=str(result.get("answer", "")),
+                    summary=(
+                        str(result["summary"])
+                        if result.get("summary") is not None
+                        else None
+                    ),
+                    sources=cast(list[dict[str, Any]], result.get("sources", []))
+                    or cast(list[dict[str, Any]], turn_bundle["sources"]),
+                    processed_query=processed_query,
+                    repo_filter=repo_filter,
+                    enable_multi_turn=bool(enable_multi_turn),
+                    bundle=turn_bundle,
                 )
 
             # Cache result for stateless flows (including single-turn sessions)
@@ -495,6 +529,7 @@ class QueryPipeline:
         try:
             # Notify start of retrieval
             yield None, {"status": "retrieving", "query": question}
+            prior_compiled_context = self._load_prior_compiled_context(session_id)
 
             # Retrieval phase (same as query method)
             use_iterative_enhancement = (
@@ -537,10 +572,27 @@ class QueryPipeline:
                 repo_filter=repo_filter,
                 use_agency_mode=use_agency_mode,
                 dialogue_history=dialogue_history if enable_multi_turn else None,
+                compiled_context=prior_compiled_context,
+            )
+            turn_bundle = self._build_turn_artifact_bundle(
+                question=question,
+                processed_query=processed_query,
+                retrieved=retrieved,
+                session_id=session_id,
+                filters=filters,
+                repo_filter=repo_filter,
+                retriever=self.retriever,
             )
 
             # Notify start of generation
-            yield None, {"status": "generating", "retrieved_count": len(retrieved)}
+            yield (
+                None,
+                {
+                    "status": "generating",
+                    "retrieved_count": len(retrieved),
+                    "turn_number": turn_bundle["turn_number"],
+                },
+            )
 
             # Stream answer generation
             full_answer_parts: list[str] = []
@@ -553,6 +605,7 @@ class QueryPipeline:
                 dialogue_history=self._get_full_dialogue_history(
                     session_id, enable_multi_turn or False
                 ),
+                compiled_context=cast(str, turn_bundle["compiled_context"]),
                 prompt_builder=prompt_builder,
             ):
                 if chunk:
@@ -570,6 +623,7 @@ class QueryPipeline:
                 "answer": full_answer,
                 "query": question,
                 "context_elements": len(retrieved),
+                "turn_number": turn_bundle["turn_number"],
                 "sources": answer_metadata.get(
                     "sources", self._extract_sources_from_elements(retrieved)
                 ),
@@ -581,28 +635,21 @@ class QueryPipeline:
             if repo_filter:
                 result["searched_repositories"] = repo_filter
 
-            # Save dialogue turn if session_id provided
             if session_id:
-                turn_number = self._get_next_turn_number(session_id)
+                result["session_id"] = session_id
 
-                self.cache_manager.save_dialogue_turn(
-                    session_id=session_id,
-                    turn_number=turn_number,
-                    query=question,
-                    answer=full_answer,
-                    summary=summary or "",
-                    retrieved_elements=result.get("sources", []),
-                    metadata={
-                        "intent": getattr(processed_query, "intent", None),
-                        "keywords": getattr(processed_query, "keywords", None),
-                        "repo_filter": repo_filter,
-                        "multi_turn": enable_multi_turn,
-                    },
-                )
-
-                self.logger.info(
-                    f"Saved dialogue turn {turn_number} for session {session_id}"
-                )
+            self._persist_turn_artifacts(
+                session_id=session_id,
+                question=question,
+                answer=full_answer,
+                summary=str(summary) if summary is not None else None,
+                sources=cast(list[dict[str, Any]], result.get("sources", []))
+                or cast(list[dict[str, Any]], turn_bundle["sources"]),
+                processed_query=processed_query,
+                repo_filter=repo_filter,
+                enable_multi_turn=bool(enable_multi_turn),
+                bundle=turn_bundle,
+            )
 
             # Final yield with complete result
             yield None, result
@@ -623,6 +670,324 @@ class QueryPipeline:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _encode_payload_json(payload: dict[str, Any]) -> str:
+        return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+    @staticmethod
+    def _resolve_snapshot_scope(
+        filters: dict[str, Any] | None,
+    ) -> tuple[str | None, str | None]:
+        snapshot_value = (filters or {}).get("snapshot_id")
+        artifact_value = (filters or {}).get("artifact_key")
+        snapshot_id = (
+            str(snapshot_value)
+            if isinstance(snapshot_value, str) and snapshot_value
+            else None
+        )
+        artifact_key = (
+            str(artifact_value)
+            if isinstance(artifact_value, str) and artifact_value
+            else None
+        )
+        return snapshot_id, artifact_key
+
+    def _safe_get_session_prefix(
+        self,
+        snapshot_id: str | None,
+    ) -> dict[str, Any] | None:
+        if not snapshot_id or self.get_session_prefix is None:
+            return None
+        try:
+            payload = self.get_session_prefix(snapshot_id)
+        except Exception as exc:
+            self.logger.info(
+                f"Skipping session prefix for snapshot {snapshot_id}: {exc}"
+            )
+            return None
+        if payload.get("error"):
+            return None
+        return payload
+
+    def _load_prior_compiled_context(self, session_id: str | None) -> str | None:
+        if not session_id:
+            return None
+        prior_record = self.cache_manager.get_latest_working_memory_record(session_id)
+        if prior_record is None or not prior_record.full_fcx:
+            return None
+        return prior_record.full_fcx
+
+    @staticmethod
+    def _answer_summary(summary: str | None, answer: str) -> str:
+        if summary:
+            return str(summary)
+        normalized = " ".join(str(answer or "").split())
+        if len(normalized) <= 280:
+            return normalized
+        return normalized[:277] + "..."
+
+    def _build_tool_observations(
+        self,
+        *,
+        retriever: HybridRetriever,
+        evidence_refs: tuple[Any, ...],
+        retrieved: list[dict[str, Any]],
+        repo_filter: list[str] | None,
+    ) -> tuple[ToolObservation, ...]:
+        observations: list[ToolObservation] = []
+        ref_ids = tuple(item.ref_id for item in evidence_refs)
+        iteration_metadata = cast(
+            dict[str, Any],
+            getattr(retriever, "last_iteration_metadata", None) or {},
+        )
+        retrieval_mode = (
+            "iterative"
+            if getattr(retriever, "last_iteration_metadata", None) is not None
+            else "standard"
+        )
+        retrieval_summary = f"Retrieved {len(retrieved)} repository elements via {retrieval_mode} retrieval."
+        if iteration_metadata:
+            rounds = int(iteration_metadata.get("rounds") or 0)
+            retrieval_summary = (
+                f"Retrieved {len(retrieved)} repository elements via iterative "
+                f"retrieval across {rounds} rounds."
+            )
+        observations.append(
+            build_tool_observation(
+                observation_id="o_retrieve",
+                tool="retrieve",
+                ok=bool(retrieved),
+                parameters={
+                    "mode": retrieval_mode,
+                    "repo_filter": list(repo_filter or []),
+                    "result_count": len(retrieved),
+                    "rounds": int(iteration_metadata.get("rounds") or 0),
+                },
+                ref_ids=ref_ids[: min(len(ref_ids), 6)],
+                summary=retrieval_summary,
+                round_number=0,
+            )
+        )
+
+        path_to_ref_ids: dict[str, list[str]] = {}
+        for item in evidence_refs:
+            if item.path:
+                path_to_ref_ids.setdefault(item.path, []).append(item.ref_id)
+
+        raw_tool_observations = cast(
+            list[dict[str, Any]],
+            getattr(retriever, "last_tool_observations", []) or [],
+        )
+        for index, raw in enumerate(raw_tool_observations, 1):
+            parameters_value = raw.get("parameters")
+            parameters = (
+                {
+                    str(key): value
+                    for key, value in cast(dict[Any, Any], parameters_value).items()
+                }
+                if isinstance(parameters_value, dict)
+                else {}
+            )
+            sample_paths = [
+                str(path)
+                for path in raw.get("sample_paths", [])
+                if isinstance(path, str) and path
+            ]
+            matched_ref_ids: list[str] = []
+            for path in sample_paths:
+                matched_ref_ids.extend(path_to_ref_ids.get(path, []))
+            if not matched_ref_ids and ref_ids:
+                matched_ref_ids.extend(ref_ids[: min(len(ref_ids), 4)])
+            candidate_count = int(raw.get("candidate_count") or 0)
+            tool_name = str(raw.get("tool") or f"tool_{index}")
+            summary = f"{tool_name} produced {candidate_count} candidate paths."
+            if sample_paths:
+                summary = (
+                    f"{tool_name} produced {candidate_count} candidate paths, "
+                    f"including {', '.join(sample_paths[:2])}."
+                )
+            observations.append(
+                build_tool_observation(
+                    observation_id=f"o_tool_{index}",
+                    tool=tool_name,
+                    ok=bool(raw.get("ok", False)),
+                    parameters=dict(parameters),
+                    ref_ids=tuple(matched_ref_ids),
+                    summary=summary,
+                    round_number=int(raw.get("round_number") or 0),
+                )
+            )
+        return tuple(observations)
+
+    def _build_turn_artifact_bundle(
+        self,
+        *,
+        question: str,
+        processed_query: ProcessedQuery,
+        retrieved: list[dict[str, Any]],
+        session_id: str | None,
+        filters: dict[str, Any] | None,
+        repo_filter: list[str] | None,
+        retriever: HybridRetriever,
+    ) -> dict[str, Any]:
+        turn_number = self._get_next_turn_number(session_id) if session_id else 1
+        snapshot_id, artifact_key = self._resolve_snapshot_scope(filters)
+        prior_compiled_context = self._load_prior_compiled_context(session_id)
+
+        sources = self._extract_sources_from_elements(retrieved)
+        evidence_refs = build_evidence_refs_from_sources(
+            sources,
+            snapshot_id=snapshot_id,
+        )
+        observations = self._build_tool_observations(
+            retriever=retriever,
+            evidence_refs=evidence_refs,
+            retrieved=retrieved,
+            repo_filter=repo_filter,
+        )
+        accepted_facts, hypotheses, rejected_hypotheses = promote_observations(
+            question=question,
+            evidence_refs=evidence_refs,
+            observations=observations,
+            snapshot_id=snapshot_id,
+        )
+        risk_state = compute_risk_state(
+            question=question,
+            snapshot_id=snapshot_id,
+            evidence_refs=evidence_refs,
+            hypotheses=hypotheses,
+            accepted_facts=accepted_facts,
+            rejected_hypotheses=rejected_hypotheses,
+        )
+        acceptance_contract = build_acceptance_contract(requested_outcome="answer")
+        plan = build_turn_plan(
+            risk_state=risk_state,
+            contract=acceptance_contract,
+        )
+        unresolved_questions: tuple[str, ...] = ()
+        if risk_state.action_bias != "answer":
+            unresolved_questions = (
+                f"Need additional repository evidence for: {question}",
+            )
+        turn_intent = TurnIntent(
+            session_id=session_id or "stateless",
+            turn_number=turn_number,
+            question=question,
+            kind=processed_query.intent,
+            requested_outcome="answer",
+            snapshot_id=snapshot_id,
+            artifact_key=artifact_key,
+            repo_filter=tuple(repo_filter or ()),
+        )
+        working_memory = compile_working_memory(
+            intent=turn_intent,
+            contract=acceptance_contract,
+            risk_state=risk_state,
+            plan=plan,
+            evidence_refs=evidence_refs,
+            observations=observations,
+            accepted_facts=accepted_facts,
+            hypotheses=hypotheses,
+            rejected_hypotheses=rejected_hypotheses,
+            unresolved_questions=unresolved_questions,
+            session_prefix=self._safe_get_session_prefix(snapshot_id),
+        )
+        compiled_context = "\n\n".join(
+            part for part in (prior_compiled_context, working_memory.full_fcx) if part
+        )
+        return {
+            "turn_number": turn_number,
+            "sources": sources,
+            "compiled_context": compiled_context or working_memory.full_fcx,
+            "intent": turn_intent,
+            "working_memory": working_memory,
+            "plan": plan,
+            "observations": observations,
+            "evidence_refs": evidence_refs,
+            "risk_state": risk_state,
+            "acceptance_contract": acceptance_contract,
+            "hypotheses": hypotheses,
+            "rejected_hypotheses": rejected_hypotheses,
+            "accepted_facts": accepted_facts,
+        }
+
+    def _persist_turn_artifacts(
+        self,
+        *,
+        session_id: str | None,
+        question: str,
+        answer: str,
+        summary: str | None,
+        sources: list[dict[str, Any]],
+        processed_query: ProcessedQuery,
+        repo_filter: list[str] | None,
+        enable_multi_turn: bool,
+        bundle: dict[str, Any],
+    ) -> None:
+        if not session_id:
+            return
+
+        working_memory = bundle["working_memory"]
+        journal = build_turn_journal(
+            intent=bundle["intent"],
+            plan=bundle["plan"],
+            observations=bundle["observations"],
+            evidence_refs=bundle["evidence_refs"],
+            risk_state=bundle["risk_state"],
+            acceptance_contract=bundle["acceptance_contract"],
+            hypotheses=bundle["hypotheses"],
+            rejected_hypotheses=bundle["rejected_hypotheses"],
+            accepted_facts=bundle["accepted_facts"],
+            working_set=working_memory.working_set,
+            answer_summary=self._answer_summary(summary, answer),
+            created_at=working_memory.created_at,
+        )
+
+        working_memory_record = WorkingMemoryRecord(
+            session_id=working_memory.session_id,
+            turn_number=working_memory.turn_number,
+            snapshot_id=working_memory.snapshot_id,
+            artifact_key=working_memory.artifact_key,
+            compiler_fingerprint=working_memory.compiler_fingerprint,
+            payload_json=self._encode_payload_json(working_memory.to_dict()),
+            stable_fcx=working_memory.stable_fcx,
+            turn_fcx=working_memory.turn_fcx,
+            obs_fcx=working_memory.obs_fcx,
+            full_fcx=working_memory.full_fcx,
+            created_at=working_memory.created_at,
+        )
+        journal_record = TurnJournalRecord(
+            session_id=journal.session_id,
+            turn_number=journal.turn_number,
+            snapshot_id=journal.snapshot_id,
+            artifact_key=journal.artifact_key,
+            compiler_fingerprint=COMPILER_FINGERPRINT,
+            payload_json=self._encode_payload_json(journal.to_dict()),
+            created_at=journal.created_at,
+        )
+        self.cache_manager.save_working_memory_record(working_memory_record)
+        self.cache_manager.save_turn_journal_record(journal_record)
+
+        dialogue_summary = self._answer_summary(summary, answer)
+        metadata = {
+            "intent": getattr(processed_query, "intent", None),
+            "keywords": getattr(processed_query, "keywords", None),
+            "repo_filter": repo_filter,
+            "multi_turn": enable_multi_turn,
+        }
+        self.cache_manager.save_dialogue_turn(
+            session_id=session_id,
+            turn_number=bundle["turn_number"],
+            query=question,
+            answer=answer,
+            summary=dialogue_summary,
+            retrieved_elements=sources,
+            metadata=metadata,
+        )
+        self.logger.info(
+            f"Saved typed working memory and dialogue turn {bundle['turn_number']} for session {session_id}"
+        )
 
     def _get_full_dialogue_history(
         self, session_id: str | None, enable_multi_turn: bool = False

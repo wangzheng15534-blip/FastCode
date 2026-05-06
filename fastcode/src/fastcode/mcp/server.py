@@ -25,6 +25,7 @@ MCP config example (for Claude Code / Cursor):
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 import inspect
+import json
 import logging
 import os
 import uuid
@@ -357,6 +358,86 @@ def get_session_history(session_id: str) -> str:
         lines.append(f"A: {answer}")
 
     return "\n".join(lines)
+
+
+@mcp.tool()
+def get_turn_context(
+    session_id: str,
+    turn_number: int | None = None,
+    format: str = "fcx",
+) -> str:
+    """Get typed working-memory context for a session turn.
+
+    Args:
+        session_id: Session identifier.
+        turn_number: Optional turn number. If omitted, the latest turn is used.
+        format: "fcx" for the compiled DSL or "json" for structured payloads.
+
+    Returns:
+        JSON describing the requested working-memory artifact.
+    """
+    fc = _get_fastcode()
+    result = fc.get_turn_context(session_id, turn_number, format)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def create_handoff(
+    session_id: str,
+    turn_number: int | None = None,
+    mode: str = "delegate",
+) -> str:
+    """Create a handoff artifact from the specified or latest session turn.
+
+    Args:
+        session_id: Session identifier.
+        turn_number: Optional turn number. If omitted, the latest turn is used.
+        mode: Handoff mode label.
+
+    Returns:
+        JSON describing the persisted handoff artifact.
+    """
+    fc = _get_fastcode()
+    result = fc.create_handoff(session_id, turn_number, mode)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def get_handoff_artifact(artifact_id: str) -> str:
+    """Get a persisted handoff artifact by ID.
+
+    Args:
+        artifact_id: Handoff artifact identifier.
+
+    Returns:
+        JSON describing the handoff artifact.
+    """
+    fc = _get_fastcode()
+    result = fc.get_handoff_artifact(artifact_id)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def expand_context_ref(
+    session_id: str,
+    turn_number: int,
+    ref_id: str,
+    depth: str = "L2",
+) -> str:
+    """Expand a specific evidence ref from working memory.
+
+    Args:
+        session_id: Session identifier.
+        turn_number: Turn number to inspect.
+        ref_id: Evidence ref ID such as e1.
+        depth: Requested expansion depth label.
+
+    Returns:
+        JSON with the resolved evidence-ref payload.
+    """
+    fc = _get_fastcode()
+    result = fc.expand_context_ref(session_id, turn_number, ref_id, depth)
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 @mcp.tool()

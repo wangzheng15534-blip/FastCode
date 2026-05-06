@@ -36,7 +36,9 @@ from fastcode.api.serialization import (
 )
 from fastcode.main.fastcode import FastCode
 from fastcode.schemas.api import (
+    AgentContextHandoffRequest,
     DeleteReposRequest,
+    ExpandContextRefRequest,
     IndexMultipleRequest,
     IndexRunRequest,
     LoadRepositoriesRequest,
@@ -685,6 +687,7 @@ async def query_repository(request: QueryRequest):
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
             session_id=session_id,
+            turn_number=result.get("turn_number"),
         )
 
     except Exception as e:
@@ -724,6 +727,7 @@ async def query_snapshot(request: QuerySnapshotRequest):
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
             session_id=session_id,
+            turn_number=result.get("turn_number"),
         )
     except Exception as e:
         logger.error(f"Snapshot query failed: {e}")
@@ -954,6 +958,91 @@ async def get_projection_prefix(snapshot_id: str):
     except Exception as e:
         logger.error(f"Session prefix fetch failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/agent-context/session/{session_id}/latest")
+async def get_latest_turn_context(session_id: str, format: str = "fcx"):
+    """Fetch the latest typed working-memory artifact for a session."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        result = await asyncio.to_thread(
+            fastcode.get_turn_context,
+            session_id,
+            None,
+            format,
+        )
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Latest turn context fetch failed: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/agent-context/session/{session_id}/turn/{turn_number}")
+async def get_turn_context(
+    session_id: str,
+    turn_number: int,
+    format: str = "fcx",
+):
+    """Fetch a specific typed working-memory artifact for a session turn."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        result = await asyncio.to_thread(
+            fastcode.get_turn_context,
+            session_id,
+            turn_number,
+            format,
+        )
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Turn context fetch failed: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/agent-context/handoff")
+async def create_agent_context_handoff(request: AgentContextHandoffRequest):
+    """Create and persist a handoff artifact from a session turn."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        result = await asyncio.to_thread(
+            fastcode.create_handoff,
+            request.session_id,
+            request.turn_number,
+            request.mode,
+        )
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Handoff creation failed: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/agent-context/handoff/{artifact_id}")
+async def get_agent_context_handoff(artifact_id: str):
+    """Fetch a persisted handoff artifact."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        result = await asyncio.to_thread(fastcode.get_handoff_artifact, artifact_id)
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Handoff fetch failed: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/agent-context/expand")
+async def expand_agent_context_ref(request: ExpandContextRefRequest):
+    """Expand a single evidence ref from working memory."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        result = await asyncio.to_thread(
+            fastcode.expand_context_ref,
+            request.session_id,
+            request.turn_number,
+            request.ref_id,
+            request.depth,
+        )
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Context ref expansion failed: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.post("/new-session", response_model=NewSessionResponse)

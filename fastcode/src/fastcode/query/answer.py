@@ -71,6 +71,7 @@ class AnswerGenerator:
         retrieved_elements: list[dict[str, Any]],
         query_info: dict[str, Any] | None = None,
         dialogue_history: list[dict[str, Any]] | None = None,
+        compiled_context: str | None = None,
         prompt_builder: Callable[
             [str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str
         ]
@@ -99,7 +100,13 @@ class AnswerGenerator:
         if prompt_builder:
             prompt = prompt_builder(query, context, query_info, dialogue_history)
         else:
-            prompt = self._build_prompt(query, context, query_info, dialogue_history)
+            prompt = self._build_prompt(
+                query,
+                context,
+                query_info,
+                dialogue_history,
+                compiled_context=compiled_context,
+            )
 
         # Count tokens
         prompt_tokens = count_tokens(prompt, self.model or "gpt-4")
@@ -121,7 +128,11 @@ class AnswerGenerator:
 
             # Calculate tokens for each component to determine how much context we can keep
             system_prompt_sample = self._build_prompt(
-                query, "", query_info, dialogue_history
+                query,
+                "",
+                query_info,
+                dialogue_history,
+                compiled_context=compiled_context,
             )
             base_tokens = count_tokens(system_prompt_sample, self.model or "gpt-4")
             context_token_budget = (
@@ -144,7 +155,11 @@ class AnswerGenerator:
                 prompt = prompt_builder(query, context, query_info, dialogue_history)
             else:
                 prompt = self._build_prompt(
-                    query, context, query_info, dialogue_history
+                    query,
+                    context,
+                    query_info,
+                    dialogue_history,
+                    compiled_context=compiled_context,
                 )
 
             # Verify final token count
@@ -218,6 +233,7 @@ class AnswerGenerator:
         retrieved_elements: list[dict[str, Any]],
         query_info: dict[str, Any] | None = None,
         dialogue_history: list[dict[str, Any]] | None = None,
+        compiled_context: str | None = None,
         prompt_builder: Callable[
             [str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str
         ]
@@ -248,7 +264,13 @@ class AnswerGenerator:
         if prompt_builder:
             prompt = prompt_builder(query, context, query_info, dialogue_history)
         else:
-            prompt = self._build_prompt(query, context, query_info, dialogue_history)
+            prompt = self._build_prompt(
+                query,
+                context,
+                query_info,
+                dialogue_history,
+                compiled_context=compiled_context,
+            )
 
         # Count tokens and truncate if needed (same logic as generate())
         prompt_tokens = count_tokens(prompt, self.model or "gpt-4")
@@ -264,7 +286,11 @@ class AnswerGenerator:
             )
 
             system_prompt_sample = self._build_prompt(
-                query, "", query_info, dialogue_history
+                query,
+                "",
+                query_info,
+                dialogue_history,
+                compiled_context=compiled_context,
             )
             base_tokens = count_tokens(system_prompt_sample, self.model or "gpt-4")
             context_token_budget = available_input_tokens - base_tokens - 100
@@ -280,7 +306,11 @@ class AnswerGenerator:
                 prompt = prompt_builder(query, context, query_info, dialogue_history)
             else:
                 prompt = self._build_prompt(
-                    query, context, query_info, dialogue_history
+                    query,
+                    context,
+                    query_info,
+                    dialogue_history,
+                    compiled_context=compiled_context,
                 )
 
             final_prompt_tokens = count_tokens(prompt, self.model or "gpt-4")
@@ -515,6 +545,7 @@ class AnswerGenerator:
         context: str,
         query_info: dict[str, Any] | None = None,
         dialogue_history: list[dict[str, Any]] | None = None,
+        compiled_context: str | None = None,
     ) -> str:
         """Build complete prompt for LLM"""
 
@@ -604,6 +635,10 @@ Symbol Mappings:
 
         # Add current query
         user_parts.append(f"**Current Question**: {query}")
+
+        if compiled_context:
+            user_parts.append("\n**Structured Working Context (FCX)**:\n")
+            user_parts.append(compiled_context)
 
         # Add query intent if available
         # if query_info and "intent" in query_info:

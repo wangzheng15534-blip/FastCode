@@ -43,6 +43,8 @@ from ..query.answer import AnswerGenerator
 from ..query.handler import QueryPipeline
 from ..query.processor import QueryProcessor
 from ..retrieval.core import snapshot as _snapshot
+from ..retrieval.core.agent_context import HandoffArtifact, WorkingMemoryArtifact
+from ..retrieval.core.context_compiler import build_handoff_from_working_memory
 from ..retrieval.hybrid import HybridRetriever
 from ..schemas.config import FastCodeConfig, config_from_mapping
 from ..scip.symbol_resolver import SymbolResolver
@@ -53,6 +55,7 @@ from ..store.index_run import IndexRunStore
 from ..store.manifest import ManifestStore
 from ..store.pg_retrieval import PgRetrievalStore
 from ..store.projection import ProjectionStore
+from ..store.records import HandoffArtifactRecord
 from ..store.snapshot import SnapshotStore
 from ..store.unit_artifacts import UnitArtifactStore
 from ..store.vector import VectorStore
@@ -263,6 +266,7 @@ class FastCode:
             is_repo_indexed=lambda: self.repo_indexed,
             load_artifacts_by_key=self.pipeline._load_artifacts_by_key,
             load_snapshot_artifacts=self.pipeline.load_snapshot_artifacts_handle,
+            get_session_prefix=self.get_session_prefix,
             semantic_escalation_cb=self._escalate_query_semantics,
         )
 
@@ -2035,6 +2039,136 @@ class FastCode:
             List of dialogue turns
         """
         return self.cache_manager.get_dialogue_history(session_id)
+
+    @staticmethod
+    def _parse_working_memory_record_payload(
+        record: Any,
+    ) -> WorkingMemoryArtifact:
+        payload = json.loads(str(record.payload_json or "{}"))
+        if not isinstance(payload, dict):
+            raise RuntimeError("working memory payload is invalid")
+        return WorkingMemoryArtifact.from_dict(payload)
+
+    @staticmethod
+    def _parse_handoff_record_payload(record: Any) -> HandoffArtifact:
+        payload = json.loads(str(record.payload_json or "{}"))
+        if not isinstance(payload, dict):
+            raise RuntimeError("handoff artifact payload is invalid")
+        return HandoffArtifact.from_dict(payload)
+
+    def get_turn_context(
+        self,
+        session_id: str,
+        turn_number: int | None = None,
+        format: str = "fcx",
+    ) -> dict[str, Any]:
+        record = (
+            self.cache_manager.get_latest_working_memory_record(session_id)
+            if turn_number is None
+            else self.cache_manager.get_working_memory_record(session_id, turn_number)
+        )
+        if record is None:
+            raise RuntimeError(
+                f"working memory not found for session={session_id}, turn={turn_number}"
+            )
+        artifact = self._parse_working_memory_record_payload(record)
+        response: dict[str, Any] = {
+            "session_id": record.session_id,
+            "turn_number": record.turn_number,
+            "snapshot_id": record.snapshot_id,
+            "artifact_key": record.artifact_key,
+            "compiler_fingerprint": record.compiler_fingerprint,
+            "format": format,
+        }
+        if format == "fcx":
+            response["stable_fcx"] = record.stable_fcx
+            response["turn_fcx"] = record.turn_fcx
+            response["obs_fcx"] = record.obs_fcx
+            response["full_fcx"] = record.full_fcx
+            return response
+        if format == "json":
+            response["artifact"] = artifact.to_dict()
+            return response
+        raise RuntimeError("format must be one of: fcx, json")
+
+    def create_handoff(
+        self,
+        session_id: str,
+        turn_number: int | None = None,
+        mode: str = "delegate",
+    ) -> dict[str, Any]:
+        record = (
+            self.cache_manager.get_latest_working_memory_record(session_id)
+            if turn_number is None
+            else self.cache_manager.get_working_memory_record(session_id, turn_number)
+        )
+        if record is None:
+            raise RuntimeError(
+                f"working memory not found for session={session_id}, turn={turn_number}"
+            )
+        artifact = build_handoff_from_working_memory(
+            working_memory=self._parse_working_memory_record_payload(record),
+            mode=mode,
+        )
+        payload_json = json.dumps(
+            artifact.to_dict(),
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        self.cache_manager.save_handoff_artifact_record(
+            HandoffArtifactRecord(
+                artifact_id=artifact.artifact_id,
+                session_id=artifact.session_id,
+                turn_number=artifact.turn_number,
+                snapshot_id=artifact.snapshot_id,
+                compiler_fingerprint=artifact.compiler_fingerprint,
+                mode=artifact.mode,
+                payload_json=payload_json,
+                full_fcx=artifact.full_fcx,
+                created_at=artifact.created_at,
+            )
+        )
+        return artifact.to_dict()
+
+    def get_handoff_artifact(self, artifact_id: str) -> dict[str, Any]:
+        record = self.cache_manager.get_handoff_artifact_record(artifact_id)
+        if record is None:
+            raise RuntimeError(f"handoff artifact not found: {artifact_id}")
+        return self._parse_handoff_record_payload(record).to_dict()
+
+    def expand_context_ref(
+        self,
+        session_id: str,
+        turn_number: int,
+        ref_id: str,
+        depth: str = "L2",
+    ) -> dict[str, Any]:
+        record = self.cache_manager.get_working_memory_record(session_id, turn_number)
+        if record is None:
+            raise RuntimeError(
+                f"working memory not found for session={session_id}, turn={turn_number}"
+            )
+        artifact = self._parse_working_memory_record_payload(record)
+        for ref in artifact.evidence_refs:
+            if ref.ref_id != ref_id:
+                continue
+            return {
+                "session_id": session_id,
+                "turn_number": turn_number,
+                "depth": depth,
+                "ref_id": ref.ref_id,
+                "kind": ref.kind,
+                "repo_name": ref.repo_name,
+                "snapshot_id": ref.snapshot_id,
+                "path": ref.path,
+                "symbol_id": ref.symbol_id,
+                "lines": ref.lines,
+                "label": ref.label,
+                "score": ref.score,
+                "source": ref.source,
+                "fresh": ref.fresh,
+            }
+        raise RuntimeError(f"context ref not found: {ref_id}")
 
     def delete_session(self, session_id: str) -> bool:
         """

@@ -609,3 +609,136 @@ class DialogueSessionRecord:
             ),
             multi_turn=bool(data.get("multi_turn", False)),
         )
+
+
+@dataclass(frozen=True)
+class TurnJournalRecord:
+    session_id: str
+    turn_number: int
+    snapshot_id: str | None
+    artifact_key: str | None
+    compiler_fingerprint: str
+    payload_json: str
+    created_at: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "turn_number": self.turn_number,
+            "snapshot_id": self.snapshot_id,
+            "artifact_key": self.artifact_key,
+            "compiler_fingerprint": self.compiler_fingerprint,
+            "payload_json": self.payload_json,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TurnJournalRecord:
+        created_at = data.get("created_at")
+        return cls(
+            session_id=str(data.get("session_id") or ""),
+            turn_number=int(data.get("turn_number") or 0),
+            snapshot_id=(
+                str(data["snapshot_id"]) if data.get("snapshot_id") is not None else None
+            ),
+            artifact_key=(
+                str(data["artifact_key"]) if data.get("artifact_key") is not None else None
+            ),
+            compiler_fingerprint=str(data.get("compiler_fingerprint") or ""),
+            payload_json=str(data.get("payload_json") or ""),
+            created_at=float(created_at) if isinstance(created_at, (int, float)) else 0.0,
+        )
+
+
+@dataclass(frozen=True)
+class WorkingMemoryRecord:
+    session_id: str
+    turn_number: int
+    snapshot_id: str | None
+    artifact_key: str | None
+    compiler_fingerprint: str
+    payload_json: str
+    stable_fcx: str
+    turn_fcx: str
+    obs_fcx: str
+    full_fcx: str
+    created_at: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "turn_number": self.turn_number,
+            "snapshot_id": self.snapshot_id,
+            "artifact_key": self.artifact_key,
+            "compiler_fingerprint": self.compiler_fingerprint,
+            "payload_json": self.payload_json,
+            "stable_fcx": self.stable_fcx,
+            "turn_fcx": self.turn_fcx,
+            "obs_fcx": self.obs_fcx,
+            "full_fcx": self.full_fcx,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> WorkingMemoryRecord:
+        created_at = data.get("created_at")
+        return cls(
+            session_id=str(data.get("session_id") or ""),
+            turn_number=int(data.get("turn_number") or 0),
+            snapshot_id=(
+                str(data["snapshot_id"]) if data.get("snapshot_id") is not None else None
+            ),
+            artifact_key=(
+                str(data["artifact_key"]) if data.get("artifact_key") is not None else None
+            ),
+            compiler_fingerprint=str(data.get("compiler_fingerprint") or ""),
+            payload_json=str(data.get("payload_json") or ""),
+            stable_fcx=str(data.get("stable_fcx") or ""),
+            turn_fcx=str(data.get("turn_fcx") or ""),
+            obs_fcx=str(data.get("obs_fcx") or ""),
+            full_fcx=str(data.get("full_fcx") or ""),
+            created_at=float(created_at) if isinstance(created_at, (int, float)) else 0.0,
+        )
+
+
+@dataclass(frozen=True)
+class HandoffArtifactRecord:
+    artifact_id: str
+    session_id: str
+    turn_number: int
+    snapshot_id: str | None
+    compiler_fingerprint: str
+    mode: str
+    payload_json: str
+    full_fcx: str
+    created_at: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_id": self.artifact_id,
+            "session_id": self.session_id,
+            "turn_number": self.turn_number,
+            "snapshot_id": self.snapshot_id,
+            "compiler_fingerprint": self.compiler_fingerprint,
+            "mode": self.mode,
+            "payload_json": self.payload_json,
+            "full_fcx": self.full_fcx,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> HandoffArtifactRecord:
+        created_at = data.get("created_at")
+        return cls(
+            artifact_id=str(data.get("artifact_id") or ""),
+            session_id=str(data.get("session_id") or ""),
+            turn_number=int(data.get("turn_number") or 0),
+            snapshot_id=(
+                str(data["snapshot_id"]) if data.get("snapshot_id") is not None else None
+            ),
+            compiler_fingerprint=str(data.get("compiler_fingerprint") or ""),
+            mode=str(data.get("mode") or ""),
+            payload_json=str(data.get("payload_json") or ""),
+            full_fcx=str(data.get("full_fcx") or ""),
+            created_at=float(created_at) if isinstance(created_at, (int, float)) else 0.0,
+        )

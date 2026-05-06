@@ -12,7 +12,13 @@ from typing import Any, cast
 
 from diskcache import Cache as DiskCache
 
-from .records import DialogueSessionRecord, DialogueTurnRecord
+from .records import (
+    DialogueSessionRecord,
+    DialogueTurnRecord,
+    HandoffArtifactRecord,
+    TurnJournalRecord,
+    WorkingMemoryRecord,
+)
 
 _CACHE_RECORD_MAGIC = b"fastcode-cache:v1:"
 _CACHE_JSON_KIND = b"json:"
@@ -126,6 +132,48 @@ class CacheManager:
             "total_turns": record.total_turns,
             "last_updated": record.last_updated,
             "multi_turn": record.multi_turn,
+        }
+
+    @staticmethod
+    def _turn_journal_payload(record: TurnJournalRecord) -> dict[str, Any]:
+        return {
+            "session_id": record.session_id,
+            "turn_number": record.turn_number,
+            "snapshot_id": record.snapshot_id,
+            "artifact_key": record.artifact_key,
+            "compiler_fingerprint": record.compiler_fingerprint,
+            "payload_json": record.payload_json,
+            "created_at": record.created_at,
+        }
+
+    @staticmethod
+    def _working_memory_payload(record: WorkingMemoryRecord) -> dict[str, Any]:
+        return {
+            "session_id": record.session_id,
+            "turn_number": record.turn_number,
+            "snapshot_id": record.snapshot_id,
+            "artifact_key": record.artifact_key,
+            "compiler_fingerprint": record.compiler_fingerprint,
+            "payload_json": record.payload_json,
+            "stable_fcx": record.stable_fcx,
+            "turn_fcx": record.turn_fcx,
+            "obs_fcx": record.obs_fcx,
+            "full_fcx": record.full_fcx,
+            "created_at": record.created_at,
+        }
+
+    @staticmethod
+    def _handoff_artifact_payload(record: HandoffArtifactRecord) -> dict[str, Any]:
+        return {
+            "artifact_id": record.artifact_id,
+            "session_id": record.session_id,
+            "turn_number": record.turn_number,
+            "snapshot_id": record.snapshot_id,
+            "compiler_fingerprint": record.compiler_fingerprint,
+            "mode": record.mode,
+            "payload_json": record.payload_json,
+            "full_fcx": record.full_fcx,
+            "created_at": record.created_at,
         }
 
     @staticmethod
@@ -534,6 +582,164 @@ class CacheManager:
             self.logger.error(f"Failed to get recent summaries: {e}")
             return []
 
+    def save_turn_journal_record(self, record: TurnJournalRecord) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            key = f"turn_journal_{record.session_id}_turn_{record.turn_number}"
+            self._cache_set_raw(
+                key,
+                self._json_cache_payload(self._turn_journal_payload(record)),
+                self.dialogue_ttl,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to save turn journal record: {e}")
+            return False
+
+    def get_turn_journal_record(
+        self, session_id: str, turn_number: int
+    ) -> TurnJournalRecord | None:
+        if not self.enabled:
+            return None
+        key = f"turn_journal_{session_id}_turn_{turn_number}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return TurnJournalRecord.from_dict(cast(dict[str, Any], value))
+
+    def get_turn_journal_records(
+        self, session_id: str, max_turns: int | None = None
+    ) -> list[TurnJournalRecord]:
+        if not self.enabled:
+            return []
+        session_index = self.get_session_index_record(session_id)
+        if session_index is None:
+            return []
+        total_turns = session_index.total_turns
+        if total_turns <= 0:
+            return []
+        start_turn = 1
+        if max_turns is not None and max_turns < total_turns:
+            start_turn = total_turns - max_turns + 1
+        records: list[TurnJournalRecord] = []
+        for turn_number in range(start_turn, total_turns + 1):
+            record = self.get_turn_journal_record(session_id, turn_number)
+            if record is not None:
+                records.append(record)
+        return records
+
+    def save_working_memory_record(self, record: WorkingMemoryRecord) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            key = f"working_memory_{record.session_id}_turn_{record.turn_number}"
+            self._cache_set_raw(
+                key,
+                self._json_cache_payload(self._working_memory_payload(record)),
+                self.dialogue_ttl,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to save working memory record: {e}")
+            return False
+
+    def get_working_memory_record(
+        self, session_id: str, turn_number: int
+    ) -> WorkingMemoryRecord | None:
+        if not self.enabled:
+            return None
+        key = f"working_memory_{session_id}_turn_{turn_number}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return WorkingMemoryRecord.from_dict(cast(dict[str, Any], value))
+
+    def get_working_memory_records(
+        self, session_id: str, max_turns: int | None = None
+    ) -> list[WorkingMemoryRecord]:
+        if not self.enabled:
+            return []
+        session_index = self.get_session_index_record(session_id)
+        if session_index is None:
+            return []
+        total_turns = session_index.total_turns
+        if total_turns <= 0:
+            return []
+        start_turn = 1
+        if max_turns is not None and max_turns < total_turns:
+            start_turn = total_turns - max_turns + 1
+        records: list[WorkingMemoryRecord] = []
+        for turn_number in range(start_turn, total_turns + 1):
+            record = self.get_working_memory_record(session_id, turn_number)
+            if record is not None:
+                records.append(record)
+        return records
+
+    def get_latest_working_memory_record(
+        self, session_id: str
+    ) -> WorkingMemoryRecord | None:
+        session_index = self.get_session_index_record(session_id)
+        if session_index is None or session_index.total_turns <= 0:
+            return None
+        return self.get_working_memory_record(session_id, session_index.total_turns)
+
+    def save_handoff_artifact_record(self, record: HandoffArtifactRecord) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            key = f"handoff_{record.artifact_id}"
+            self._cache_set_raw(
+                key,
+                self._json_cache_payload(self._handoff_artifact_payload(record)),
+                self.dialogue_ttl,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to save handoff artifact record: {e}")
+            return False
+
+    def get_handoff_artifact_record(
+        self, artifact_id: str
+    ) -> HandoffArtifactRecord | None:
+        if not self.enabled:
+            return None
+        key = f"handoff_{artifact_id}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return HandoffArtifactRecord.from_dict(cast(dict[str, Any], value))
+
+    def list_handoff_artifact_records(
+        self, session_id: str | None = None
+    ) -> list[HandoffArtifactRecord]:
+        if not self.enabled or self.cache is None:
+            return []
+        records: list[HandoffArtifactRecord] = []
+        try:
+            if self.backend == "disk":
+                iterable = self.cache.iterkeys()
+            elif self.backend == "redis":
+                iterable = self.cache.scan_iter(match="handoff_*")
+            else:
+                iterable = []
+
+            for raw_key in iterable:
+                key = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+                if not isinstance(key, str) or not key.startswith("handoff_"):
+                    continue
+                value = self.get(key)
+                if not isinstance(value, dict):
+                    continue
+                record = HandoffArtifactRecord.from_dict(cast(dict[str, Any], value))
+                if session_id is None or record.session_id == session_id:
+                    records.append(record)
+            records.sort(key=lambda record: record.created_at, reverse=True)
+            return records
+        except Exception as e:
+            self.logger.error(f"Failed to list handoff artifact records: {e}")
+            return []
+
     def _update_session_index(
         self, session_id: str, turn_number: int, multi_turn: bool | None = None
     ) -> bool:
@@ -613,10 +819,15 @@ class CacheManager:
             for turn_num in range(1, total_turns + 1):
                 key = f"dialogue_{session_id}_turn_{turn_num}"
                 self.delete(key)
+                self.delete(f"turn_journal_{session_id}_turn_{turn_num}")
+                self.delete(f"working_memory_{session_id}_turn_{turn_num}")
 
             # Delete session index
             index_key = f"dialogue_session_{session_id}_index"
             self.delete(index_key)
+
+            for record in self.list_handoff_artifact_records(session_id):
+                self.delete(f"handoff_{record.artifact_id}")
 
             self.logger.info(f"Deleted session {session_id} with {total_turns} turns")
             return True

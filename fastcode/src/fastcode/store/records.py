@@ -639,14 +639,20 @@ class TurnJournalRecord:
             session_id=str(data.get("session_id") or ""),
             turn_number=int(data.get("turn_number") or 0),
             snapshot_id=(
-                str(data["snapshot_id"]) if data.get("snapshot_id") is not None else None
+                str(data["snapshot_id"])
+                if data.get("snapshot_id") is not None
+                else None
             ),
             artifact_key=(
-                str(data["artifact_key"]) if data.get("artifact_key") is not None else None
+                str(data["artifact_key"])
+                if data.get("artifact_key") is not None
+                else None
             ),
             compiler_fingerprint=str(data.get("compiler_fingerprint") or ""),
             payload_json=str(data.get("payload_json") or ""),
-            created_at=float(created_at) if isinstance(created_at, (int, float)) else 0.0,
+            created_at=float(created_at)
+            if isinstance(created_at, (int, float))
+            else 0.0,
         )
 
 
@@ -686,10 +692,14 @@ class WorkingMemoryRecord:
             session_id=str(data.get("session_id") or ""),
             turn_number=int(data.get("turn_number") or 0),
             snapshot_id=(
-                str(data["snapshot_id"]) if data.get("snapshot_id") is not None else None
+                str(data["snapshot_id"])
+                if data.get("snapshot_id") is not None
+                else None
             ),
             artifact_key=(
-                str(data["artifact_key"]) if data.get("artifact_key") is not None else None
+                str(data["artifact_key"])
+                if data.get("artifact_key") is not None
+                else None
             ),
             compiler_fingerprint=str(data.get("compiler_fingerprint") or ""),
             payload_json=str(data.get("payload_json") or ""),
@@ -697,7 +707,9 @@ class WorkingMemoryRecord:
             turn_fcx=str(data.get("turn_fcx") or ""),
             obs_fcx=str(data.get("obs_fcx") or ""),
             full_fcx=str(data.get("full_fcx") or ""),
-            created_at=float(created_at) if isinstance(created_at, (int, float)) else 0.0,
+            created_at=float(created_at)
+            if isinstance(created_at, (int, float))
+            else 0.0,
         )
 
 
@@ -734,11 +746,15 @@ class HandoffArtifactRecord:
             session_id=str(data.get("session_id") or ""),
             turn_number=int(data.get("turn_number") or 0),
             snapshot_id=(
-                str(data["snapshot_id"]) if data.get("snapshot_id") is not None else None
+                str(data["snapshot_id"])
+                if data.get("snapshot_id") is not None
+                else None
             ),
             compiler_fingerprint=str(data.get("compiler_fingerprint") or ""),
             mode=str(data.get("mode") or ""),
             payload_json=str(data.get("payload_json") or ""),
             full_fcx=str(data.get("full_fcx") or ""),
-            created_at=float(created_at) if isinstance(created_at, (int, float)) else 0.0,
+            created_at=float(created_at)
+            if isinstance(created_at, (int, float))
+            else 0.0,
         )

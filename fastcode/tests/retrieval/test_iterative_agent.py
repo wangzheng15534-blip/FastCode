@@ -221,3 +221,91 @@ def test_convert_selections_to_elements_avoids_code_element_to_dict() -> None:
         "is_method": False,
     }
     assert results[0]["selection_granularity"] == "function"
+
+
+def test_round_prompts_include_compiled_context() -> None:
+    agent = IterativeAgent.__new__(IterativeAgent)
+    agent.compiled_context = (
+        "<fcx:turn>\nH h1 p=0.9 | auth hypothesis\nEND refs=1\n</fcx:turn>"
+    )
+    agent._generate_directory_tree = lambda repos: "repo/\n  src/\n    auth.py"
+    agent._format_elements_with_metadata = lambda elements: "src/auth.py"
+    agent._format_tool_call_history = lambda current_round: "search_codebase auth"
+    agent._calculate_total_lines = lambda elements: 120
+    agent.adaptive_line_budget = 1000
+    agent.max_iterations = 4
+    agent.confidence_threshold = 95
+
+    round_one_prompt = agent._build_round_one_prompt(
+        "Where is auth handled?",
+        ProcessedQuery(
+            original="Where is auth handled?",
+            expanded="Where is auth handled?",
+            keywords=[],
+            intent="where",
+            subqueries=[],
+            filters={},
+        ),
+        {},
+        ["repo"],
+        [{"query": "Previous auth question", "summary": "Auth is relevant"}],
+    )
+    round_n_prompt = agent._build_round_n_prompt(
+        "Where is auth handled?",
+        [{"element": {"relative_path": "src/auth.py"}}],
+        {"selected_repos": ["repo"]},
+        2,
+        [{"query": "Previous auth question", "summary": "Auth is relevant"}],
+    )
+
+    assert "Structured Working Context (FCX)" in round_one_prompt
+    assert agent.compiled_context in round_one_prompt
+    assert "Previous auth question" in round_one_prompt
+    assert "Structured Working Context (FCX)" in round_n_prompt
+    assert agent.compiled_context in round_n_prompt
+    assert "search_codebase auth" in round_n_prompt
+
+
+def test_tool_execution_records_agent_context_observations() -> None:
+    agent = IterativeAgent.__new__(IterativeAgent)
+    agent.logger = SimpleNamespace(
+        debug=lambda *a, **kw: None,
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+    )
+    agent.agent_context_tool_observations = []
+    agent._execute_search_codebase = lambda parameters, selected_repos: [
+        {"file_path": "src/auth.py", "repo_name": "repo"}
+    ]
+    agent._execute_list_directory = lambda parameters, selected_repos: []
+    agent._llm_select_elements_with_granularity = lambda query, candidates: [
+        {"element": {"relative_path": "src/auth.py"}}
+    ]
+    agent.retriever = SimpleNamespace(
+        _enhance_with_file_selection=lambda query, results, repos: []
+    )
+
+    results = agent._execute_tool_calls_with_selection(
+        "Where is auth handled?",
+        [
+            {
+                "tool": "search_codebase",
+                "parameters": {"search_term": "auth", "file_pattern": "**/*.py"},
+            }
+        ],
+        ["repo"],
+        round_num=2,
+    )
+
+    assert results == [{"element": {"relative_path": "src/auth.py"}}]
+    assert agent.agent_context_tool_observations == [
+        {
+            "tool": "search_codebase",
+            "ok": True,
+            "parameters": {"search_term": "auth", "file_pattern": "**/*.py"},
+            "round_number": 2,
+            "candidate_count": 1,
+            "sample_paths": ["src/auth.py"],
+        }
+    ]

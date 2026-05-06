@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pickle
 from dataclasses import is_dataclass
 from pathlib import Path
@@ -13,7 +14,20 @@ import pytest
 
 from fastcode.ir.element import CodeElement
 from fastcode.main import FastCode
+from fastcode.retrieval.core.agent_context import (
+    AcceptedFact,
+    EvidenceRef,
+    Hypothesis,
+    RiskState,
+    TurnIntent,
+)
+from fastcode.retrieval.core.context_compiler import (
+    build_tool_observation,
+    build_turn_plan,
+    compile_working_memory,
+)
 from fastcode.schemas.config import config_from_mapping
+from fastcode.store.records import WorkingMemoryRecord
 
 # ---------------------------------------------------------------------------
 # Helpers (basic / doc pipeline tests)
@@ -36,6 +50,109 @@ def _make_fastcode(
         enabled=graph_enabled, sync_docs=lambda **_: sync_result
     )
     return fc
+
+
+def _make_working_memory_record(
+    *,
+    session_id: str = "sess-1",
+    turn_number: int = 2,
+) -> tuple[WorkingMemoryRecord, dict[str, Any]]:
+    from fastcode.retrieval.core.agent_context import build_acceptance_contract
+
+    intent = TurnIntent(
+        session_id=session_id,
+        turn_number=turn_number,
+        question="Where is auth handled?",
+        kind="debug",
+        requested_outcome="answer",
+        snapshot_id="snap:1",
+        artifact_key="art:1",
+        repo_filter=("repo",),
+    )
+    contract = build_acceptance_contract(requested_outcome="answer")
+    risk_state = RiskState(
+        evidence_gap=0,
+        conflict_level=0,
+        freshness_risk=0,
+        requirement_ambiguity=0,
+        execution_risk=0,
+        verifier_status="clean",
+        action_bias="answer",
+    )
+    plan = build_turn_plan(risk_state=risk_state, contract=contract)
+    evidence_refs = (
+        EvidenceRef(
+            ref_id="e1",
+            kind="range",
+            repo_name="repo",
+            snapshot_id="snap:1",
+            path="src/auth.py",
+            lines="10-20",
+            label="auth.py",
+            score=0.9,
+            source="retrieval",
+            fresh="ok",
+        ),
+    )
+    observations = (
+        build_tool_observation(
+            observation_id="o1",
+            tool="retrieve",
+            ok=True,
+            parameters={"mode": "standard"},
+            ref_ids=("e1",),
+            summary="Retrieved auth evidence.",
+            round_number=0,
+        ),
+    )
+    accepted_facts = (
+        AcceptedFact(
+            fact_id="f1",
+            statement="Auth behavior is grounded in src/auth.py.",
+            ref_ids=("e1",),
+            scope="turn",
+        ),
+    )
+    hypotheses = (
+        Hypothesis(
+            hypothesis_id="h1",
+            statement="Auth logic lives in src/auth.py.",
+            confidence=0.91,
+            support_ref_ids=("e1",),
+            conflict_ref_ids=(),
+            state="favored",
+        ),
+    )
+    artifact = compile_working_memory(
+        intent=intent,
+        contract=contract,
+        risk_state=risk_state,
+        plan=plan,
+        evidence_refs=evidence_refs,
+        observations=observations,
+        accepted_facts=accepted_facts,
+        hypotheses=hypotheses,
+        rejected_hypotheses=(),
+        unresolved_questions=("Verify auth call chain",),
+        session_prefix=None,
+        created_at=1234.5,
+    )
+    record = WorkingMemoryRecord(
+        session_id=artifact.session_id,
+        turn_number=artifact.turn_number,
+        snapshot_id=artifact.snapshot_id,
+        artifact_key=artifact.artifact_key,
+        compiler_fingerprint=artifact.compiler_fingerprint,
+        payload_json=json.dumps(
+            artifact.to_dict(), separators=(",", ":"), sort_keys=True
+        ),
+        stable_fcx=artifact.stable_fcx,
+        turn_fcx=artifact.turn_fcx,
+        obs_fcx=artifact.obs_fcx,
+        full_fcx=artifact.full_fcx,
+        created_at=artifact.created_at,
+    )
+    return record, artifact.to_dict()
 
 
 # --- Doc pipeline tests ---
@@ -468,6 +585,66 @@ def test_service_state_lock_serializes_query_with_mutations(
     assert max_concurrent <= 1, f"query overlapped with {mutation_name}; calls={calls}"
     assert "query" in calls
     assert mutation_name in calls
+
+
+def test_turn_context_facade_uses_typed_working_memory_payloads() -> None:
+    record, artifact = _make_working_memory_record()
+    fc = FastCode.__new__(FastCode)
+    fc.cache_manager = SimpleNamespace(
+        get_latest_working_memory_record=lambda session_id: record,
+        get_working_memory_record=lambda session_id, turn_number: record,
+    )
+
+    latest = fc.get_turn_context("sess-1")
+    structured = fc.get_turn_context("sess-1", 2, "json")
+    expanded = fc.expand_context_ref("sess-1", 2, "e1")
+
+    assert latest["format"] == "fcx"
+    assert latest["full_fcx"] == record.full_fcx
+    assert structured["artifact"]["turn_number"] == 2
+    assert structured["artifact"]["accepted_facts"][0]["fact_id"] == "f1"
+    assert expanded == {
+        "session_id": "sess-1",
+        "turn_number": 2,
+        "depth": "L2",
+        "ref_id": "e1",
+        "kind": "range",
+        "repo_name": "repo",
+        "snapshot_id": "snap:1",
+        "path": "src/auth.py",
+        "symbol_id": None,
+        "lines": "10-20",
+        "label": "auth.py",
+        "score": 0.9,
+        "source": "retrieval",
+        "fresh": "ok",
+    }
+    assert artifact["evidence_refs"][0]["ref_id"] == "e1"
+
+
+def test_handoff_facade_persists_and_restores_typed_handoff_artifact() -> None:
+    record, _artifact = _make_working_memory_record()
+    saved_records: list[Any] = []
+    fc = FastCode.__new__(FastCode)
+    fc.cache_manager = SimpleNamespace(
+        get_latest_working_memory_record=lambda session_id: record,
+        get_working_memory_record=lambda session_id, turn_number: record,
+        save_handoff_artifact_record=lambda handoff_record: (
+            saved_records.append(handoff_record) or True
+        ),
+        get_handoff_artifact_record=lambda artifact_id: saved_records[0],
+    )
+
+    handoff = fc.create_handoff("sess-1", 2, "delegate")
+    restored = fc.get_handoff_artifact(handoff["artifact_id"])
+
+    assert handoff["artifact_id"].startswith("hf_")
+    assert handoff["mode"] == "delegate"
+    assert handoff["accepted_facts"][0]["fact_id"] == "f1"
+    assert handoff["unresolved_questions"] == ["Verify auth call chain"]
+    assert saved_records
+    assert saved_records[0].artifact_id == handoff["artifact_id"]
+    assert restored == handoff
 
 
 def test_snapshot_artifact_handle_loader_caches_by_artifact_key(

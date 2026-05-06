@@ -71,6 +71,12 @@ def _query_pipeline(
     cache_manager = MagicMock()
     cache_manager.get_recent_summaries.return_value = []
     cache_manager.get_dialogue_history.return_value = []
+    cache_manager.get_session_index_record.return_value = None
+    cache_manager._get_session_index.return_value = None
+    cache_manager.get_latest_working_memory_record.return_value = None
+    cache_manager.save_working_memory_record.return_value = True
+    cache_manager.save_turn_journal_record.return_value = True
+    cache_manager.save_dialogue_turn.return_value = True
     return QueryPipeline(
         config={"generation": {"enable_multi_turn": False}},
         logger=MagicMock(),
@@ -236,6 +242,69 @@ def test_query_pipeline_skips_semantic_escalation_without_snapshot_scope() -> No
     callback.assert_not_called()
     assert pipeline.retriever.retrieve.call_count == 1
     assert "semantic_escalation" not in result
+
+
+def test_query_pipeline_compiles_context_and_persists_typed_records() -> None:
+    processed_query = _processed_query(
+        question="Where is auth handled?",
+        filters={"snapshot_id": "snap:1", "artifact_key": "art:1"},
+    )
+    pipeline = _query_pipeline()
+    pipeline.query_processor.process.return_value = processed_query
+    pipeline.get_session_prefix = MagicMock(
+        return_value={
+            "snapshot_id": "snap:1",
+            "projection_id": "proj:1",
+            "l0": {"summary": "Repository overview"},
+            "l1": {"summary": "Package map"},
+        }
+    )
+    pipeline.cache_manager.get_latest_working_memory_record.return_value = (
+        SimpleNamespace(full_fcx="<fcx:stable>\nprior\n</fcx:stable>")
+    )
+    pipeline.retriever.retrieve.return_value = [
+        {
+            "element": {
+                "relative_path": "src/auth.py",
+                "repo_name": "repo",
+                "type": "file",
+                "name": "auth.py",
+                "start_line": 10,
+                "end_line": 80,
+            },
+            "total_score": 1.4,
+        }
+    ]
+    pipeline.answer_generator.generate.return_value = {
+        "answer": "Auth is handled in src/auth.py",
+        "sources": [
+            {
+                "file": "src/auth.py",
+                "repo": "repo",
+                "type": "file",
+                "name": "auth.py",
+                "start_line": 10,
+                "end_line": 80,
+            }
+        ],
+    }
+
+    result = pipeline.query(
+        "Where is auth handled?",
+        filters={"snapshot_id": "snap:1", "artifact_key": "art:1"},
+        session_id="sess-1",
+    )
+
+    retrieve_kwargs = pipeline.retriever.retrieve.call_args.kwargs
+    generate_kwargs = pipeline.answer_generator.generate.call_args.kwargs
+
+    assert retrieve_kwargs["compiled_context"] == "<fcx:stable>\nprior\n</fcx:stable>"
+    assert "<fcx:stable>" in generate_kwargs["compiled_context"]
+    assert "<fcx:turn>" in generate_kwargs["compiled_context"]
+    assert pipeline.cache_manager.save_working_memory_record.call_count == 1
+    assert pipeline.cache_manager.save_turn_journal_record.call_count == 1
+    assert pipeline.cache_manager.save_dialogue_turn.call_args.kwargs["summary"]
+    assert result["turn_number"] == 1
 
 
 def test_fastcode_query_semantic_escalation_updates_ir_graphs() -> None:

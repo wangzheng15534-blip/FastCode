@@ -546,6 +546,38 @@ class TestApiSerializationBoundaries:
                 "score": 0.75,
             }
         ]
+        assert result.turn_number is None
+
+    def test_query_endpoint_propagates_turn_number(self) -> None:
+        fake_fastcode = MagicMock()
+        fake_fastcode.query_snapshot.return_value = {
+            "answer": "ok",
+            "query": "Where is config loaded?",
+            "context_elements": 1,
+            "sources": [_NoDictSource()],
+            "turn_number": 4,
+        }
+
+        with patch(
+            "fastcode.api.routes._ensure_fastcode_initialized",
+            return_value=fake_fastcode,
+        ):
+            result = asyncio.run(
+                api.query_repository(
+                    api.QueryRequest(
+                        question="Where is config loaded?",
+                        snapshot_id="snap:1",
+                        repo_name=None,
+                        ref_name=None,
+                        filters=None,
+                        repo_filter=None,
+                        multi_turn=False,
+                        session_id=None,
+                    )
+                )
+            )
+
+        assert result.turn_number == 4
 
     def test_session_endpoint_serializes_history_explicitly(self) -> None:
         fake_fastcode = MagicMock()
@@ -590,3 +622,105 @@ class TestApiSerializationBoundaries:
                 }
             ],
         }
+
+
+class TestAgentContextRoutes:
+    def test_agent_context_endpoints_return_fastcode_payloads(self) -> None:
+        fake_fastcode = MagicMock()
+        fake_fastcode.get_turn_context.side_effect = [
+            {
+                "session_id": "sess-1",
+                "turn_number": 3,
+                "format": "fcx",
+                "full_fcx": "<fcx:turn>\n...\n</fcx:turn>",
+            },
+            {
+                "session_id": "sess-1",
+                "turn_number": 2,
+                "format": "json",
+                "artifact": {"turn_number": 2},
+            },
+        ]
+        fake_fastcode.create_handoff.return_value = {
+            "artifact_id": "hf_123",
+            "session_id": "sess-1",
+            "turn_number": 2,
+        }
+        fake_fastcode.get_handoff_artifact.return_value = {
+            "artifact_id": "hf_123",
+            "session_id": "sess-1",
+        }
+        fake_fastcode.expand_context_ref.return_value = {
+            "ref_id": "e1",
+            "path": "src/auth.py",
+        }
+
+        with patch(
+            "fastcode.api.routes._ensure_fastcode_initialized",
+            return_value=fake_fastcode,
+        ):
+            latest = asyncio.run(api.get_latest_turn_context("sess-1", format="fcx"))
+            turn = asyncio.run(api.get_turn_context("sess-1", 2, format="json"))
+            handoff = asyncio.run(
+                api.create_agent_context_handoff(
+                    api.AgentContextHandoffRequest(
+                        session_id="sess-1",
+                        turn_number=2,
+                        mode="delegate",
+                    )
+                )
+            )
+            restored = asyncio.run(api.get_agent_context_handoff("hf_123"))
+            expanded = asyncio.run(
+                api.expand_agent_context_ref(
+                    api.ExpandContextRefRequest(
+                        session_id="sess-1",
+                        turn_number=2,
+                        ref_id="e1",
+                        depth="L2",
+                    )
+                )
+            )
+
+        assert latest["result"]["turn_number"] == 3
+        assert turn["result"]["artifact"]["turn_number"] == 2
+        assert handoff["result"]["artifact_id"] == "hf_123"
+        assert restored["result"]["session_id"] == "sess-1"
+        assert expanded["result"]["path"] == "src/auth.py"
+        assert fake_fastcode.get_turn_context.call_args_list[0].args == (
+            "sess-1",
+            None,
+            "fcx",
+        )
+        assert fake_fastcode.get_turn_context.call_args_list[1].args == (
+            "sess-1",
+            2,
+            "json",
+        )
+
+    def test_agent_context_routes_surface_not_found_as_http_404(self) -> None:
+        fake_fastcode = MagicMock()
+        fake_fastcode.expand_context_ref.side_effect = RuntimeError(
+            "context ref not found: e9"
+        )
+
+        with (
+            patch(
+                "fastcode.api.routes._ensure_fastcode_initialized",
+                return_value=fake_fastcode,
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            asyncio.run(
+                api.expand_agent_context_ref(
+                    api.ExpandContextRefRequest(
+                        session_id="sess-1",
+                        turn_number=2,
+                        ref_id="e9",
+                        depth="L2",
+                    )
+                )
+            )
+
+        assert exc_info.value.status_code == 404
+        assert "context ref not found" in str(exc_info.value.detail)

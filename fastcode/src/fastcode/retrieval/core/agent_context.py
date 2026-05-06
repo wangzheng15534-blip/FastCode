@@ -458,7 +458,8 @@ class WorkingMemoryArtifact:
             obs_fcx=_string(data.get("obs_fcx")),
             full_fcx=_string(data.get("full_fcx")),
             evidence_refs=tuple(
-                EvidenceRef.from_dict(item) for item in _dict_tuple(data.get("evidence_refs"))
+                EvidenceRef.from_dict(item)
+                for item in _dict_tuple(data.get("evidence_refs"))
             ),
             accepted_facts=tuple(
                 AcceptedFact.from_dict(item)

@@ -5,10 +5,14 @@ Enhanced with LLM-processed query support
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 
+from __future__ import annotations
+
+import hashlib
+import json
 import logging
 import os
 import pickle
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -164,6 +168,8 @@ class HybridRetriever:
         )
         self.ir_graphs: IRGraphs | None = None
         self.ir_snapshot_id: str | None = None
+        self._ir_graph_loader: Callable[[str], Any | None] | None = None
+        self._ir_union_graph: nx.Graph[str] | None = None
         self.pg_retrieval_store: PgRetrievalStore | None = None
         self._active_snapshot_id: str | None = None
         self._last_fusion_debug: dict[str, Any] | None = None
@@ -225,12 +231,66 @@ class HybridRetriever:
     ) -> None:
         self.ir_graphs = ir_graphs
         self.ir_snapshot_id = snapshot_id
+        self._ir_graph_loader = None
+        self._ir_union_graph = None
         if ir_graphs is not None:
             self.logger.info(
                 f"IR graph backend active for snapshot {snapshot_id or 'unknown'}"
             )
         else:
             self.logger.info("IR graph backend cleared")
+
+    def set_ir_graph_loader(
+        self,
+        graph_loader: Callable[[str], Any | None] | None,
+        *,
+        snapshot_id: str | None,
+    ) -> None:
+        self.ir_graphs = None
+        self.ir_snapshot_id = snapshot_id
+        self._ir_graph_loader = graph_loader if snapshot_id else None
+        self._ir_union_graph = None
+        if graph_loader is not None and snapshot_id:
+            self.logger.info(f"IR graph backend deferred for snapshot {snapshot_id}")
+        else:
+            self.logger.info("IR graph backend cleared")
+
+    def _ensure_ir_graphs_loaded(self) -> IRGraphs | None:
+        ir_graphs = getattr(self, "ir_graphs", None)
+        if ir_graphs is not None:
+            return ir_graphs
+        graph_loader = getattr(self, "_ir_graph_loader", None)
+        snapshot_id = getattr(self, "ir_snapshot_id", None)
+        if graph_loader is None or not snapshot_id:
+            return None
+        loaded_graphs = graph_loader(snapshot_id)
+        if isinstance(loaded_graphs, IRGraphs):
+            self.ir_graphs = loaded_graphs
+            self.logger.info(
+                f"IR graph backend activated lazily for snapshot {snapshot_id}"
+            )
+            return loaded_graphs
+        return None
+
+    def _ensure_ir_union_graph(self) -> nx.Graph[str] | None:
+        cached_union = getattr(self, "_ir_union_graph", None)
+        if cached_union is not None:
+            return cached_union
+        ir_graphs = self._ensure_ir_graphs_loaded()
+        if ir_graphs is None:
+            return None
+        graph: nx.Graph[str] = nx.Graph()
+        for component in [
+            ir_graphs.dependency_graph,
+            ir_graphs.call_graph,
+            ir_graphs.inheritance_graph,
+            ir_graphs.reference_graph,
+            ir_graphs.containment_graph,
+        ]:
+            graph.add_nodes_from(component.nodes())
+            graph.add_edges_from(component.edges())
+        self._ir_union_graph = graph
+        return graph
 
     def set_pg_retrieval_store(self, store: PgRetrievalStore | None) -> None:
         self.pg_retrieval_store = store
@@ -1436,7 +1496,10 @@ class HybridRetriever:
     def _get_related_ids(
         self, element_id: str, element_meta: dict[str, Any], max_hops: int = 2
     ) -> set[str]:
-        use_ir = self.graph_backend == "ir" and self.ir_graphs is not None
+        use_ir = self.graph_backend == "ir" and (
+            getattr(self, "ir_graphs", None) is not None
+            or getattr(self, "_ir_graph_loader", None) is not None
+        )
         if use_ir:
             ids = self._get_related_ids_from_ir(
                 element_id, element_meta, max_hops=max_hops
@@ -1453,7 +1516,8 @@ class HybridRetriever:
     def _get_related_ids_from_ir(
         self, element_id: str, element_meta: dict[str, Any], max_hops: int = 2
     ) -> set[str]:
-        if self.ir_graphs is None:
+        ir_graphs = self._ensure_ir_graphs_loaded()
+        if ir_graphs is None:
             return set()
         seed = (element_meta.get("metadata", {}) or {}).get("ir_symbol_id") or (
             element_meta.get("metadata", {}) or {}
@@ -1463,17 +1527,9 @@ class HybridRetriever:
         if not seed:
             return set()
 
-        g = nx.Graph()
-        for graph in [
-            self.ir_graphs.dependency_graph,
-            self.ir_graphs.call_graph,
-            self.ir_graphs.inheritance_graph,
-            self.ir_graphs.reference_graph,
-            self.ir_graphs.containment_graph,
-        ]:
-            g.add_nodes_from(graph.nodes())
-            g.add_edges_from(graph.edges())
-
+        g = self._ensure_ir_union_graph()
+        if g is None:
+            return set()
         if seed not in g:
             return set()
         related_ir_nodes = set(
@@ -1506,6 +1562,9 @@ class HybridRetriever:
         return mapped
 
     def _heuristic_ir_seed(self, element_meta: dict[str, Any]) -> str | None:
+        ir_graphs = self._ensure_ir_graphs_loaded()
+        if ir_graphs is None:
+            return None
         rel_path = element_meta.get("relative_path") or element_meta.get("file_path")
         name = element_meta.get("name")
         if not rel_path and not name:
@@ -1513,11 +1572,9 @@ class HybridRetriever:
 
         candidates = []
         for graph in [
-            self.ir_graphs.containment_graph if self.ir_graphs else None,
-            self.ir_graphs.call_graph if self.ir_graphs else None,
+            ir_graphs.containment_graph,
+            ir_graphs.call_graph,
         ]:
-            if graph is None:
-                continue
             for n in graph.nodes():
                 if (rel_path and rel_path in str(n)) or (name and name in str(n)):
                     candidates.append(str(n))
@@ -1661,25 +1718,23 @@ class HybridRetriever:
             all_bm25_corpus = []
 
             for repo_name in repo_names:
-                bm25_path = os.path.join(self.persist_dir, f"{repo_name}_bm25.pkl")
-                if os.path.exists(bm25_path):
-                    try:
-                        with open(bm25_path, "rb") as f:
-                            data = pickle.load(f)
-                            all_bm25_corpus.extend(data["bm25_corpus"])
-
-                            for elem_payload in data["bm25_elements"]:
-                                all_bm25_elements.append(
-                                    deserialize_code_element(elem_payload)
-                                )
-
-                        self.logger.info(f"Loaded BM25 index for {repo_name}")
-                    except Exception as e:
-                        self.logger.warning(
-                            f"Failed to load BM25 index for {repo_name}: {e}"
-                        )
-                else:
+                data = self._load_bm25_payload(repo_name)
+                if data is None:
                     self.logger.warning(f"BM25 index not found for {repo_name}")
+                    continue
+                try:
+                    all_bm25_corpus.extend(
+                        cast(list[list[str]], data.get("bm25_corpus", []))
+                    )
+                    for elem_payload in cast(
+                        list[dict[str, Any]], data.get("bm25_elements", [])
+                    ):
+                        all_bm25_elements.append(deserialize_code_element(elem_payload))
+                    self.logger.info(f"Loaded BM25 index for {repo_name}")
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to load BM25 index for {repo_name}: {e}"
+                    )
 
             # Rebuild FILTERED BM25 with selected repositories
             if all_bm25_elements and all_bm25_corpus:
@@ -1734,22 +1789,9 @@ class HybridRetriever:
         Args:
             name: Name for the saved files
         """
-        bm25_path = os.path.join(self.persist_dir, f"{name}_bm25.pkl")
-
         try:
-            with open(bm25_path, "wb") as f:
-                pickle.dump(
-                    {
-                        "bm25_corpus": self.full_bm25_corpus,
-                        "bm25_elements": [
-                            serialize_code_element(elem)
-                            for elem in self.full_bm25_elements
-                        ],
-                    },
-                    f,
-                )
-
-            self.logger.info(f"Saved full BM25 data to {bm25_path}")
+            self._write_bm25_bundle(name)
+            self.logger.info(f"Saved full BM25 data for {name}")
             return True
 
         except Exception as e:
@@ -1766,21 +1808,17 @@ class HybridRetriever:
         Returns:
             True if successful, False otherwise
         """
-        bm25_path = os.path.join(self.persist_dir, f"{name}_bm25.pkl")
-
-        if not os.path.exists(bm25_path):
-            self.logger.warning(f"BM25 data not found: {bm25_path}")
-            return False
-
         try:
-            with open(bm25_path, "rb") as f:
-                data = pickle.load(f)
-                self.full_bm25_corpus = data["bm25_corpus"]
-
-                self.full_bm25_elements = [
-                    deserialize_code_element(elem_payload)
-                    for elem_payload in data["bm25_elements"]
-                ]
+            data = self.load_bm25_payload(name)
+            if data is None:
+                bm25_path = self._legacy_bm25_path(name)
+                self.logger.warning(f"BM25 data not found: {bm25_path}")
+                return False
+            self.full_bm25_corpus = cast(list[list[str]], data["bm25_corpus"])
+            self.full_bm25_elements = [
+                deserialize_code_element(elem_payload)
+                for elem_payload in data["bm25_elements"]
+            ]
 
             # Rebuild FULL BM25 index from corpus
             if self.full_bm25_corpus:
@@ -1796,6 +1834,191 @@ class HybridRetriever:
         except Exception as e:
             self.logger.error(f"Failed to load BM25 data: {e}")
             return False
+
+    def load_bm25_payload(self, name: str) -> dict[str, Any] | None:
+        return self._load_bm25_payload(name)
+
+    def has_saved_bm25(self, name: str) -> bool:
+        return os.path.exists(self._bm25_manifest_path(name)) or os.path.exists(
+            self._legacy_bm25_path(name)
+        )
+
+    def bm25_artifact_paths(self, name: str) -> list[str]:
+        paths = [
+            self._legacy_bm25_path(name),
+            self._bm25_manifest_path(name),
+            self._bm25_shards_dir(name),
+        ]
+        return [path for path in paths if os.path.exists(path)]
+
+    def _legacy_bm25_path(self, name: str) -> str:
+        return os.path.join(self.persist_dir, f"{name}_bm25.pkl")
+
+    def _bm25_manifest_path(self, name: str) -> str:
+        return os.path.join(self.persist_dir, f"{name}_bm25_manifest.json")
+
+    def _bm25_shards_dir(self, name: str) -> str:
+        return os.path.join(self.persist_dir, f"{name}_bm25_shards")
+
+    @staticmethod
+    def _bm25_path_key(element: CodeElement, sequence_no: int) -> str:
+        if element.relative_path:
+            return str(element.relative_path)
+        if element.file_path:
+            return str(element.file_path)
+        return f"__pathless__:{element.id or sequence_no}"
+
+    @staticmethod
+    def _bm25_shard_filename(path_key: str) -> str:
+        digest = hashlib.sha256(path_key.encode("utf-8")).hexdigest()[:20]
+        return f"{digest}.pkl"
+
+    @staticmethod
+    def _bm25_shard_bytes(entries: list[dict[str, Any]]) -> bytes:
+        return pickle.dumps({"entries": entries}, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def _load_bm25_manifest(self, name: str) -> dict[str, Any] | None:
+        manifest_path = self._bm25_manifest_path(name)
+        if not os.path.exists(manifest_path):
+            return None
+        try:
+            with open(manifest_path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return None
+        return cast(dict[str, Any], payload) if isinstance(payload, dict) else None
+
+    def _write_bm25_bundle(self, name: str) -> None:
+        shard_dir = self._bm25_shards_dir(name)
+        ensure_dir(shard_dir)
+        existing_manifest = self._load_bm25_manifest(name)
+        existing_by_path = {
+            str(entry.get("path_key")): cast(dict[str, Any], entry)
+            for entry in (
+                existing_manifest.get("shards", []) if existing_manifest else []
+            )
+            if isinstance(entry, dict) and entry.get("path_key")
+        }
+
+        grouped_entries: dict[str, list[dict[str, Any]]] = {}
+        for sequence_no, (tokens, element) in enumerate(
+            zip(self.full_bm25_corpus, self.full_bm25_elements, strict=False)
+        ):
+            path_key = self._bm25_path_key(element, sequence_no)
+            grouped_entries.setdefault(path_key, []).append(
+                {
+                    "sequence_no": sequence_no,
+                    "tokens": list(tokens),
+                    "element": serialize_code_element(element),
+                }
+            )
+
+        manifest: dict[str, Any] = {
+            "version": 1,
+            "element_count": len(self.full_bm25_elements),
+            "shards": [],
+        }
+        active_files: set[str] = set()
+        for path_key, entries in grouped_entries.items():
+            shard_bytes = self._bm25_shard_bytes(entries)
+            digest = hashlib.sha256(shard_bytes).hexdigest()
+            existing = existing_by_path.get(path_key)
+            shard_file = (
+                str(existing.get("shard_file"))
+                if existing and existing.get("shard_file")
+                else self._bm25_shard_filename(path_key)
+            )
+            shard_path = os.path.join(shard_dir, shard_file)
+            active_files.add(shard_file)
+            if not (
+                existing
+                and existing.get("digest") == digest
+                and os.path.exists(shard_path)
+            ):
+                tmp_path = f"{shard_path}.tmp"
+                with open(tmp_path, "wb") as handle:
+                    handle.write(shard_bytes)
+                os.replace(tmp_path, shard_path)
+            manifest["shards"].append(
+                {
+                    "path_key": path_key,
+                    "shard_file": shard_file,
+                    "digest": digest,
+                    "count": len(entries),
+                }
+            )
+
+        if existing_manifest is not None:
+            for entry in existing_manifest.get("shards", []):
+                if not isinstance(entry, dict):
+                    continue
+                shard_file = entry.get("shard_file")
+                if not shard_file or shard_file in active_files:
+                    continue
+                stale_path = os.path.join(shard_dir, str(shard_file))
+                if os.path.exists(stale_path):
+                    os.remove(stale_path)
+
+        manifest_path = self._bm25_manifest_path(name)
+        tmp_manifest = f"{manifest_path}.tmp"
+        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp_manifest, manifest_path)
+
+        legacy_bm25_path = self._legacy_bm25_path(name)
+        if os.path.exists(legacy_bm25_path):
+            os.remove(legacy_bm25_path)
+
+    def _load_bm25_payload(self, name: str) -> dict[str, Any] | None:
+        manifest = self._load_bm25_manifest(name)
+        if manifest is not None:
+            try:
+                ordered_entries: list[tuple[int, list[str], dict[str, Any]]] = []
+                shard_dir = self._bm25_shards_dir(name)
+                for shard in manifest.get("shards", []):
+                    if not isinstance(shard, dict) or not shard.get("shard_file"):
+                        continue
+                    shard_path = os.path.join(shard_dir, str(shard["shard_file"]))
+                    with open(shard_path, "rb") as handle:
+                        payload = pickle.load(handle)
+                    entries = (
+                        payload.get("entries", []) if isinstance(payload, dict) else []
+                    )
+                    if not isinstance(entries, list):
+                        continue
+                    for entry in entries:
+                        if not isinstance(entry, dict):
+                            continue
+                        sequence_no = entry.get("sequence_no")
+                        tokens = entry.get("tokens")
+                        element = entry.get("element")
+                        if (
+                            not isinstance(sequence_no, int)
+                            or not isinstance(tokens, list)
+                            or not isinstance(element, dict)
+                        ):
+                            continue
+                        ordered_entries.append(
+                            (
+                                sequence_no,
+                                [str(token) for token in tokens],
+                                cast(dict[str, Any], element),
+                            )
+                        )
+                ordered_entries.sort(key=lambda item: item[0])
+                return {
+                    "bm25_corpus": [tokens for _, tokens, _ in ordered_entries],
+                    "bm25_elements": [element for _, _, element in ordered_entries],
+                }
+            except Exception as e:
+                self.logger.warning(f"Failed to load sharded BM25 for {name}: {e}")
+
+        bm25_path = self._legacy_bm25_path(name)
+        if not os.path.exists(bm25_path):
+            return None
+        with open(bm25_path, "rb") as handle:
+            payload = pickle.load(handle)
+        return cast(dict[str, Any], payload) if isinstance(payload, dict) else None
 
     def _initialize_agents(self, repo_root: str) -> bool:
         """

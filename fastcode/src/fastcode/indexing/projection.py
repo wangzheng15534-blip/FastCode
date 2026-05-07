@@ -104,6 +104,7 @@ class ProjectionService:
         self, snapshot_id: str, result: dict[str, Any]
     ) -> str:
         import os
+        import shutil
 
         root = os.path.join(
             self.snapshot_store.snapshot_dir(snapshot_id),
@@ -112,6 +113,8 @@ class ProjectionService:
         )
         ensure_dir(root)
         chunk_dir = os.path.join(root, "chunks")
+        if os.path.isdir(chunk_dir):
+            shutil.rmtree(chunk_dir, ignore_errors=True)
         ensure_dir(chunk_dir)
         with open(os.path.join(root, "node.l0.json"), "w", encoding="utf-8") as f:
             json.dump(result["l0"], f, ensure_ascii=False, indent=2)

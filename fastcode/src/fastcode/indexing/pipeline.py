@@ -307,6 +307,25 @@ class IndexPipeline:
     def _invalidate_loaded_artifact_handle(self, artifact_key: str) -> None:
         self._artifact_handle_cache.pop(artifact_key, None)
 
+    def _configure_retriever_ir_graph_backend(
+        self,
+        retriever: Any,
+        *,
+        snapshot_id: str | None,
+    ) -> None:
+        if not snapshot_id:
+            retriever.set_ir_graphs(None, snapshot_id=None)
+            return
+        set_loader = getattr(retriever, "set_ir_graph_loader", None)
+        if callable(set_loader):
+            set_loader(
+                self.snapshot_store.load_ir_graphs,
+                snapshot_id=snapshot_id,
+            )
+            return
+        ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
+        retriever.set_ir_graphs(ir_graphs, snapshot_id=snapshot_id)
+
     def load_snapshot_artifacts_handle(
         self,
         artifact_key: str,
@@ -353,10 +372,10 @@ class IndexPipeline:
         )
         retriever.set_pg_retrieval_store(self.pg_retrieval_store)
         bm25_loaded = retriever.load_bm25(artifact_key)
-        ir_graphs = None
-        if resolved_snapshot_id:
-            ir_graphs = self.snapshot_store.load_ir_graphs(resolved_snapshot_id)
-        retriever.set_ir_graphs(ir_graphs, snapshot_id=resolved_snapshot_id)
+        self._configure_retriever_ir_graph_backend(
+            retriever,
+            snapshot_id=resolved_snapshot_id,
+        )
         retriever.build_repo_overview_bm25()
 
         if not bm25_loaded or not graph_loaded:
@@ -387,13 +406,13 @@ class IndexPipeline:
 
         bm25_loaded = self.retriever.load_bm25(artifact_key)
         graph_loaded = self.graph_builder.load(artifact_key)
-        ir_graphs = None
         if artifact_key.startswith("snap_"):
             record = self.snapshot_store.find_by_artifact_key(artifact_key)
             snapshot_id = record["snapshot_id"] if record else None
-            if snapshot_id:
-                ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
-                self.retriever.set_ir_graphs(ir_graphs, snapshot_id=snapshot_id)
+            self._configure_retriever_ir_graph_backend(
+                self.retriever,
+                snapshot_id=snapshot_id,
+            )
         else:
             self.retriever.set_ir_graphs(None, snapshot_id=None)
         self.retriever.build_repo_overview_bm25()
@@ -513,6 +532,82 @@ class IndexPipeline:
                 row["repair_frontier_summary"] = metadata["repair_frontier_summary"]
             rows.append(row)
         return rows
+
+    @staticmethod
+    def _stable_unit_id_from_artifact_row(row: Mapping[str, Any]) -> str:
+        metadata = row.get("metadata")
+        if isinstance(metadata, Mapping):
+            stable_unit_id = metadata.get("stable_unit_id")
+            if stable_unit_id:
+                return str(stable_unit_id)
+        stable_unit_id = row.get("stable_unit_id")
+        return str(stable_unit_id) if stable_unit_id else ""
+
+    @staticmethod
+    def _stable_unit_id_from_ir_unit(unit: Any) -> str:
+        metadata = getattr(unit, "metadata", None)
+        if isinstance(metadata, Mapping):
+            stable_unit_id = metadata.get("stable_unit_id")
+            if stable_unit_id:
+                return str(stable_unit_id)
+        return ""
+
+    @classmethod
+    def _current_unit_artifact_rows(
+        cls,
+        *,
+        rows: Sequence[dict[str, Any]],
+        snapshot: IRSnapshot,
+        target_paths: set[str],
+    ) -> list[dict[str, Any]]:
+        if not snapshot.units:
+            return [dict(row) for row in rows]
+        target_paths_norm = {normalize_path(path) for path in target_paths}
+        units_by_stable_id: dict[str, Any] = {}
+        for unit in snapshot.units:
+            stable_unit_id = cls._stable_unit_id_from_ir_unit(unit)
+            if not stable_unit_id:
+                continue
+            unit_path = normalize_path(getattr(unit, "path", ""))
+            if unit_path not in target_paths_norm:
+                continue
+            units_by_stable_id[stable_unit_id] = unit
+
+        refreshed_rows: list[dict[str, Any]] = []
+        metadata_fields = (
+            "content_hash",
+            "syntax_hash",
+            "signature_hash",
+            "edge_surface_hash",
+            "embedding_text_hash",
+            "api_surface_hash",
+            "embedding_artifact_ref",
+            "scoped_tool_ref",
+            "package_root",
+            "repair_frontier_summary",
+        )
+        for row in rows:
+            stable_unit_id = cls._stable_unit_id_from_artifact_row(row)
+            if not stable_unit_id or stable_unit_id not in units_by_stable_id:
+                continue
+            unit = units_by_stable_id[stable_unit_id]
+            row_payload = dict(row)
+            row_metadata = cls._unit_artifact_metadata_payload(
+                row_payload.get("metadata")
+            )
+            unit_metadata = cls._unit_artifact_metadata_payload(
+                getattr(unit, "metadata", None)
+            )
+            row_metadata.update(unit_metadata)
+            row_payload["metadata"] = row_metadata
+            unit_path = getattr(unit, "path", None)
+            if unit_path:
+                row_payload["relative_path"] = unit_path
+            for field_name in metadata_fields:
+                if row_metadata.get(field_name) is not None:
+                    row_payload[field_name] = row_metadata.get(field_name)
+            refreshed_rows.append(row_payload)
+        return refreshed_rows
 
     @staticmethod
     def _unit_artifact_metadata_payload(value: Any) -> dict[str, Any]:
@@ -1150,6 +1245,20 @@ class IndexPipeline:
             return None
 
     def _load_existing_metadata(self, artifact_key: str) -> list[dict[str, Any]]:
+        load_metadata_payload = getattr(
+            self.vector_store, "load_metadata_payload", None
+        )
+        if callable(load_metadata_payload):
+            try:
+                data = load_metadata_payload(artifact_key)
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to load incremental metadata for '{artifact_key}': {e}"
+                )
+            else:
+                metadata = data.get("metadata", []) if isinstance(data, dict) else []
+                if isinstance(metadata, list):
+                    return cast(list[dict[str, Any]], metadata)
         metadata_path = self._metadata_path_for_artifact(artifact_key)
         if not os.path.exists(metadata_path):
             return []
@@ -2157,11 +2266,16 @@ class IndexPipeline:
         )
         self._invalidate_loaded_artifact_handle(record.artifact_key)
         self.snapshot_store.save_snapshot(repaired_snapshot, metadata=metadata)
+        refreshed_rows = self._current_unit_artifact_rows(
+            rows=affected_rows,
+            snapshot=repaired_snapshot,
+            target_paths=target_paths,
+        )
         if affected_stable_unit_ids:
             self.unit_artifact_store.refresh_units(
                 snapshot_id=snapshot_id,
                 stable_unit_ids=affected_stable_unit_ids,
-                elements=affected_rows,
+                elements=refreshed_rows,
             )
         self.snapshot_symbol_index.register_snapshot(repaired_snapshot)
         self.snapshot_store.save_relational_facts(repaired_snapshot)

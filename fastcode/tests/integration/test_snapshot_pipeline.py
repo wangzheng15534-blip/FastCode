@@ -1920,6 +1920,161 @@ def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
         assert rows_by_path["other/c.py"]["metadata"]["signature_hash"] == "sig:c:keep"
 
 
+def test_run_semantic_repair_frontier_refresh_drops_missing_target_units() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_repair_refresh_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:repair-refresh",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+            metadata={"semantic_resolver_runs": []},
+        )
+        record = pipeline.snapshot_store.save_snapshot(snapshot, metadata={})
+        pipeline.snapshot_store.save_relational_facts = Mock(return_value=None)
+        pipeline.snapshot_store.save_ir_graphs = Mock(return_value=None)
+        pipeline.snapshot_symbol_index.register_snapshot = Mock(return_value=None)
+        pipeline.ir_graph_builder.build_graphs = Mock(return_value=SimpleNamespace())
+        pipeline._load_artifacts_by_key = Mock(return_value=True)
+        pipeline.loader.repo_path = tmp
+        pipeline._reconstruct_elements_from_metadata = Mock(
+            return_value=[
+                SimpleNamespace(
+                    id="elem:a",
+                    relative_path="pkg/a.py",
+                    file_path="pkg/a.py",
+                    to_dict=lambda: {
+                        "id": "elem:a",
+                        "type": "function",
+                        "relative_path": "pkg/a.py",
+                        "metadata": {
+                            "stable_unit_id": "unit:function:a",
+                            "signature_hash": "sig:a:new",
+                        },
+                    },
+                ),
+                SimpleNamespace(
+                    id="elem:b",
+                    relative_path="pkg/sub/b.py",
+                    file_path="pkg/sub/b.py",
+                    to_dict=lambda: {
+                        "id": "elem:b",
+                        "type": "function",
+                        "relative_path": "pkg/sub/b.py",
+                        "metadata": {
+                            "stable_unit_id": "unit:function:b",
+                            "signature_hash": "sig:b:new",
+                        },
+                    },
+                ),
+                SimpleNamespace(
+                    id="elem:c",
+                    relative_path="other/c.py",
+                    file_path="other/c.py",
+                    to_dict=lambda: {
+                        "id": "elem:c",
+                        "type": "function",
+                        "relative_path": "other/c.py",
+                        "metadata": {"stable_unit_id": "unit:function:c"},
+                    },
+                ),
+            ]
+        )
+        repaired_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id=record.snapshot_id,
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:a:current",
+                    kind="function",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a",
+                    metadata={
+                        "stable_unit_id": "unit:function:a",
+                        "signature_hash": "sig:a:new",
+                    },
+                ),
+                IRCodeUnit(
+                    unit_id="unit:c:current",
+                    kind="function",
+                    path="other/c.py",
+                    language="python",
+                    display_name="c",
+                    metadata={
+                        "stable_unit_id": "unit:function:c",
+                        "signature_hash": "sig:c:keep",
+                    },
+                ),
+            ],
+            metadata={"semantic_resolver_runs": []},
+        )
+        pipeline._apply_semantic_resolvers = Mock(return_value=repaired_snapshot)
+        with open(os.path.join(tmp, "pyproject.toml"), "w", encoding="utf-8") as handle:
+            handle.write("[project]\nname='repo'\n")
+        os.makedirs(os.path.join(tmp, "pkg", "sub"), exist_ok=True)
+        with open(os.path.join(tmp, "pkg", "a.py"), "w", encoding="utf-8") as handle:
+            handle.write("print('a')\n")
+        with open(
+            os.path.join(tmp, "pkg", "sub", "b.py"), "w", encoding="utf-8"
+        ) as handle:
+            handle.write("print('b')\n")
+        pipeline.unit_artifact_store.replace_snapshot_units(
+            record.snapshot_id,
+            elements=[
+                {
+                    "type": "function",
+                    "relative_path": "pkg/a.py",
+                    "metadata": {
+                        "stable_unit_id": "unit:function:a",
+                        "signature_hash": "sig:a:old",
+                    },
+                },
+                {
+                    "type": "function",
+                    "relative_path": "pkg/sub/b.py",
+                    "metadata": {
+                        "stable_unit_id": "unit:function:b",
+                        "signature_hash": "sig:b:old",
+                    },
+                },
+                {
+                    "type": "function",
+                    "relative_path": "other/c.py",
+                    "metadata": {
+                        "stable_unit_id": "unit:function:c",
+                        "signature_hash": "sig:c:keep",
+                    },
+                },
+            ],
+        )
+
+        with patch(
+            "fastcode.indexing.pipeline.run_scip_for_language",
+            return_value=None,
+        ):
+            result = pipeline.run_semantic_repair_frontier(
+                snapshot_id=record.snapshot_id,
+                scope_kind="package",
+                scope_roots=["pkg"],
+                changed_paths=["pkg/a.py"],
+                repo_name="repo",
+            )
+
+        assert result["status"] == "repaired"
+        stored_units = pipeline.unit_artifact_store.list_snapshot_units(
+            record.snapshot_id
+        )
+        rows_by_id = {row["stable_unit_id"]: row for row in stored_units}
+        assert "unit:function:b" not in rows_by_id
+        assert rows_by_id["unit:function:a"]["signature_hash"] == "sig:a:new"
+        assert rows_by_id["unit:function:c"]["signature_hash"] == "sig:c:keep"
+
+
 def test_drop_owned_evidence_removes_scoped_scip_supports_only() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_support_") as tmp:
         pipeline = _make_minimal_pipeline(tmp)

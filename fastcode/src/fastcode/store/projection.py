@@ -491,6 +491,13 @@ class ProjectionStore:
     ) -> None:
         now = utc_now()
         coverage_nodes = self._coverage_nodes(result)
+        chunk_ids = sorted(
+            {
+                str(chunk_id)
+                for chunk in result.chunks
+                if (chunk_id := chunk.get("chunk_id"))
+            }
+        )
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -556,7 +563,27 @@ class ProjectionStore:
                             now,
                         ),
                     )
+                if chunk_ids:
+                    cur.execute(
+                        """
+                        DELETE FROM projection_chunks
+                        WHERE projection_id=%s
+                          AND NOT (chunk_id = ANY(%s::text[]))
+                        """,
+                        (result.projection_id, chunk_ids),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        DELETE FROM projection_chunks
+                        WHERE projection_id=%s
+                        """,
+                        (result.projection_id,),
+                    )
                 for chunk in result.chunks:
+                    chunk_id = chunk.get("chunk_id")
+                    if not chunk_id:
+                        continue
                     cur.execute(
                         """
                         INSERT INTO projection_chunks (projection_id, chunk_id, chunk_json, updated_at)
@@ -567,7 +594,7 @@ class ProjectionStore:
                         """,
                         (
                             result.projection_id,
-                            chunk["chunk_id"],
+                            str(chunk_id),
                             json.dumps(chunk, ensure_ascii=False),
                             now,
                         ),

@@ -847,14 +847,15 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - `store/pg_retrieval.py` now strips raw embedding arrays from `metadata_json` before insert so vector payloads are not duplicated in JSON storage
   - it still converts embeddings to Python lists/vector literals for the current pgvector/array insert path
 - vector retrieval path:
-  - `store/vector.py` keeps FAISS native indexes, persists repository overviews as an explicit JSON manifest plus NumPy embedding archive, and vectorizes repository-overview ranking before result metadata assembly
+  - `store/vector.py` keeps shard-backed vector rows hot after load, rebuilds FAISS lazily only when a compatibility operation needs it, persists repository overviews as an explicit JSON manifest plus NumPy embedding archive, and vectorizes repository-overview ranking before result metadata assembly
   - full repository-overview consumers still decode JSON metadata into Python dicts because selector/BM25 flows currently operate on Python text/metadata payloads
 - PostgreSQL retrieval result path:
   - semantic fallback now delays JSON metadata inflation until after vectorized NumPy ranking
   - direct pgvector/keyword result rows still materialize JSON payloads at the retrieval boundary
 - graph path:
   - hot graph operations still use `networkx`, which is fundamentally Python-object heavy
-  - graph persistence/load paths materialize large object graphs instead of keeping a compact native representation
+  - compatibility `graph/build.py` loads now retain compact shard adjacency payloads and only materialize `networkx` lazily for save/merge/path/stats compatibility paths
+  - snapshot IR graph storage/load still reconstructs full `networkx` graph objects from JSON, and IR graph expansion still depends on that representation even though query handles now defer the first load and cache a combined traversal graph per snapshot
 - IR/store path:
   - `IRSnapshot.to_dict()/from_dict()` and record `to_dict()/from_dict()` patterns are still common interchange mechanisms
   - DB rows are routinely converted with `row_to_dict()` before typed reconstruction

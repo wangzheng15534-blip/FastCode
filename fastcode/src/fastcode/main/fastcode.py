@@ -654,6 +654,50 @@ class FastCode:
         dirty_path_set = {normalize_path(path) for path in dirty_paths if path}
         return bool(coverage_paths & dirty_path_set)
 
+    def _projection_dirty_node_ids(
+        self, snapshot_id: str, dirty_paths: list[str]
+    ) -> set[str]:
+        snapshot_store = getattr(self, "snapshot_store", None)
+        load_snapshot = getattr(snapshot_store, "load_snapshot", None)
+        if not callable(load_snapshot):
+            return set()
+        snapshot = load_snapshot(snapshot_id)
+        if snapshot is None:
+            return set()
+        dirty_path_set = {normalize_path(path) for path in dirty_paths if path}
+        node_ids: set[str] = set()
+        for unit in getattr(snapshot, "units", []) or []:
+            unit_path = normalize_path(getattr(unit, "path", ""))
+            unit_id = getattr(unit, "unit_id", "")
+            if unit_path in dirty_path_set and unit_id:
+                node_ids.add(str(unit_id))
+        return node_ids
+
+    @staticmethod
+    def _projection_build_intersects_frontier(
+        build: dict[str, Any],
+        *,
+        dirty_paths: list[str],
+        dirty_nodes: set[str],
+    ) -> bool:
+        coverage_paths = {
+            normalize_path(path) for path in build.get("coverage_paths") or [] if path
+        }
+        coverage_nodes = {
+            str(node_id) for node_id in build.get("coverage_nodes") or [] if node_id
+        }
+        if not coverage_paths and not coverage_nodes:
+            return True
+
+        dirty_path_set = {normalize_path(path) for path in dirty_paths if path}
+        if coverage_paths and coverage_paths & dirty_path_set:
+            return True
+        if coverage_nodes:
+            if not dirty_nodes:
+                return not coverage_paths
+            return bool(coverage_nodes & dirty_nodes)
+        return False
+
     def _mark_projection_dirty_for_repair(
         self,
         *,
@@ -695,6 +739,8 @@ class FastCode:
 
         dirty_reason = self._projection_dirty_reason(change_kinds)
         dirty_package_roots = list(frontier.get("scope_roots") or [])
+        dirty_nodes = self._projection_dirty_node_ids(snapshot_id, dirty_paths)
+        dirty_units = sorted(dirty_nodes)
         if (
             self._projection_dirty_widened(
                 change_kinds=change_kinds,
@@ -706,13 +752,14 @@ class FastCode:
                 snapshot_id,
                 dirty_reason,
                 dirty_paths=dirty_paths,
-                dirty_units=[],
+                dirty_units=dirty_units,
                 dirty_package_roots=dirty_package_roots,
             )
             return {
                 "marked": 1,
                 "reason": dirty_reason,
                 "dirty_paths": dirty_paths,
+                "dirty_units": dirty_units,
                 "widened": True,
                 "scope_kind": "all",
             }
@@ -724,7 +771,11 @@ class FastCode:
             scope_key = str(build.get("scope_key") or "")
             if not scope_kind or not scope_key:
                 continue
-            if not self._projection_build_intersects_paths(build, dirty_paths):
+            if not self._projection_build_intersects_frontier(
+                build,
+                dirty_paths=dirty_paths,
+                dirty_nodes=dirty_nodes,
+            ):
                 skipped_clean += 1
                 continue
             mark_projection_dirty(
@@ -732,7 +783,7 @@ class FastCode:
                 scope_kind=scope_kind,
                 scope_key=scope_key,
                 dirty_paths=dirty_paths,
-                dirty_units=[],
+                dirty_units=dirty_units,
                 dirty_package_roots=dirty_package_roots,
                 dirty_reason=dirty_reason,
             )
@@ -741,6 +792,7 @@ class FastCode:
             "marked": marked,
             "reason": dirty_reason,
             "dirty_paths": dirty_paths,
+            "dirty_units": dirty_units,
             "skipped_clean": skipped_clean,
         }
 
@@ -1690,18 +1742,26 @@ class FastCode:
         """
         try:
             # Discover available repository indexes
-            persist_dir = self.vector_store.persist_dir
             available_repos: list[str] = []
-
-            if os.path.exists(persist_dir):
-                for file in os.listdir(persist_dir):
-                    if file.endswith(".faiss"):
-                        repo_name = file.replace(".faiss", "")
-                        metadata_file = os.path.join(
-                            persist_dir, f"{repo_name}_metadata.pkl"
-                        )
-                        if os.path.exists(metadata_file):
-                            available_repos.append(repo_name)
+            scan_available_indexes = getattr(
+                self.vector_store, "scan_available_indexes", None
+            )
+            if callable(scan_available_indexes):
+                for repo in cast(list[dict[str, Any]], scan_available_indexes(False)):
+                    repo_name = str(repo.get("name") or repo.get("repo_name") or "")
+                    if repo_name:
+                        available_repos.append(repo_name)
+            else:
+                persist_dir = self.vector_store.persist_dir
+                if os.path.exists(persist_dir):
+                    for file in os.listdir(persist_dir):
+                        if file.endswith(".faiss"):
+                            repo_name = file.replace(".faiss", "")
+                            metadata_file = os.path.join(
+                                persist_dir, f"{repo_name}_metadata.pkl"
+                            )
+                            if os.path.exists(metadata_file):
+                                available_repos.append(repo_name)
 
             if not available_repos:
                 self.logger.error("No repository indexes found")
@@ -1762,27 +1822,44 @@ class FastCode:
             all_bm25_corpus: list[list[str]] = []
             graphs_loaded = False
 
+            load_bm25_payload = getattr(self.retriever, "load_bm25_payload", None)
+
             for repo_name in repos_to_load:
                 # Try loading BM25 for each repo
-                bm25_path = os.path.join(
-                    self.retriever.persist_dir, f"{repo_name}_bm25.pkl"
-                )
-                if os.path.exists(bm25_path):
+                data: dict[str, Any] | None = None
+                if callable(load_bm25_payload):
                     try:
-                        with open(bm25_path, "rb") as f:
-                            data = pickle.load(f)
-                            all_bm25_corpus.extend(data["bm25_corpus"])
-
-                            for elem_payload in data["bm25_elements"]:
-                                all_bm25_elements.append(
-                                    deserialize_code_element(elem_payload)
-                                )
-
-                        self.logger.info(f"Loaded BM25 data for {repo_name}")
+                        payload = load_bm25_payload(repo_name)
+                        if isinstance(payload, dict):
+                            data = payload
                     except Exception as e:
                         self.logger.warning(
                             f"Failed to load BM25 data for {repo_name}: {e}"
                         )
+                else:
+                    bm25_path = os.path.join(
+                        self.retriever.persist_dir, f"{repo_name}_bm25.pkl"
+                    )
+                    if os.path.exists(bm25_path):
+                        try:
+                            with open(bm25_path, "rb") as f:
+                                payload = pickle.load(f)
+                            if isinstance(payload, dict):
+                                data = payload
+                        except Exception as e:
+                            self.logger.warning(
+                                f"Failed to load BM25 data for {repo_name}: {e}"
+                            )
+
+                if data is not None:
+                    all_bm25_corpus.extend(
+                        cast(list[list[str]], data.get("bm25_corpus", []))
+                    )
+                    for elem_payload in cast(
+                        list[dict[str, Any]], data.get("bm25_elements", [])
+                    ):
+                        all_bm25_elements.append(deserialize_code_element(elem_payload))
+                    self.logger.info(f"Loaded BM25 data for {repo_name}")
 
                 # Load graph data (merge into main graph)
                 if not graphs_loaded:
@@ -1901,6 +1978,17 @@ class FastCode:
 
     def _load_existing_metadata(self, repo_name: str) -> list[dict[str, Any]]:
         """Load existing vector store metadata for a repo directly from disk."""
+        try:
+            load_metadata_payload = getattr(
+                self.vector_store, "load_metadata_payload", None
+            )
+            if callable(load_metadata_payload):
+                data = load_metadata_payload(repo_name)
+                metadata = data.get("metadata", []) if isinstance(data, dict) else []
+                if isinstance(metadata, list):
+                    return cast(list[dict[str, Any]], metadata)
+        except Exception as e:
+            self.logger.warning(f"Failed to load metadata for '{repo_name}': {e}")
         meta_path = os.path.join(
             self.vector_store.persist_dir, f"{repo_name}_metadata.pkl"
         )
@@ -1909,10 +1997,116 @@ class FastCode:
         try:
             with open(meta_path, "rb") as f:
                 data = pickle.load(f)
-            return data.get("metadata", [])
+            metadata = data.get("metadata", []) if isinstance(data, dict) else []
+            return (
+                cast(list[dict[str, Any]], metadata)
+                if isinstance(metadata, list)
+                else []
+            )
         except Exception as e:
             self.logger.warning(f"Failed to load metadata for '{repo_name}': {e}")
-            return []
+        return []
+
+    @staticmethod
+    def _artifact_size_bytes(path: str) -> int:
+        if os.path.isdir(path):
+            return sum(
+                os.path.getsize(os.path.join(dirpath, filename))
+                for dirpath, _, filenames in os.walk(path)
+                for filename in filenames
+            )
+        return os.path.getsize(path) if os.path.exists(path) else 0
+
+    def _repository_artifact_paths(self, repo_name: str) -> list[str]:
+        artifact_paths = [
+            os.path.join(self.vector_store.persist_dir, f"{repo_name}_manifest.json")
+        ]
+
+        vector_artifact_paths = getattr(
+            self.vector_store, "vector_artifact_paths", None
+        )
+        if callable(vector_artifact_paths):
+            artifact_paths.extend(cast(list[str], vector_artifact_paths(repo_name)))
+        else:
+            artifact_paths.extend(
+                [
+                    os.path.join(self.vector_store.persist_dir, f"{repo_name}.faiss"),
+                    os.path.join(
+                        self.vector_store.persist_dir,
+                        f"{repo_name}_vector_manifest.json",
+                    ),
+                    os.path.join(
+                        self.vector_store.persist_dir, f"{repo_name}_vector_shards"
+                    ),
+                ]
+            )
+
+        graph_artifact_paths = getattr(
+            getattr(self, "graph_builder", None), "graph_artifact_paths", None
+        )
+        if callable(graph_artifact_paths):
+            artifact_paths.extend(cast(list[str], graph_artifact_paths(repo_name)))
+        else:
+            artifact_paths.extend(
+                [
+                    os.path.join(
+                        self.vector_store.persist_dir, f"{repo_name}_graphs.pkl"
+                    ),
+                    os.path.join(
+                        self.vector_store.persist_dir,
+                        f"{repo_name}_graph_manifest.json",
+                    ),
+                    os.path.join(
+                        self.vector_store.persist_dir, f"{repo_name}_graph_shards"
+                    ),
+                ]
+            )
+
+        metadata_artifact_paths = getattr(
+            self.vector_store, "metadata_artifact_paths", None
+        )
+        if callable(metadata_artifact_paths):
+            artifact_paths.extend(cast(list[str], metadata_artifact_paths(repo_name)))
+        else:
+            artifact_paths.extend(
+                [
+                    os.path.join(
+                        self.vector_store.persist_dir, f"{repo_name}_metadata.pkl"
+                    ),
+                    os.path.join(
+                        self.vector_store.persist_dir,
+                        f"{repo_name}_metadata_manifest.json",
+                    ),
+                    os.path.join(
+                        self.vector_store.persist_dir, f"{repo_name}_metadata_shards"
+                    ),
+                ]
+            )
+
+        bm25_artifact_paths = getattr(self.retriever, "bm25_artifact_paths", None)
+        if callable(bm25_artifact_paths):
+            artifact_paths.extend(cast(list[str], bm25_artifact_paths(repo_name)))
+        else:
+            artifact_paths.extend(
+                [
+                    os.path.join(self.retriever.persist_dir, f"{repo_name}_bm25.pkl"),
+                    os.path.join(
+                        self.retriever.persist_dir, f"{repo_name}_bm25_manifest.json"
+                    ),
+                    os.path.join(
+                        self.retriever.persist_dir, f"{repo_name}_bm25_shards"
+                    ),
+                ]
+            )
+
+        seen: set[str] = set()
+        existing_paths: list[str] = []
+        for path in artifact_paths:
+            if path in seen or not os.path.exists(path):
+                continue
+            seen.add(path)
+            existing_paths.append(path)
+        return existing_paths
 
     def _detect_file_changes(
         self, repo_name: str, current_files: list[dict[str, Any]]
@@ -2204,26 +2398,18 @@ class FastCode:
         """
         import shutil
 
-        persist_dir = self.vector_store.persist_dir
         deleted_files: list[str] = []
         freed_bytes = 0
 
-        # Files to delete from vector_store directory
-        file_patterns = [
-            f"{repo_name}.faiss",
-            f"{repo_name}_metadata.pkl",
-            f"{repo_name}_bm25.pkl",
-            f"{repo_name}_graphs.pkl",
-        ]
-
-        for fname in file_patterns:
-            fpath = os.path.join(persist_dir, fname)
-            if os.path.exists(fpath):
-                size = os.path.getsize(fpath)
-                os.remove(fpath)
-                deleted_files.append(fname)
-                freed_bytes += size
-                self.logger.info(f"Deleted {fpath} ({size / (1024 * 1024):.2f} MB)")
+        for artifact_path in self._repository_artifact_paths(repo_name):
+            size = self._artifact_size_bytes(artifact_path)
+            if os.path.isdir(artifact_path):
+                shutil.rmtree(artifact_path)
+            else:
+                os.remove(artifact_path)
+            deleted_files.append(os.path.basename(artifact_path))
+            freed_bytes += size
+            self.logger.info(f"Deleted {artifact_path} ({size / (1024 * 1024):.2f} MB)")
 
         # Remove overview entry from repository overview storage
         if self.vector_store.delete_repo_overview(repo_name):

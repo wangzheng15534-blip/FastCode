@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import pickle
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -61,6 +63,7 @@ def test_graph_save_avoids_code_element_to_dict(tmp_path: Path) -> None:
     elem = _element("func:one", "load_config")
     builder.element_by_name = {elem.name: elem}
     builder.element_by_id = {elem.id: elem}
+    (tmp_path / "repo_graphs.pkl").write_bytes(b"legacy")
 
     with patch.object(
         CodeElement,
@@ -70,11 +73,71 @@ def test_graph_save_avoids_code_element_to_dict(tmp_path: Path) -> None:
     ):
         assert builder.save("repo") is True
 
-    with open(tmp_path / "repo_graphs.pkl", "rb") as handle:
-        payload = pickle.load(handle)  # noqa: S301 - test fixture written locally above
+    assert (tmp_path / "repo_graph_manifest.json").exists()
+    assert (tmp_path / "repo_graph_shards").is_dir()
+    assert not (tmp_path / "repo_graphs.pkl").exists()
 
-    assert payload["element_by_id"][elem.id]["id"] == elem.id
-    assert payload["element_by_id"][elem.id]["metadata"] == elem.metadata
+    assert builder.load("repo") is True
+
+    assert builder.element_by_id[elem.id].id == elem.id
+    assert builder.element_by_id[elem.id].metadata == elem.metadata
+
+
+def test_graph_save_reuses_unchanged_shards(tmp_path: Path) -> None:
+    builder = _builder(tmp_path)
+    elem_a = _element("func:a", "load_a", relative_path="src/a.py")
+    elem_b = _element("func:b", "load_b", relative_path="src/b.py")
+    builder.element_by_name = {elem_a.name: elem_a, elem_b.name: elem_b}
+    builder.element_by_id = {elem_a.id: elem_a, elem_b.id: elem_b}
+    builder.call_graph.add_edge(elem_a.id, elem_b.id, type="calls")
+
+    assert builder.save("repo") is True
+    manifest = json.loads(
+        (tmp_path / "repo_graph_manifest.json").read_text(encoding="utf-8")
+    )
+    shards_by_path = {
+        entry["path_key"]: tmp_path / "repo_graph_shards" / entry["shard_file"]
+        for entry in manifest["shards"]
+    }
+    a_before = shards_by_path["src/a.py"].stat().st_mtime_ns
+    b_before = shards_by_path["src/b.py"].stat().st_mtime_ns
+
+    time.sleep(0.01)
+    elem_b_v2 = _element("func:b", "load_b", relative_path="src/b.py")
+    elem_b_v2.metadata["refreshed"] = True
+    builder.element_by_name = {elem_a.name: elem_a, elem_b_v2.name: elem_b_v2}
+    builder.element_by_id = {elem_a.id: elem_a, elem_b_v2.id: elem_b_v2}
+    assert builder.save("repo") is True
+
+    a_after = shards_by_path["src/a.py"].stat().st_mtime_ns
+    b_after = shards_by_path["src/b.py"].stat().st_mtime_ns
+    assert a_after == a_before
+    assert b_after > b_before
+
+
+def test_graph_sharded_load_keeps_lazy_adjacency_until_needed(tmp_path: Path) -> None:
+    builder = _builder(tmp_path)
+    elem_a = _element("func:a", "load_a", relative_path="src/a.py")
+    elem_b = _element("func:b", "load_b", relative_path="src/b.py")
+    builder.element_by_name = {elem_a.name: elem_a, elem_b.name: elem_b}
+    builder.element_by_id = {elem_a.id: elem_a, elem_b.id: elem_b}
+    builder.call_graph.add_edge(elem_a.id, elem_b.id, type="calls")
+
+    assert builder.save("repo") is True
+
+    loaded = _builder(tmp_path)
+    assert loaded.load("repo") is True
+    assert loaded.call_graph.number_of_nodes() == 0
+
+    related = loaded.get_related_elements(elem_a.id, max_hops=1)
+
+    assert related == {elem_a.id, elem_b.id}
+    assert loaded.call_graph.number_of_nodes() == 0
+
+    path = loaded.find_path(elem_a.id, elem_b.id, graph_type="call")
+
+    assert path == [elem_a.id, elem_b.id]
+    assert loaded.call_graph.number_of_nodes() == 2
 
 
 def test_graph_load_uses_explicit_deserializer(tmp_path: Path) -> None:

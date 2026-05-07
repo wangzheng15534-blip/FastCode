@@ -84,6 +84,9 @@ def _repo_name_from_source(source: str, is_url: bool) -> str:
 def _is_repo_indexed(repo_name: str) -> bool:
     """Check whether a repo already has a persisted FAISS index."""
     fc = _get_fastcode()
+    has_saved_index = getattr(fc.vector_store, "has_saved_index", None)
+    if callable(has_saved_index):
+        return bool(has_saved_index(repo_name))
     persist_dir = fc.vector_store.persist_dir
     faiss_path = os.path.join(persist_dir, f"{repo_name}.faiss")
     meta_path = os.path.join(persist_dir, f"{repo_name}_metadata.pkl")

@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from fastcode.ir.projection import ProjectionBuildResult, ProjectionScope
 from fastcode.store.projection import ProjectionStore
 from fastcode.store.records import ProjectionBuildRecord, ProjectionDirtyScopeRecord
 
@@ -213,3 +214,42 @@ def test_build_helpers_use_explicit_serializers(
     assert build["coverage_paths"] == ["pkg/a.py"]
     assert build["coverage_nodes"] == ["unit:a"]
     assert builds == [build]
+
+
+def test_save_prunes_stale_chunks_before_upserting_current_chunk_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def responder(_sql: str, _params: tuple[Any, ...]) -> tuple[Any, list[Any]]:
+        return None, []
+
+    store, executed = _make_store(responder)
+    monkeypatch.setattr(
+        "fastcode.store.projection.utc_now", lambda: "2026-05-05T00:00:10+00:00"
+    )
+
+    result = ProjectionBuildResult(
+        projection_id="proj_1",
+        snapshot_id="snap:1",
+        scope_kind="snapshot",
+        scope_key="snapshot:*",
+        l0={"layer": "L0", "meta": {"covers_nodes": ["unit:a"]}},
+        l1={"layer": "L1", "meta": {"covers_nodes": ["unit:a"]}},
+        l2_index={"layer": "L2", "meta": {"covers_nodes": ["unit:a"]}},
+        chunks=[{"chunk_id": "chunk-a", "content": {"summary": "kept"}}],
+    )
+    scope = ProjectionScope(
+        scope_kind="snapshot",
+        snapshot_id="snap:1",
+        scope_key="snapshot:*",
+    )
+
+    store.save(result, "hash123", scope=scope, coverage_paths=["pkg/a.py"])
+
+    delete_sql, delete_params = next(
+        (sql, params)
+        for sql, params in executed
+        if "DELETE FROM projection_chunks" in sql
+    )
+    assert "DELETE FROM projection_chunks" in delete_sql
+    assert delete_params[0] == "proj_1"
+    assert delete_params[1] == ["chunk-a"]

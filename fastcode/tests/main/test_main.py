@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import pickle
 from dataclasses import is_dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from fastcode.ir.element import CodeElement
+from fastcode.ir.types import IRCodeUnit, IRSnapshot
 from fastcode.main import FastCode
 from fastcode.retrieval.core.agent_context import (
     AcceptedFact,
@@ -362,6 +362,77 @@ def test_process_semantic_repair_frontier_skips_unrelated_projection_scopes():
     assert {entry["scope_key"] for entry in marked} == {"scope:snapshot"}
 
 
+def test_process_semantic_repair_frontier_uses_coverage_nodes_when_paths_absent():
+    fc = FastCode.__new__(FastCode)
+    fc.pipeline = SimpleNamespace(
+        run_semantic_repair_frontier=lambda **kwargs: {
+            "status": "repaired",
+            "warnings": [],
+            "repair_frontier": {
+                "scope_kind": kwargs["scope_kind"],
+                "scope_roots": kwargs["scope_roots"],
+                "changed_paths": kwargs["changed_paths"],
+                "target_paths": ["pkg/a.py"],
+            },
+        }
+    )
+    snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:1",
+        units=[
+            IRCodeUnit(
+                unit_id="unit:a",
+                kind="function",
+                path="pkg/a.py",
+                language="python",
+                display_name="a",
+            ),
+            IRCodeUnit(
+                unit_id="unit:c",
+                kind="function",
+                path="other/c.py",
+                language="python",
+                display_name="c",
+            ),
+        ],
+    )
+    marked: list[dict[str, Any]] = []
+    fc.snapshot_store = SimpleNamespace(load_snapshot=lambda _snapshot_id: snapshot)
+    fc.projection_store = SimpleNamespace(
+        enabled=True,
+        list_builds_for_snapshot=lambda _snapshot_id: [
+            {
+                "scope_kind": "snapshot",
+                "scope_key": "scope:snapshot",
+                "coverage_paths": [],
+                "coverage_nodes": ["unit:a"],
+            },
+            {
+                "scope_kind": "query",
+                "scope_key": "scope:query",
+                "coverage_paths": [],
+                "coverage_nodes": ["unit:c"],
+            },
+        ],
+        mark_dirty=lambda **kwargs: marked.append(kwargs),
+        mark_all_dirty=lambda *args, **kwargs: None,
+    )
+
+    result = fc.process_semantic_repair_frontier(
+        {
+            "snapshot_id": "snap:1",
+            "repo_name": "repo",
+            "changed_paths": ["pkg/a.py"],
+            "scope_kind": "package",
+            "scope_roots": ["pkg"],
+            "change_kinds": ["embedding_text_hash"],
+        }
+    )
+
+    assert result["projection_dirty"]["marked"] == 1
+    assert {entry["scope_key"] for entry in marked} == {"scope:snapshot"}
+
+
 def test_process_semantic_repair_frontier_widens_topology_dirty_scopes():
     fc = FastCode.__new__(FastCode)
     fc.pipeline = SimpleNamespace(
@@ -422,6 +493,7 @@ def test_load_multi_repo_cache_uses_explicit_code_element_deserializer(
         initialize=lambda _dimension: None,
         merge_from_index=lambda _repo_name: True,
         get_count=lambda: 1,
+        scan_available_indexes=lambda _use_cache=False: [{"name": "repo"}],
     )
     fc.retriever = SimpleNamespace(
         persist_dir=str(tmp_path),
@@ -430,16 +502,16 @@ def test_load_multi_repo_cache_uses_explicit_code_element_deserializer(
         full_bm25=None,
         index_for_bm25=lambda _elements: None,
         build_repo_overview_bm25=lambda: None,
+        load_bm25_payload=lambda _repo_name: {
+            "bm25_corpus": [["service"]],
+            "bm25_elements": [payload],
+        },
     )
     fc.graph_builder = SimpleNamespace(
         load=lambda _repo_name: True,
         merge_from_file=lambda _repo_name: True,
     )
     fc._reconstruct_elements_from_metadata = lambda: []
-
-    (tmp_path / "repo.faiss").touch()
-    with open(tmp_path / "repo_metadata.pkl", "wb") as handle:
-        pickle.dump({"metadata": []}, handle)
 
     payload = {
         "id": "file:service",
@@ -458,8 +530,6 @@ def test_load_multi_repo_cache_uses_explicit_code_element_deserializer(
         "repo_name": "repo",
         "repo_url": None,
     }
-    with open(tmp_path / "repo_bm25.pkl", "wb") as handle:
-        pickle.dump({"bm25_corpus": [["service"]], "bm25_elements": [payload]}, handle)
 
     calls: list[dict[str, Any]] = []
 
@@ -493,6 +563,87 @@ def test_load_multi_repo_cache_uses_explicit_code_element_deserializer(
     assert calls == [payload]
     assert fc.retriever.full_bm25_elements[0].id == "file:service"
     assert fc.retriever.full_bm25_corpus == [["service"]]
+
+
+def test_remove_repository_removes_sharded_artifacts(tmp_path: Path) -> None:
+    fc = FastCode.__new__(FastCode)
+    fc.logger = SimpleNamespace(info=lambda *a, **kw: None)
+    fc.config = {"repo_root": str(tmp_path / "repos")}
+    fc.loader = SimpleNamespace(safe_repo_root=str(tmp_path / "repos"))
+    invalidations: list[bool] = []
+    fc.vector_store = SimpleNamespace(
+        persist_dir=str(tmp_path),
+        vector_artifact_paths=lambda _repo_name: [
+            str(tmp_path / "repo_vector_manifest.json"),
+            str(tmp_path / "repo_vector_shards"),
+        ],
+        metadata_artifact_paths=lambda _repo_name: [
+            str(tmp_path / "repo_metadata_manifest.json"),
+            str(tmp_path / "repo_metadata_shards"),
+        ],
+        delete_repo_overview=lambda _repo_name: False,
+        invalidate_scan_cache=lambda: invalidations.append(True),
+    )
+    fc.retriever = SimpleNamespace(
+        persist_dir=str(tmp_path),
+        bm25_artifact_paths=lambda _repo_name: [
+            str(tmp_path / "repo_bm25_manifest.json"),
+            str(tmp_path / "repo_bm25_shards"),
+        ],
+    )
+    fc.graph_builder = SimpleNamespace(
+        graph_artifact_paths=lambda _repo_name: [
+            str(tmp_path / "repo_graph_manifest.json"),
+            str(tmp_path / "repo_graph_shards"),
+        ]
+    )
+
+    (tmp_path / "repo_manifest.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "repo_vector_manifest.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "repo_graph_manifest.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "repo_metadata_manifest.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "repo_bm25_manifest.json").write_text("{}", encoding="utf-8")
+
+    vector_shards = tmp_path / "repo_vector_shards"
+    vector_shards.mkdir()
+    (vector_shards / "a.npz").write_bytes(b"vector")
+
+    graph_shards = tmp_path / "repo_graph_shards"
+    graph_shards.mkdir()
+    (graph_shards / "a.pkl").write_bytes(b"graph")
+
+    metadata_shards = tmp_path / "repo_metadata_shards"
+    metadata_shards.mkdir()
+    (metadata_shards / "a.pkl").write_bytes(b"meta")
+
+    bm25_shards = tmp_path / "repo_bm25_shards"
+    bm25_shards.mkdir()
+    (bm25_shards / "a.pkl").write_bytes(b"bm25")
+
+    result = fc._remove_repository_unlocked("repo", delete_source=False)
+
+    assert result["freed_bytes"] > 0
+    assert invalidations == [True]
+    assert set(result["deleted_files"]) == {
+        "repo_manifest.json",
+        "repo_vector_manifest.json",
+        "repo_vector_shards",
+        "repo_graph_manifest.json",
+        "repo_graph_shards",
+        "repo_metadata_manifest.json",
+        "repo_metadata_shards",
+        "repo_bm25_manifest.json",
+        "repo_bm25_shards",
+    }
+    assert not (tmp_path / "repo_manifest.json").exists()
+    assert not (tmp_path / "repo_vector_manifest.json").exists()
+    assert not (tmp_path / "repo_vector_shards").exists()
+    assert not (tmp_path / "repo_graph_manifest.json").exists()
+    assert not (tmp_path / "repo_graph_shards").exists()
+    assert not (tmp_path / "repo_metadata_manifest.json").exists()
+    assert not (tmp_path / "repo_metadata_shards").exists()
+    assert not (tmp_path / "repo_bm25_manifest.json").exists()
+    assert not (tmp_path / "repo_bm25_shards").exists()
 
 
 def _run_refresh_index_cache(fc: Any) -> None:
@@ -657,6 +808,7 @@ def test_snapshot_artifact_handle_loader_caches_by_artifact_key(
 
     vector_loads: list[str] = []
     bm25_loads: list[str] = []
+    ir_graph_loads: list[str] = []
 
     class FakeVectorStore:
         def __init__(self, config: dict[str, Any]) -> None:
@@ -717,6 +869,15 @@ def test_snapshot_artifact_handle_loader_caches_by_artifact_key(
             self.ir_graphs = ir_graphs
             self.snapshot_id = snapshot_id
 
+        def set_ir_graph_loader(
+            self,
+            graph_loader: Any,
+            *,
+            snapshot_id: str | None,
+        ) -> None:
+            self.ir_graph_loader = graph_loader
+            self.snapshot_id = snapshot_id
+
         def build_repo_overview_bm25(self) -> None:
             return None
 
@@ -728,8 +889,13 @@ def test_snapshot_artifact_handle_loader_caches_by_artifact_key(
     pipeline.config = {"query": {"snapshot_handle_cache_size": 2}}
     pipeline.embedder = object()
     pipeline.loader = SimpleNamespace(repo_path="/tmp/repo")
+
+    def _load_ir_graphs(snapshot_id: str) -> str:
+        ir_graph_loads.append(snapshot_id)
+        return "ir-graphs"
+
     pipeline.snapshot_store = SimpleNamespace(
-        load_ir_graphs=lambda snapshot_id: "ir-graphs",
+        load_ir_graphs=_load_ir_graphs,
         find_by_artifact_key=lambda artifact_key: {"snapshot_id": "snap:1"},
     )
     pipeline.pg_retrieval_store = None
@@ -748,3 +914,7 @@ def test_snapshot_artifact_handle_loader_caches_by_artifact_key(
     assert first is second
     assert vector_loads == ["snap_cache"]
     assert bm25_loads == ["snap_cache"]
+    assert ir_graph_loads == []
+    assert first.retriever.snapshot_id == "snap:1"
+    assert first.retriever.ir_graph_loader("snap:1") == "ir-graphs"
+    assert ir_graph_loads == ["snap:1"]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -309,6 +310,32 @@ def test_build_projection_saves_coverage_paths_double():
 
         assert result["status"] == "built"
         assert store._builds[result["projection_id"]]["coverage_paths"] == ["pkg/a.py"]
+
+
+def test_mirror_projection_artifacts_prunes_stale_chunk_files(
+    tmp_path: Path,
+) -> None:
+    store = _FakeProjectionStore()
+    service, _transformer = _make_projection_service(str(tmp_path), store)
+    payload = {
+        "projection_id": "proj_fixed",
+        "l0": {"layer": "L0"},
+        "l1": {"layer": "L1"},
+        "l2_index": {"layer": "L2"},
+        "chunks": [
+            {"chunk_id": "chunk-a", "content": {"summary": "kept"}},
+            {"chunk_id": "chunk-b", "content": {"summary": "stale"}},
+        ],
+    }
+
+    root = Path(service._mirror_projection_artifacts("snap:projection", payload))
+    assert (root / "chunks" / "chunk-b.json").exists()
+
+    payload["chunks"] = [{"chunk_id": "chunk-a", "content": {"summary": "kept"}}]
+    service._mirror_projection_artifacts("snap:projection", payload)
+
+    assert (root / "chunks" / "chunk-a.json").exists()
+    assert not (root / "chunks" / "chunk-b.json").exists()
 
 
 def test_build_projection_uses_explicit_scope_and_build_serializers_double(

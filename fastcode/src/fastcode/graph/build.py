@@ -5,9 +5,12 @@ Graph Builder - Build code relationship graphs
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import pickle
+from collections import deque
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import networkx as nx
@@ -29,6 +32,8 @@ if TYPE_CHECKING:
     _DiGraphStr: TypeAlias = nx.DiGraph[str]
 else:
     _DiGraphStr = Any
+
+_GRAPH_SHARD_STORAGE_VERSION = 1
 
 
 class CodeGraphBuilder:
@@ -55,6 +60,9 @@ class CodeGraphBuilder:
         self.call_graph: nx.DiGraph[str] = nx.DiGraph()
         self.dependency_graph: nx.DiGraph[str] = nx.DiGraph()
         self.inheritance_graph: nx.DiGraph[str] = nx.DiGraph()
+        self._lazy_graph_payloads: dict[str, dict[str, list[Any]]] | None = None
+        self._lazy_successors: dict[str, dict[str, set[str]]] | None = None
+        self._lazy_predecessors: dict[str, dict[str, set[str]]] | None = None
 
         # Maps for quick lookup
         self.element_by_name: dict[str, CodeElement] = {}
@@ -82,6 +90,7 @@ class CodeGraphBuilder:
             symbol_resolver: Optional SymbolResolver for precise inheritance resolution
         """
         self.logger.info("Building code relationship graphs")
+        self._clear_lazy_graph_state()
 
         # --- OPTIMIZATION: Pre-compute Lookup Maps ---
         # 1. Scope Lookup for Call Graph (replaces O(N) scan in _get_caller_id_from_scope)
@@ -162,6 +171,124 @@ class CodeGraphBuilder:
             f"inheritance ({self.inheritance_graph.number_of_nodes()} nodes), "
             f"call ({self.call_graph.number_of_nodes()} nodes)"
         )
+
+    def _clear_lazy_graph_state(self) -> None:
+        self._lazy_graph_payloads = None
+        self._lazy_successors = None
+        self._lazy_predecessors = None
+
+    @staticmethod
+    def _empty_graph_payloads() -> dict[str, dict[str, list[Any]]]:
+        return {
+            "call": {"nodes": [], "edges": []},
+            "dependency": {"nodes": [], "edges": []},
+            "inheritance": {"nodes": [], "edges": []},
+        }
+
+    @staticmethod
+    def _build_lazy_adjacency(
+        graph_payloads: dict[str, dict[str, list[Any]]],
+    ) -> tuple[dict[str, dict[str, set[str]]], dict[str, dict[str, set[str]]]]:
+        successors: dict[str, dict[str, set[str]]] = {}
+        predecessors: dict[str, dict[str, set[str]]] = {}
+        for graph_name, payload in graph_payloads.items():
+            succ: dict[str, set[str]] = {}
+            pred: dict[str, set[str]] = {}
+            for raw_node in payload.get("nodes", []):
+                node_id = str(raw_node)
+                succ.setdefault(node_id, set())
+                pred.setdefault(node_id, set())
+            for edge in payload.get("edges", []):
+                if not isinstance(edge, dict):
+                    continue
+                source = edge.get("source")
+                target = edge.get("target")
+                if source is None or target is None:
+                    continue
+                source_id = str(source)
+                target_id = str(target)
+                succ.setdefault(source_id, set()).add(target_id)
+                succ.setdefault(target_id, set())
+                pred.setdefault(target_id, set()).add(source_id)
+                pred.setdefault(source_id, set())
+            successors[graph_name] = succ
+            predecessors[graph_name] = pred
+        return successors, predecessors
+
+    @staticmethod
+    def _materialize_graph_payload(
+        payload: dict[str, list[Any]],
+    ) -> nx.DiGraph[str]:
+        graph: nx.DiGraph[str] = nx.DiGraph()
+        for raw_node in payload.get("nodes", []):
+            graph.add_node(str(raw_node))
+        for edge in payload.get("edges", []):
+            if not isinstance(edge, dict):
+                continue
+            source = edge.get("source")
+            target = edge.get("target")
+            if source is None or target is None:
+                continue
+            attrs = edge.get("attrs")
+            graph.add_edge(
+                str(source),
+                str(target),
+                **(dict(attrs) if isinstance(attrs, dict) else {}),
+            )
+        return graph
+
+    def _ensure_materialized_graphs(self) -> None:
+        if self._lazy_graph_payloads is None:
+            return
+        self.call_graph = self._materialize_graph_payload(
+            self._lazy_graph_payloads["call"]
+        )
+        self.dependency_graph = self._materialize_graph_payload(
+            self._lazy_graph_payloads["dependency"]
+        )
+        self.inheritance_graph = self._materialize_graph_payload(
+            self._lazy_graph_payloads["inheritance"]
+        )
+        self._clear_lazy_graph_state()
+
+    def _lazy_neighbors(
+        self,
+        graph_name: str,
+        element_id: str,
+        *,
+        reverse: bool = False,
+    ) -> list[str]:
+        views = self._lazy_predecessors if reverse else self._lazy_successors
+        if views is None:
+            return []
+        return list(views.get(graph_name, {}).get(element_id, ()))
+
+    def _lazy_reachable(
+        self,
+        graph_name: str,
+        element_id: str,
+        *,
+        max_hops: int,
+        reverse: bool = False,
+    ) -> set[str]:
+        views = self._lazy_predecessors if reverse else self._lazy_successors
+        if views is None:
+            return set()
+        adjacency = views.get(graph_name, {})
+        if element_id not in adjacency:
+            return set()
+        visited = {element_id}
+        frontier = deque([(element_id, 0)])
+        while frontier:
+            node_id, depth = frontier.popleft()
+            if depth >= max_hops:
+                continue
+            for neighbor in adjacency.get(node_id, ()):
+                if neighbor in visited:
+                    continue
+                visited.add(neighbor)
+                frontier.append((neighbor, depth + 1))
+        return visited
 
     def _build_dependency_graph(
         self, elements: list[CodeElement], module_resolver: ModuleResolver | None = None
@@ -532,6 +659,25 @@ class CodeGraphBuilder:
         """
         related: set[str] = set()
 
+        if self._lazy_graph_payloads is not None:
+            for graph_name in ("dependency", "inheritance", "call"):
+                related.update(
+                    self._lazy_reachable(
+                        graph_name,
+                        element_id,
+                        max_hops=max_hops,
+                    )
+                )
+                related.update(
+                    self._lazy_reachable(
+                        graph_name,
+                        element_id,
+                        max_hops=max_hops,
+                        reverse=True,
+                    )
+                )
+            return related
+
         # Check all graphs
         for graph in [self.dependency_graph, self.inheritance_graph, self.call_graph]:
             if element_id in graph:
@@ -573,36 +719,48 @@ class CodeGraphBuilder:
 
     def get_dependencies(self, element_id: str) -> list[str]:
         """Get direct dependencies of an element"""
+        if self._lazy_graph_payloads is not None:
+            return self._lazy_neighbors("dependency", element_id)
         if element_id in self.dependency_graph:
             return list(self.dependency_graph.successors(element_id))
         return []
 
     def get_dependents(self, element_id: str) -> list[str]:
         """Get elements that depend on this element"""
+        if self._lazy_graph_payloads is not None:
+            return self._lazy_neighbors("dependency", element_id, reverse=True)
         if element_id in self.dependency_graph:
             return list(self.dependency_graph.predecessors(element_id))
         return []
 
     def get_subclasses(self, element_id: str) -> list[str]:
         """Get subclasses of a class"""
+        if self._lazy_graph_payloads is not None:
+            return self._lazy_neighbors("inheritance", element_id, reverse=True)
         if element_id in self.inheritance_graph:
             return list(self.inheritance_graph.predecessors(element_id))
         return []
 
     def get_superclasses(self, element_id: str) -> list[str]:
         """Get superclasses of a class"""
+        if self._lazy_graph_payloads is not None:
+            return self._lazy_neighbors("inheritance", element_id)
         if element_id in self.inheritance_graph:
             return list(self.inheritance_graph.successors(element_id))
         return []
 
     def get_callers(self, element_id: str) -> list[str]:
         """Get functions that call this function"""
+        if self._lazy_graph_payloads is not None:
+            return self._lazy_neighbors("call", element_id, reverse=True)
         if element_id in self.call_graph:
             return list(self.call_graph.predecessors(element_id))
         return []
 
     def get_callees(self, element_id: str) -> list[str]:
         """Get functions called by this function"""
+        if self._lazy_graph_payloads is not None:
+            return self._lazy_neighbors("call", element_id)
         if element_id in self.call_graph:
             return list(self.call_graph.successors(element_id))
         return []
@@ -621,6 +779,7 @@ class CodeGraphBuilder:
         Returns:
             List of element IDs forming the path, or None if no path
         """
+        self._ensure_materialized_graphs()
         graph_map: dict[str, nx.DiGraph[str]] = {
             "dependency": self.dependency_graph,
             "inheritance": self.inheritance_graph,
@@ -640,6 +799,7 @@ class CodeGraphBuilder:
 
     def get_graph_stats(self) -> dict[str, Any]:
         """Get statistics about the graphs"""
+        self._ensure_materialized_graphs()
         stats: dict[str, dict[str, Any]] = {}
 
         for name, graph in [
@@ -670,29 +830,10 @@ class CodeGraphBuilder:
         Args:
             name: Name for the saved files
         """
-        graph_path = os.path.join(self.persist_dir, f"{name}_graphs.pkl")
-
         try:
-            with open(graph_path, "wb") as f:
-                pickle.dump(
-                    {
-                        "call_graph": self.call_graph,
-                        "dependency_graph": self.dependency_graph,
-                        "inheritance_graph": self.inheritance_graph,
-                        "element_by_name": {
-                            k: serialize_code_element(v)
-                            for k, v in self.element_by_name.items()
-                        },
-                        "element_by_id": {
-                            k: serialize_code_element(v)
-                            for k, v in self.element_by_id.items()
-                        },
-                        "imports_by_file": self.imports_by_file,
-                    },
-                    f,
-                )
-
-            self.logger.info(f"Saved graph data to {graph_path}")
+            self._ensure_materialized_graphs()
+            self._write_graph_bundle(name)
+            self.logger.info(f"Saved graph data to {self.persist_dir}")
             return True
 
         except Exception as e:
@@ -709,64 +850,34 @@ class CodeGraphBuilder:
         Returns:
             True if successful, False otherwise
         """
-        graph_path = os.path.join(self.persist_dir, f"{name}_graphs.pkl")
-
-        if not os.path.exists(graph_path):
-            self.logger.warning(f"Graph data not found: {graph_path}")
-            return False
-
         try:
-            with open(graph_path, "rb") as f:
-                data = pickle.load(f)
-
-                # --- DEBUG LOGS: Check for data loss due to name collisions ---
-                saved_by_name = len(data.get("element_by_name", {}))
-                saved_by_id = len(data.get("element_by_id", {}))
-                self.logger.info(
-                    f"[DEBUG] Load Stats - Saved by Name: {saved_by_name}, Saved by ID: {saved_by_id}"
-                )
-
-                if saved_by_id > saved_by_name:
-                    self.logger.warning(
-                        f"[DEBUG] BUG DETECTED: Lost {saved_by_id - saved_by_name} elements due to name collisions!"
-                    )
-                # ------------------------------------------------------------
-
-                self.call_graph = cast(_DiGraphStr, data["call_graph"])
-                self.dependency_graph = cast(_DiGraphStr, data["dependency_graph"])
-                self.inheritance_graph = cast(_DiGraphStr, data["inheritance_graph"])
-                self.imports_by_file = data["imports_by_file"]
-
-                # Reconstruct indices with CodeElement objects
-                self.element_by_name = {}
-                self.element_by_id = {}
-
-                # --- FIX: Use element_by_id to avoid data loss from duplicate names ---
-                # Prefer loading from 'element_by_id' to avoid data loss from duplicate names
-                if "element_by_id" in data:
-                    source_data = data["element_by_id"]
-                    self.logger.info(
-                        f"Restoring {len(source_data)} elements from unique ID index."
-                    )
-                else:
-                    # Fallback for legacy cache files that might not have element_by_id saved
-                    self.logger.warning(
-                        "Legacy cache detected: restoring from element_by_name (some duplicate functions may be lost)."
-                    )
-                    source_data = data["element_by_name"]
-
-                for _k, v in source_data.items():
-                    elem = deserialize_code_element(v)
-                    # Populate both maps
-                    self.element_by_id[elem.id] = elem
-                    self.element_by_name[elem.name] = elem
-                # -------------------------------------------------------------------
+            payload = self._load_graph_payload(name)
+            if payload is None:
+                graph_path = self._legacy_graph_path(name)
+                self.logger.warning(f"Graph data not found: {graph_path}")
+                return False
+            self._restore_graph_payload(payload)
+            dep_nodes = (
+                len(self._lazy_successors.get("dependency", {}))
+                if self._lazy_successors is not None
+                else self.dependency_graph.number_of_nodes()
+            )
+            inheritance_nodes = (
+                len(self._lazy_successors.get("inheritance", {}))
+                if self._lazy_successors is not None
+                else self.inheritance_graph.number_of_nodes()
+            )
+            call_nodes = (
+                len(self._lazy_successors.get("call", {}))
+                if self._lazy_successors is not None
+                else self.call_graph.number_of_nodes()
+            )
 
             self.logger.info(
                 f"Loaded graph data with "
-                f"{self.dependency_graph.number_of_nodes()} dependency nodes, "
-                f"{self.inheritance_graph.number_of_nodes()} inheritance nodes, "
-                f"{self.call_graph.number_of_nodes()} call nodes"
+                f"{dep_nodes} dependency nodes, "
+                f"{inheritance_nodes} inheritance nodes, "
+                f"{call_nodes} call nodes"
             )
             return True
 
@@ -784,34 +895,36 @@ class CodeGraphBuilder:
         Returns:
             True if successful, False otherwise
         """
-        graph_path = os.path.join(self.persist_dir, f"{name}_graphs.pkl")
-
-        if not os.path.exists(graph_path):
-            self.logger.warning(f"Graph data not found for merging: {graph_path}")
-            return False
-
         try:
-            with open(graph_path, "rb") as f:
-                data = pickle.load(f)
-                other_call_graph = cast(_DiGraphStr, data["call_graph"])
-                other_dependency_graph = cast(_DiGraphStr, data["dependency_graph"])
-                other_inheritance_graph = cast(_DiGraphStr, data["inheritance_graph"])
-                other_imports_by_file = data["imports_by_file"]
-
-                # --- FIX: Use element_by_id to avoid data loss from duplicate names ---
-                # Prefer loading from 'element_by_id' to avoid data loss from duplicate names
-                if "element_by_id" in data:
-                    other_elements = data["element_by_id"]
-                    self.logger.info(
-                        f"Merging {len(other_elements)} elements from unique ID index."
-                    )
-                else:
-                    # Fallback for legacy cache files
-                    self.logger.warning(
-                        "Legacy cache detected in merge: using element_by_name (some duplicate functions may be lost)."
-                    )
-                    other_elements = data["element_by_name"]
-                # -------------------------------------------------------------------
+            self._ensure_materialized_graphs()
+            payload = self._load_graph_payload(name)
+            if payload is None:
+                graph_path = self._legacy_graph_path(name)
+                self.logger.warning(f"Graph data not found for merging: {graph_path}")
+                return False
+            if "graph_payloads" in payload:
+                graph_payloads = cast(
+                    dict[str, dict[str, list[Any]]], payload["graph_payloads"]
+                )
+                other_call_graph = self._materialize_graph_payload(
+                    graph_payloads["call"]
+                )
+                other_dependency_graph = self._materialize_graph_payload(
+                    graph_payloads["dependency"]
+                )
+                other_inheritance_graph = self._materialize_graph_payload(
+                    graph_payloads["inheritance"]
+                )
+            else:
+                other_call_graph = cast(_DiGraphStr, payload["call_graph"])
+                other_dependency_graph = cast(_DiGraphStr, payload["dependency_graph"])
+                other_inheritance_graph = cast(
+                    _DiGraphStr, payload["inheritance_graph"]
+                )
+            other_imports_by_file = cast(
+                dict[str, list[dict[str, Any]]], payload["imports_by_file"]
+            )
+            other_elements = cast(list[dict[str, Any]], payload["element_payloads"])
 
             # Merge graphs using NetworkX compose (combines nodes and edges)
             self.call_graph = nx.compose(self.call_graph, other_call_graph)
@@ -823,7 +936,7 @@ class CodeGraphBuilder:
             )
 
             # Merge elements from source file
-            for v in other_elements.values():
+            for v in other_elements:
                 elem = deserialize_code_element(v)
 
                 # Avoid duplicates: only add if not already present
@@ -846,6 +959,402 @@ class CodeGraphBuilder:
         except Exception as e:
             self.logger.error(f"Failed to merge graph data from {name}: {e}")
             return False
+
+    def has_saved_graph(self, name: str) -> bool:
+        return os.path.exists(self._graph_manifest_path(name)) or os.path.exists(
+            self._legacy_graph_path(name)
+        )
+
+    def graph_artifact_paths(self, name: str) -> list[str]:
+        paths = [
+            self._legacy_graph_path(name),
+            self._graph_manifest_path(name),
+            self._graph_shards_dir(name),
+        ]
+        return [path for path in paths if os.path.exists(path)]
+
+    def _legacy_graph_path(self, name: str) -> str:
+        return os.path.join(self.persist_dir, f"{name}_graphs.pkl")
+
+    def _graph_manifest_path(self, name: str) -> str:
+        return os.path.join(self.persist_dir, f"{name}_graph_manifest.json")
+
+    def _graph_shards_dir(self, name: str) -> str:
+        return os.path.join(self.persist_dir, f"{name}_graph_shards")
+
+    @staticmethod
+    def _graph_shard_filename(path_key: str) -> str:
+        digest = hashlib.sha256(path_key.encode("utf-8")).hexdigest()[:20]
+        return f"{digest}.pkl"
+
+    @staticmethod
+    def _graph_shard_bytes(payload: dict[str, Any]) -> bytes:
+        return pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
+
+    @staticmethod
+    def _path_key_from_element(element: CodeElement, sequence_no: int) -> str:
+        if element.relative_path:
+            return str(element.relative_path)
+        if element.file_path:
+            return str(element.file_path)
+        return f"__pathless__:{element.id or sequence_no}"
+
+    @staticmethod
+    def _imports_path_key(file_path: str, fallback_index: int) -> str:
+        if file_path:
+            return str(file_path)
+        return f"__pathless_imports__:{fallback_index}"
+
+    @staticmethod
+    def _edge_sort_key(edge: dict[str, Any]) -> tuple[str, str, str]:
+        attrs = edge.get("attrs", {})
+        try:
+            attrs_json = json.dumps(attrs, sort_keys=True, default=repr)
+        except TypeError:
+            attrs_json = repr(attrs)
+        return (
+            str(edge.get("source") or ""),
+            str(edge.get("target") or ""),
+            attrs_json,
+        )
+
+    def _persisted_elements(self) -> list[CodeElement]:
+        if self.element_by_id:
+            return list(self.element_by_id.values())
+        seen_ids: set[str] = set()
+        elements: list[CodeElement] = []
+        for elem in self.element_by_name.values():
+            if elem.id in seen_ids:
+                continue
+            seen_ids.add(elem.id)
+            elements.append(elem)
+        return elements
+
+    def _path_key_for_node_id(
+        self,
+        node_id: str,
+        *,
+        element_by_id: dict[str, CodeElement],
+    ) -> str:
+        element = element_by_id.get(node_id)
+        if element is not None:
+            return self._path_key_from_element(element, 0)
+        return f"__pathless_node__:{node_id}"
+
+    @staticmethod
+    def _empty_shard_payload() -> dict[str, Any]:
+        return {
+            "elements": [],
+            "imports": [],
+            "graphs": {
+                "call": {"nodes": [], "edges": []},
+                "dependency": {"nodes": [], "edges": []},
+                "inheritance": {"nodes": [], "edges": []},
+            },
+        }
+
+    def _load_graph_manifest(self, name: str) -> dict[str, Any] | None:
+        manifest_path = self._graph_manifest_path(name)
+        if not os.path.exists(manifest_path):
+            return None
+        try:
+            with open(manifest_path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return None
+        return cast(dict[str, Any], payload) if isinstance(payload, dict) else None
+
+    def _write_graph_bundle(self, name: str) -> None:
+        shard_dir = self._graph_shards_dir(name)
+        ensure_dir(shard_dir)
+        existing_manifest = self._load_graph_manifest(name)
+        existing_by_path = {
+            str(entry.get("path_key")): cast(dict[str, Any], entry)
+            for entry in (
+                existing_manifest.get("shards", []) if existing_manifest else []
+            )
+            if isinstance(entry, dict) and entry.get("path_key")
+        }
+
+        persisted_elements = self._persisted_elements()
+        element_by_id = {element.id: element for element in persisted_elements}
+        file_path_to_path_key: dict[str, str] = {}
+        grouped_payloads: dict[str, dict[str, Any]] = {}
+
+        for sequence_no, element in enumerate(persisted_elements):
+            path_key = self._path_key_from_element(element, sequence_no)
+            grouped = grouped_payloads.setdefault(path_key, self._empty_shard_payload())
+            grouped["elements"].append(
+                {
+                    "sequence_no": sequence_no,
+                    "payload": serialize_code_element(element),
+                }
+            )
+            if element.file_path:
+                file_path_to_path_key[str(element.file_path)] = path_key
+
+        for import_index, (file_path, imports) in enumerate(
+            self.imports_by_file.items()
+        ):
+            path_key = file_path_to_path_key.get(
+                str(file_path), self._imports_path_key(str(file_path), import_index)
+            )
+            grouped = grouped_payloads.setdefault(path_key, self._empty_shard_payload())
+            grouped["imports"].append(
+                {"file_path": str(file_path), "imports": list(imports)}
+            )
+
+        graph_map: dict[str, nx.DiGraph[str]] = {
+            "call": self.call_graph,
+            "dependency": self.dependency_graph,
+            "inheritance": self.inheritance_graph,
+        }
+        for graph_name, graph in graph_map.items():
+            for node_id in graph.nodes:
+                path_key = self._path_key_for_node_id(
+                    str(node_id), element_by_id=element_by_id
+                )
+                grouped = grouped_payloads.setdefault(
+                    path_key, self._empty_shard_payload()
+                )
+                grouped["graphs"][graph_name]["nodes"].append(str(node_id))
+            for source, target, attrs in graph.edges(data=True):
+                path_key = self._path_key_for_node_id(
+                    str(source), element_by_id=element_by_id
+                )
+                grouped = grouped_payloads.setdefault(
+                    path_key, self._empty_shard_payload()
+                )
+                grouped["graphs"][graph_name]["edges"].append(
+                    {
+                        "source": str(source),
+                        "target": str(target),
+                        "attrs": dict(attrs),
+                    }
+                )
+
+        manifest: dict[str, Any] = {
+            "version": _GRAPH_SHARD_STORAGE_VERSION,
+            "shards": [],
+        }
+        active_files: set[str] = set()
+        for path_key, payload in grouped_payloads.items():
+            payload["elements"].sort(key=lambda row: int(row.get("sequence_no", 0)))
+            payload["imports"].sort(key=lambda row: str(row.get("file_path") or ""))
+            for graph_payload in payload["graphs"].values():
+                graph_payload["nodes"] = sorted(
+                    {str(node_id) for node_id in graph_payload.get("nodes", [])}
+                )
+                graph_payload["edges"].sort(key=self._edge_sort_key)
+
+            shard_bytes = self._graph_shard_bytes(payload)
+            digest = hashlib.sha256(shard_bytes).hexdigest()
+            existing = existing_by_path.get(path_key)
+            shard_file = (
+                str(existing.get("shard_file"))
+                if existing and existing.get("shard_file")
+                else self._graph_shard_filename(path_key)
+            )
+            shard_path = os.path.join(shard_dir, shard_file)
+            active_files.add(shard_file)
+            if not (
+                existing
+                and existing.get("digest") == digest
+                and os.path.exists(shard_path)
+            ):
+                tmp_path = f"{shard_path}.tmp"
+                with open(tmp_path, "wb") as handle:
+                    handle.write(shard_bytes)
+                os.replace(tmp_path, shard_path)
+            manifest["shards"].append(
+                {
+                    "path_key": path_key,
+                    "shard_file": shard_file,
+                    "digest": digest,
+                    "element_count": len(payload["elements"]),
+                    "import_count": len(payload["imports"]),
+                }
+            )
+
+        if existing_manifest is not None:
+            for entry in existing_manifest.get("shards", []):
+                if not isinstance(entry, dict):
+                    continue
+                shard_file = entry.get("shard_file")
+                if not shard_file or shard_file in active_files:
+                    continue
+                stale_path = os.path.join(shard_dir, str(shard_file))
+                if os.path.exists(stale_path):
+                    os.remove(stale_path)
+
+        manifest_path = self._graph_manifest_path(name)
+        tmp_manifest = f"{manifest_path}.tmp"
+        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp_manifest, manifest_path)
+
+        legacy_graph_path = self._legacy_graph_path(name)
+        if os.path.exists(legacy_graph_path):
+            os.remove(legacy_graph_path)
+
+    def _load_graph_payload(self, name: str) -> dict[str, Any] | None:
+        manifest = self._load_graph_manifest(name)
+        if manifest is not None:
+            try:
+                graph_payloads = self._empty_graph_payloads()
+                imports_by_file: dict[str, list[dict[str, Any]]] = {}
+                ordered_elements: list[tuple[int, dict[str, Any]]] = []
+                shard_dir = self._graph_shards_dir(name)
+                for entry in manifest.get("shards", []):
+                    if not isinstance(entry, dict) or not entry.get("shard_file"):
+                        continue
+                    shard_path = os.path.join(shard_dir, str(entry["shard_file"]))
+                    with open(shard_path, "rb") as handle:
+                        payload = pickle.load(handle)
+                    if not isinstance(payload, dict):
+                        continue
+
+                    element_rows = payload.get("elements", [])
+                    if isinstance(element_rows, list):
+                        for row in element_rows:
+                            if not isinstance(row, dict):
+                                continue
+                            sequence_no = row.get("sequence_no")
+                            element_payload = row.get("payload")
+                            if not isinstance(sequence_no, int) or not isinstance(
+                                element_payload, dict
+                            ):
+                                continue
+                            ordered_elements.append(
+                                (sequence_no, cast(dict[str, Any], element_payload))
+                            )
+
+                    import_rows = payload.get("imports", [])
+                    if isinstance(import_rows, list):
+                        for row in import_rows:
+                            if not isinstance(row, dict):
+                                continue
+                            file_path = row.get("file_path")
+                            imports = row.get("imports")
+                            if not isinstance(file_path, str) or not isinstance(
+                                imports, list
+                            ):
+                                continue
+                            imports_by_file[file_path] = cast(
+                                list[dict[str, Any]], imports
+                            )
+
+                    graphs_payload = payload.get("graphs", {})
+                    if not isinstance(graphs_payload, dict):
+                        continue
+                    for graph_name, graph_payload in graphs_payload.items():
+                        target_payload = graph_payloads.get(str(graph_name))
+                        if target_payload is None or not isinstance(
+                            graph_payload, dict
+                        ):
+                            continue
+                        target_payload["nodes"].extend(
+                            str(node_id)
+                            for node_id in cast(
+                                list[Any], graph_payload.get("nodes", [])
+                            )
+                        )
+                        for edge in cast(list[Any], graph_payload.get("edges", [])):
+                            if not isinstance(edge, dict):
+                                continue
+                            source = edge.get("source")
+                            target = edge.get("target")
+                            if source is None or target is None:
+                                continue
+                            attrs = edge.get("attrs")
+                            target_payload["edges"].append(
+                                {
+                                    "source": str(source),
+                                    "target": str(target),
+                                    "attrs": (
+                                        dict(cast(dict[str, Any], attrs))
+                                        if isinstance(attrs, dict)
+                                        else {}
+                                    ),
+                                }
+                            )
+
+                ordered_elements.sort(key=lambda item: item[0])
+                for graph_payload in graph_payloads.values():
+                    graph_payload["nodes"] = sorted(set(graph_payload["nodes"]))
+                    graph_payload["edges"].sort(key=self._edge_sort_key)
+                return {
+                    "graph_payloads": graph_payloads,
+                    "imports_by_file": imports_by_file,
+                    "element_payloads": [payload for _, payload in ordered_elements],
+                }
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to load sharded graph data for {name}: {e}"
+                )
+
+        graph_path = self._legacy_graph_path(name)
+        if not os.path.exists(graph_path):
+            return None
+        try:
+            with open(graph_path, "rb") as handle:
+                data = pickle.load(handle)
+            if not isinstance(data, dict):
+                return None
+            if "element_by_id" in data and isinstance(data["element_by_id"], dict):
+                element_payloads = list(
+                    cast(dict[str, dict[str, Any]], data["element_by_id"]).values()
+                )
+            elif "element_by_name" in data and isinstance(
+                data["element_by_name"], dict
+            ):
+                self.logger.warning(
+                    "Legacy cache detected: restoring from element_by_name "
+                    "(some duplicate functions may be lost)."
+                )
+                element_payloads = list(
+                    cast(dict[str, dict[str, Any]], data["element_by_name"]).values()
+                )
+            else:
+                element_payloads = []
+            return {
+                "call_graph": data.get("call_graph", nx.DiGraph()),
+                "dependency_graph": data.get("dependency_graph", nx.DiGraph()),
+                "inheritance_graph": data.get("inheritance_graph", nx.DiGraph()),
+                "imports_by_file": data.get("imports_by_file", {}),
+                "element_payloads": element_payloads,
+            }
+        except Exception as e:
+            self.logger.warning(f"Failed to load legacy graph data for {name}: {e}")
+            return None
+
+    def _restore_graph_payload(self, payload: dict[str, Any]) -> None:
+        if "graph_payloads" in payload:
+            self.call_graph = nx.DiGraph()
+            self.dependency_graph = nx.DiGraph()
+            self.inheritance_graph = nx.DiGraph()
+            self._lazy_graph_payloads = cast(
+                dict[str, dict[str, list[Any]]], payload["graph_payloads"]
+            )
+            self._lazy_successors, self._lazy_predecessors = self._build_lazy_adjacency(
+                self._lazy_graph_payloads
+            )
+        else:
+            self.call_graph = cast(_DiGraphStr, payload["call_graph"])
+            self.dependency_graph = cast(_DiGraphStr, payload["dependency_graph"])
+            self.inheritance_graph = cast(_DiGraphStr, payload["inheritance_graph"])
+            self._clear_lazy_graph_state()
+        self.imports_by_file = cast(
+            dict[str, list[dict[str, Any]]], payload["imports_by_file"]
+        )
+        self.element_by_name = {}
+        self.element_by_id = {}
+
+        element_payloads = cast(list[dict[str, Any]], payload["element_payloads"])
+        for element_payload in element_payloads:
+            elem = deserialize_code_element(element_payload)
+            self.element_by_id[elem.id] = elem
+            self.element_by_name[elem.name] = elem
 
     def _get_caller_id_from_scope(
         self, call: dict[str, Any], file_elem: CodeElement, elements: list[CodeElement]

@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import pickle
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import networkx as nx
 import numpy as np
 
 from fastcode.ir.element import CodeElement
+from fastcode.ir.graph import IRGraphs
 from fastcode.retrieval.hybrid import HybridRetriever
 
 
@@ -348,6 +351,66 @@ def test_retrieval_helpers_avoid_code_element_to_dict() -> None:
     ]
 
 
+def test_ir_graph_expansion_loads_snapshot_graphs_lazily_and_caches_union() -> None:
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.graph_backend = "ir"
+    retriever.allow_legacy_graph_fallback = False
+
+    seed_elem = _element(
+        "service.py",
+        element_id="func:service",
+        element_type="function",
+        metadata={"ir_symbol_id": "ir:service"},
+    )
+    helper_elem = _element(
+        "service.py",
+        element_id="func:helper",
+        element_type="function",
+        metadata={"ir_symbol_id": "ir:helper"},
+    )
+    retriever.graph_builder = SimpleNamespace(
+        element_by_id={
+            seed_elem.id: seed_elem,
+            helper_elem.id: helper_elem,
+        }
+    )
+
+    call_graph = nx.DiGraph()
+    call_graph.add_edge("ir:service", "ir:helper")
+    graphs = IRGraphs(
+        dependency_graph=nx.DiGraph(),
+        call_graph=call_graph,
+        inheritance_graph=nx.DiGraph(),
+        reference_graph=nx.DiGraph(),
+        containment_graph=nx.DiGraph(),
+    )
+
+    loader_calls: list[str] = []
+
+    def _load(snapshot_id: str) -> IRGraphs:
+        loader_calls.append(snapshot_id)
+        return graphs
+
+    retriever.set_ir_graph_loader(_load, snapshot_id="snap:1")
+
+    first = retriever._get_related_ids(
+        seed_elem.id,
+        {"metadata": {"ir_symbol_id": "ir:service"}},
+        max_hops=1,
+    )
+    second = retriever._get_related_ids(
+        seed_elem.id,
+        {"metadata": {"ir_symbol_id": "ir:service"}},
+        max_hops=1,
+    )
+
+    assert first == {"func:helper"}
+    assert second == {"func:helper"}
+    assert loader_calls == ["snap:1"]
+    assert retriever._ir_union_graph is not None
+
+
 def test_extract_trace_links_ignores_ungrounded_links():
     retriever = _mk_retriever()
     row = _mk_row(
@@ -467,3 +530,63 @@ def test_reload_specific_repositories_uses_explicit_deserializer(
     assert calls == [payload]
     assert retriever.filtered_bm25_elements[0].id == "file:service"
     assert retriever.filtered_bm25_corpus == [["service"]]
+
+
+def test_save_bm25_persists_sharded_bundle_and_loads_without_legacy_pickle(
+    tmp_path: Path,
+) -> None:
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+    retriever.full_bm25_corpus = [["alpha"], ["beta"]]
+    retriever.full_bm25_elements = [
+        _element("pkg/a.py", element_id="elem:a"),
+        _element("pkg/b.py", element_id="elem:b"),
+    ]
+    (tmp_path / "index_bm25.pkl").write_bytes(b"legacy")
+
+    assert retriever.save_bm25("index") is True
+    assert (tmp_path / "index_bm25_manifest.json").exists()
+    assert (tmp_path / "index_bm25_shards").is_dir()
+    assert not (tmp_path / "index_bm25.pkl").exists()
+
+    loaded = _mk_retriever()
+    loaded.logger = MagicMock()
+    loaded.persist_dir = str(tmp_path)
+    assert loaded.load_bm25("index") is True
+    assert [elem.id for elem in loaded.full_bm25_elements] == ["elem:a", "elem:b"]
+    assert loaded.full_bm25_corpus == [["alpha"], ["beta"]]
+
+
+def test_save_bm25_reuses_unchanged_shards(tmp_path: Path) -> None:
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+    retriever.full_bm25_corpus = [["alpha"], ["beta"]]
+    retriever.full_bm25_elements = [
+        _element("pkg/a.py", element_id="elem:a"),
+        _element("pkg/b.py", element_id="elem:b"),
+    ]
+
+    assert retriever.save_bm25("index") is True
+    manifest = json.loads(
+        (tmp_path / "index_bm25_manifest.json").read_text(encoding="utf-8")
+    )
+    shards_by_path = {
+        entry["path_key"]: tmp_path / "index_bm25_shards" / entry["shard_file"]
+        for entry in manifest["shards"]
+    }
+    a_before = shards_by_path["pkg/a.py"].stat().st_mtime_ns
+    b_before = shards_by_path["pkg/b.py"].stat().st_mtime_ns
+
+    retriever.full_bm25_corpus = [["alpha"], ["beta", "changed"]]
+    retriever.full_bm25_elements = [
+        _element("pkg/a.py", element_id="elem:a"),
+        _element("pkg/b.py", element_id="elem:b", metadata={"v": 2}),
+    ]
+    assert retriever.save_bm25("index") is True
+
+    a_after = shards_by_path["pkg/a.py"].stat().st_mtime_ns
+    b_after = shards_by_path["pkg/b.py"].stat().st_mtime_ns
+    assert a_after == a_before
+    assert b_after >= b_before

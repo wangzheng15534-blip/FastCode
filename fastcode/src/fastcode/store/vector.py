@@ -6,10 +6,12 @@ Vector Store - Store and retrieve code embeddings
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import pickle
+from collections.abc import Mapping
 from typing import Any, TypedDict, cast
 
 import faiss
@@ -18,6 +20,8 @@ import numpy as np
 from ..ir.element import CodeElementMeta
 from ..utils import ensure_dir
 
+_METADATA_SHARD_STORAGE_VERSION = 1
+_VECTOR_SHARD_STORAGE_VERSION = 1
 _REPO_OVERVIEW_STORAGE_VERSION = 1
 _REPO_OVERVIEW_MANIFEST_FILENAME = "repo_overviews.json"
 _REPO_OVERVIEW_EMBEDDINGS_FILENAME = "repo_overviews_embeddings.npz"
@@ -36,6 +40,38 @@ class _RepoOverviewStoredEntry(TypedDict, total=False):
     metadata: dict[str, Any]
     metadata_json: str
     raw_overview: dict[str, Any]
+
+
+class _MetadataShardManifestEntry(TypedDict):
+    path_key: str
+    shard_file: str
+    digest: str
+    count: int
+
+
+class _MetadataShardManifest(TypedDict):
+    version: int
+    dimension: int | None
+    distance_metric: str
+    index_type: str
+    vector_count: int
+    shards: list[_MetadataShardManifestEntry]
+
+
+class _VectorShardManifestEntry(TypedDict):
+    path_key: str
+    shard_file: str
+    digest: str
+    count: int
+
+
+class _VectorShardManifest(TypedDict):
+    version: int
+    dimension: int | None
+    distance_metric: str
+    index_type: str
+    vector_count: int
+    shards: list[_VectorShardManifestEntry]
 
 
 class VectorStore:
@@ -57,12 +93,21 @@ class VectorStore:
         self.dimension: int | None = None
         self.index: Any = None  # faiss index types are untyped
         self.metadata: list[CodeElementMeta] = []  # Store metadata for each vector
+        self._vector_rows: np.ndarray | None = None
 
         self.persist_dir: str = self.vector_config.get(
             "persist_directory", "./data/vector_store"
         )
         self.distance_metric: str = self.vector_config.get("distance_metric", "cosine")
         self.index_type: str = self.vector_config.get("index_type", "HNSW")
+        self.persist_faiss_binary: bool = bool(
+            self.vector_config.get("persist_faiss_binary", False)
+        )
+        raw_threshold = self.vector_config.get("vector_rows_search_threshold", 10000)
+        try:
+            self.vector_rows_search_threshold = max(0, int(raw_threshold))
+        except (TypeError, ValueError):
+            self.vector_rows_search_threshold = 10000
 
         # HNSW parameters
         self.m: int = self.vector_config.get("m", 16)
@@ -94,6 +139,15 @@ class VectorStore:
         """
         self.dimension = dimension
         self.logger.info(f"Initializing vector store with dimension {dimension}")
+        self.index = self._create_index(dimension)
+        self.metadata: list[CodeElementMeta] = []
+        self._vector_rows = np.empty((0, dimension), dtype=np.float32)
+        self.logger.info(
+            f"Initialized {self.index_type} index with {self.distance_metric} distance"
+        )
+
+    def _create_index(self, dimension: int) -> Any:
+        """Build a FAISS index for the configured metric/index type."""
 
         if self.index_type == "HNSW":
             # HNSW index for fast approximate search
@@ -108,18 +162,12 @@ class VectorStore:
 
             index.hnsw.efConstruction = self.ef_construction
             index.hnsw.efSearch = self.ef_search
-            self.index = index
+            return index
 
         # Flat index for exact search (slower but more accurate)
-        elif self.distance_metric == "cosine":
-            self.index = faiss.IndexFlatIP(dimension)  # Inner product
-        else:
-            self.index = faiss.IndexFlatL2(dimension)  # L2 distance
-
-        self.metadata: list[CodeElementMeta] = []
-        self.logger.info(
-            f"Initialized {self.index_type} index with {self.distance_metric} distance"
-        )
+        if self.distance_metric == "cosine":
+            return faiss.IndexFlatIP(dimension)  # Inner product
+        return faiss.IndexFlatL2(dimension)  # L2 distance
 
     def add_vectors(self, vectors: np.ndarray, metadata: list[CodeElementMeta]) -> None:
         """
@@ -129,7 +177,9 @@ class VectorStore:
             vectors: Array of embedding vectors (N x dimension)
             metadata: List of metadata dictionaries for each vector
         """
-        if self.index is None:
+        if self.dimension is None:
+            raise RuntimeError("Vector store not initialized")
+        if self.index is None and not self._ensure_faiss_index():
             raise RuntimeError("Vector store not initialized")
 
         if len(vectors) != len(metadata):
@@ -145,6 +195,7 @@ class VectorStore:
         # Add to index
         self.index.add(vectors)
         self.metadata.extend(metadata)
+        self._append_vector_rows(vectors)
 
         self.logger.info(
             f"Added {len(vectors)} vectors to store (total: {len(self.metadata)})"
@@ -171,7 +222,20 @@ class VectorStore:
         Returns:
             List of (metadata, score) tuples
         """
-        if self.index is None or len(self.metadata) == 0:
+        if len(self.metadata) == 0:
+            return []
+
+        vector_rows = self._vector_rows_for_search()
+        if vector_rows is not None:
+            return self._search_with_vector_rows(
+                vector_rows=vector_rows,
+                query_vector=query_vector,
+                k=k,
+                min_score=min_score,
+                repo_filter=repo_filter,
+                element_type_filter=element_type_filter,
+            )
+        if self.index is None and not self._ensure_faiss_index():
             return []
 
         # Ensure query is float32 and 2D
@@ -361,7 +425,7 @@ class VectorStore:
         if k <= 0:
             return []
 
-        query = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
+        query = np.array(query_vector, dtype=np.float32, copy=True).reshape(1, -1)
         if query.shape[1] == 0:
             return []
 
@@ -430,7 +494,18 @@ class VectorStore:
         Returns:
             List of result lists (one per query)
         """
-        if self.index is None or len(self.metadata) == 0:
+        if len(self.metadata) == 0:
+            return [[] for _ in range(len(query_vectors))]
+
+        vector_rows = self._vector_rows_for_search()
+        if vector_rows is not None:
+            return self._search_batch_with_vector_rows(
+                vector_rows=vector_rows,
+                query_vectors=query_vectors,
+                k=k,
+                min_score=min_score,
+            )
+        if self.index is None and not self._ensure_faiss_index():
             return [[] for _ in range(len(query_vectors))]
 
         # Ensure float32
@@ -515,27 +590,13 @@ class VectorStore:
             self.logger.info("Skipping vector store save (in-memory mode enabled)")
             return
 
-        if self.index is None:
-            self.logger.warning("No index to save")
+        if len(self.metadata) == 0 or self.dimension is None:
+            self.logger.warning("No vectors to save")
             return
 
-        index_path = os.path.join(self.persist_dir, f"{name}.faiss")
-        metadata_path = os.path.join(self.persist_dir, f"{name}_metadata.pkl")
-
-        # Save FAISS index
-        faiss.write_index(self.index, index_path)
-
-        # Save metadata
-        with open(metadata_path, "wb") as f:
-            pickle.dump(
-                {
-                    "metadata": self.metadata,
-                    "dimension": self.dimension,
-                    "distance_metric": self.distance_metric,
-                    "index_type": self.index_type,
-                },
-                f,
-            )
+        self._write_vector_bundle(name)
+        self._write_metadata_bundle(name)
+        self._persist_optional_faiss_binary(name)
 
         # Invalidate cache since we just modified the indexes
         self.invalidate_scan_cache()
@@ -556,28 +617,57 @@ class VectorStore:
             self.logger.info("Skipping vector store load (in-memory mode enabled)")
             return False
 
-        index_path = os.path.join(self.persist_dir, f"{name}.faiss")
-        metadata_path = os.path.join(self.persist_dir, f"{name}_metadata.pkl")
-
-        if not os.path.exists(index_path) or not os.path.exists(metadata_path):
-            self.logger.warning(f"Index files not found in {self.persist_dir}")
-            return False
-
         try:
-            # Load FAISS index
-            self.index = faiss.read_index(index_path)
+            data = self.load_metadata_payload(name)
+            if data is None:
+                self.logger.warning(f"Index files not found in {self.persist_dir}")
+                return False
+            vector_payload = self.load_vector_payload(name)
+            if vector_payload is not None:
+                self.distance_metric = str(
+                    data.get("distance_metric")
+                    or vector_payload.get("distance_metric")
+                    or "cosine"
+                )
+                self.index_type = str(
+                    data.get("index_type") or vector_payload.get("index_type") or "HNSW"
+                )
+                vectors = cast(np.ndarray, vector_payload["vectors"])
+                dimension = int(
+                    data.get("dimension")
+                    or vector_payload.get("dimension")
+                    or (vectors.shape[1] if vectors.ndim == 2 else 0)
+                )
+                metadata = cast(list[CodeElementMeta], data["metadata"])
+                if len(metadata) != len(vectors):
+                    self.logger.error(
+                        "Vector/metadata count mismatch for %s: %d vs %d",
+                        name,
+                        len(vectors),
+                        len(metadata),
+                    )
+                    return False
+                self.dimension = dimension
+                self.metadata = metadata
+                self._vector_rows = vectors.astype(np.float32, copy=False)
+                self.index = None
+            else:
+                index_path = self._legacy_index_path(name)
+                if not os.path.exists(index_path):
+                    self.logger.warning(f"Index files not found in {self.persist_dir}")
+                    return False
 
-            # Load metadata
-            with open(metadata_path, "rb") as f:
-                data = pickle.load(f)
+                # Load FAISS index
+                self.index = faiss.read_index(index_path)
                 self.metadata = cast(list[CodeElementMeta], data["metadata"])
                 self.dimension = data["dimension"]
                 self.distance_metric = data.get("distance_metric", "cosine")
                 self.index_type = data.get("index_type", "HNSW")
+                self._vector_rows = None
 
-            # Set search parameters for HNSW
-            if self.index_type == "HNSW" and hasattr(self.index, "hnsw"):
-                self.index.hnsw.efSearch = self.ef_search
+                # Set search parameters for HNSW
+                if self.index_type == "HNSW" and hasattr(self.index, "hnsw"):
+                    self.index.hnsw.efSearch = self.ef_search
 
             self.logger.info(
                 f"Loaded vector store with {len(self.metadata)} vectors "
@@ -596,6 +686,7 @@ class VectorStore:
         else:
             self.index = None
             self.metadata: list[CodeElementMeta] = []
+            self._vector_rows = None
         self.logger.info("Cleared vector store")
 
     def merge_from_index(self, index_name: str) -> bool:
@@ -612,22 +703,13 @@ class VectorStore:
             self.logger.info("Skipping merge_from_index (in-memory mode enabled)")
             return False
 
-        index_path = os.path.join(self.persist_dir, f"{index_name}.faiss")
-        metadata_path = os.path.join(self.persist_dir, f"{index_name}_metadata.pkl")
-
-        if not os.path.exists(index_path) or not os.path.exists(metadata_path):
-            self.logger.warning(f"Index files not found for {index_name}")
-            return False
-
         try:
-            # Load the other index
-            other_index = faiss.read_index(index_path)
-
-            # Load metadata
-            with open(metadata_path, "rb") as f:
-                data = pickle.load(f)
-                other_metadata = cast(list[CodeElementMeta], data["metadata"])
-                other_dimension = data["dimension"]
+            data = self.load_metadata_payload(index_name)
+            if data is None:
+                self.logger.warning(f"Index files not found for {index_name}")
+                return False
+            other_metadata = cast(list[CodeElementMeta], data["metadata"])
+            other_dimension = data["dimension"]
 
             # Verify dimensions match
             if self.dimension and self.dimension != other_dimension:
@@ -636,15 +718,27 @@ class VectorStore:
                 )
                 return False
 
-            # Initialize if needed
-            if self.index is None:
-                self.initialize(other_dimension)
+            if self.dimension is None:
+                self.dimension = other_dimension
 
-            # Reconstruct vectors from the FAISS index
-            # For flat indices, we can access vectors directly
-            # For HNSW, we need to reconstruct
+            vector_payload = self.load_vector_payload(index_name)
+            if vector_payload is not None:
+                vectors = cast(np.ndarray, vector_payload["vectors"])
+                if len(vectors) == 0:
+                    self.logger.warning(f"No vectors in {index_name}")
+                    return False
+                self.add_vectors(vectors, other_metadata)
+                self.logger.info(f"Merged {len(vectors)} vectors from {index_name}")
+                return True
+
+            index_path = self._legacy_index_path(index_name)
+            if not os.path.exists(index_path):
+                self.logger.warning(f"Index files not found for {index_name}")
+                return False
+
+            # Load the other index
+            other_index = faiss.read_index(index_path)
             n_vectors = other_index.ntotal
-
             if n_vectors == 0:
                 self.logger.warning(f"No vectors in {index_name}")
                 return False
@@ -702,6 +796,12 @@ class VectorStore:
             # For now, we'll just track metadata
             # In production, consider storing vectors separately
             self.metadata = metadata_to_keep
+            if (
+                self._vector_rows is not None
+                and len(self._vector_rows) == len(indices_to_keep) + num_deleted
+            ):
+                self._vector_rows = self._vector_rows[indices_to_keep]
+            self.index = None
 
             self.logger.warning(
                 "Note: FAISS doesn't support efficient deletion. "
@@ -741,85 +841,39 @@ class VectorStore:
         # Perform actual scan
         self.logger.info("Scanning available indexes...")
 
-        for file in os.listdir(self.persist_dir):
-            if file.endswith(".faiss"):
-                repo_name = file.replace(".faiss", "")
-                metadata_file = os.path.join(
-                    self.persist_dir, f"{repo_name}_metadata.pkl"
+        for repo_name in self._discover_saved_repo_names():
+            if not self.has_saved_index(repo_name):
+                continue
+            try:
+                total_size = self._vector_storage_size(
+                    repo_name
+                ) + self._metadata_storage_size(repo_name)
+                total_size_mb = total_size / (1024 * 1024)
+
+                element_count, file_count, repo_url = self._metadata_scan_stats(
+                    repo_name
                 )
 
-                if os.path.exists(metadata_file):
-                    try:
-                        # Get file sizes (fast operation)
-                        index_path = os.path.join(self.persist_dir, file)
-                        file_size = os.path.getsize(index_path)
-                        metadata_size = os.path.getsize(metadata_file)
-                        total_size_mb = (file_size + metadata_size) / (1024 * 1024)
-
-                        # Optimized: Only read first chunk of metadata for basic info
-                        # This avoids loading potentially huge metadata files
-                        element_count = 0
-                        file_count = 0
-                        repo_url = "N/A"
-
-                        with open(metadata_file, "rb") as f:
-                            try:
-                                data = pickle.load(f)
-                                metadata_list = data.get("metadata", [])
-                                element_count = len(metadata_list)
-
-                                # Sample first few entries to get URL and estimate file count
-                                # (much faster than iterating through all)
-                                sample_size = min(
-                                    self._index_scan_sample_size, len(metadata_list)
-                                )
-                                seen_files = set()
-
-                                for i in range(sample_size):
-                                    meta = metadata_list[i]
-                                    file_path = meta.get("file_path")
-                                    if file_path:
-                                        seen_files.add(file_path)
-                                    if not repo_url or repo_url == "N/A":
-                                        repo_url = meta.get("repo_url", "N/A")
-
-                                # Estimate total file count based on sample
-                                if sample_size > 0 and sample_size < len(metadata_list):
-                                    file_count = int(
-                                        len(seen_files)
-                                        * (len(metadata_list) / sample_size)
-                                    )
-                                else:
-                                    file_count = len(seen_files)
-
-                            except Exception as load_error:
-                                self.logger.warning(
-                                    f"Failed to parse metadata for {repo_name}: {load_error}"
-                                )
-
-                        available_repos.append(
-                            {
-                                "name": repo_name,
-                                "element_count": element_count,
-                                "file_count": file_count,
-                                "size_mb": round(total_size_mb, 2),
-                                "url": repo_url,
-                            }
-                        )
-                    except Exception as e:
-                        self.logger.warning(
-                            f"Failed to read metadata for {repo_name}: {e}"
-                        )
-                        # Still add it with minimal info
-                        available_repos.append(
-                            {
-                                "name": repo_name,
-                                "element_count": 0,
-                                "file_count": 0,
-                                "size_mb": 0,
-                                "url": "N/A",
-                            }
-                        )
+                available_repos.append(
+                    {
+                        "name": repo_name,
+                        "element_count": element_count,
+                        "file_count": file_count,
+                        "size_mb": round(total_size_mb, 2),
+                        "url": repo_url,
+                    }
+                )
+            except Exception as e:
+                self.logger.warning(f"Failed to read metadata for {repo_name}: {e}")
+                available_repos.append(
+                    {
+                        "name": repo_name,
+                        "element_count": 0,
+                        "file_count": 0,
+                        "size_mb": 0,
+                        "url": "N/A",
+                    }
+                )
 
         results = sorted(available_repos, key=lambda x: x["name"])
 
@@ -833,6 +887,659 @@ class VectorStore:
         """Invalidate the scan cache (call this when indexes change)"""
         self._index_scan_cache = None
         self.logger.debug("Invalidated index scan cache")
+
+    def has_saved_vectors(self, name: str) -> bool:
+        return os.path.exists(self._vector_manifest_path(name)) or os.path.exists(
+            self._legacy_index_path(name)
+        )
+
+    def has_saved_index(self, name: str) -> bool:
+        return self.has_saved_metadata(name) and self.has_saved_vectors(name)
+
+    def has_saved_metadata(self, name: str) -> bool:
+        return os.path.exists(self._metadata_manifest_path(name)) or os.path.exists(
+            self._legacy_metadata_path(name)
+        )
+
+    def vector_artifact_paths(self, name: str) -> list[str]:
+        paths = [
+            self._legacy_index_path(name),
+            self._vector_manifest_path(name),
+            self._vector_shards_dir(name),
+        ]
+        return [path for path in paths if os.path.exists(path)]
+
+    def metadata_artifact_paths(self, name: str) -> list[str]:
+        paths = [
+            self._legacy_metadata_path(name),
+            self._metadata_manifest_path(name),
+            self._metadata_shards_dir(name),
+        ]
+        return [path for path in paths if os.path.exists(path)]
+
+    def _legacy_index_path(self, name: str) -> str:
+        return os.path.join(self.persist_dir, f"{name}.faiss")
+
+    def _legacy_metadata_path(self, name: str) -> str:
+        return os.path.join(self.persist_dir, f"{name}_metadata.pkl")
+
+    def _vector_manifest_path(self, name: str) -> str:
+        return os.path.join(self.persist_dir, f"{name}_vector_manifest.json")
+
+    def _vector_shards_dir(self, name: str) -> str:
+        return os.path.join(self.persist_dir, f"{name}_vector_shards")
+
+    def _discover_saved_repo_names(self) -> list[str]:
+        suffixes = (
+            ".faiss",
+            "_vector_manifest.json",
+            "_vector_shards",
+            "_metadata_manifest.json",
+            "_metadata.pkl",
+        )
+        repo_names: set[str] = set()
+        for entry in os.listdir(self.persist_dir):
+            for suffix in suffixes:
+                if entry.endswith(suffix):
+                    repo_names.add(entry.removesuffix(suffix))
+                    break
+        return sorted(repo_names)
+
+    def _append_vector_rows(self, vectors: np.ndarray) -> None:
+        if vectors.ndim != 2:
+            return
+        if self._vector_rows is None or self._vector_rows.size == 0:
+            self._vector_rows = vectors.copy()
+            return
+        self._vector_rows = np.vstack([self._vector_rows, vectors]).astype(
+            np.float32, copy=False
+        )
+
+    def _vector_rows_for_search(self) -> np.ndarray | None:
+        if self._vector_rows is None or len(self._vector_rows) != len(self.metadata):
+            return None
+        if (
+            self.vector_rows_search_threshold > 0
+            and len(self._vector_rows) > self.vector_rows_search_threshold
+        ):
+            return None
+        return self._vector_rows.astype(np.float32, copy=False)
+
+    def _search_with_vector_rows(
+        self,
+        *,
+        vector_rows: np.ndarray,
+        query_vector: np.ndarray,
+        k: int,
+        min_score: float | None,
+        repo_filter: list[str] | None,
+        element_type_filter: str | None,
+    ) -> list[tuple[CodeElementMeta, float]]:
+        if k <= 0 or vector_rows.ndim != 2 or vector_rows.shape[0] == 0:
+            return []
+
+        query = np.array(query_vector, dtype=np.float32, copy=True).reshape(1, -1)
+        if query.shape[1] != vector_rows.shape[1]:
+            return []
+
+        if self.distance_metric == "cosine":
+            faiss.normalize_L2(query)
+            scores = vector_rows @ query.reshape(-1)
+        else:
+            distances = np.linalg.norm(vector_rows - query, axis=1)
+            scores = 1.0 / (1.0 + distances)
+
+        candidate_indexes = np.arange(len(self.metadata), dtype=np.int64)
+        if repo_filter:
+            allowed_repos = set(repo_filter)
+            candidate_indexes = candidate_indexes[
+                [
+                    self.metadata[int(idx)].get("repo_name") in allowed_repos
+                    for idx in candidate_indexes
+                ]
+            ]
+        if element_type_filter:
+            candidate_indexes = candidate_indexes[
+                [
+                    self.metadata[int(idx)].get("type") == element_type_filter
+                    for idx in candidate_indexes
+                ]
+            ]
+        if candidate_indexes.size == 0:
+            return []
+
+        ranked_indexes = candidate_indexes[np.argsort(scores[candidate_indexes])[::-1]]
+        results: list[tuple[CodeElementMeta, float]] = []
+        for raw_index in ranked_indexes:
+            index = int(raw_index)
+            score = float(scores[index])
+            if min_score is not None and score < min_score:
+                continue
+            results.append((self.metadata[index], score))
+            if len(results) >= k:
+                break
+        return results
+
+    def _search_batch_with_vector_rows(
+        self,
+        *,
+        vector_rows: np.ndarray,
+        query_vectors: np.ndarray,
+        k: int,
+        min_score: float | None,
+    ) -> list[list[tuple[CodeElementMeta, float]]]:
+        if (
+            k <= 0
+            or vector_rows.ndim != 2
+            or vector_rows.shape[0] == 0
+            or query_vectors.ndim != 2
+        ):
+            return [[] for _ in range(len(query_vectors))]
+
+        queries = np.array(query_vectors, dtype=np.float32, copy=True)
+        if queries.shape[1] != vector_rows.shape[1]:
+            return [[] for _ in range(len(queries))]
+
+        if self.distance_metric == "cosine":
+            faiss.normalize_L2(queries)
+            score_matrix = queries @ vector_rows.T
+        else:
+            diff = vector_rows[None, :, :] - queries[:, None, :]
+            distances = np.linalg.norm(diff, axis=2)
+            score_matrix = 1.0 / (1.0 + distances)
+
+        all_results: list[list[tuple[CodeElementMeta, float]]] = []
+        for row_scores in score_matrix:
+            ranked_indexes = np.argsort(row_scores)[::-1]
+            results: list[tuple[CodeElementMeta, float]] = []
+            for raw_index in ranked_indexes:
+                index = int(raw_index)
+                score = float(row_scores[index])
+                if min_score is not None and score < min_score:
+                    continue
+                results.append((self.metadata[index], score))
+                if len(results) >= k:
+                    break
+            all_results.append(results)
+        return all_results
+
+    def _ensure_faiss_index(self) -> bool:
+        if self.index is not None:
+            return True
+        if self.dimension is None:
+            return False
+        self.index = self._create_index(self.dimension)
+        if self._vector_rows is not None and self._vector_rows.size > 0:
+            self.index.add(self._vector_rows.astype(np.float32, copy=False))
+        return True
+
+    def _vector_matrix_for_persist(self) -> np.ndarray:
+        if self._vector_rows is not None and len(self._vector_rows) == len(
+            self.metadata
+        ):
+            return self._vector_rows.astype(np.float32, copy=False)
+
+        if self.index is None or self.dimension is None:
+            raise RuntimeError("Vector rows unavailable for persistence")
+
+        vectors = np.zeros((len(self.metadata), self.dimension), dtype=np.float32)
+        for i in range(len(self.metadata)):
+            self.index.reconstruct(int(i), vectors[i])
+        self._vector_rows = vectors
+        return vectors
+
+    def _persist_optional_faiss_binary(self, name: str) -> None:
+        index_path = self._legacy_index_path(name)
+        if self.persist_faiss_binary:
+            if self.index is None and not self._ensure_faiss_index():
+                return
+            faiss.write_index(self.index, index_path)
+            return
+        if os.path.exists(index_path):
+            os.remove(index_path)
+
+    @staticmethod
+    def _vector_shard_filename(path_key: str) -> str:
+        digest = hashlib.sha256(path_key.encode("utf-8")).hexdigest()[:20]
+        return f"{digest}.npz"
+
+    @staticmethod
+    def _vector_shard_bytes(
+        *,
+        sequence_nos: np.ndarray,
+        vectors: np.ndarray,
+    ) -> bytes:
+        import io
+
+        buffer = io.BytesIO()
+        np.savez_compressed(
+            buffer,
+            sequence_nos=sequence_nos.astype(np.int64, copy=False),
+            vectors=vectors.astype(np.float32, copy=False),
+        )
+        return buffer.getvalue()
+
+    def _load_vector_manifest(self, name: str) -> _VectorShardManifest | None:
+        manifest_path = self._vector_manifest_path(name)
+        if not os.path.exists(manifest_path):
+            return None
+        try:
+            with open(manifest_path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        shards = data.get("shards")
+        if not isinstance(shards, list):
+            return None
+        return cast(_VectorShardManifest, data)
+
+    def _write_vector_bundle(self, name: str) -> None:
+        vectors = self._vector_matrix_for_persist()
+        if len(vectors) != len(self.metadata):
+            raise RuntimeError("Vector/metadata count mismatch during persistence")
+
+        shard_dir = self._vector_shards_dir(name)
+        ensure_dir(shard_dir)
+        existing_manifest = self._load_vector_manifest(name)
+        existing_by_path = {
+            str(entry.get("path_key")): entry
+            for entry in (
+                existing_manifest.get("shards", []) if existing_manifest else []
+            )
+            if entry.get("path_key")
+        }
+
+        grouped_rows: dict[str, list[tuple[int, np.ndarray]]] = {}
+        for sequence_no, meta in enumerate(self.metadata):
+            path_key = self._metadata_path_key(meta, sequence_no)
+            grouped_rows.setdefault(path_key, []).append(
+                (sequence_no, vectors[sequence_no])
+            )
+
+        manifest: _VectorShardManifest = {
+            "version": _VECTOR_SHARD_STORAGE_VERSION,
+            "dimension": self.dimension,
+            "distance_metric": self.distance_metric,
+            "index_type": self.index_type,
+            "vector_count": len(self.metadata),
+            "shards": [],
+        }
+        active_files: set[str] = set()
+        for path_key, rows in grouped_rows.items():
+            sequence_nos = np.asarray(
+                [sequence_no for sequence_no, _ in rows], dtype=np.int64
+            )
+            shard_vectors = np.vstack([vector for _, vector in rows]).astype(
+                np.float32, copy=False
+            )
+            shard_bytes = self._vector_shard_bytes(
+                sequence_nos=sequence_nos,
+                vectors=shard_vectors,
+            )
+            digest = hashlib.sha256(shard_bytes).hexdigest()
+            existing = existing_by_path.get(path_key)
+            shard_file = (
+                str(existing.get("shard_file"))
+                if existing and existing.get("shard_file")
+                else self._vector_shard_filename(path_key)
+            )
+            shard_path = os.path.join(shard_dir, shard_file)
+            active_files.add(shard_file)
+            if not (
+                existing
+                and existing.get("digest") == digest
+                and os.path.exists(shard_path)
+            ):
+                tmp_path = f"{shard_path}.tmp"
+                with open(tmp_path, "wb") as handle:
+                    handle.write(shard_bytes)
+                os.replace(tmp_path, shard_path)
+            manifest["shards"].append(
+                {
+                    "path_key": path_key,
+                    "shard_file": shard_file,
+                    "digest": digest,
+                    "count": len(rows),
+                }
+            )
+
+        if existing_manifest is not None:
+            for entry in existing_manifest.get("shards", []):
+                shard_file = entry.get("shard_file")
+                if not shard_file or shard_file in active_files:
+                    continue
+                stale_path = os.path.join(shard_dir, str(shard_file))
+                if os.path.exists(stale_path):
+                    os.remove(stale_path)
+
+        manifest_path = self._vector_manifest_path(name)
+        tmp_manifest = f"{manifest_path}.tmp"
+        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
+        os.replace(tmp_manifest, manifest_path)
+
+    def load_vector_payload(self, name: str) -> dict[str, Any] | None:
+        manifest = self._load_vector_manifest(name)
+        if manifest is None:
+            return None
+        try:
+            shard_dir = self._vector_shards_dir(name)
+            ordered_rows: list[tuple[int, np.ndarray]] = []
+            for entry in manifest.get("shards", []):
+                shard_file = entry.get("shard_file")
+                if not shard_file:
+                    continue
+                shard_path = os.path.join(shard_dir, str(shard_file))
+                with np.load(shard_path, allow_pickle=False) as archive:
+                    sequence_nos = archive["sequence_nos"]
+                    shard_vectors = archive["vectors"]
+                if sequence_nos.ndim != 1 or shard_vectors.ndim != 2:
+                    continue
+                for sequence_no, vector in zip(
+                    sequence_nos.tolist(),
+                    shard_vectors,
+                    strict=True,
+                ):
+                    if not isinstance(sequence_no, (int, np.integer)):
+                        continue
+                    ordered_rows.append(
+                        (int(sequence_no), np.asarray(vector, dtype=np.float32))
+                    )
+            ordered_rows.sort(key=lambda item: item[0])
+            vectors = (
+                np.vstack([row for _, row in ordered_rows]).astype(
+                    np.float32, copy=False
+                )
+                if ordered_rows
+                else np.empty(
+                    (0, int(manifest.get("dimension") or 0)), dtype=np.float32
+                )
+            )
+            return {
+                "vectors": vectors,
+                "dimension": manifest.get("dimension"),
+                "distance_metric": manifest.get("distance_metric", "cosine"),
+                "index_type": manifest.get("index_type", "HNSW"),
+            }
+        except Exception as e:
+            self.logger.warning(f"Failed to load sharded vectors for {name}: {e}")
+            return None
+
+    def _vector_storage_size(self, name: str) -> int:
+        total = 0
+        manifest = self._load_vector_manifest(name)
+        if manifest is not None:
+            manifest_path = self._vector_manifest_path(name)
+            if os.path.exists(manifest_path):
+                total += os.path.getsize(manifest_path)
+            shard_dir = self._vector_shards_dir(name)
+            for entry in manifest.get("shards", []):
+                shard_file = entry.get("shard_file")
+                if not shard_file:
+                    continue
+                shard_path = os.path.join(shard_dir, str(shard_file))
+                if os.path.exists(shard_path):
+                    total += os.path.getsize(shard_path)
+        legacy_index_path = self._legacy_index_path(name)
+        if os.path.exists(legacy_index_path):
+            total += os.path.getsize(legacy_index_path)
+        return total
+
+    def _metadata_manifest_path(self, name: str) -> str:
+        return os.path.join(self.persist_dir, f"{name}_metadata_manifest.json")
+
+    def _metadata_shards_dir(self, name: str) -> str:
+        return os.path.join(self.persist_dir, f"{name}_metadata_shards")
+
+    @staticmethod
+    def _metadata_path_key(meta: Mapping[str, Any], sequence_no: int) -> str:
+        relative_path = meta.get("relative_path")
+        file_path = meta.get("file_path")
+        if relative_path:
+            return str(relative_path)
+        if file_path:
+            return str(file_path)
+        fallback_id = meta.get("id")
+        return f"__pathless__:{fallback_id or sequence_no}"
+
+    @staticmethod
+    def _metadata_shard_filename(path_key: str) -> str:
+        digest = hashlib.sha256(path_key.encode("utf-8")).hexdigest()[:20]
+        return f"{digest}.pkl"
+
+    @staticmethod
+    def _metadata_shard_bytes(entries: list[dict[str, Any]]) -> bytes:
+        return pickle.dumps({"entries": entries}, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def _load_metadata_manifest(self, name: str) -> _MetadataShardManifest | None:
+        manifest_path = self._metadata_manifest_path(name)
+        if not os.path.exists(manifest_path):
+            return None
+        try:
+            with open(manifest_path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        shards = data.get("shards")
+        if not isinstance(shards, list):
+            return None
+        return cast(_MetadataShardManifest, data)
+
+    def _write_metadata_bundle(self, name: str) -> None:
+        shard_dir = self._metadata_shards_dir(name)
+        ensure_dir(shard_dir)
+        existing_manifest = self._load_metadata_manifest(name)
+        existing_by_path = {
+            str(entry.get("path_key")): entry
+            for entry in (
+                existing_manifest.get("shards", []) if existing_manifest else []
+            )
+            if entry.get("path_key")
+        }
+
+        grouped_entries: dict[str, list[dict[str, Any]]] = {}
+        for sequence_no, meta in enumerate(self.metadata):
+            path_key = self._metadata_path_key(meta, sequence_no)
+            grouped_entries.setdefault(path_key, []).append(
+                {"sequence_no": sequence_no, "payload": meta}
+            )
+
+        manifest: _MetadataShardManifest = {
+            "version": _METADATA_SHARD_STORAGE_VERSION,
+            "dimension": self.dimension,
+            "distance_metric": self.distance_metric,
+            "index_type": self.index_type,
+            "vector_count": len(self.metadata),
+            "shards": [],
+        }
+        active_files: set[str] = set()
+        for path_key, entries in grouped_entries.items():
+            shard_bytes = self._metadata_shard_bytes(entries)
+            digest = hashlib.sha256(shard_bytes).hexdigest()
+            existing = existing_by_path.get(path_key)
+            shard_file = (
+                str(existing.get("shard_file"))
+                if existing and existing.get("shard_file")
+                else self._metadata_shard_filename(path_key)
+            )
+            shard_path = os.path.join(shard_dir, shard_file)
+            active_files.add(shard_file)
+            if not (
+                existing
+                and existing.get("digest") == digest
+                and os.path.exists(shard_path)
+            ):
+                tmp_path = f"{shard_path}.tmp"
+                with open(tmp_path, "wb") as handle:
+                    handle.write(shard_bytes)
+                os.replace(tmp_path, shard_path)
+            manifest["shards"].append(
+                {
+                    "path_key": path_key,
+                    "shard_file": shard_file,
+                    "digest": digest,
+                    "count": len(entries),
+                }
+            )
+
+        if existing_manifest is not None:
+            for entry in existing_manifest.get("shards", []):
+                shard_file = entry.get("shard_file")
+                if not shard_file or shard_file in active_files:
+                    continue
+                stale_path = os.path.join(shard_dir, str(shard_file))
+                if os.path.exists(stale_path):
+                    os.remove(stale_path)
+
+        manifest_path = self._metadata_manifest_path(name)
+        tmp_manifest = f"{manifest_path}.tmp"
+        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
+        os.replace(tmp_manifest, manifest_path)
+
+        legacy_metadata_path = self._legacy_metadata_path(name)
+        if os.path.exists(legacy_metadata_path):
+            os.remove(legacy_metadata_path)
+
+    def load_metadata_payload(self, name: str) -> dict[str, Any] | None:
+        manifest = self._load_metadata_manifest(name)
+        if manifest is not None:
+            try:
+                shard_dir = self._metadata_shards_dir(name)
+                ordered_rows: list[tuple[int, CodeElementMeta]] = []
+                for entry in manifest.get("shards", []):
+                    shard_file = entry.get("shard_file")
+                    if not shard_file:
+                        continue
+                    shard_path = os.path.join(shard_dir, str(shard_file))
+                    with open(shard_path, "rb") as handle:
+                        payload = pickle.load(handle)
+                    entries = (
+                        payload.get("entries", []) if isinstance(payload, dict) else []
+                    )
+                    if not isinstance(entries, list):
+                        continue
+                    for item in entries:
+                        if not isinstance(item, dict):
+                            continue
+                        sequence_no = item.get("sequence_no")
+                        row = item.get("payload")
+                        if not isinstance(sequence_no, int) or not isinstance(
+                            row, Mapping
+                        ):
+                            continue
+                        ordered_rows.append(
+                            (
+                                sequence_no,
+                                cast(
+                                    CodeElementMeta, dict(cast(Mapping[str, Any], row))
+                                ),
+                            )
+                        )
+                ordered_rows.sort(key=lambda item: item[0])
+                return {
+                    "metadata": [row for _, row in ordered_rows],
+                    "dimension": manifest.get("dimension"),
+                    "distance_metric": manifest.get("distance_metric", "cosine"),
+                    "index_type": manifest.get("index_type", "HNSW"),
+                }
+            except Exception as e:
+                self.logger.warning(f"Failed to load sharded metadata for {name}: {e}")
+
+        metadata_path = self._legacy_metadata_path(name)
+        if not os.path.exists(metadata_path):
+            return None
+        try:
+            with open(metadata_path, "rb") as handle:
+                data = pickle.load(handle)
+            return cast(dict[str, Any], data) if isinstance(data, dict) else None
+        except Exception as e:
+            self.logger.warning(f"Failed to load metadata bundle for {name}: {e}")
+            return None
+
+    def _metadata_storage_size(self, name: str) -> int:
+        manifest = self._load_metadata_manifest(name)
+        if manifest is not None:
+            total = 0
+            manifest_path = self._metadata_manifest_path(name)
+            if os.path.exists(manifest_path):
+                total += os.path.getsize(manifest_path)
+            shard_dir = self._metadata_shards_dir(name)
+            for entry in manifest.get("shards", []):
+                shard_file = entry.get("shard_file")
+                if not shard_file:
+                    continue
+                shard_path = os.path.join(shard_dir, str(shard_file))
+                if os.path.exists(shard_path):
+                    total += os.path.getsize(shard_path)
+            return total
+
+        metadata_path = self._legacy_metadata_path(name)
+        return os.path.getsize(metadata_path) if os.path.exists(metadata_path) else 0
+
+    def _metadata_scan_stats(self, name: str) -> tuple[int, int, str]:
+        manifest = self._load_metadata_manifest(name)
+        if manifest is not None:
+            element_count = int(manifest.get("vector_count", 0) or 0)
+            file_count = len(
+                [
+                    entry
+                    for entry in manifest.get("shards", [])
+                    if str(entry.get("path_key") or "").startswith("__pathless__")
+                    is False
+                ]
+            )
+            repo_url = "N/A"
+            shards = manifest.get("shards", [])
+            if shards:
+                first = shards[0]
+                if first.get("shard_file"):
+                    shard_path = os.path.join(
+                        self._metadata_shards_dir(name), str(first["shard_file"])
+                    )
+                    try:
+                        with open(shard_path, "rb") as handle:
+                            payload = pickle.load(handle)
+                        entries = (
+                            payload.get("entries", [])
+                            if isinstance(payload, dict)
+                            else []
+                        )
+                        if entries:
+                            first_row = (
+                                entries[0].get("payload")
+                                if isinstance(entries[0], dict)
+                                else None
+                            )
+                            if isinstance(first_row, Mapping):
+                                repo_url = str(first_row.get("repo_url") or "N/A")
+                    except Exception as e:
+                        self.logger.warning(
+                            f"Failed to sample metadata shard for {name}: {e}"
+                        )
+            return element_count, file_count, repo_url
+
+        data = self.load_metadata_payload(name)
+        if data is None:
+            return 0, 0, "N/A"
+        metadata_list = data.get("metadata", [])
+        if not isinstance(metadata_list, list):
+            return 0, 0, "N/A"
+        repo_url = "N/A"
+        seen_files = set()
+        for meta in metadata_list[: self._index_scan_sample_size]:
+            if not isinstance(meta, Mapping):
+                continue
+            file_path = meta.get("file_path")
+            if file_path:
+                seen_files.add(str(file_path))
+            if repo_url == "N/A" and meta.get("repo_url"):
+                repo_url = str(meta.get("repo_url"))
+        return len(metadata_list), len(seen_files), repo_url
 
     def _repo_overview_manifest_path(self) -> str:
         return os.path.join(self.persist_dir, _REPO_OVERVIEW_MANIFEST_FILENAME)

@@ -335,6 +335,9 @@ The v1 implementation should not introduce Pydantic models inside
 route bundle persistence through generic `dict` or recursive JSON cleanup on hot
 paths.
 
+The detailed pattern and module design for this next step lives in
+[AGENT_INTEGRATION_PATTERNS.md](./AGENT_INTEGRATION_PATTERNS.md).
+
 ### Bundle Assembly Flow
 
 A request-local bundle should be built as a deterministic pipeline:

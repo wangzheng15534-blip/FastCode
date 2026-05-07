@@ -239,6 +239,9 @@ engineering substrate: cacheable, budget-aware, provenance-preserving code
 evidence that agents can retrieve, compress, reactivate, and cite without
 re-reading or re-summarizing the same repository facts.
 
+Detailed design reference:
+[AGENT_INTEGRATION_PATTERNS.md](./AGENT_INTEGRATION_PATTERNS.md)
+
 **Why this is now the right research target:** The original March design notes
 framed FastCode as the code-intelligence provider beside a dynamic memory/core
 agent system. Most of the needed FastCode-side foundations now exist:

@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import os
 import pathlib
+import urllib.request
 from typing import Any
 
 import pytest
 from hypothesis import HealthCheck, settings
 from hypothesis import strategies as st
+
+from fastcode.db_runtime import DBRuntime
+from fastcode.ir.element import CodeElement
+from fastcode.ir.types import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
+from fastcode.scip.models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
 
 # Schemathesis fuzzing is intentionally opt-in because it is slow and uses
 # separate pytest plugin wiring. Keep it out of default collection instead of
@@ -17,6 +25,11 @@ if os.getenv("FASTCODE_RUN_SCHEMATHESIS") == "1":
     collect_ignore_glob: list[str] = []
 else:
     collect_ignore_glob = ["api/test_schemathesis_api.py"]
+
+DEFAULT_FASTCODE_E2E_OLLAMA_URL = "http://127.0.0.1:11434/api/embeddings"
+DEFAULT_FASTCODE_E2E_PG_DSN = (
+    "postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e"
+)
 
 # mutmut calls pytest.main() in-process, causing hypothesis to see
 # "multiple executors"; safe to suppress since mutmut owns the process
@@ -27,10 +40,76 @@ if os.getenv("MUTANT_UNDER_TEST"):
     )
     settings.load_profile("mutmut")
 
-from fastcode.db_runtime import DBRuntime
-from fastcode.ir.element import CodeElement
-from fastcode.ir.types import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
-from fastcode.scip.models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
+
+def _probe_ollama_embeddings(url: str, model: str) -> str | None:
+    payload = json.dumps(
+        {"model": model, "prompt": "probe"},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            if response.status != 200:
+                return f"unexpected HTTP status {response.status}"
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return None
+
+
+@pytest.fixture(scope="session")
+def fastcode_e2e_ollama_url() -> str:
+    return os.getenv("FASTCODE_E2E_OLLAMA_URL", DEFAULT_FASTCODE_E2E_OLLAMA_URL)
+
+
+@pytest.fixture(scope="session")
+def require_ollama_all_minilm_embeddings(fastcode_e2e_ollama_url: str) -> str:
+    error = _probe_ollama_embeddings(fastcode_e2e_ollama_url, "all-minilm:l6-v2")
+    if error is not None:
+        pytest.fail(
+            "E2E Ollama service unavailable for model 'all-minilm:l6-v2' at "
+            f"{fastcode_e2e_ollama_url}: {error}"
+        )
+    return fastcode_e2e_ollama_url
+
+
+@pytest.fixture(scope="session")
+def require_ollama_nomic_embeddings(fastcode_e2e_ollama_url: str) -> str:
+    error = _probe_ollama_embeddings(fastcode_e2e_ollama_url, "nomic-embed-text-v2-moe")
+    if error is not None:
+        pytest.fail(
+            "E2E Ollama service unavailable for model "
+            f"'nomic-embed-text-v2-moe' at {fastcode_e2e_ollama_url}: {error}"
+        )
+    return fastcode_e2e_ollama_url
+
+
+@pytest.fixture(scope="session")
+def require_postgres_e2e() -> str:
+    dsn = os.getenv("PG_E2E_DSN", DEFAULT_FASTCODE_E2E_PG_DSN)
+    try:
+        import psycopg
+
+        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+    except Exception as exc:
+        pytest.fail(f"E2E PostgreSQL unavailable at {dsn}: {type(exc).__name__}: {exc}")
+    return dsn
+
+
+@pytest.fixture(scope="session")
+def require_ladybug_runtime() -> None:
+    if importlib.util.find_spec("real_ladybug") is None:
+        pytest.fail(
+            "E2E Ladybug runtime unavailable: install FastCode with `uv sync --extra "
+            "ladybug` so `real_ladybug` is importable."
+        )
+
 
 # --- Primitive strategies ---
 

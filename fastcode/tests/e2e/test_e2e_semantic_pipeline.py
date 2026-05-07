@@ -8,9 +8,14 @@ Exercises:
 4. Query pipeline retrieves semantically relevant results
 
 Requirements:
-- Ollama running at localhost:11434 with nomic-embed-text-v2-moe
-- PostgreSQL with pgvector extension
-- LadybugDB (optional, graceful skip)
+- Ollama embeddings endpoint at FASTCODE_E2E_OLLAMA_URL
+  (defaults to http://127.0.0.1:11434/api/embeddings)
+- PostgreSQL with pgvector extension at PG_E2E_DSN
+  (defaults to postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e)
+- FastCode installed with the ladybug extra for the Ladybug e2e case
+
+These are real-service e2e tests. They should fail fast when the required
+services are unavailable rather than being silently skipped.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ from fastcode.indexing.pipeline import IndexPipeline
 from fastcode.indexing.terminus import TerminusPublisher
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.main import FastCode
+from fastcode.schemas.config import config_from_mapping
 from fastcode.semantic import build_default_semantic_resolver_registry
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.store.index_run import IndexRunStore
@@ -43,55 +49,9 @@ from fastcode.store.manifest import ManifestStore
 from fastcode.store.pg_retrieval import PgRetrievalStore
 from fastcode.store.snapshot import SnapshotStore
 from fastcode.store.vector import VectorStore
+from fastcode.utils import config_to_legacy_dict
 
 pytestmark = [pytest.mark.e2e]
-
-# ---------------------------------------------------------------------------
-# Service availability checks
-# ---------------------------------------------------------------------------
-
-
-def _ollama_available() -> bool:
-    try:
-        import urllib.request
-
-        req = urllib.request.Request(
-            "http://127.0.0.1:11434/api/embeddings",
-            data=b'{"model":"nomic-embed-text-v2-moe","prompt":"probe"}',
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
-
-
-def _pg_available() -> bool:
-    dsn = os.environ.get(
-        "PG_E2E_DSN",
-        "postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e",
-    )
-    try:
-        import psycopg
-
-        psycopg.connect(dsn).close()
-        return True
-    except Exception:
-        return False
-
-
-def _ladybug_available() -> bool:
-    import importlib.util
-
-    return importlib.util.find_spec("real_ladybug") is not None
-
-
-_skip_ollama = pytest.mark.skipif(not _ollama_available(), reason="Ollama not running")
-_skip_pg = pytest.mark.skipif(not _pg_available(), reason="PostgreSQL not available")
-_skip_ladybug = pytest.mark.skipif(
-    not _ladybug_available(), reason="LadybugDB not installed"
-)
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +126,7 @@ def _build_test_repo(tmp_path: pathlib.Path) -> Any:
     repo_dir.mkdir()
 
     (repo_dir / "math_utils.py").write_text(_TEST_PYTHON_SOURCE, encoding="utf-8")
+    (repo_dir / ".e2e_case_id").write_text(tmp_path.name, encoding="utf-8")
     docs_dir = repo_dir / "docs" / "design"
     docs_dir.mkdir(parents=True)
     (docs_dir / "arch.md").write_text(_TEST_DESIGN_DOC, encoding="utf-8")
@@ -216,6 +177,7 @@ def _base_config(
     enable_docs: Any = True,
     enable_ladybug: Any = False,
     ladybug_db_path: Any = "",
+    ollama_url: Any = "http://127.0.0.1:11434/api/embeddings",
 ) -> dict[str, Any]:
     """Return a minimal config dict with all paths under tmp_path."""
     persist_dir = str(tmp_path / "persist")
@@ -262,7 +224,7 @@ def _base_config(
         "embedding": {
             "provider": "ollama",
             "model": "nomic-embed-text-v2-moe",
-            "ollama_url": "http://127.0.0.1:11434/api/embeddings",
+            "ollama_url": ollama_url,
             "device": "cpu",
             "batch_size": 32,
         },
@@ -298,6 +260,9 @@ def _base_config(
         }
 
     if enable_ladybug:
+        pathlib.Path(ladybug_db_path or tmp_path / "ladybug" / "test.lb").parent.mkdir(
+            parents=True, exist_ok=True
+        )
         config["graph"] = {
             "ladybug": {
                 "enabled": True,
@@ -318,8 +283,9 @@ def _base_config(
 def _build_fastcode(config: dict[str, Any]) -> Any:
     """Construct a FastCode instance with real components from config."""
     fc = FastCode.__new__(FastCode)
-    fc.config = config
-    fc.eval_config = config.get("evaluation", {})
+    fc.runtime_config = config_from_mapping(config)
+    fc.config = config_to_legacy_dict(fc.runtime_config)
+    fc.eval_config = fc.config.get("evaluation", {})
     fc.eval_mode = False
     fc.in_memory_index = False
     fc.global_index_builder = None
@@ -327,48 +293,54 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
     fc.symbol_resolver = None
     fc.logger = MagicMock()
 
-    fc.loader = RepositoryLoader(config)
-    fc.parser = CodeParser(config)
-    fc.embedder = CodeEmbedder(config)
-    fc.vector_store = VectorStore(config)
-    fc.graph_builder = CodeGraphBuilder(config)
+    fc.loader = RepositoryLoader(fc.config)
+    fc.parser = CodeParser(fc.config)
+    fc.embedder = CodeEmbedder(fc.config)
+    fc.vector_store = VectorStore(fc.config)
+    fc.graph_builder = CodeGraphBuilder(fc.config)
     fc.ir_graph_builder = IRGraphBuilder()
 
-    fc.indexer = CodeIndexer(config, fc.loader, fc.parser, fc.embedder, fc.vector_store)
+    fc.indexer = CodeIndexer(
+        fc.config,
+        fc.loader,
+        fc.parser,
+        fc.embedder,
+        fc.vector_store,
+    )
 
     from fastcode.query.processor import QueryProcessor
     from fastcode.retrieval.hybrid import HybridRetriever
     from fastcode.store.cache import CacheManager
 
-    config_repo_root = config.get("repo_root", "./repos")
+    config_repo_root = fc.config.get("repo_root", "./repos")
     fc.retriever = HybridRetriever(
-        config,
+        fc.config,
         fc.vector_store,
         fc.embedder,
         fc.graph_builder,
         repo_root=config_repo_root,
     )
-    fc.query_processor = QueryProcessor(config)
+    fc.query_processor = QueryProcessor(fc.config)
     fc.answer_generator = MagicMock()
-    fc.cache_manager = CacheManager(config)
+    fc.cache_manager = CacheManager(fc.config)
 
     persist_dir = fc.vector_store.persist_dir
-    storage_cfg = config.get("storage", {})
+    storage_cfg = fc.config.get("storage", {})
     fc.snapshot_store = SnapshotStore(persist_dir, storage_cfg=storage_cfg)
     fc.manifest_store = ManifestStore(fc.snapshot_store.db_runtime)
     fc.index_run_store = IndexRunStore(fc.snapshot_store.db_runtime)
-    fc.terminus_publisher = TerminusPublisher(config)
+    fc.terminus_publisher = TerminusPublisher(fc.config)
 
     from fastcode.indexing.projection_transform import ProjectionTransformer
     from fastcode.store.projection import ProjectionStore
 
-    fc.projection_transformer = ProjectionTransformer(config)
-    fc.projection_store = ProjectionStore(config)
+    fc.projection_transformer = ProjectionTransformer(fc.config)
+    fc.projection_store = ProjectionStore(fc.config)
     fc.snapshot_symbol_index = SnapshotSymbolIndex()
-    fc.pg_retrieval_store = PgRetrievalStore(fc.snapshot_store.db_runtime, config)
+    fc.pg_retrieval_store = PgRetrievalStore(fc.snapshot_store.db_runtime, fc.config)
     fc.retriever.set_pg_retrieval_store(fc.pg_retrieval_store)
-    fc.doc_ingester = KeyDocIngester(config, fc.embedder)
-    fc.graph_runtime = LadybugGraphRuntime(config)
+    fc.doc_ingester = KeyDocIngester(fc.config, fc.embedder)
+    fc.graph_runtime = LadybugGraphRuntime(fc.config)
 
     fc.repo_loaded = False
     fc.repo_indexed = False
@@ -443,7 +415,6 @@ def _cleanup_pg_tables(dsn: str) -> None:
 # ===========================================================================
 
 
-@_skip_ollama
 def test_semantic_chunker_uses_configured_embedding_model(tmp_path: pathlib.Path):
     """SemanticChunker should use sentence-transformers model from config,
     not the hardcoded default minishlab/potion-base-32M."""
@@ -497,9 +468,11 @@ The gateway handles authentication and rate limiting.
 # ===========================================================================
 
 
-@_skip_ollama
-@_skip_pg
-def test_e2e_semantic_indexing_with_postgres(tmp_path: pathlib.Path):
+def test_e2e_semantic_indexing_with_postgres(
+    tmp_path: pathlib.Path,
+    require_ollama_nomic_embeddings: str,
+    require_postgres_e2e: str,
+):
     """Full index pipeline with PostgreSQL backend + Chonkie semantic chunking.
 
     Verifies:
@@ -508,12 +481,15 @@ def test_e2e_semantic_indexing_with_postgres(tmp_path: pathlib.Path):
     - Doc ingestion produces semantic chunks with headings
     - Snapshot persisted with correct symbols and documents
     """
-    pg_dsn = os.environ.get(
-        "PG_E2E_DSN",
-        "postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e",
-    )
+    pg_dsn = require_postgres_e2e
     repo_path = _build_test_repo(tmp_path)
-    config = _base_config(tmp_path, backend="postgres", pg_dsn=pg_dsn, enable_docs=True)
+    config = _base_config(
+        tmp_path,
+        backend="postgres",
+        pg_dsn=pg_dsn,
+        enable_docs=True,
+        ollama_url=require_ollama_nomic_embeddings,
+    )
     fc = _build_fastcode(config)
 
     # Verify real services wired
@@ -589,9 +565,11 @@ def test_e2e_semantic_indexing_with_postgres(tmp_path: pathlib.Path):
 # ===========================================================================
 
 
-@_skip_ollama
-@_skip_ladybug
-def test_e2e_semantic_indexing_with_ladybug(tmp_path: pathlib.Path):
+def test_e2e_semantic_indexing_with_ladybug(
+    tmp_path: pathlib.Path,
+    require_ollama_nomic_embeddings: str,
+    require_ladybug_runtime: None,
+):
     """Index pipeline with LadybugDB graph backend + semantic chunking.
 
     Verifies:
@@ -608,6 +586,7 @@ def test_e2e_semantic_indexing_with_ladybug(tmp_path: pathlib.Path):
         enable_docs=True,
         enable_ladybug=True,
         ladybug_db_path=ladybug_path,
+        ollama_url=require_ollama_nomic_embeddings,
     )
     fc = _build_fastcode(config)
 
@@ -674,9 +653,11 @@ def test_e2e_semantic_indexing_with_ladybug(tmp_path: pathlib.Path):
 # ===========================================================================
 
 
-@_skip_ollama
-@_skip_pg
-def test_e2e_semantic_query_pipeline_with_postgres(tmp_path: pathlib.Path):
+def test_e2e_semantic_query_pipeline_with_postgres(
+    tmp_path: pathlib.Path,
+    require_ollama_nomic_embeddings: str,
+    require_postgres_e2e: str,
+):
     """Index with semantic chunking, then query and verify retrieval.
 
     Verifies:
@@ -684,12 +665,15 @@ def test_e2e_semantic_query_pipeline_with_postgres(tmp_path: pathlib.Path):
     - HybridRetriever returns relevant results for a code query
     - Results include doc chunks with proper metadata
     """
-    pg_dsn = os.environ.get(
-        "PG_E2E_DSN",
-        "postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e",
-    )
+    pg_dsn = require_postgres_e2e
     repo_path = _build_test_repo(tmp_path)
-    config = _base_config(tmp_path, backend="postgres", pg_dsn=pg_dsn, enable_docs=True)
+    config = _base_config(
+        tmp_path,
+        backend="postgres",
+        pg_dsn=pg_dsn,
+        enable_docs=True,
+        ollama_url=require_ollama_nomic_embeddings,
+    )
     fc = _build_fastcode(config)
 
     _cleanup_pg_tables(pg_dsn)

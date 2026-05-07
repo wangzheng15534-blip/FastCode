@@ -6,11 +6,13 @@ Exercises run_index_pipeline() in two configurations:
 2. PostgreSQL + doc ingestion with real Ollama embeddings
 
 Requirements:
-- Ollama running at localhost:11434 with all-minilm:l6-v2
-- PostgreSQL with pgvector extension
-- PGUSER=jacob PGPASSWORD=jacob (or adjust PG_E2E_DSN)
+- Ollama embeddings endpoint at FASTCODE_E2E_OLLAMA_URL
+  (defaults to http://127.0.0.1:11434/api/embeddings)
+- PostgreSQL with pgvector extension at PG_E2E_DSN
+  (defaults to postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e)
 
-Mark with pytest.mark.skipif if services are unavailable.
+These are real-service e2e tests. They should fail fast when the required
+services are unavailable rather than being silently skipped.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ from fastcode.indexing.pipeline import IndexPipeline
 from fastcode.indexing.terminus import TerminusPublisher
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.main import FastCode
+from fastcode.schemas.config import config_from_mapping
 from fastcode.semantic import build_default_semantic_resolver_registry
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.store.index_run import IndexRunStore
@@ -44,46 +47,9 @@ from fastcode.store.manifest import ManifestStore
 from fastcode.store.pg_retrieval import PgRetrievalStore
 from fastcode.store.snapshot import SnapshotStore
 from fastcode.store.vector import VectorStore
+from fastcode.utils import config_to_legacy_dict
 
 pytestmark = [pytest.mark.e2e]
-
-# ---------------------------------------------------------------------------
-# Service availability checks
-# ---------------------------------------------------------------------------
-
-
-def _ollama_available() -> bool:
-    try:
-        import urllib.request
-
-        req = urllib.request.Request(
-            "http://127.0.0.1:11434/api/embeddings",
-            data=b'{"model":"nomic-embed-text-v2-moe","prompt":"probe"}',
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
-
-
-def _pg_available() -> bool:
-    dsn = os.environ.get(
-        "PG_E2E_DSN",
-        "postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e",
-    )
-    try:
-        import psycopg
-
-        psycopg.connect(dsn).close()
-        return True
-    except Exception:
-        return False
-
-
-_skip_ollama = pytest.mark.skipif(not _ollama_available(), reason="Ollama not running")
-_skip_pg = pytest.mark.skipif(not _pg_available(), reason="PostgreSQL not available")
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +130,7 @@ def _build_test_repo(tmp_path: pathlib.Path) -> Any:
 
     (repo_dir / "math_utils.py").write_text(_TEST_PYTHON_SOURCE, encoding="utf-8")
     (repo_dir / "README.md").write_text(_TEST_README, encoding="utf-8")
+    (repo_dir / ".e2e_case_id").write_text(tmp_path.name, encoding="utf-8")
     docs_dir = repo_dir / "docs" / "design"
     docs_dir.mkdir(parents=True)
     (docs_dir / "arch.md").write_text(_TEST_DESIGN_DOC, encoding="utf-8")
@@ -209,6 +176,7 @@ def _base_config(
     backend: Any = "sqlite",
     pg_dsn: Any = "",
     enable_docs: Any = False,
+    ollama_url: Any = "http://127.0.0.1:11434/api/embeddings",
 ) -> dict[str, Any]:
     """Return a minimal config dict with all paths under tmp_path."""
     persist_dir = str(tmp_path / "persist")
@@ -254,8 +222,8 @@ def _base_config(
         },
         "embedding": {
             "provider": "ollama",
-            "model": "nomic-embed-text-v2-moe",
-            "ollama_url": "http://127.0.0.1:11434/api/embeddings",
+            "model": "all-minilm:l6-v2",
+            "ollama_url": ollama_url,
             "device": "cpu",
             "batch_size": 32,
         },
@@ -294,8 +262,9 @@ def _base_config(
 def _build_fastcode(config: dict[str, Any]) -> Any:
     """Construct a FastCode instance, wiring real components from config."""
     fc = FastCode.__new__(FastCode)
-    fc.config = config
-    fc.eval_config = config.get("evaluation", {})
+    fc.runtime_config = config_from_mapping(config)
+    fc.config = config_to_legacy_dict(fc.runtime_config)
+    fc.eval_config = fc.config.get("evaluation", {})
     fc.eval_mode = False
     fc.in_memory_index = False
     fc.global_index_builder = None
@@ -304,49 +273,55 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
     fc.logger = MagicMock()
 
     # Real components.
-    fc.loader = RepositoryLoader(config)
-    fc.parser = CodeParser(config)
-    fc.embedder = CodeEmbedder(config)  # Real Ollama embedder
-    fc.vector_store = VectorStore(config)
-    fc.graph_builder = CodeGraphBuilder(config)
+    fc.loader = RepositoryLoader(fc.config)
+    fc.parser = CodeParser(fc.config)
+    fc.embedder = CodeEmbedder(fc.config)  # Real Ollama embedder
+    fc.vector_store = VectorStore(fc.config)
+    fc.graph_builder = CodeGraphBuilder(fc.config)
     fc.ir_graph_builder = IRGraphBuilder()
 
-    fc.indexer = CodeIndexer(config, fc.loader, fc.parser, fc.embedder, fc.vector_store)
+    fc.indexer = CodeIndexer(
+        fc.config,
+        fc.loader,
+        fc.parser,
+        fc.embedder,
+        fc.vector_store,
+    )
 
     from fastcode.query.processor import QueryProcessor
     from fastcode.retrieval.hybrid import HybridRetriever
     from fastcode.store.cache import CacheManager
 
-    config_repo_root = config.get("repo_root", "./repos")
+    config_repo_root = fc.config.get("repo_root", "./repos")
     fc.retriever = HybridRetriever(
-        config,
+        fc.config,
         fc.vector_store,
         fc.embedder,
         fc.graph_builder,
         repo_root=config_repo_root,
     )
-    fc.query_processor = QueryProcessor(config)
+    fc.query_processor = QueryProcessor(fc.config)
     fc.answer_generator = MagicMock()
-    fc.cache_manager = CacheManager(config)
+    fc.cache_manager = CacheManager(fc.config)
 
     # Persistence.
     persist_dir = fc.vector_store.persist_dir
-    storage_cfg = config.get("storage", {})
+    storage_cfg = fc.config.get("storage", {})
     fc.snapshot_store = SnapshotStore(persist_dir, storage_cfg=storage_cfg)
     fc.manifest_store = ManifestStore(fc.snapshot_store.db_runtime)
     fc.index_run_store = IndexRunStore(fc.snapshot_store.db_runtime)
-    fc.terminus_publisher = TerminusPublisher(config)
+    fc.terminus_publisher = TerminusPublisher(fc.config)
 
     from fastcode.indexing.projection_transform import ProjectionTransformer
     from fastcode.store.projection import ProjectionStore
 
-    fc.projection_transformer = ProjectionTransformer(config)
-    fc.projection_store = ProjectionStore(config)
+    fc.projection_transformer = ProjectionTransformer(fc.config)
+    fc.projection_store = ProjectionStore(fc.config)
     fc.snapshot_symbol_index = SnapshotSymbolIndex()
-    fc.pg_retrieval_store = PgRetrievalStore(fc.snapshot_store.db_runtime, config)
+    fc.pg_retrieval_store = PgRetrievalStore(fc.snapshot_store.db_runtime, fc.config)
     fc.retriever.set_pg_retrieval_store(fc.pg_retrieval_store)
-    fc.doc_ingester = KeyDocIngester(config, fc.embedder)
-    fc.graph_runtime = LadybugGraphRuntime(config)
+    fc.doc_ingester = KeyDocIngester(fc.config, fc.embedder)
+    fc.graph_runtime = LadybugGraphRuntime(fc.config)
 
     # State.
     fc.repo_loaded = False
@@ -393,11 +368,17 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@_skip_ollama
-def test_e2e_indexing_sqlite_real_embeddings(tmp_path: pathlib.Path):
+def test_e2e_indexing_sqlite_real_embeddings(
+    tmp_path: pathlib.Path,
+    require_ollama_all_minilm_embeddings: str,
+):
     """Full indexing pipeline with SQLite backend and real Ollama embeddings."""
     repo_path = _build_test_repo(tmp_path)
-    config = _base_config(tmp_path, backend="sqlite")
+    config = _base_config(
+        tmp_path,
+        backend="sqlite",
+        ollama_url=require_ollama_all_minilm_embeddings,
+    )
     fc = _build_fastcode(config)
 
     # Verify embedder is real Ollama, not mocked.
@@ -411,10 +392,13 @@ def test_e2e_indexing_sqlite_real_embeddings(tmp_path: pathlib.Path):
     )
 
     # Return shape.
-    assert result["status"] == "succeeded"
+    assert result["status"] in ("succeeded", "degraded")
     assert result["run_id"]
     assert result["snapshot_id"]
     assert result["artifact_key"]
+
+    if result["status"] == "degraded":
+        assert "terminus_not_configured" in result["warnings"]
 
     snapshot_id = result["snapshot_id"]
     run_id = result["run_id"]
@@ -457,7 +441,7 @@ def test_e2e_indexing_sqlite_real_embeddings(tmp_path: pathlib.Path):
     # Index run completed.
     run = fc.index_run_store.get_run(run_id)
     assert run is not None
-    assert run["status"] == "succeeded"
+    assert run["status"] in ("succeeded", "degraded")
 
 
 # ---------------------------------------------------------------------------
@@ -465,9 +449,11 @@ def test_e2e_indexing_sqlite_real_embeddings(tmp_path: pathlib.Path):
 # ---------------------------------------------------------------------------
 
 
-@_skip_ollama
-@_skip_pg
-def test_e2e_indexing_pg_real_embeddings(tmp_path: pathlib.Path):
+def test_e2e_indexing_pg_real_embeddings(
+    tmp_path: pathlib.Path,
+    require_ollama_all_minilm_embeddings: str,
+    require_postgres_e2e: str,
+):
     """Full indexing pipeline with real PG backend and real Ollama embeddings.
 
     Verifies:
@@ -476,11 +462,15 @@ def test_e2e_indexing_pg_real_embeddings(tmp_path: pathlib.Path):
     - IR snapshot is persisted and loadable
     - Manifest is published
     """
-    pg_dsn = os.environ.get(
-        "PG_E2E_DSN", "postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e"
-    )
+    pg_dsn = require_postgres_e2e
     repo_path = _build_test_repo(tmp_path)
-    config = _base_config(tmp_path, backend="postgres", pg_dsn=pg_dsn, enable_docs=True)
+    config = _base_config(
+        tmp_path,
+        backend="postgres",
+        pg_dsn=pg_dsn,
+        enable_docs=True,
+        ollama_url=require_ollama_all_minilm_embeddings,
+    )
     fc = _build_fastcode(config)
 
     # Verify real services are wired.
@@ -532,15 +522,14 @@ def test_e2e_indexing_pg_real_embeddings(tmp_path: pathlib.Path):
 
 def _pg_execute(
     dsn: str, sql: str, params: dict[str, Any] | None = None
-) -> list[dict[str, Any]] | None:
+) -> list[tuple[Any, ...]] | None:
     """Execute a query against the test PG database."""
     import psycopg
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(sql, params or ())  # type: ignore[arg-type]
         if cur.description:
-            rows = cur.fetchall()
-            return [dict(r) for r in rows]
+            return cur.fetchall()
         conn.commit()
         return None
 

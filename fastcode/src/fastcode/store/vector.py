@@ -10,14 +10,12 @@ import json
 import logging
 import os
 import pickle
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import Any, TypedDict, cast
 
 import faiss
 import numpy as np
 
-if TYPE_CHECKING:
-    from ..ir.element import CodeElementMeta
-
+from ..ir.element import CodeElementMeta
 from ..utils import ensure_dir
 
 _REPO_OVERVIEW_STORAGE_VERSION = 1

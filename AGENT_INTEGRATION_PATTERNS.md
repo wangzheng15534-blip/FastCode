@@ -18,6 +18,9 @@ This design covers:
 - typed record boundaries for working memory, handoff, and activation
 - why FastCode should support multiple execution modes instead of one default
 
+Checkpoint and transactional state design is tracked separately in
+[AGENT_CHECKPOINT_STATE_DESIGN.md](./AGENT_CHECKPOINT_STATE_DESIGN.md).
+
 This design does not cover:
 
 - training or fine-tuning models

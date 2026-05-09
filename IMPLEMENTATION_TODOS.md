@@ -23,15 +23,15 @@ FastCode is currently in a hardened pre-release state, not a real stable release
 The core algorithmic path is much stronger than the original prototype: snapshot indexing, IR/SCIP merge, semantic resolver fallback, query-time escalation, artifact isolation, and async endpoint offloading all have regression coverage and green smoke gates.
 
 The remaining gap to a stable release is no longer mainly "does the core pipeline work?" The gap is production evidence and operational hardening:
-- true incremental source/index/update caching at the pipeline core
-- true embedding/model cache reuse keyed by content and model fingerprint
+- true incremental source/index/update caching at the pipeline core, beyond the currently partial manifest/scoped-frontier implementation
+- first-class embedding/model fingerprint reuse across snapshots, vector artifacts, repository overviews, PG rows, and query embeddings
 - strict FP/FCIS dataflow enforcement across API -> schema -> core -> store boundaries
 - completion of typed store/query/projection records so persistence and API shells stop leaking raw dict payloads
 - install/package reproducibility from a clean environment
 - real external-tool integration evidence across supported languages
 - real PostgreSQL/backend semantics beyond local fakes
-- API/file-upload security hardening
-- service-wide state isolation under concurrent load/query/mutation traffic
+- production deployment/auth runbooks for API/file-upload use beyond the current trusted-local/proxy-auth contract
+- request-local artifact serving that scales concurrent reads without the current public `FastCode` service lock serializing query paths
 - release documentation, compatibility policy, and deployment runbooks
 
 Stable release should mean all of the following are true at once:
@@ -41,6 +41,48 @@ Stable release should mean all of the following are true at once:
 - storage backends, migrations, and artifact compatibility are tested against real upgrade scenarios
 - install, deploy, operate, and recover workflows are documented and reproducible
 - release claims about language support, backend support, and compatibility are narrower than the proven evidence, not broader
+
+## Source-level audit - May 10, 2026
+
+This audit checked current source and regression tests directly, not git history.
+
+**Verdict:** the tracker should say "hardened pre-release with several partial passes," not "stable-ready." Several earlier TODO entries were stale in both directions: some work marked future now has a v0 implementation, while some work marked closed only satisfies a trusted-local or unit-tested contract rather than the full non-functional release goal.
+
+**Evidence anchors checked:**
+- architecture gates: `fastcode/tests/architecture/`
+- incremental planning/materialization: `fastcode/src/fastcode/indexing/pipeline.py`,
+  `fastcode/src/fastcode/scip/ast_adapter.py`
+- embedding cache: `fastcode/src/fastcode/indexing/embedder.py`
+- snapshot query handles and service locking:
+  `fastcode/src/fastcode/indexing/pipeline.py`,
+  `fastcode/src/fastcode/query/handler.py`,
+  `fastcode/src/fastcode/main/fastcode.py`
+- API upload/CORS/offload hardening: `fastcode/src/fastcode/utils/archive.py`,
+  `fastcode/src/fastcode/api/cors.py`, `fastcode/src/fastcode/api/routes.py`
+- agent turn/context v0: `fastcode/src/fastcode/retrieval/core/agent_context.py`,
+  `fastcode/src/fastcode/retrieval/core/context_compiler.py`,
+  `fastcode/src/fastcode/store/records.py`, `fastcode/src/fastcode/store/cache.py`
+
+**Really implemented:**
+- Architecture gates are active and green for import layers, no Pydantic in core, package-root purity, explicit translation, and settings flow. Verified with `uv run pytest fastcode/tests/architecture -q` (`11 passed`).
+- Incremental indexing has moved beyond the May 4 audit: `build_ir_from_ast()` now persists file-level `content_hash`/`blob_oid` metadata, incremental planning rebuilds AST IR from changed elements, changed-unit embeddings can be reused when `embedding_text_hash` matches, and package/path repair-frontier logic can run scoped SCIP/semantic refresh.
+- Embedding cache reuse is active for repeated texts and writes `float32` buffer payloads. Focused cache/materialization tests pass.
+- `LoadedSnapshotArtifacts` plus an artifact-key LRU exist in `IndexPipeline`, and `QueryPipeline.query_snapshot()` can use request-local retriever/graph handles without its own snapshot-query lock.
+- API upload/CORS hardening is closed for the current trusted-local/proxy-auth contract: active ZIP paths use safe extraction, defaults are local CORS origins and localhost binding, and blocking endpoint work is offloaded with `asyncio.to_thread`.
+- A turn-journal/context-compiler v0 exists: typed `EvidenceRef`, `ToolObservation`, `RiskState`, `AcceptanceContract`, `TurnIntent`, `TurnPlan`, `WorkingMemoryArtifact`, `TurnJournal`, and `HandoffArtifact`; typed cache records; REST/web/MCP facades for turn context, ref expansion, and handoff.
+
+**Still only partially implemented against the non-functional goals:**
+- Incremental update is not file-shard-native end to end. The pipeline still rehydrates a full combined element list and rebuilds vector/BM25/legacy graph artifacts from that set, and scoped SCIP still widens or falls back to repo/tool scope in important cases.
+- Embedding identity is still mostly local to `CodeEmbedder`; there is no shared `embedding_fingerprint` contract enforced uniformly across snapshots, vector stores, repository overviews, query embeddings, and PG/vector rows.
+- Snapshot artifact handles are not yet a full serving isolation solution because public `FastCode.query()` and `FastCode.query_snapshot()` still take the service-wide state lock around the query.
+- FP/FCIS dataflow is much better but not complete. Store hot paths have many typed-record adapters and regression guards, while query/retrieval/API compatibility surfaces still pass raw dict-shaped payloads in several places.
+- Agent-native context bundles are not implemented. The v0 turn compiler is real, but there are no durable `ContextBundle`, `DistillationRecord`, or `ActivationRecord` records, no bundle cache/invalidation path, and no source-ref-preserving distillation reuse.
+
+**Still open:**
+- clean wheel/sdist install smoke from built artifacts
+- real external SCIP/tool command matrix for stable language claims
+- real PostgreSQL migration/locking/outbox/redo/fact semantics under integration load
+- release gate, compatibility policy, artifact migration policy, dependency/supply-chain review, and deployment/operator runbooks
 
 ## Landed hardening
 
@@ -105,6 +147,10 @@ Stable release should mean all of the following are true at once:
   - `IndexPipeline._plan_incremental_elements()` reuses unchanged element metadata from the previous artifact manifest
   - compatible snapshots call `CodeIndexer.index_files()` only for added/modified files instead of falling back to full `extract_elements()`
   - integration coverage proves unchanged files bypass full extraction when compatibility checks match
+  - `build_ir_from_ast()` now persists file-level `content_hash`/`blob_oid` metadata on file units
+  - incremental plans now build AST IR from changed elements and merge with the previous snapshot rather than rebuilding AST IR from unchanged files
+  - changed-unit embeddings can be reused when stable unit identity and `embedding_text_hash` match
+  - package/path repair-frontier logic can scope semantic refresh and SCIP reruns when API or edge surfaces change
 - Embedding cache hardening:
   - `CodeEmbedder` now uses cache-aware batch embedding in the active indexing path
   - identical embedding texts are deduplicated before provider calls
@@ -165,6 +211,15 @@ Stable release should mean all of the following are true at once:
   - `FastCode` now exposes a service-level reentrant state lock around repository load/index, snapshot pipeline, projection build, query/query-stream, multi-repo cache load, delete, cleanup, and shutdown flows
   - REST and web load+index/upload+index helpers now execute the combined mutation under one service critical section, preventing interleaving between repository replacement and indexing
   - Regression tests cover query serialization against load, index, delete, refresh, and cleanup/unload-style mutations
+- Snapshot artifact-handle hardening:
+  - `IndexPipeline` now exposes `LoadedSnapshotArtifacts` handles and an artifact-key LRU cache
+  - `QueryPipeline.query_snapshot()` can use request-local retriever/graph handles instead of mutating the singleton retriever state
+  - regression coverage proves the handle path can isolate concurrent snapshot queries without `QueryPipeline._snapshot_query_lock`; public `FastCode` still serializes query entrypoints with the service lock, so this is not yet a read-scalability closure
+- Agent-context v0 hardening:
+  - pure typed turn/context records now live in `retrieval/core/agent_context.py`
+  - `retrieval/core/context_compiler.py` renders stable/turn/observation FCX working-memory artifacts and typed handoff artifacts
+  - `store.records` and `store/cache.py` persist typed working-memory, turn-journal, and handoff records through explicit payload serializers
+  - REST, web, MCP, and `FastCode` facades expose latest/specific turn context, evidence-ref expansion, and handoff creation/fetch
 - Lock fencing hardening:
   - PostgreSQL same-owner lock refresh preserves the current fencing token instead of invalidating in-flight work
 - Package-root import-boundary hardening:
@@ -191,7 +246,7 @@ Stable release should mean all of the following are true at once:
 
 ## Incremental Update and Cache Audit
 
-**Audit date:** May 4, 2026
+**Audit date:** May 4, 2026; source-level status refreshed May 10, 2026
 
 **Verdict:** partial PASS. FastCode now has real early reuse for unchanged files, but it does not yet implement graceful end-to-end incremental update for compiler/tool-backed stages.
 
@@ -199,12 +254,16 @@ Stable release should mean all of the following are true at once:
 - `fastcode.indexing.pipeline._plan_incremental_elements()` reuses unchanged element metadata from the previous artifact manifest and only reindexes added/modified files.
 - `fastcode.tests.integration.test_snapshot_pipeline.test_pipeline_incremental_prefilter_only_indexes_changed_files` proves unchanged files bypass `extract_elements()` and only changed files are passed to `index_files()`.
 - `fastcode.indexing.embedder.CodeEmbedder` uses cache-aware `embed_code_elements()`, deduplicates identical texts, and keys cache entries by provider/model/dimension/normalization/max-sequence-length identity.
+- `build_ir_from_ast()` persists file-level `content_hash` / `blob_oid` metadata on file units.
+- incremental plans can build AST IR from changed elements and merge it with the previous snapshot instead of rebuilding AST IR from unchanged files.
+- changed-unit embeddings can be reused when stable unit identity and `embedding_text_hash` match.
 - helper-backed semantic resolvers already scope helper input to changed `target_paths`, so helper work is narrower than full-repo in the happy path.
+- package/path repair-frontier logic can scope semantic refresh and SCIP reruns when changed API or edge surfaces are known.
 
 **What is not yet true:**
-- the pipeline still rebuilds a full combined `elements` list and then rebuilds AST IR from that whole set, so reuse is earlier than before but not yet shard-native.
-- optional SCIP still detects languages by walking the repository and then invokes repo-scoped indexers, so one-file edits can still pay near full compiler/indexer cost.
-- the late `diff_changed_files()` / `apply_incremental_update()` path is not yet a sufficient primary correctness anchor because `build_ir_from_ast()` does not currently persist canonical `blob_oid` / `content_hash` on file units.
+- the pipeline still rehydrates a full combined `elements` list and rebuilds downstream whole-snapshot vector/BM25/legacy graph artifacts from that set, so reuse is not yet file-shard-native end to end.
+- optional SCIP now has scoped paths, but language detection and unsupported/widened cases can still pay near full compiler/indexer cost.
+- file-unit `content_hash` / `blob_oid` metadata exists, but file identity is not yet a single canonical planner anchor shared by inventory, incremental planning, SCIP, file-artifact reuse, and downstream publication.
 - helper-backed runtimes still pay per-run process startup cost; the Go helper currently uses `go run`, which also implies repeated compile/build overhead.
 
 **Release implication:** current behavior materially reduces repeated parse and embedding work for unchanged files, but stable-release claims must still say compiler/tooling cost is only partially incremental.
@@ -316,9 +375,14 @@ prompt-facing working-memory view from typed state.
   - prefer stable IDs/placeholders plus expandable summaries over repeatedly
     injecting large raw snippets
 
+**Current state:** v0 already defines `EvidenceRef` and typed
+turn/working-memory/handoff records outside Pydantic-heavy shells. The
+bundle/distillation/activation layer remains future work.
+
 **Proposed staged roadmap:**
-1. Define frozen core records for `EvidenceRef`, `ContextBundle`,
-   `DistillationRecord`, and `ActivationRecord` outside Pydantic-heavy shells.
+1. Define frozen core records for `ContextBundle`, `DistillationRecord`, and
+   `ActivationRecord`, extending the existing `EvidenceRef` contract only where
+   bundle expansion requires it.
 2. Add explicit serializers and cache keys for those records in `store/cache.py`
    or a dedicated context store.
 3. Add a read-only context-bundle builder that consumes current retrieval
@@ -521,16 +585,16 @@ The template philosophy remains correct for Python: use one importable package w
 
 ### P0.2 True incremental source/index caching
 
-**Gap:** The current release path is partially incremental, not gracefully incremental end to end. The manifest-driven prefilter can skip unchanged-file parse and embedding, but later AST/IR materialization, whole-repo SCIP, and some helper/tool startup costs still scale close to a full reindex.
+**Gap:** The current release path is partially incremental, not gracefully incremental end to end. The manifest-driven prefilter can skip unchanged-file parse and embedding, changed AST IR can be merged with the previous snapshot, and some semantic/SCIP work can be scoped. Snapshot publication still materializes combined repo-level artifacts, and widened SCIP/helper/tool startup costs can still scale close to a full reindex.
 
-**Why this is core-level:** This is the largest remaining architecture gap between a hardened prototype and a stable release. On medium and large repos, “incremental” behavior still scales like full reindex.
+**Why this is core-level:** This is the largest remaining architecture gap between a hardened prototype and a stable release. On medium and large repos, important parts of “incremental” behavior can still scale like full reindex even when parse and embedding reuse are working.
 
 **Current failure modes:**
 - repository inventory and file hashing are recomputed repeatedly across snapshot identity, incremental planning, and SCIP language detection.
-- `run_index_pipeline()` rehydrates unchanged metadata into one full `elements` list and rebuilds AST IR from the entire combined set instead of merging file-native IR shards.
-- optional SCIP remains repo-scoped: `detect_scip_languages()` walks the repository and `run_scip_for_language()` invokes language indexers for the repo even when only one file changed.
-- `diff_changed_files()` relies on canonical file-unit `blob_oid` / `content_hash`, but `build_ir_from_ast()` does not yet populate those identities end to end, so the late snapshot-diff merge cannot be the primary trusted planner.
-- unchanged files are skipped before parse/embedding, but not yet before AST-IR rebuild, relational fact rebuild, IR graph rebuild, or most compiler/indexer work.
+- `run_index_pipeline()` rehydrates unchanged metadata into one full `elements` list and publishes whole-snapshot vector/BM25/legacy graph artifacts instead of preserving file-native artifact shards through the backend boundary.
+- optional SCIP has scoped paths, but `detect_scip_languages()` still walks the repository and unsupported/widened tool paths still invoke repo/package-scale indexers even when only one file changed.
+- file units now carry `content_hash` / `blob_oid` metadata, but file identity is not yet the single shared planner anchor across inventory, snapshot diffing, SCIP scope, file-artifact stores, and publication.
+- unchanged files are skipped before parse/embedding and before changed-file AST merge, but not yet before every relational fact, IR graph, vector/BM25, legacy graph, or compiler/indexer publication step.
 
 **Required work:**
 - Promote the existing manifest-first prefilter into the canonical `plan_changes` stage:
@@ -546,6 +610,8 @@ The template philosophy remains correct for Python: use one importable package w
   - prefer git `blob_oid` when available
   - otherwise persist `content_hash`
   - fall back to size/mtime only as an explicit degraded mode
+  - use the same identity contract in inventory, file units, manifest planning,
+    SCIP scoping, and artifact publication
 - Add a `FileArtifactStore` keyed by `(repo, rel_path, blob_oid/content_hash)` for:
   - parsed file output
   - file-level AST/IR shards
@@ -567,15 +633,17 @@ The template philosophy remains correct for Python: use one importable package w
 - Treat “missing file fingerprints” as a reason to disable incremental mode, not to silently claim success.
 
 **Exit criteria:**
-- A one-file edit does not trigger full-repo parsing or full-repo embedding.
+- A one-file edit does not trigger full-repo parsing, full-repo embedding, or whole-repo downstream artifact rebuild when file-shard reuse is valid.
 - A one-file implementation-only edit does not trigger whole-repo SCIP/helper recomputation unless interface or build-graph rules require widening.
 - Incremental publish reports correct `added/modified/removed/unchanged` counts for both git and non-git repos.
-- There is an integration test proving unchanged files are not reparsed or re-embedded.
+- There are integration tests proving unchanged files are not reparsed, re-embedded, or republished through full vector/BM25/graph rebuilds when reuse is valid.
 - There is a benchmark/regression test showing one-file update cost is materially below full reindex.
 
 ### P0.2a Graceful update under code change
 
 **Research framing:** A graceful updater should widen work in proportion to semantic impact, not in proportion to raw textual churn.
+
+**Current status:** partially implemented. Incremental plans now classify change kinds, reuse changed-unit embeddings where the prepared text is unchanged, detect API-frontier changes, compute package-scope roots, and feed scoped semantic/SCIP refresh paths in the happy path. The missing release-grade pieces are explicit interface digests, dependency-frontier invalidation, deterministic degraded-mode metadata, and benchmark evidence by edit class.
 
 **Core idea:** Separate change detection into four classes and bind each class to an invalidation radius:
 - identity-stable: no rebuild
@@ -633,6 +701,8 @@ The template philosophy remains correct for Python: use one importable package w
 
 **Why this is core-level:** Stable release users will judge the system by repeated indexing/update cost. Without a correct embedding cache, model inference dominates runtime and cost even when source changes are small.
 
+**Current status:** partially implemented. The active embedder path deduplicates identical prepared texts, stores cached vectors as `float32` buffer payloads, treats stale list-format cache entries as misses, and has focused regression coverage for repeated-text reuse. The remaining gap is a first-class embedding fingerprint propagated across every artifact and persistence surface that can reuse vectors.
+
 **Current failure modes:**
 - embedding cache identity is still mostly local to `CodeEmbedder`; snapshot metadata, vector artifacts, repo-overview artifacts, and PG/vector persistence do not yet share one first-class embedding fingerprint contract.
 - the preparation schema is implicit in `_prepare_code_text()` and only manually versioned through optional `cache_version`, so schema drift still depends on operator discipline.
@@ -675,18 +745,22 @@ The template philosophy remains correct for Python: use one importable package w
 
 ### P0.4 Snapshot artifact handle caching for query serving
 
-**Gap:** Snapshot artifacts are cached only as disk bundles. Query-time loads still mutate global singleton state and serialize all snapshot queries through one critical section.
+**Status:** partially implemented. `LoadedSnapshotArtifacts` handles and an artifact-key LRU now exist in `IndexPipeline`, and `QueryPipeline.query_snapshot()` can consume request-local retriever/graph handles without swapping singleton query state.
+
+**Remaining gap:** this is not yet a full serving isolation/read-scalability closure. The public `FastCode.query()` and `FastCode.query_snapshot()` entrypoints still acquire the service-wide state lock around query execution, so concurrent reads remain serialized at the composition root even though the lower query handler can use request-local handles.
 
 **Required work:**
-- Introduce immutable `LoadedSnapshotArtifacts` handles.
-- Add in-process LRU caching by `artifact_key`.
-- Make query paths consume request-local handles instead of swapping singleton `vector_store` / `retriever` / `graph_builder` state.
-- Separate serving-time artifact load from repair/rebuild behavior.
+- Narrow the public `FastCode` service lock so immutable snapshot queries can run concurrently while mutations remain serialized.
+- Keep artifact-handle load/cache mutation internally locked without serializing the full query.
+- Treat `LoadedSnapshotArtifacts` contents as read-only serving handles and document which contained stores/retrievers are safe to share across concurrent reads.
+- Keep serving-time artifact load separate from repair/rebuild behavior.
+- Add endpoint-level concurrency coverage above the lower `QueryPipeline` handle tests.
 
 **Exit criteria:**
 - Repeated queries against the same snapshot avoid disk reload.
 - Concurrent snapshot queries on different snapshots do not cross-contaminate results.
 - Eviction behavior is bounded and tested.
+- Public API/`FastCode` query entrypoints can serve independent immutable snapshot reads concurrently, or the singleton serialization contract is explicitly documented as a non-goal.
 
 ### P0.5 Real external-tool integration matrix
 
@@ -915,17 +989,18 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 
 ### P0.8 Service-wide state isolation under concurrent traffic
 
-**Status:** Mostly closed for the singleton trusted-local mode. The remaining architectural improvement is request-local immutable artifact handles so read traffic does not serialize behind unrelated mutations.
+**Status:** closed for correctness in the singleton trusted-local mode, but not closed for read scalability. Service-wide locking prevents mixed query/mutation races; artifact handles now exist below the composition root, but public query entrypoints still serialize behind the same lock.
 
 **Recently landed:**
 - Repository load/index, snapshot pipeline, projection build, query/query-stream, multi-repo cache load, delete, cleanup, and shutdown paths now acquire a shared reentrant service lock.
 - REST and web load+index/upload+index helpers hold that lock across the entire combined mutation, including scan-cache invalidation.
 - Regression coverage verifies the combined helpers use one critical section.
 - Regression coverage verifies query serving does not overlap load, index, delete, refresh, or cleanup/unload-style mutations.
+- Lower-level snapshot query serving can use request-local `LoadedSnapshotArtifacts` handles without `QueryPipeline._snapshot_query_lock`.
 
 **Remaining follow-up:**
 - Add endpoint-level concurrency tests for upload vs query with real ASGI request scheduling.
-- Longer term, move query serving toward request-local immutable artifact handles so reads do not serialize behind unrelated mutations.
+- Narrow or split the public `FastCode` state lock so request-local immutable artifact handles can actually serve independent reads concurrently while mutations stay serialized.
 
 **Exit criteria:**
 - Concurrent mutation/query behavior is either serialized by design or explicitly rejected with clear errors.
@@ -1199,21 +1274,24 @@ This item should be treated as the implementation slice of the broader P0.6a sch
 
 ### P1.10 Agent context bundle v0
 
-**Status:** Research/design track. This is not a stable-release P0 blocker for
-the current API/CLI/MCP product shape, but it is required before FastCode should
-claim to be an agent-native context engineering system.
+**Status:** bundle layer not implemented. This is not a stable-release P0 blocker
+for the current API/CLI/MCP product shape, but it is required before FastCode
+should claim to be an agent-native context engineering system. The source-level
+audit found a real turn-journal/context-compiler v0, including typed
+`EvidenceRef`, but no durable bundle/distillation/activation layer.
 
-**Gap:** Current agent integration still mostly exposes tools that answer a
-question, search symbols, inspect graph paths, or return session history.
-Agents do not yet get durable, cacheable, expandable context bundles with
-source-ref preserving distillation and reuse metadata.
+**Gap:** Current agent integration can compile and persist typed working-memory,
+turn-journal, and handoff artifacts. Agents do not yet get durable, cacheable,
+expandable `ContextBundle` artifacts with source-ref preserving distillation,
+activation feedback, and reuse metadata.
 
 **Required work:**
 - Add frozen context records for:
-  - evidence refs
   - context bundles
   - distillation records
   - activation records
+- Extend the existing `EvidenceRef` model only where bundle expansion requires
+  additional source handles.
 - Build a read-only context-bundle path over existing retrieval/projection
   outputs.
 - Make bundle cache keys include snapshot/artifact, projection, embedding,
@@ -1237,27 +1315,34 @@ source-ref preserving distillation and reuse metadata.
 
 ### P1.11 Turn journal and context compiler
 
-**Status:** Not started.
+**Status:** v0 partially implemented.
 
-**Gap:** The current iterative agent already has multi-round control, but turn
-state is still mostly transient prompt data plus flat cache summaries. Tool
-calls are not yet persisted and reused as typed observations that can drive the
-next-turn rewrite deterministically. The code also does not yet clearly
-separate append-only historical truth from the replaceable working-memory view.
+**Already landed:**
+- Pure typed records exist for `EvidenceRef`, `ToolObservation`, `RiskState`,
+  `AcceptanceContract`, `TurnIntent`, `TurnPlan`, `WorkingMemoryArtifact`,
+  `TurnJournal`, and `HandoffArtifact`.
+- `context_compiler.py` renders stable/turn/observation FCX sections from typed
+  state and builds typed handoff artifacts.
+- `store.records` and `store/cache.py` persist working-memory, turn-journal, and
+  handoff records through explicit payload serializers.
+- `query/handler.py` feeds prior compiled context into subsequent query turns and
+  saves typed working-memory plus journal records.
+- REST, web, MCP, and `FastCode` facades expose latest/specific turn context,
+  evidence-ref expansion, and handoff creation/fetch.
+
+**Gap:** The v0 gives FastCode a real typed turn/context substrate, but it is not
+yet the full deterministic agent-control layer described here. Verifier
+transitions, rejected-hypothesis lifecycle, strict FCX parse-back, reset,
+branch, ask, and abstain policy gates, and replay/cache-stability guarantees
+remain open.
 
 **Required work:**
-- Add typed turn-journal records and explicit serializers.
-- Split persistence and compilation responsibilities:
-  - append-only journal for observations, verifier outputs, and outcomes
-  - compiled working-memory artifact for stable prefix, active turn state, and
-    recent relevant observation slice
 - Normalize tool outputs from `agent_tools` and future verifier tools into
   observation records with evidence refs and freshness metadata.
-- Add a context compiler that renders next-turn prompt state from typed turn
-  state instead of replaying broad dialogue history.
 - Keep raw tool output and deep context external/restorable by reference rather
   than inline in the compiled prompt.
-- Add a strict FCX serializer/parser for compact model-facing prompt state.
+- Add a strict FCX parser/round-trip contract for compact model-facing prompt
+  state.
 - Add possibility-management fields:
   - hypotheses
   - supporting refs
@@ -1265,10 +1350,7 @@ separate append-only historical truth from the replaceable working-memory view.
   - verifier status
   - unresolved questions
 - Add explicit decision-control objects:
-  - `RiskState`
-  - `AcceptanceContract`
   - `RejectedHypothesisLedger`
-  - `HandoffArtifact`
 - Add a versioned promotion/rejection policy:
   - observation -> cited note
   - cited note -> hypothesis support/conflict

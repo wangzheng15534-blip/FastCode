@@ -188,14 +188,23 @@ What already works:
 
 - unchanged files can bypass repeated parse and embedding work via manifest-first
   planning in the active path
+- file-level `content_hash` / `blob_oid` metadata is persisted on AST-derived IR
+  file units
+- incremental plans can rebuild changed AST IR and merge it with the previous
+  snapshot instead of rebuilding unchanged-file AST IR
+- changed-unit embeddings can be reused when stable unit identity and
+  `embedding_text_hash` match
 - embeddings are deduplicated and cached with model-aware keys
 - helper-backed semantic resolvers can scope work to changed paths
+- package/path repair-frontier logic can scope semantic refresh and SCIP reruns
+  when changed API or edge surfaces are known
 
 What is still missing before stable-release claims:
 
-- file-native IR shard reuse as the primary execution model
-- truly incremental SCIP and tool-backed extraction
-- end-to-end canonical file fingerprinting as the single planner anchor
+- file-native artifact shard reuse as the primary execution and publication model
+- truly incremental SCIP/tool-backed extraction in widened and unsupported cases
+- one shared inventory/fingerprint planner across snapshot identity, incremental
+  planning, SCIP scope, file-artifact reuse, and publication
 - deterministic cache invalidation across schema, model, and tool changes
 
 ## Retrieval and query flow
@@ -222,11 +231,13 @@ Current hardened properties:
 
 ## Agent Context Integration
 
-FastCode's current shells expose repository intelligence through CLI, API, web,
-and MCP entrypoints. The next architecture step is deeper agent integration:
-FastCode should produce cacheable context artifacts that agents can budget,
-distill, reactivate, and expand, rather than only returning one-shot answers or
-raw retrieval rows.
+FastCode's shells expose repository intelligence through CLI, API, web, and MCP
+entrypoints. The first agent-context v0 is now implemented: typed turn,
+working-memory, evidence-ref, risk/contract, and handoff artifacts can be
+compiled, persisted, fetched, expanded, and passed into later turns. The next
+architecture step is the bundle layer: durable cacheable context artifacts that
+agents can budget, distill, reactivate, and expand, rather than only returning
+one-shot answers or raw retrieval rows.
 
 The design follows the existing source-of-truth rule:
 
@@ -253,7 +264,7 @@ In practice that means:
 - "rewrite" means replacing the compiled working-memory view, not mutating the
   historical evidence journal
 
-The target context model has four record families:
+The broader target context model has four record families:
 
 - `EvidenceRef`: pointer to a code fact, projection chunk, file range, symbol,
   graph path, tool trace, or prior dialogue turn
@@ -264,6 +275,13 @@ The target context model has four record families:
 - `ActivationRecord`: record that an agent actually used a bundle or evidence
   item for a task, optionally with outcome signals such as edited files, tests
   run, accepted/rejected sources, or follow-up expansions
+
+Current implementation status: `EvidenceRef`, `ToolObservation`, `RiskState`,
+`AcceptanceContract`, `TurnIntent`, `TurnPlan`, `WorkingMemoryArtifact`,
+`TurnJournal`, and `HandoffArtifact` exist in `retrieval/core/` with explicit
+cache records and shell facades. Durable `ContextBundle`, `DistillationRecord`,
+and `ActivationRecord` records are still target architecture, not implemented
+release features.
 
 This split also matches the practical lessons from long-turn agents such as
 Manus:
@@ -363,20 +381,27 @@ is enough evaluation data to avoid reinforcing accidental retrieval choices.
 
 ### Turn-Centric Toolchain Integration
 
-The next rewrite should center the agent loop on typed turns, not on raw prompt
-history plus ad hoc tool outputs.
+The agent loop is now partially centered on typed turns instead of raw prompt
+history plus ad hoc tool output.
 
-Current code already exposes the right starting points:
+Current code already exposes the v0 substrate:
 
-- `query/handler.py` owns session-aware orchestration
-- `retrieval/iterative.py` already models multi-round confidence, tool calls,
-  and keep/discard decisions
+- `retrieval/core/agent_context.py` owns typed evidence, observation, risk,
+  contract, working-memory, journal, and handoff records
+- `retrieval/core/context_compiler.py` renders FCX working-memory and handoff
+  artifacts from typed state
+- `query/handler.py` owns session-aware orchestration and persists compiled turn
+  artifacts
+- `retrieval/iterative.py` models multi-round confidence, tool calls, and
+  keep/discard decisions while accepting compiled context from prior turns
 - `retrieval/agent_tools.py` is the read-only repository boundary
-- `store/cache.py` persists dialogue turns and session indexes
+- `store/cache.py` persists dialogue turns, session indexes, turn journals,
+  working memory, and handoff artifacts
 
-The gap is that these pieces are still joined mainly through prompt text,
-flat dict payloads, and saved summaries. The deeper integration model should
-make toolchain outputs first-class turn artifacts while clearly separating:
+The remaining gap is deterministic agent control, not the absence of a turn
+substrate. Verifier transitions, strict FCX parse-back, branch/ask/abstain
+policy gates, rejected-hypothesis lifecycle, and cache-stability/replay proofs
+still need to become first-class typed behavior while preserving:
 
 - the append-only historical journal
 - the replaceable compiled working-memory view
@@ -778,18 +803,28 @@ Current entrypoints from `fastcode/pyproject.toml`:
 
 ## Concurrency and state
 
-The codebase has some landed hardening here, but this remains a release-risk
-area.
+The codebase has landed correctness hardening here, but read scalability remains
+a release-risk area.
 
 Landed:
 
-- `query_snapshot` serializes load-plus-query with a `threading.Lock`
-- regression tests cover concurrent callers and artifact isolation
+- public `FastCode` entrypoints serialize repository load/index, snapshot
+  pipeline, query/query-stream, cache load, delete, cleanup, and shutdown through
+  a service-level `threading.RLock`
+- `LoadedSnapshotArtifacts` handles and an artifact-key LRU cache exist in
+  `IndexPipeline`
+- `QueryPipeline.query_snapshot()` can use request-local retriever/graph handles
+  without swapping singleton serving state
+- regression tests cover mutation/query serialization and lower-level artifact
+  handle isolation
 - several blocking API and web paths are offloaded with `asyncio.to_thread`
 
 Open concerns:
 
-- wider service-state isolation under mixed query, indexing, and mutation load
+- public `FastCode.query()` and `FastCode.query_snapshot()` still hold the
+  service lock for the whole query, so independent immutable snapshot reads are
+  serialized at the composition root
+- endpoint-level concurrency coverage under real ASGI scheduling
 - real backend behavior under concurrent traffic
 
 ## Release blockers still open
@@ -801,7 +836,8 @@ The main remaining stable-release blockers are:
 - true end-to-end incremental source and index caching
 - broader FP/FCIS dataflow completion across store, query, and projection boundaries
 - real backend and toolchain evidence across supported languages
-- API and file-upload security hardening
+- production deployment/auth documentation beyond the current
+  trusted-local/proxy-auth API contract
 - deployment and operations documentation
 
 See [IMPLEMENTATION_TODOS.md](./IMPLEMENTATION_TODOS.md) for the maintained

@@ -19,7 +19,7 @@ from fastcode.ir.types import (
     IRSnapshot,
     IRUnitSupport,
 )
-from fastcode.scip.models import SCIPIndex
+from fastcode.scip.models import SCIPDocument, SCIPIndex
 from fastcode.store.index_run import IndexRunStore
 from fastcode.store.manifest import ManifestStore
 from fastcode.store.snapshot import SnapshotStore
@@ -1801,6 +1801,101 @@ def test_incremental_scip_scope_skips_when_source_owned_evidence_preserved() -> 
             "target_paths": ["pkg/b.py"],
             "scope_roots": [],
         }
+
+
+def test_scoped_scip_frontier_uses_repo_root_mode_and_cache() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_scoped_cache_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        os.makedirs(os.path.join(tmp, "pkg"), exist_ok=True)
+        with open(os.path.join(tmp, "pyproject.toml"), "w", encoding="utf-8") as handle:
+            handle.write("[project]\nname='repo'\n")
+        with open(os.path.join(tmp, "pkg", "a.py"), "w", encoding="utf-8") as handle:
+            handle.write("def a():\n    return 1\n")
+        snapshot = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:scoped")
+        scip_index = SCIPIndex(
+            documents=[SCIPDocument(path="pkg/a.py", language="python")],
+            indexer_name="scip-python",
+            indexer_version="test",
+        )
+        warnings: list[str] = []
+        run_roots: list[str] = []
+
+        def _run_scip(_language: str, repo_path: str, _output_dir: str) -> SCIPIndex:
+            run_roots.append(repo_path)
+            return scip_index
+
+        with (
+            patch("fastcode.indexing.pipeline.run_scip_for_language", _run_scip),
+            patch.object(
+                pipeline,
+                "_copy_scope_root",
+                side_effect=AssertionError("scoped SCIP should not copy package roots"),
+            ),
+        ):
+            first, first_languages = pipeline._run_scoped_scip_frontier(
+                snapshot=snapshot,
+                repo_name="repo",
+                scope_kind="package",
+                scope_roots=["pkg"],
+                target_paths={"pkg/a.py"},
+                warnings=warnings,
+            )
+            second, second_languages = pipeline._run_scoped_scip_frontier(
+                snapshot=snapshot,
+                repo_name="repo",
+                scope_kind="package",
+                scope_roots=["pkg"],
+                target_paths={"pkg/a.py"},
+                warnings=warnings,
+            )
+
+        assert first is not None
+        assert second is not None
+        assert first_languages == ["python"]
+        assert second_languages == ["python"]
+        assert run_roots == [tmp]
+        assert warnings == []
+        assert first.metadata["scoped_scip_cache"] == {
+            "hits": 0,
+            "misses": 1,
+            "scope_copies": 0,
+            "working_mode": "repo_root_filtered",
+        }
+        assert second.metadata["scoped_scip_cache"] == {
+            "hits": 1,
+            "misses": 0,
+            "scope_copies": 0,
+            "working_mode": "repo_root_filtered",
+        }
+
+
+def test_scoped_scip_cache_key_includes_package_marker_fingerprint() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_scoped_key_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        os.makedirs(os.path.join(tmp, "pkg"), exist_ok=True)
+        with open(os.path.join(tmp, "pkg", "a.py"), "w", encoding="utf-8") as handle:
+            handle.write("def a():\n    return 1\n")
+        marker_path = os.path.join(tmp, "pyproject.toml")
+        with open(marker_path, "w", encoding="utf-8") as handle:
+            handle.write("[project]\nname='repo'\n")
+
+        first = pipeline._scoped_scip_cache_entry(
+            repo_root=tmp,
+            language="python",
+            scope_root="pkg",
+            target_paths={"pkg/a.py"},
+        )
+        with open(marker_path, "w", encoding="utf-8") as handle:
+            handle.write("[project]\nname='repo2'\n")
+        second = pipeline._scoped_scip_cache_entry(
+            repo_root=tmp,
+            language="python",
+            scope_root="pkg",
+            target_paths={"pkg/a.py"},
+        )
+
+        assert first.key != second.key
+        assert first.payload["package_markers"][0]["path"] == "pyproject.toml"
 
 
 def test_resolve_snapshot_ref_uses_dirty_worktree_hash_for_local_changes() -> None:

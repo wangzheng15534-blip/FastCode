@@ -233,7 +233,9 @@ class PgRetrievalStore:
                 for item in cast(set[Any], value)
             ]
         if isinstance(value, np.ndarray):
-            return value.tolist()
+            raise ValueError(
+                "NumPy arrays must not be serialized into PG metadata JSON"
+            )
         if isinstance(value, np.integer):  # type: ignore[arg-type]
             return int(cast(Any, value))
         if isinstance(value, np.floating):  # type: ignore[arg-type]

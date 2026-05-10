@@ -1270,7 +1270,7 @@ class VectorStore:
                 continue
             if sequence_nos.ndim != 1:
                 continue
-            values = [int(value) for value in sequence_nos.tolist()]
+            values = [int(value) for value in sequence_nos.astype(np.int64, copy=False)]
             if values:
                 max_sequence_no = max(max_sequence_no, *values)
             sequences_by_path[path_key] = values
@@ -1385,9 +1385,11 @@ class VectorStore:
         ordered_rows.sort(key=lambda item: item[0])
         if not ordered_rows:
             return np.empty((0, int(self.dimension or 0)), dtype=np.float32)
-        return np.vstack([row for _, row in ordered_rows]).astype(
-            np.float32, copy=False
-        )
+        dimension = int(self.dimension or vectors.shape[1])
+        ordered = np.empty((len(ordered_rows), dimension), dtype=np.float32)
+        for dest_index, (_sequence_no, row) in enumerate(ordered_rows):
+            ordered[dest_index] = row
+        return ordered
 
     def _load_vector_manifest(self, name: str) -> _VectorShardManifest | None:
         manifest_path = self._vector_manifest_path(name)
@@ -1441,9 +1443,8 @@ class VectorStore:
             sequence_nos = np.asarray(
                 [sequence_no for sequence_no, _ in rows], dtype=np.int64
             )
-            shard_vectors = np.vstack([vector for _, vector in rows]).astype(
-                np.float32, copy=False
-            )
+            row_indexes = np.asarray([sequence_no for sequence_no, _ in rows])
+            shard_vectors = vectors[row_indexes].astype(np.float32, copy=False)
             shard_bytes = self._vector_shard_bytes(
                 sequence_nos=sequence_nos,
                 vectors=shard_vectors,
@@ -1549,10 +1550,13 @@ class VectorStore:
                     reused += 1
                     continue
 
-            sequence_nos = np.asarray([sequence_no for sequence_no, _, _ in rows])
-            shard_vectors = np.vstack([vector for _, _, vector in rows]).astype(
-                np.float32, copy=False
+            sequence_nos = np.asarray(
+                [sequence_no for sequence_no, _, _ in rows], dtype=np.int64
             )
+            row_indexes = np.asarray(
+                [row_index for _, row_index, _ in rows], dtype=np.int64
+            )
+            shard_vectors = vectors[row_indexes].astype(np.float32, copy=False)
             shard_bytes = self._vector_shard_bytes(
                 sequence_nos=sequence_nos,
                 vectors=shard_vectors,
@@ -1596,7 +1600,15 @@ class VectorStore:
             return None
         try:
             shard_dir = self._vector_shards_dir(name)
-            ordered_rows: list[tuple[int, np.ndarray]] = []
+            vector_count = int(manifest.get("vector_count") or 0)
+            dimension = int(manifest.get("dimension") or 0)
+            vectors = (
+                np.empty((vector_count, dimension), dtype=np.float32)
+                if vector_count > 0 and dimension > 0
+                else np.empty((0, dimension), dtype=np.float32)
+            )
+            filled = np.zeros((vector_count,), dtype=bool) if vector_count > 0 else None
+            fallback_rows: list[tuple[int, np.ndarray]] = []
             for entry in manifest.get("shards", []):
                 shard_file = entry.get("shard_file")
                 if not shard_file:
@@ -1607,28 +1619,42 @@ class VectorStore:
                     shard_vectors = archive["vectors"]
                 if sequence_nos.ndim != 1 or shard_vectors.ndim != 2:
                     continue
-                for sequence_no, vector in zip(
-                    sequence_nos.tolist(),
-                    shard_vectors,
-                    strict=True,
+                seq = sequence_nos.astype(np.int64, copy=False)
+                shard_matrix = shard_vectors.astype(np.float32, copy=False)
+                if (
+                    filled is not None
+                    and shard_matrix.shape[0] == seq.shape[0]
+                    and shard_matrix.shape[1] == dimension
                 ):
-                    if not isinstance(sequence_no, (int, np.integer)):
+                    valid = (seq >= 0) & (seq < vector_count)
+                    if bool(valid.all()):
+                        vectors[seq] = shard_matrix
+                        filled[seq] = True
                         continue
-                    ordered_rows.append(
-                        (int(sequence_no), np.asarray(vector, dtype=np.float32))
+                for sequence_no, vector in zip(seq, shard_matrix, strict=True):
+                    fallback_rows.append((int(sequence_no), vector))
+            if filled is not None and bool(filled.all()):
+                loaded_vectors = vectors
+            else:
+                ordered_rows: list[tuple[int, np.ndarray]] = []
+                if filled is not None:
+                    for sequence_no in np.flatnonzero(filled):
+                        ordered_rows.append((int(sequence_no), vectors[sequence_no]))
+                ordered_rows.extend(fallback_rows)
+                ordered_rows.sort(key=lambda item: item[0])
+                loaded_vectors = np.empty(
+                    (len(ordered_rows), dimension), dtype=np.float32
+                )
+                for row_index, (_sequence_no, row) in enumerate(ordered_rows):
+                    loaded_vectors[row_index] = row
+                if not ordered_rows and vector_count == 0:
+                    loaded_vectors = np.empty(
+                        (0, int(manifest.get("dimension") or 0)), dtype=np.float32
                     )
-            ordered_rows.sort(key=lambda item: item[0])
-            vectors = (
-                np.vstack([row for _, row in ordered_rows]).astype(
-                    np.float32, copy=False
-                )
-                if ordered_rows
-                else np.empty(
-                    (0, int(manifest.get("dimension") or 0)), dtype=np.float32
-                )
-            )
+                elif not ordered_rows and vector_count > 0:
+                    loaded_vectors = vectors[filled] if filled is not None else vectors
             return {
-                "vectors": vectors,
+                "vectors": loaded_vectors,
                 "dimension": manifest.get("dimension"),
                 "distance_metric": manifest.get("distance_metric", "cosine"),
                 "index_type": manifest.get("index_type", "HNSW"),

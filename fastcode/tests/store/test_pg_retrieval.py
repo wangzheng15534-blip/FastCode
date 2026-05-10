@@ -257,3 +257,30 @@ def test_upsert_elements_ignores_unknown_top_level_payloads_double():
     vector_payload = json.loads(cursor.calls[0][1][8])
     assert "opaque_payload" not in vector_payload
     assert vector_payload["metadata"]["opaque_metadata"] == "<opaque>"
+
+
+def test_upsert_elements_rejects_array_metadata_json_double():
+    store = PgRetrievalStore.__new__(PgRetrievalStore)
+    store.enabled = True
+    store.logger = logging.getLogger(__name__)
+    store.db_runtime = _FakeDBRuntime(_FakeConn(_RecordingCursor()))
+
+    with pytest.raises(ValueError, match="NumPy arrays"):
+        store.upsert_elements(
+            "snap:1",
+            [
+                {
+                    "id": "elem:bad-array",
+                    "type": "function",
+                    "name": "bad_array",
+                    "relative_path": "pkg/bad_array.py",
+                    "language": "python",
+                    "repo_name": "repo",
+                    "embedding": np.asarray([1.0, 0.0], dtype=np.float32),
+                    "metadata": {
+                        "repo_name": "repo",
+                        "unexpected_array": np.asarray([0.1, 0.2], dtype=np.float32),
+                    },
+                }
+            ],
+        )

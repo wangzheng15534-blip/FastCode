@@ -6,7 +6,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.ir.graph import IRGraphBuilder, IRGraphs
+from fastcode.ir.graph import IRGraphBuilder, IRGraphs, IRGraphView
 from fastcode.ir.types import IREdge, IRSnapshot
 
 # --- Helpers ---
@@ -51,6 +51,19 @@ class TestIRGraphBuilder:
         graphs = builder.build_graphs(snap)
         assert graphs.call_graph.number_of_nodes() == 2
         assert graphs.call_graph.number_of_edges() == 1
+
+    def test_ir_graph_view_reachable_within_respects_hop_cutoff(self):
+        graph = IRGraphView(
+            edges=[
+                ("a", "b", {}),
+                ("b", "c", {}),
+                ("c", "d", {}),
+            ]
+        )
+
+        assert graph.reachable_within("a", 0) == set()
+        assert graph.reachable_within("a", 1) == {"b"}
+        assert graph.reachable_within("a", 2) == {"b", "c"}
 
     def test_import_edge_goes_to_dependency_property(self):
         """HAPPY: import edges populate dependency graph."""

@@ -51,6 +51,10 @@ class IRGraphView:
 
         self._graph: Any = ig.Graph(directed=True)
         self.graph: dict[str, Any] = {}
+        self._node_names: tuple[str, ...] = tuple(node_list)
+        self._name_to_index: dict[str, int] = {
+            name: index for index, name in enumerate(self._node_names)
+        }
         self._graph.add_vertices(node_list)
         if edge_list:
             self._graph.add_edges([(src, dst) for src, dst, _ in edge_list])
@@ -62,9 +66,7 @@ class IRGraphView:
                 ]
 
     def _names(self) -> list[str]:
-        if "name" not in self._graph.vs.attributes():
-            return []
-        return [str(name) for name in self._graph.vs["name"]]
+        return list(self._node_names)
 
     @classmethod
     def from_networkx(cls, graph: nx.Graph[str]) -> IRGraphView:
@@ -112,7 +114,7 @@ class IRGraphView:
         return cls(nodes=nodes, edges=edges)
 
     def __contains__(self, node: object) -> bool:
-        return isinstance(node, str) and node in self._names()
+        return isinstance(node, str) and node in self._name_to_index
 
     def __iter__(self) -> Any:
         return iter(self.nodes())
@@ -155,9 +157,8 @@ class IRGraphView:
         return True
 
     def predecessors(self, node: str) -> Any:
-        try:
-            vertex = self._graph.vs.find(name=str(node))
-        except ValueError:
+        vertex = self._name_to_index.get(str(node))
+        if vertex is None:
             return iter(())
         names = self._names()
         return iter(
@@ -165,9 +166,8 @@ class IRGraphView:
         )
 
     def successors(self, node: str) -> Any:
-        try:
-            vertex = self._graph.vs.find(name=str(node))
-        except ValueError:
+        vertex = self._name_to_index.get(str(node))
+        if vertex is None:
             return iter(())
         names = self._names()
         return iter(
@@ -175,15 +175,27 @@ class IRGraphView:
         )
 
     def reachable_within(self, seed: str, max_hops: int) -> set[str]:
-        if seed not in self:
+        seed_index = self._name_to_index.get(str(seed))
+        if seed_index is None or max_hops <= 0:
             return set()
-        distances = self._graph.distances(source=seed, mode="all")[0]
-        names = self._names()
-        return {
-            str(name)
-            for name, distance in zip(names, distances, strict=True)
-            if 0 < distance <= max_hops
-        }
+        try:
+            indexes = self._graph.neighborhood(
+                vertices=seed_index,
+                order=int(max_hops),
+                mode="all",
+                mindist=1,
+            )
+        except TypeError:
+            indexes = [
+                index
+                for index in self._graph.neighborhood(
+                    vertices=seed_index,
+                    order=int(max_hops),
+                    mode="all",
+                )
+                if index != seed_index
+            ]
+        return {self._node_names[int(index)] for index in indexes}
 
     def to_networkx(self) -> nx.DiGraph[str]:
         graph: nx.DiGraph[str] = nx.DiGraph()

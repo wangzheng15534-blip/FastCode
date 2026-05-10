@@ -13,7 +13,6 @@ from datetime import datetime
 from typing import Any, cast
 
 import networkx as nx
-import numpy as np
 from rank_bm25 import BM25Okapi
 
 from ..graph.build import CodeGraphBuilder
@@ -60,6 +59,7 @@ from ..store.snapshot import SnapshotStore
 from ..store.unit_artifacts import UnitArtifactStore
 from ..store.vector import VectorStore
 from ..utils import (
+    as_float32_matrix,
     config_to_legacy_dict,
     ensure_dir,
     load_runtime_config,
@@ -428,7 +428,7 @@ class FastCode:
                     metadata.append(serialize_code_element(elem))
 
             if vectors:
-                vectors_array: np.ndarray = np.array(vectors)
+                vectors_array = as_float32_matrix(vectors, copy_policy="contiguous")
                 self.vector_store.add_vectors(vectors_array, metadata)
 
             # Initialize resolvers for complete graph building
@@ -1572,7 +1572,7 @@ class FastCode:
                         metadata.append(serialize_code_element(elem))
 
                 if vectors:
-                    vectors_array: np.ndarray = np.array(vectors)
+                    vectors_array = as_float32_matrix(vectors, copy_policy="contiguous")
                     temp_vector_store.add_vectors(vectors_array, metadata)
 
                     # Save this repository's vector index separately

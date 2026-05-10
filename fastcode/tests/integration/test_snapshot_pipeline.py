@@ -12,6 +12,7 @@ import pytest
 from git import Repo
 
 from fastcode.indexing.pipeline import IndexPipeline
+from fastcode.ir.element import CodeElement
 from fastcode.ir.types import (
     IRAttachment,
     IRCodeUnit,
@@ -367,7 +368,7 @@ def _make_minimal_pipeline(tmp: str) -> IndexPipeline:
 def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_layers_") as tmp:
         pipeline = _make_minimal_pipeline(tmp)
-        element = SimpleNamespace(
+        element = CodeElement(
             id="file:a",
             type="file",
             name="a.py",
@@ -376,9 +377,13 @@ def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
             language="python",
             start_line=1,
             end_line=1,
+            code="pass\n",
             signature=None,
+            docstring=None,
+            summary=None,
             metadata={"embedding": np.array([0.1, 0.2, 0.3])},
-            to_dict=lambda: {"id": "file:a", "relative_path": "a.py", "metadata": {}},
+            repo_name="repo",
+            repo_url=None,
         )
         ast_snapshot = IRSnapshot(
             repo_name="repo",
@@ -438,6 +443,14 @@ def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
             ),
             patch.object(pipeline, "_build_git_meta", return_value={}),
             patch.object(pipeline.indexer, "extract_elements", return_value=[element]),
+            patch.object(
+                CodeElement,
+                "to_dict",
+                autospec=True,
+                side_effect=AssertionError(
+                    "active indexing path must not call CodeElement.to_dict()"
+                ),
+            ),
             patch("fastcode.indexing.pipeline.VectorStore", return_value=temp_store),
             patch(
                 "fastcode.indexing.pipeline.CodeGraphBuilder", return_value=temp_graph

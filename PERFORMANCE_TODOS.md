@@ -46,6 +46,9 @@ Implementation update, May 11, 2026:
 - Index runs now publish scoped runtime counters for explicit materialization
   boundaries, including JSON encode/decode, pickle load/dump, NetworkX
   conversion, vector list conversion, full snapshot load, and full graph load.
+- Active-path regressions now patch generic conversion shortcuts to raise across
+  indexing, retrieval, and persistence coverage, so the optimized adapters stay
+  on the exercised paths.
 
 - Incremental indexing can skip unchanged-file parse and embedding work, reuse
   changed-unit embeddings, merge changed AST IR with a previous snapshot, and
@@ -622,7 +625,7 @@ TODO:
 - [x] Add runtime counters for explicit materialization boundaries: JSON encode,
   JSON decode, pickle load/dump, NetworkX conversion, vector list conversion,
   snapshot full load, and graph full load.
-- [ ] Add tests that patch old generic conversion helpers to raise in active
+- [x] Add tests that patch old generic conversion helpers to raise in active
   indexing, retrieval, and persistence paths.
 
 Exit criteria:

@@ -73,6 +73,13 @@ class LoadedSnapshotArtifacts:
     graph_builder: CodeGraphBuilder
 
 
+@dataclass(frozen=True)
+class ScopedSCIPCacheEntry:
+    key: str
+    path: str
+    payload: dict[str, Any]
+
+
 class IndexPipeline:
     """Encapsulates the full snapshot-oriented indexing pipeline."""
 
@@ -2110,6 +2117,147 @@ class IndexPipeline:
             metadata=dict(scip_index.metadata or {}),
         )
 
+    def _scoped_scip_cache_dir(self) -> str:
+        scip_config = self.config.get("scip", {})
+        configured = (
+            scip_config.get("artifact_cache_dir")
+            if isinstance(scip_config, dict)
+            else None
+        )
+        cache_dir = (
+            str(configured)
+            if configured
+            else os.path.join(self.vector_store.persist_dir, "scip_tool_cache")
+        )
+        ensure_dir(cache_dir)
+        return cache_dir
+
+    def _scoped_scip_file_fingerprint(
+        self, repo_root: str, rel_path: str
+    ) -> dict[str, Any] | None:
+        normalized = normalize_path(rel_path)
+        abs_path = os.path.join(repo_root, normalized)
+        try:
+            stat = os.stat(abs_path)
+        except OSError:
+            return None
+        content_hash = compute_file_hash(abs_path) or None
+        if content_hash is None:
+            return None
+        return {
+            "path": normalized,
+            "size": int(stat.st_size),
+            "content_hash": content_hash,
+        }
+
+    def _scoped_scip_package_marker_paths(
+        self, repo_root: str, scope_root: str
+    ) -> list[str]:
+        normalized_scope = normalize_path(scope_root)
+        candidates: set[str] = set()
+        for marker in self._PACKAGE_SCOPE_MARKERS:
+            candidates.add(marker)
+            if normalized_scope and normalized_scope != ".":
+                candidates.add(normalize_path(os.path.join(normalized_scope, marker)))
+        return sorted(
+            path for path in candidates if os.path.exists(os.path.join(repo_root, path))
+        )
+
+    def _scoped_scip_cache_entry(
+        self,
+        *,
+        repo_root: str,
+        language: str,
+        scope_root: str,
+        target_paths: set[str],
+    ) -> ScopedSCIPCacheEntry:
+        normalized_scope = normalize_path(scope_root or ".") or "."
+        profile = get_scip_indexer_profile(language)
+        file_fingerprints = [
+            fingerprint
+            for path in sorted(normalize_path(path) for path in target_paths if path)
+            if (fingerprint := self._scoped_scip_file_fingerprint(repo_root, path))
+            is not None
+        ]
+        marker_fingerprints = [
+            fingerprint
+            for path in self._scoped_scip_package_marker_paths(
+                repo_root, normalized_scope
+            )
+            if (fingerprint := self._scoped_scip_file_fingerprint(repo_root, path))
+            is not None
+        ]
+        payload: dict[str, Any] = {
+            "version": 1,
+            "language": language,
+            "scope_root": normalized_scope,
+            "target_paths": sorted(
+                normalize_path(path) for path in target_paths if path
+            ),
+            "files": file_fingerprints,
+            "package_markers": marker_fingerprints,
+            "tool": {
+                "binary_name": profile.binary_name if profile else None,
+                "extra_args": list(profile.extra_args) if profile else [],
+                "experimental": bool(profile.experimental) if profile else False,
+            },
+            "mode": "repo_root_filtered",
+        }
+        key = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return ScopedSCIPCacheEntry(
+            key=key,
+            path=os.path.join(self._scoped_scip_cache_dir(), f"{key}.json"),
+            payload=payload,
+        )
+
+    def _load_scoped_scip_cache(self, entry: ScopedSCIPCacheEntry) -> SCIPIndex | None:
+        if not os.path.exists(entry.path):
+            return None
+        try:
+            with open(entry.path, encoding="utf-8") as handle:
+                raw = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            self.logger.warning(
+                "Failed to load scoped SCIP cache %s: %s", entry.key, exc
+            )
+            return None
+        if not isinstance(raw, dict) or raw.get("key") != entry.key:
+            return None
+        if raw.get("identity") != entry.payload:
+            return None
+        index_payload = raw.get("scip_index")
+        if not isinstance(index_payload, dict):
+            return None
+        return SCIPIndex.from_dict(index_payload)
+
+    def _save_scoped_scip_cache(
+        self, entry: ScopedSCIPCacheEntry, scip_index: SCIPIndex
+    ) -> None:
+        payload = {
+            "key": entry.key,
+            "identity": entry.payload,
+            "scip_index": scip_index.to_dict(),
+        }
+        tmp_path = f"{entry.path}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
+            os.replace(tmp_path, entry.path)
+        except OSError as exc:
+            self.logger.warning(
+                "Failed to save scoped SCIP cache %s: %s", entry.key, exc
+            )
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    def _scoped_scip_runs_from_repo_root(self) -> bool:
+        scip_config = self.config.get("scip", {})
+        if not isinstance(scip_config, dict):
+            return True
+        return bool(scip_config.get("scoped_repo_root_mode", True))
+
     def _copy_scope_root(self, repo_root: str, scope_root: str, temp_root: str) -> str:
         normalized_root = normalize_path(scope_root)
         if normalized_root == ".":
@@ -2143,16 +2291,33 @@ class IndexPipeline:
             return None, []
 
         filtered_indexes: list[SCIPIndex] = []
+        cache_hits = 0
+        cache_misses = 0
+        scope_copies = 0
         for scope_root in scope_roots:
             materialized_root = repo_root
             temp_root: str | None = None
             try:
-                if normalize_path(scope_root) != ".":
+                use_repo_root = self._scoped_scip_runs_from_repo_root()
+                if normalize_path(scope_root) != "." and not use_repo_root:
                     temp_root = tempfile.mkdtemp(prefix="fastcode_scope_repo_")
                     materialized_root = self._copy_scope_root(
                         repo_root, scope_root, temp_root
                     )
+                    scope_copies += 1
                 for language in languages:
+                    cache_entry = self._scoped_scip_cache_entry(
+                        repo_root=repo_root,
+                        language=language,
+                        scope_root=scope_root,
+                        target_paths=target_paths,
+                    )
+                    cached_index = self._load_scoped_scip_cache(cache_entry)
+                    if cached_index is not None:
+                        cache_hits += 1
+                        filtered_indexes.append(cached_index)
+                        continue
+                    cache_misses += 1
                     scoped_index = run_scip_for_language(
                         language,
                         materialized_root,
@@ -2162,6 +2327,8 @@ class IndexPipeline:
                         scoped_index, target_paths
                     )
                     if filtered is not None:
+                        filtered.metadata["scoped_scip_cache_key"] = cache_entry.key
+                        self._save_scoped_scip_cache(cache_entry, filtered)
                         filtered_indexes.append(filtered)
             except Exception as exc:
                 warnings.append(f"scoped_scip_failed:{scope_root}:{exc}")
@@ -2177,7 +2344,18 @@ class IndexPipeline:
             documents=[doc for index in filtered_indexes for doc in index.documents],
             indexer_name=filtered_indexes[0].indexer_name,
             indexer_version=filtered_indexes[0].indexer_version,
-            metadata={"scoped": True, "scope_roots": scope_roots},
+            metadata={
+                "scoped": True,
+                "scope_roots": scope_roots,
+                "cache_hits": cache_hits,
+                "cache_misses": cache_misses,
+                "scope_copies": scope_copies,
+                "working_mode": (
+                    "repo_root_filtered"
+                    if self._scoped_scip_runs_from_repo_root()
+                    else "copied_scope_root"
+                ),
+            },
         )
         scip_snapshot = build_ir_from_scip(
             repo_name=repo_name,
@@ -2187,6 +2365,12 @@ class IndexPipeline:
             commit_id=snapshot.commit_id,
             tree_id=snapshot.tree_id,
         )
+        scip_snapshot.metadata["scoped_scip_cache"] = {
+            "hits": cache_hits,
+            "misses": cache_misses,
+            "scope_copies": scope_copies,
+            "working_mode": combined.metadata["working_mode"],
+        }
         return scip_snapshot, languages
 
     def run_semantic_repair_frontier(

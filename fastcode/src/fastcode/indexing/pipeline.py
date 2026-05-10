@@ -55,6 +55,15 @@ from ..store.snapshot import SnapshotStore
 from ..store.unit_artifacts import UnitArtifactStore
 from ..store.vector import VectorStore
 from ..utils import as_float32_matrix, compute_file_hash, ensure_dir, normalize_path
+from ..utils.materialization import (
+    BOUNDARY_JSON_DECODE,
+    BOUNDARY_JSON_ENCODE,
+    BOUNDARY_PICKLE_LOAD,
+    MaterializationCounters,
+    increment_materialization_boundary,
+    reset_materialization_counters,
+    set_materialization_counters,
+)
 from .doc_ingester import KeyDocIngester
 from .embedder import CodeEmbedder
 from .global_builder import GlobalIndexBuilder
@@ -1346,6 +1355,10 @@ class IndexPipeline:
         with open(
             self._manifest_path_for_artifact(artifact_key), "w", encoding="utf-8"
         ) as f:
+            increment_materialization_boundary(
+                BOUNDARY_JSON_ENCODE,
+                items=len(cast(dict[str, Any], manifest.get("files", {}))),
+            )
             json.dump(manifest, f, indent=2)
 
     def _load_file_manifest(self, artifact_key: str) -> dict[str, Any] | None:
@@ -1354,6 +1367,7 @@ class IndexPipeline:
             return None
         try:
             with open(manifest_path, encoding="utf-8") as f:
+                increment_materialization_boundary(BOUNDARY_JSON_DECODE)
                 return cast(dict[str, Any], json.load(f))
         except Exception as e:
             self.logger.warning(
@@ -1381,6 +1395,7 @@ class IndexPipeline:
             return []
         try:
             with open(metadata_path, "rb") as f:
+                increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
                 data = pickle.load(f)  # noqa: S301 - FastCode-owned vector artifact.
             metadata = data.get("metadata", [])
             if isinstance(metadata, list):
@@ -2754,6 +2769,8 @@ class IndexPipeline:
             )
         lock_token: int = fencing_token
         stage_id: str | None = None
+        materialization_counters = MaterializationCounters()
+        materialization_token = set_materialization_counters(materialization_counters)
 
         try:
             self.index_run_store.mark_status(run_id, "extracting")
@@ -3588,6 +3605,11 @@ class IndexPipeline:
                         snapshot_id=snapshot_id, stage_id=stage_id
                     )
 
+            pipeline_metrics = dict(
+                merged_snapshot.metadata.get("pipeline_metrics", {})
+            )
+            pipeline_metrics.update(materialization_counters.as_metrics())
+            merged_snapshot.metadata["pipeline_metrics"] = pipeline_metrics
             self.snapshot_store.update_snapshot_metadata(
                 snapshot_id,
                 {
@@ -3705,4 +3727,5 @@ class IndexPipeline:
             )
             raise
         finally:
+            reset_materialization_counters(materialization_token)
             self.snapshot_store.release_lock(lock_name, owner_id=run_id)

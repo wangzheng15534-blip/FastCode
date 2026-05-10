@@ -11,6 +11,10 @@ import pytest
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot
 from fastcode.utils import as_float32_matrix
+from fastcode.utils.materialization import (
+    BOUNDARY_VECTOR_LIST_CONVERSION,
+    collect_materialization_counters,
+)
 
 pytestmark = [pytest.mark.perf]
 
@@ -60,6 +64,23 @@ def test_vector_matrix_staging_allocations_perf(benchmark: Any) -> None:
 
     assert shape == (1000, 128)
     assert peak > 0
+
+
+def test_vector_matrix_materialization_counter_perf(benchmark: Any) -> None:
+    vectors = [np.arange(128, dtype=np.float32) for _ in range(1000)]
+
+    def _stage() -> tuple[tuple[int, int], int]:
+        with collect_materialization_counters() as counters:
+            matrix = as_float32_matrix(vectors, copy_policy="contiguous")
+        return (
+            matrix.shape,
+            counters.counts[BOUNDARY_VECTOR_LIST_CONVERSION],
+        )
+
+    shape, conversions = benchmark(_stage)
+
+    assert shape == (1000, 128)
+    assert conversions == 1
 
 
 def test_ir_graph_view_build_allocations_perf(benchmark: Any) -> None:

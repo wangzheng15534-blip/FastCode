@@ -12,6 +12,11 @@ from typing import Any, Literal
 
 import numpy as np
 
+from .materialization import (
+    BOUNDARY_VECTOR_LIST_CONVERSION,
+    increment_materialization_boundary,
+)
+
 VectorCopyPolicy = Literal["view", "contiguous", "mutable"]
 
 
@@ -54,6 +59,10 @@ def as_float32_matrix(
         elif matrix.ndim != 2:
             return np.empty((0, 0), dtype=np.float32)
     else:
+        increment_materialization_boundary(
+            BOUNDARY_VECTOR_LIST_CONVERSION,
+            items=len(values),
+        )
         vectors = [as_float32_vector(value, copy_policy="view") for value in values]
         valid_vectors = [vector for vector in vectors if vector is not None]
         if not valid_vectors:

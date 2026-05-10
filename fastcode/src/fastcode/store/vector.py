@@ -20,6 +20,14 @@ import numpy as np
 
 from ..ir.element import CodeElementMeta
 from ..utils import as_float32_matrix, as_float32_vector, ensure_dir
+from ..utils.materialization import (
+    BOUNDARY_JSON_DECODE,
+    BOUNDARY_JSON_ENCODE,
+    BOUNDARY_PICKLE_DUMP,
+    BOUNDARY_PICKLE_LOAD,
+    BOUNDARY_VECTOR_LIST_CONVERSION,
+    increment_materialization_boundary,
+)
 
 _METADATA_SHARD_STORAGE_VERSION = 1
 _VECTOR_SHARD_STORAGE_VERSION = 1
@@ -1397,6 +1405,7 @@ class VectorStore:
             return None
         try:
             with open(manifest_path, encoding="utf-8") as handle:
+                increment_materialization_boundary(BOUNDARY_JSON_DECODE)
                 data = json.load(handle)
         except (OSError, json.JSONDecodeError):
             return None
@@ -1488,6 +1497,10 @@ class VectorStore:
         manifest_path = self._vector_manifest_path(name)
         tmp_manifest = f"{manifest_path}.tmp"
         with open(tmp_manifest, "w", encoding="utf-8") as handle:
+            increment_materialization_boundary(
+                BOUNDARY_JSON_ENCODE,
+                items=len(manifest["shards"]),
+            )
             json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
         os.replace(tmp_manifest, manifest_path)
 
@@ -1587,6 +1600,10 @@ class VectorStore:
         manifest_path = self._vector_manifest_path(name)
         tmp_manifest = f"{manifest_path}.tmp"
         with open(tmp_manifest, "w", encoding="utf-8") as handle:
+            increment_materialization_boundary(
+                BOUNDARY_JSON_ENCODE,
+                items=len(manifest["shards"]),
+            )
             json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
         os.replace(tmp_manifest, manifest_path)
         return {
@@ -1707,6 +1724,7 @@ class VectorStore:
 
     @staticmethod
     def _metadata_shard_bytes(entries: list[dict[str, Any]]) -> bytes:
+        increment_materialization_boundary(BOUNDARY_PICKLE_DUMP, items=len(entries))
         return pickle.dumps({"entries": entries}, protocol=pickle.HIGHEST_PROTOCOL)
 
     def _load_metadata_manifest(self, name: str) -> _MetadataShardManifest | None:
@@ -1715,6 +1733,7 @@ class VectorStore:
             return None
         try:
             with open(manifest_path, encoding="utf-8") as handle:
+                increment_materialization_boundary(BOUNDARY_JSON_DECODE)
                 data = json.load(handle)
         except (OSError, json.JSONDecodeError):
             return None
@@ -1794,6 +1813,10 @@ class VectorStore:
         manifest_path = self._metadata_manifest_path(name)
         tmp_manifest = f"{manifest_path}.tmp"
         with open(tmp_manifest, "w", encoding="utf-8") as handle:
+            increment_materialization_boundary(
+                BOUNDARY_JSON_ENCODE,
+                items=len(manifest["shards"]),
+            )
             json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
         os.replace(tmp_manifest, manifest_path)
 
@@ -1861,6 +1884,10 @@ class VectorStore:
         manifest_path = self._metadata_manifest_path(name)
         tmp_manifest = f"{manifest_path}.tmp"
         with open(tmp_manifest, "w", encoding="utf-8") as handle:
+            increment_materialization_boundary(
+                BOUNDARY_JSON_ENCODE,
+                items=len(manifest["shards"]),
+            )
             json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
         os.replace(tmp_manifest, manifest_path)
 
@@ -1881,6 +1908,7 @@ class VectorStore:
                         continue
                     shard_path = os.path.join(shard_dir, str(shard_file))
                     with open(shard_path, "rb") as handle:
+                        increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
                         payload = pickle.load(handle)
                     entries = (
                         payload.get("entries", []) if isinstance(payload, dict) else []
@@ -1919,6 +1947,7 @@ class VectorStore:
             return None
         try:
             with open(metadata_path, "rb") as handle:
+                increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
                 data = pickle.load(handle)
             return cast(dict[str, Any], data) if isinstance(data, dict) else None
         except Exception as e:
@@ -1967,6 +1996,7 @@ class VectorStore:
                     )
                     try:
                         with open(shard_path, "rb") as handle:
+                            increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
                             payload = pickle.load(handle)
                         entries = (
                             payload.get("entries", [])
@@ -2021,6 +2051,7 @@ class VectorStore:
     @staticmethod
     def _serialize_repo_overview_metadata(metadata: Any) -> str:
         safe_metadata = metadata if isinstance(metadata, dict) else {}
+        increment_materialization_boundary(BOUNDARY_JSON_ENCODE)
         return json.dumps(
             safe_metadata,
             sort_keys=True,
@@ -2033,6 +2064,7 @@ class VectorStore:
         if not isinstance(raw_metadata, str):
             return {}
         try:
+            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
             metadata = json.loads(raw_metadata)
         except json.JSONDecodeError:
             return {}
@@ -2114,6 +2146,7 @@ class VectorStore:
         decode_metadata: bool,
     ) -> dict[str, _RepoOverviewStoredEntry]:
         with open(self._repo_overview_manifest_path(), encoding="utf-8") as f:
+            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
             raw_manifest = json.load(f)
 
         repos = raw_manifest.get("repos")
@@ -2160,6 +2193,7 @@ class VectorStore:
         decode_metadata: bool,
     ) -> dict[str, _RepoOverviewStoredEntry]:
         with open(self._legacy_repo_overview_path(), "rb") as f:
+            increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
             raw_overviews = pickle.load(f)
         if not isinstance(raw_overviews, dict):
             return {}
@@ -2201,6 +2235,7 @@ class VectorStore:
 
         embeddings_by_repo: dict[str, np.ndarray] = {}
         with np.load(embeddings_path, allow_pickle=False) as archive:
+            increment_materialization_boundary(BOUNDARY_VECTOR_LIST_CONVERSION)
             repo_names = np.asarray(archive["repo_names"]).tolist()
             if not isinstance(repo_names, list):
                 return {}
@@ -2285,6 +2320,10 @@ class VectorStore:
         embeddings_tmp = f"{embeddings_path}.tmp.npz"
 
         with open(manifest_tmp, "w", encoding="utf-8") as f:
+            increment_materialization_boundary(
+                BOUNDARY_JSON_ENCODE,
+                items=len(manifest_repos),
+            )
             json.dump(
                 manifest_payload,
                 f,

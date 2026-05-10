@@ -491,6 +491,11 @@ def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
         assert layers[1]["reason"] == "disabled_by_config"
         assert layers[1]["warnings"] == ["layer_disabled: enable_scip=false"]
         assert result["pipeline_metrics"]["never_silent_fallback"] is True
+        materialization_counts = result["pipeline_metrics"][
+            "materialization_boundary_counts"
+        ]
+        assert materialization_counts["json_encode"] >= 1
+        assert materialization_counts["vector_list_conversion"] == 1
 
 
 def test_pipeline_layer_helpers_report_semantic_gap_metrics() -> None:

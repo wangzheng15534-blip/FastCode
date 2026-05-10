@@ -14,6 +14,11 @@ import igraph as ig
 import networkx as nx
 from igraph._igraph import InternalError as IGraphInternalError
 
+from fastcode.utils.materialization import (
+    BOUNDARY_NETWORKX_CONVERSION,
+    increment_materialization_boundary,
+)
+
 from .types import IRSnapshot
 
 
@@ -70,6 +75,10 @@ class IRGraphView:
 
     @classmethod
     def from_networkx(cls, graph: nx.Graph[str]) -> IRGraphView:
+        increment_materialization_boundary(
+            BOUNDARY_NETWORKX_CONVERSION,
+            items=graph.number_of_nodes() + graph.number_of_edges(),
+        )
         return cls(
             nodes=(str(node) for node in graph.nodes()),
             edges=(
@@ -198,6 +207,10 @@ class IRGraphView:
         return {self._node_names[int(index)] for index in indexes}
 
     def to_networkx(self) -> nx.DiGraph[str]:
+        increment_materialization_boundary(
+            BOUNDARY_NETWORKX_CONVERSION,
+            items=self.number_of_nodes() + self.number_of_edges(),
+        )
         graph: nx.DiGraph[str] = nx.DiGraph()
         graph.add_nodes_from(self.nodes())
         graph.add_edges_from(self.edges(data=True))

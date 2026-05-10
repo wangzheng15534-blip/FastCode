@@ -43,6 +43,9 @@ Implementation update, May 11, 2026:
   unapproved `.tolist()` materialization, raw `np.array(vector-list)`
   insertion, and generic row/object dict round trips unless the call site is
   documented as an explicit compatibility or storage boundary.
+- Index runs now publish scoped runtime counters for explicit materialization
+  boundaries, including JSON encode/decode, pickle load/dump, NetworkX
+  conversion, vector list conversion, full snapshot load, and full graph load.
 
 - Incremental indexing can skip unchanged-file parse and embedding work, reuse
   changed-unit embeddings, merge changed AST IR with a previous snapshot, and
@@ -616,7 +619,7 @@ TODO:
   generic `to_dict()` / `from_dict()` round trips, `row_to_dict()`, `.tolist()`,
   and raw `np.array(vectors)` unless the call site is annotated as an allowed
   boundary.
-- [ ] Add runtime counters for explicit materialization boundaries: JSON encode,
+- [x] Add runtime counters for explicit materialization boundaries: JSON encode,
   JSON decode, pickle load/dump, NetworkX conversion, vector list conversion,
   snapshot full load, and graph full load.
 - [ ] Add tests that patch old generic conversion helpers to raise in active

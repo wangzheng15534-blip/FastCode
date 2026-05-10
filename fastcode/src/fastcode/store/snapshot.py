@@ -28,6 +28,14 @@ from ..ir.types import (
     IRUnitSupport,
 )
 from ..utils import ensure_dir, safe_jsonable, utc_now
+from ..utils.materialization import (
+    BOUNDARY_GRAPH_FULL_LOAD,
+    BOUNDARY_JSON_DECODE,
+    BOUNDARY_JSON_ENCODE,
+    BOUNDARY_NETWORKX_CONVERSION,
+    BOUNDARY_SNAPSHOT_FULL_LOAD,
+    increment_materialization_boundary,
+)
 from .records import (
     OutboxEventRecord,
     RedoTaskRecord,
@@ -967,8 +975,18 @@ class SnapshotStore:
         ir_path = os.path.join(snap_dir, "ir_snapshot.json")
         tmp_ir_path = f"{ir_path}.tmp"
         with open(tmp_ir_path, "w", encoding="utf-8") as f:
+            snapshot_payload = self._snapshot_file_payload(snapshot)
+            increment_materialization_boundary(
+                BOUNDARY_JSON_ENCODE,
+                items=(
+                    len(snapshot.units)
+                    + len(snapshot.supports)
+                    + len(snapshot.relations)
+                    + len(snapshot.embeddings)
+                ),
+            )
             json.dump(
-                self._snapshot_file_payload(snapshot),
+                snapshot_payload,
                 f,
                 ensure_ascii=False,
                 indent=2,
@@ -978,6 +996,8 @@ class SnapshotStore:
         os.replace(tmp_ir_path, ir_path)
 
         artifact_key = self.artifact_key_for_snapshot(snapshot.snapshot_id)
+        increment_materialization_boundary(BOUNDARY_JSON_ENCODE)
+        metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,
@@ -1004,7 +1024,7 @@ class SnapshotStore:
                     artifact_key,
                     ir_path,
                     utc_now(),
-                    json.dumps(metadata or {}, ensure_ascii=False),
+                    metadata_json,
                 ),
             )
             self.db_runtime.execute(
@@ -1036,17 +1056,19 @@ class SnapshotStore:
             ir_path=ir_path,
             ir_graphs_path=None,
             created_at=utc_now(),
-            metadata_json=json.dumps(metadata or {}, ensure_ascii=False),
+            metadata_json=metadata_json,
         )
 
     def update_snapshot_metadata(
         self, snapshot_id: str, metadata: dict[str, Any]
     ) -> None:
+        increment_materialization_boundary(BOUNDARY_JSON_ENCODE)
+        metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,
                 "UPDATE snapshots SET metadata_json=? WHERE snapshot_id=?",
-                (json.dumps(metadata or {}, ensure_ascii=False), snapshot_id),
+                (metadata_json, snapshot_id),
             )
             conn.commit()
 
@@ -1077,10 +1099,18 @@ class SnapshotStore:
             if callable(to_payload):
                 serializable[name] = to_payload()
             elif isinstance(graph, nx.Graph):
+                increment_materialization_boundary(
+                    BOUNDARY_NETWORKX_CONVERSION,
+                    items=graph.number_of_nodes() + graph.number_of_edges(),
+                )
                 serializable[name] = nx.node_link_data(graph)
             else:
                 serializable[name] = self._graph_json_payload(graph)
         with open(path, "w", encoding="utf-8") as f:
+            increment_materialization_boundary(
+                BOUNDARY_JSON_ENCODE,
+                items=len(serializable),
+            )
             json.dump({"graphs": serializable}, f, ensure_ascii=False)
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
@@ -1104,6 +1134,8 @@ class SnapshotStore:
 
         try:
             with open(path, encoding="utf-8") as f:
+                increment_materialization_boundary(BOUNDARY_GRAPH_FULL_LOAD)
+                increment_materialization_boundary(BOUNDARY_JSON_DECODE)
                 data = json.load(f)
         except (json.JSONDecodeError, UnicodeDecodeError):
             logging.getLogger(__name__).warning(
@@ -1127,6 +1159,10 @@ class SnapshotStore:
                     not graph_data["nodes"] or isinstance(graph_data["nodes"][0], dict)
                 )
             ):
+                increment_materialization_boundary(
+                    BOUNDARY_NETWORKX_CONVERSION,
+                    items=len(graph_data["nodes"]),
+                )
                 result[name] = nx.node_link_graph(graph_data, directed=True)
             else:
                 result[name] = graph_data
@@ -1159,6 +1195,8 @@ class SnapshotStore:
         if not ir_path or not os.path.exists(ir_path):
             return None
         with open(ir_path, encoding="utf-8") as f:
+            increment_materialization_boundary(BOUNDARY_SNAPSHOT_FULL_LOAD)
+            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
             data = json.load(f)
         return self._snapshot_from_payload(data)
 

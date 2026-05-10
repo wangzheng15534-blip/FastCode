@@ -100,11 +100,12 @@ def test_semantic_fallback_only_materializes_ranked_metadata_double():
     rows = [
         (
             json.dumps({"id": "best", "type": "function", "repo_name": "repoA"}),
+            None,
             [1.0, 0.0],
             "repoA",
             "function",
         ),
-        (_ExplodingMetadata(), [0.0, 1.0], "repoA", "function"),
+        (_ExplodingMetadata(), None, [0.0, 1.0], "repoA", "function"),
     ]
     store = PgRetrievalStore.__new__(PgRetrievalStore)
     store.enabled = True
@@ -157,8 +158,10 @@ def test_upsert_elements_keeps_embedding_out_of_metadata_json_double():
     assert len(cursor.calls) == 2
     vector_params = cursor.calls[0][1]
     search_params = cursor.calls[1][1]
-    assert vector_params[6] == "[0.10000000,0.20000000,0.30000001]"
-    assert vector_params[7] == pytest.approx([0.1, 0.2, 0.3])
+    assert isinstance(vector_params[6], np.ndarray)
+    assert vector_params[6].dtype == np.float32
+    assert vector_params[6].tolist() == pytest.approx([0.1, 0.2, 0.3])
+    assert vector_params[7] is None
 
     vector_payload = json.loads(vector_params[8])
     search_payload = json.loads(search_params[7])
@@ -201,10 +204,23 @@ def test_upsert_elements_accepts_root_embedding_when_metadata_lacks_one_double()
 
     vector_params = cursor.calls[0][1]
     vector_payload = json.loads(vector_params[8])
-    assert vector_params[6] == "[0.50000000,0.25000000]"
-    assert vector_params[7] == pytest.approx([0.5, 0.25])
+    assert isinstance(vector_params[6], np.ndarray)
+    assert vector_params[6].tolist() == pytest.approx([0.5, 0.25])
+    assert vector_params[7] is None
     assert "embedding" not in vector_payload
     assert vector_payload["metadata"]["embedding_text_hash"] == "hash-root-only"
+
+
+def test_vector_parameter_falls_back_to_literal_without_pgvector_adapter_double(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import fastcode.db_runtime as db_runtime_module
+
+    monkeypatch.setattr(db_runtime_module, "register_vector", None)
+
+    param = PgRetrievalStore._vector_parameter(np.asarray([0.1, 0.2], dtype=np.float32))
+
+    assert param == "[0.10000000,0.20000000]"
 
 
 def test_upsert_elements_ignores_unknown_top_level_payloads_double():

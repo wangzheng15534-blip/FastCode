@@ -21,9 +21,18 @@ except Exception:  # pragma: no cover - optional dependency
     dict_row = None
 
 try:
+    from pgvector.psycopg import register_vector
+except Exception:  # pragma: no cover - optional dependency
+    register_vector = None
+
+try:
     from psycopg_pool import ConnectionPool
 except Exception:  # pragma: no cover - optional dependency
     ConnectionPool = None
+
+
+def pgvector_adapter_available() -> bool:
+    return register_vector is not None
 
 
 class DBRuntime:
@@ -56,6 +65,7 @@ class DBRuntime:
                     min_size=self.pool_min,
                     max_size=self.pool_max,
                     kwargs={"autocommit": False, "row_factory": dict_row},
+                    configure=self._configure_postgres_connection,
                 )
             else:
                 logger.warning(
@@ -116,6 +126,7 @@ class DBRuntime:
                 autocommit=False,
                 row_factory=dict_row,  # type: ignore[arg-type]
             )
+            self._configure_postgres_connection(conn)
             try:
                 yield conn
             finally:
@@ -139,6 +150,23 @@ class DBRuntime:
         cur = conn.cursor()
         cur.execute(self.adapt_sql(sql), params)
         return cur
+
+    @staticmethod
+    def _configure_postgres_connection(conn: Any) -> None:
+        if register_vector is None:
+            logger.debug("pgvector Python adapter unavailable; using SQL casts")
+            return
+        try:
+            register_vector(conn)
+            commit = getattr(conn, "commit", None)
+            if callable(commit):
+                commit()
+        except Exception as exc:  # pragma: no cover - depends on live PG extension
+            rollback = getattr(conn, "rollback", None)
+            if callable(rollback):
+                with contextlib.suppress(Exception):
+                    rollback()
+            logger.debug("pgvector adapter registration failed: %s", exc)
 
     @staticmethod
     def row_to_dict(row: Any) -> dict[str, Any] | None:

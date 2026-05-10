@@ -599,6 +599,74 @@ class TestConnectionPooling:
             with rt.connect() as inner, pytest.raises(sqlite3.OperationalError):
                 rt.execute(inner, "SELECT * FROM t")
 
+    def test_configure_postgres_connection_registers_pgvector_property(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import fastcode.db_runtime as mod
+
+        calls: list[Any] = []
+
+        def _register(conn: Any) -> None:
+            calls.append(conn)
+
+        monkeypatch.setattr(mod, "register_vector", _register)
+        conn = object()
+
+        DBRuntime._configure_postgres_connection(conn)
+
+        assert calls == [conn]
+
+    def test_configure_postgres_connection_commits_adapter_setup_property(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import fastcode.db_runtime as mod
+
+        events: list[str] = []
+
+        class _Conn:
+            def commit(self) -> None:
+                events.append("commit")
+
+        def _register(conn: Any) -> None:
+            assert isinstance(conn, _Conn)
+            events.append("register")
+
+        monkeypatch.setattr(mod, "register_vector", _register)
+
+        DBRuntime._configure_postgres_connection(_Conn())
+
+        assert events == ["register", "commit"]
+
+    def test_configure_postgres_connection_rolls_back_failed_setup_property(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import fastcode.db_runtime as mod
+
+        events: list[str] = []
+
+        class _Conn:
+            def rollback(self) -> None:
+                events.append("rollback")
+
+        def _register(conn: Any) -> None:
+            assert isinstance(conn, _Conn)
+            raise RuntimeError("adapter setup failed")
+
+        monkeypatch.setattr(mod, "register_vector", _register)
+
+        DBRuntime._configure_postgres_connection(_Conn())
+
+        assert events == ["rollback"]
+
+    def test_configure_postgres_connection_allows_missing_pgvector_property(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import fastcode.db_runtime as mod
+
+        monkeypatch.setattr(mod, "register_vector", None)
+
+        DBRuntime._configure_postgres_connection(object())
+
 
 # --- Rollback and error handling ---
 

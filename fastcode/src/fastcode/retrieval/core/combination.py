@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...ir.element import CodeElementMeta
+from fastcode.ir.element import CodeElementMeta
 
 
 def combine_results(

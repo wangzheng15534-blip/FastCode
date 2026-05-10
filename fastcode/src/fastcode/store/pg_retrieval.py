@@ -11,7 +11,8 @@ from typing import Any, cast
 
 import numpy as np
 
-from ..db_runtime import DBRuntime
+from ..db_runtime import DBRuntime, pgvector_adapter_available
+from ..utils import as_float32_matrix, as_float32_vector
 
 
 class PgRetrievalStore:
@@ -134,15 +135,7 @@ class PgRetrievalStore:
 
     @staticmethod
     def _vector_array(vec: Any) -> np.ndarray | None:
-        try:
-            array = np.asarray(vec, dtype=np.float32).reshape(-1)
-        except (TypeError, ValueError):
-            return None
-        if array.size == 0:
-            return None
-        if not bool(np.isfinite(array).all()):
-            array = np.nan_to_num(array, copy=True, nan=0.0, posinf=0.0, neginf=0.0)
-        return array
+        return as_float32_vector(vec, copy_policy="contiguous")
 
     @staticmethod
     def _vector_literal_from_array(vec: np.ndarray) -> str:
@@ -156,6 +149,17 @@ class PgRetrievalStore:
         if array is None:
             raise ValueError("Cannot create vector literal from empty sequence")
         return cls._vector_literal_from_array(array)
+
+    @staticmethod
+    def _vector_parameter(vec: np.ndarray | None) -> np.ndarray | str | None:
+        if vec is None:
+            return None
+        array = as_float32_vector(vec, copy_policy="contiguous")
+        if array is None:
+            return None
+        if not pgvector_adapter_available():
+            return PgRetrievalStore._vector_literal_from_array(array)
+        return array
 
     @staticmethod
     def _row_value(row: Any, index: int, key: str) -> Any:
@@ -286,12 +290,8 @@ class PgRetrievalStore:
                 serializable_elem = self._serialize_element_payload(elem)
                 metadata_json = json.dumps(serializable_elem, ensure_ascii=False)
 
-                vector_literal: str | None = None
-                embedding_arr: list[float] | None = None
                 embedding_array = self._vector_array(embedding)
-                if embedding_array is not None:
-                    vector_literal = self._vector_literal_from_array(embedding_array)
-                    embedding_arr = embedding_array.tolist()
+                embedding_param = self._vector_parameter(embedding_array)
 
                 cur.execute(
                     """
@@ -317,8 +317,8 @@ class PgRetrievalStore:
                         relative_path,
                         language,
                         element_type,
-                        vector_literal,
-                        embedding_arr,
+                        embedding_param,
+                        None,
                         metadata_json,
                     ),
                 )
@@ -363,7 +363,7 @@ class PgRetrievalStore:
         query_vector = self._vector_array(query_embedding)
         if not self.enabled or query_vector is None or top_k <= 0:
             return []
-        vector_literal = self._vector_literal_from_array(query_vector)
+        vector_param = self._vector_parameter(query_vector)
 
         with self.db_runtime.connect() as conn:
             cur = conn.cursor()
@@ -380,11 +380,11 @@ class PgRetrievalStore:
                         LIMIT %s
                         """,
                         (
-                            vector_literal,
+                            vector_param,
                             snapshot_id,
                             repo_filter,
                             element_types,
-                            vector_literal,
+                            vector_param,
                             top_k,
                         ),
                     )
@@ -399,10 +399,10 @@ class PgRetrievalStore:
                         LIMIT %s
                         """,
                         (
-                            vector_literal,
+                            vector_param,
                             snapshot_id,
                             repo_filter,
-                            vector_literal,
+                            vector_param,
                             top_k,
                         ),
                     )
@@ -417,10 +417,10 @@ class PgRetrievalStore:
                         LIMIT %s
                         """,
                         (
-                            vector_literal,
+                            vector_param,
                             snapshot_id,
                             element_types,
-                            vector_literal,
+                            vector_param,
                             top_k,
                         ),
                     )
@@ -433,7 +433,7 @@ class PgRetrievalStore:
                         ORDER BY embedding <=> %s::vector
                         LIMIT %s
                         """,
-                        (vector_literal, snapshot_id, vector_literal, top_k),
+                        (vector_param, snapshot_id, vector_param, top_k),
                     )
                 return self._metadata_score_rows(cur.fetchall())
             except Exception as exc:
@@ -465,7 +465,7 @@ class PgRetrievalStore:
         if repo_filter and element_types:
             cur.execute(
                 """
-                SELECT metadata_json, embedding_arr, repo_name, element_type
+                SELECT metadata_json, embedding, embedding_arr, repo_name, element_type
                 FROM embedding_vectors
                 WHERE snapshot_id=%s
                   AND repo_name = ANY(%s)
@@ -477,7 +477,7 @@ class PgRetrievalStore:
         elif repo_filter:
             cur.execute(
                 """
-                SELECT metadata_json, embedding_arr, repo_name, element_type
+                SELECT metadata_json, embedding, embedding_arr, repo_name, element_type
                 FROM embedding_vectors
                 WHERE snapshot_id=%s
                   AND repo_name = ANY(%s)
@@ -488,7 +488,7 @@ class PgRetrievalStore:
         elif element_types:
             cur.execute(
                 """
-                SELECT metadata_json, embedding_arr, repo_name, element_type
+                SELECT metadata_json, embedding, embedding_arr, repo_name, element_type
                 FROM embedding_vectors
                 WHERE snapshot_id=%s
                   AND element_type = ANY(%s)
@@ -499,7 +499,7 @@ class PgRetrievalStore:
         else:
             cur.execute(
                 """
-                SELECT metadata_json, embedding_arr, repo_name, element_type
+                SELECT metadata_json, embedding, embedding_arr, repo_name, element_type
                 FROM embedding_vectors
                 WHERE snapshot_id=%s
                 LIMIT %s
@@ -519,17 +519,19 @@ class PgRetrievalStore:
             raw_metadata = self._row_value(row, 0, "metadata_json")
             if allowed_repos:
                 row_repo = self._row_filter_value(
-                    row, 2, "repo_name", raw_metadata, "repo_name"
+                    row, 3, "repo_name", raw_metadata, "repo_name"
                 )
                 if row_repo is not None and row_repo not in allowed_repos:
                     continue
             if allowed_types:
                 row_type = self._row_filter_value(
-                    row, 3, "element_type", raw_metadata, "type"
+                    row, 4, "element_type", raw_metadata, "type"
                 )
                 if row_type is not None and row_type not in allowed_types:
                     continue
-            embedding = self._vector_array(self._row_value(row, 1, "embedding_arr"))
+            embedding = self._vector_array(self._row_value(row, 1, "embedding"))
+            if embedding is None:
+                embedding = self._vector_array(self._row_value(row, 2, "embedding_arr"))
             if embedding is None or embedding.size != query_vector.size:
                 continue
             raw_metadata_by_index.append(raw_metadata)
@@ -538,7 +540,9 @@ class PgRetrievalStore:
         if not vectors:
             return []
 
-        matrix = np.vstack(vectors).astype(np.float32, copy=False)
+        matrix = as_float32_matrix(vectors, copy_policy="contiguous")
+        if matrix.size == 0:
+            return []
         denominators = np.linalg.norm(matrix, axis=1) * query_norm
         scores = np.divide(
             matrix @ query_vector,

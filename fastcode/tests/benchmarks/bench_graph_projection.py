@@ -4,6 +4,8 @@ Baseline performance test: IR graph builder and projection transform.
 Run: pytest tests/bench_graph_projection.py -v --benchmark-only
 """
 
+from typing import Any
+
 import pytest
 
 from fastcode.indexing.projection_transform import ProjectionTransformer
@@ -69,9 +71,7 @@ def _make_snapshot(num_symbols: int, edges_per_symbol: int = 2) -> IRSnapshot:
 
 
 @pytest.mark.parametrize("num_symbols", [10, 100, 500, 1000])
-def test_graph_builder_throughput_perf(
-    num_symbols: int, benchmark: pytest.BenchmarkFixture
-):
+def test_graph_builder_throughput_perf(num_symbols: int, benchmark: Any):
     """Benchmark IR graph materialization."""
     snap = _make_snapshot(num_symbols)
     builder = IRGraphBuilder()
@@ -84,9 +84,7 @@ def test_graph_builder_throughput_perf(
 
 
 @pytest.mark.parametrize("num_symbols", [10, 100, 500])
-def test_projection_transform_throughput_perf(
-    num_symbols: int, benchmark: pytest.BenchmarkFixture
-):
+def test_projection_transform_throughput_perf(num_symbols: int, benchmark: Any):
     """Benchmark projection transform (Leiden disabled, no LLM)."""
     snap = _make_snapshot(num_symbols)
     graphs = IRGraphBuilder().build_graphs(snap)

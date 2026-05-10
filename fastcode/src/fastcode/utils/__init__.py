@@ -46,6 +46,7 @@ if TYPE_CHECKING:
         should_ignore_path,
         truncate_to_tokens,
     )
+    from fastcode.utils.vectors import as_float32_matrix, as_float32_vector
 
 _COMPAT_EXPORTS = {
     "calculate_code_complexity",
@@ -63,6 +64,11 @@ _COMPAT_EXPORTS = {
     "setup_logging",
     "should_ignore_path",
     "truncate_to_tokens",
+}
+
+_VECTOR_EXPORTS = {
+    "as_float32_matrix",
+    "as_float32_vector",
 }
 
 
@@ -126,10 +132,16 @@ def __getattr__(name: str) -> Any:
         value = getattr(import_module("fastcode.utils._compat"), name)
         globals()[name] = value
         return value
+    if name in _VECTOR_EXPORTS:
+        value = getattr(import_module("fastcode.utils.vectors"), name)
+        globals()[name] = value
+        return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
+    "as_float32_matrix",
+    "as_float32_vector",
     "calculate_code_complexity",
     "clean_docstring",
     "compute_file_hash",

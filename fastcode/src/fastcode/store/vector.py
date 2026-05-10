@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import pickle
+import shutil
 from collections.abc import Mapping
 from typing import Any, TypedDict, cast
 
@@ -18,7 +19,7 @@ import faiss
 import numpy as np
 
 from ..ir.element import CodeElementMeta
-from ..utils import ensure_dir
+from ..utils import as_float32_matrix, as_float32_vector, ensure_dir
 
 _METADATA_SHARD_STORAGE_VERSION = 1
 _VECTOR_SHARD_STORAGE_VERSION = 1
@@ -72,6 +73,12 @@ class _VectorShardManifest(TypedDict):
     index_type: str
     vector_count: int
     shards: list[_VectorShardManifestEntry]
+
+
+class _IncrementalShardPlan(TypedDict):
+    sequences_by_path: dict[str, list[int]]
+    reusable_vector_entries: dict[str, _VectorShardManifestEntry]
+    max_previous_sequence_no: int
 
 
 class VectorStore:
@@ -185,8 +192,11 @@ class VectorStore:
         if len(vectors) != len(metadata):
             raise ValueError("Number of vectors must match number of metadata entries")
 
-        # Ensure vectors are float32
-        vectors = vectors.astype(np.float32)
+        # FAISS cosine normalization mutates input buffers, so this backend
+        # boundary explicitly owns a mutable float32 matrix.
+        vectors = as_float32_matrix(vectors, copy_policy="mutable")
+        if vectors.ndim != 2 or vectors.shape[0] == 0:
+            raise ValueError("vectors must be a non-empty 2D float32 matrix")
 
         # Normalize if using cosine similarity
         if self.distance_metric == "cosine":
@@ -239,7 +249,13 @@ class VectorStore:
             return []
 
         # Ensure query is float32 and 2D
-        query_vector = query_vector.astype(np.float32).reshape(1, -1)
+        query_vector = as_float32_matrix(query_vector, copy_policy="mutable")
+        if (
+            query_vector.ndim != 2
+            or query_vector.shape[0] != 1
+            or query_vector.shape[1] == 0
+        ):
+            return []
 
         # Normalize if using cosine similarity
         if self.distance_metric == "cosine":
@@ -425,27 +441,21 @@ class VectorStore:
         if k <= 0:
             return []
 
-        query = np.array(query_vector, dtype=np.float32, copy=True).reshape(1, -1)
-        if query.shape[1] == 0:
+        query = as_float32_matrix(query_vector, copy_policy="mutable")
+        if query.ndim != 2 or query.shape[0] != 1 or query.shape[1] == 0:
             return []
 
         repo_names: list[str] = []
         overview_payloads: list[_RepoOverviewStoredEntry] = []
         embedding_rows: list[np.ndarray] = []
         for repo_name, overview_data in overviews.items():
-            raw_embedding = overview_data.get("embedding")
-            if raw_embedding is None:
-                continue
-            try:
-                embedding = np.asarray(raw_embedding, dtype=np.float32).reshape(-1)
-            except (TypeError, ValueError):
+            embedding = as_float32_vector(
+                overview_data.get("embedding"), copy_policy="view"
+            )
+            if embedding is None:
                 continue
             if embedding.size != query.shape[1]:
                 continue
-            if not np.isfinite(embedding).all():
-                embedding = np.nan_to_num(
-                    embedding, copy=False, nan=0.0, posinf=0.0, neginf=0.0
-                )
             repo_names.append(repo_name)
             overview_payloads.append(overview_data)
             embedding_rows.append(embedding)
@@ -453,7 +463,9 @@ class VectorStore:
         if not embedding_rows:
             return []
 
-        matrix = np.vstack(embedding_rows).astype(np.float32, copy=False)
+        matrix = as_float32_matrix(embedding_rows, copy_policy="mutable")
+        if matrix.shape[1] != query.shape[1]:
+            return []
         if self.distance_metric == "cosine":
             faiss.normalize_L2(query)
             faiss.normalize_L2(matrix)
@@ -508,8 +520,15 @@ class VectorStore:
         if self.index is None and not self._ensure_faiss_index():
             return [[] for _ in range(len(query_vectors))]
 
+        try:
+            query_count = len(query_vectors)
+        except TypeError:
+            query_count = 0
+
         # Ensure float32
-        query_vectors = query_vectors.astype(np.float32)
+        query_vectors = as_float32_matrix(query_vectors, copy_policy="mutable")
+        if query_vectors.ndim != 2 or query_vectors.shape[0] == 0:
+            return [[] for _ in range(query_count)]
 
         # Normalize if using cosine
         if self.distance_metric == "cosine":
@@ -602,6 +621,70 @@ class VectorStore:
         self.invalidate_scan_cache()
 
         self.logger.info(f"Saved vector store to {self.persist_dir}")
+
+    def save_incremental(
+        self,
+        name: str,
+        *,
+        previous_name: str,
+        reusable_path_keys: set[str],
+    ) -> dict[str, int]:
+        """Save a new artifact while reusing unchanged vector path shards.
+
+        Metadata shards are rewritten because they carry snapshot-scoped fields such
+        as ``snapshot_id``. Vector shards can be reused safely when the path is
+        unchanged and the row count still matches the previous shard.
+        """
+        if self.in_memory:
+            self.logger.info(
+                "Skipping vector store incremental save (in-memory mode enabled)"
+            )
+            return {
+                "vector_shards_reused": 0,
+                "vector_shards_written": 0,
+                "metadata_shards_written": 0,
+            }
+
+        if len(self.metadata) == 0 or self.dimension is None:
+            self.logger.warning("No vectors to save")
+            return {
+                "vector_shards_reused": 0,
+                "vector_shards_written": 0,
+                "metadata_shards_written": 0,
+            }
+
+        vectors = self._vector_matrix_for_persist()
+        if len(vectors) != len(self.metadata):
+            raise RuntimeError("Vector/metadata count mismatch during persistence")
+
+        grouped_counts = self._path_row_counts(self.metadata)
+        plan = self._build_incremental_shard_plan(
+            previous_name=previous_name,
+            reusable_path_keys=reusable_path_keys,
+            grouped_counts=grouped_counts,
+        )
+        vector_stats = self._write_vector_bundle_with_sequences(
+            name,
+            vectors=vectors,
+            sequences_by_path=plan["sequences_by_path"],
+            previous_name=previous_name,
+            reusable_entries=plan["reusable_vector_entries"],
+        )
+        metadata_stats = self._write_metadata_bundle_with_sequences(
+            name,
+            sequences_by_path=plan["sequences_by_path"],
+        )
+        ordered_vectors = self._vector_matrix_ordered_by_sequences(
+            vectors, plan["sequences_by_path"]
+        )
+        self._persist_optional_faiss_binary(name, vectors=ordered_vectors)
+        self.invalidate_scan_cache()
+        self.logger.info(
+            "Saved vector store to %s with %d reused vector shards",
+            self.persist_dir,
+            vector_stats["vector_shards_reused"],
+        )
+        return {**vector_stats, **metadata_stats}
 
     def load(self, name: str = "index") -> bool:
         """
@@ -978,8 +1061,12 @@ class VectorStore:
         if k <= 0 or vector_rows.ndim != 2 or vector_rows.shape[0] == 0:
             return []
 
-        query = np.array(query_vector, dtype=np.float32, copy=True).reshape(1, -1)
-        if query.shape[1] != vector_rows.shape[1]:
+        query = as_float32_matrix(query_vector, copy_policy="mutable")
+        if (
+            query.ndim != 2
+            or query.shape[0] != 1
+            or query.shape[1] != vector_rows.shape[1]
+        ):
             return []
 
         if self.distance_metric == "cosine":
@@ -1028,15 +1115,16 @@ class VectorStore:
         k: int,
         min_score: float | None,
     ) -> list[list[tuple[CodeElementMeta, float]]]:
-        if (
-            k <= 0
-            or vector_rows.ndim != 2
-            or vector_rows.shape[0] == 0
-            or query_vectors.ndim != 2
-        ):
-            return [[] for _ in range(len(query_vectors))]
+        try:
+            query_count = len(query_vectors)
+        except TypeError:
+            query_count = 0
+        if k <= 0 or vector_rows.ndim != 2 or vector_rows.shape[0] == 0:
+            return [[] for _ in range(query_count)]
 
-        queries = np.array(query_vectors, dtype=np.float32, copy=True)
+        queries = as_float32_matrix(query_vectors, copy_policy="mutable")
+        if queries.ndim != 2 or queries.shape[0] == 0:
+            return [[] for _ in range(query_count)]
         if queries.shape[1] != vector_rows.shape[1]:
             return [[] for _ in range(len(queries))]
 
@@ -1088,9 +1176,21 @@ class VectorStore:
         self._vector_rows = vectors
         return vectors
 
-    def _persist_optional_faiss_binary(self, name: str) -> None:
+    def _persist_optional_faiss_binary(
+        self, name: str, *, vectors: np.ndarray | None = None
+    ) -> None:
         index_path = self._legacy_index_path(name)
         if self.persist_faiss_binary:
+            if vectors is not None:
+                if self.dimension is None:
+                    return
+                matrix = as_float32_matrix(vectors, copy_policy="contiguous")
+                if matrix.ndim != 2 or matrix.shape[1] != self.dimension:
+                    return
+                index = self._create_index(self.dimension)
+                index.add(matrix)
+                faiss.write_index(index, index_path)
+                return
             if self.index is None and not self._ensure_faiss_index():
                 return
             faiss.write_index(self.index, index_path)
@@ -1118,6 +1218,176 @@ class VectorStore:
             vectors=vectors.astype(np.float32, copy=False),
         )
         return buffer.getvalue()
+
+    @staticmethod
+    def _copy_or_link_file(source_path: str, target_path: str) -> None:
+        if os.path.abspath(source_path) == os.path.abspath(target_path):
+            return
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        try:
+            os.link(source_path, target_path)
+        except OSError:
+            shutil.copy2(source_path, target_path)
+
+    @staticmethod
+    def _path_row_counts(metadata: list[CodeElementMeta]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for sequence_no, meta in enumerate(metadata):
+            path_key = VectorStore._metadata_path_key(meta, sequence_no)
+            counts[path_key] = counts.get(path_key, 0) + 1
+        return counts
+
+    def _load_vector_sequences_by_path(
+        self,
+        name: str,
+        *,
+        path_keys: set[str] | None = None,
+    ) -> tuple[dict[str, list[int]], int]:
+        manifest = self._load_vector_manifest(name)
+        if manifest is None:
+            return {}, -1
+        shard_dir = self._vector_shards_dir(name)
+        sequences_by_path: dict[str, list[int]] = {}
+        max_sequence_no = -1
+        for entry in manifest.get("shards", []):
+            path_key = str(entry.get("path_key") or "")
+            if not path_key or (path_keys is not None and path_key not in path_keys):
+                continue
+            shard_file = entry.get("shard_file")
+            if not shard_file:
+                continue
+            shard_path = os.path.join(shard_dir, str(shard_file))
+            try:
+                with np.load(shard_path, allow_pickle=False) as archive:
+                    sequence_nos = archive["sequence_nos"]
+            except Exception as exc:
+                self.logger.warning(
+                    "Failed to read previous vector shard %s: %s",
+                    shard_path,
+                    exc,
+                )
+                continue
+            if sequence_nos.ndim != 1:
+                continue
+            values = [int(value) for value in sequence_nos.tolist()]
+            if values:
+                max_sequence_no = max(max_sequence_no, *values)
+            sequences_by_path[path_key] = values
+        return sequences_by_path, max_sequence_no
+
+    def _build_incremental_shard_plan(
+        self,
+        *,
+        previous_name: str,
+        reusable_path_keys: set[str],
+        grouped_counts: dict[str, int],
+    ) -> _IncrementalShardPlan:
+        previous_manifest = self._load_vector_manifest(previous_name)
+        if not self._vector_manifest_supports_reuse(previous_manifest):
+            return self._fresh_incremental_shard_plan(grouped_counts)
+        previous_entries = {
+            str(entry.get("path_key")): entry
+            for entry in (
+                previous_manifest.get("shards", []) if previous_manifest else []
+            )
+            if entry.get("path_key")
+        }
+        previous_sequences, max_previous_sequence_no = (
+            self._load_vector_sequences_by_path(previous_name)
+        )
+        sequences_by_path: dict[str, list[int]] = {}
+        reusable_entries: dict[str, _VectorShardManifestEntry] = {}
+        used_sequences: set[int] = set()
+
+        for path_key, count in grouped_counts.items():
+            if path_key.startswith("__pathless__"):
+                continue
+            if path_key not in reusable_path_keys:
+                continue
+            previous_entry = previous_entries.get(path_key)
+            previous_sequence_nos = previous_sequences.get(path_key)
+            if not previous_entry or previous_sequence_nos is None:
+                continue
+            if len(previous_sequence_nos) != count:
+                continue
+            if any(
+                sequence_no in used_sequences for sequence_no in previous_sequence_nos
+            ):
+                continue
+            sequences_by_path[path_key] = list(previous_sequence_nos)
+            reusable_entries[path_key] = previous_entry
+            used_sequences.update(previous_sequence_nos)
+
+        next_sequence_no = max(max_previous_sequence_no + 1, 0)
+        for path_key, count in grouped_counts.items():
+            if path_key in sequences_by_path:
+                continue
+            while next_sequence_no in used_sequences:
+                next_sequence_no += 1
+            assigned = list(range(next_sequence_no, next_sequence_no + count))
+            sequences_by_path[path_key] = assigned
+            used_sequences.update(assigned)
+            next_sequence_no += count
+
+        return {
+            "sequences_by_path": sequences_by_path,
+            "reusable_vector_entries": reusable_entries,
+            "max_previous_sequence_no": max_previous_sequence_no,
+        }
+
+    def _vector_manifest_supports_reuse(
+        self, manifest: _VectorShardManifest | None
+    ) -> bool:
+        if manifest is None:
+            return False
+        return (
+            int(manifest.get("version") or 0) == _VECTOR_SHARD_STORAGE_VERSION
+            and int(manifest.get("dimension") or 0) == int(self.dimension or 0)
+            and str(manifest.get("distance_metric") or "cosine") == self.distance_metric
+            and str(manifest.get("index_type") or "HNSW") == self.index_type
+        )
+
+    @staticmethod
+    def _fresh_incremental_shard_plan(
+        grouped_counts: dict[str, int],
+    ) -> _IncrementalShardPlan:
+        sequences_by_path: dict[str, list[int]] = {}
+        next_sequence_no = 0
+        for path_key, count in grouped_counts.items():
+            sequences_by_path[path_key] = list(
+                range(next_sequence_no, next_sequence_no + count)
+            )
+            next_sequence_no += count
+        return {
+            "sequences_by_path": sequences_by_path,
+            "reusable_vector_entries": {},
+            "max_previous_sequence_no": -1,
+        }
+
+    def _vector_matrix_ordered_by_sequences(
+        self,
+        vectors: np.ndarray,
+        sequences_by_path: dict[str, list[int]],
+    ) -> np.ndarray:
+        ordered_rows: list[tuple[int, np.ndarray]] = []
+        grouped_seen: dict[str, int] = {}
+        for row_index, meta in enumerate(self.metadata):
+            path_key = self._metadata_path_key(meta, row_index)
+            seen_count = grouped_seen.get(path_key, 0)
+            sequence_nos = sequences_by_path.get(path_key)
+            if sequence_nos is None or len(sequence_nos) <= seen_count:
+                raise RuntimeError(
+                    f"Missing incremental vector sequence for path: {path_key}"
+                )
+            grouped_seen[path_key] = seen_count + 1
+            ordered_rows.append((sequence_nos[seen_count], vectors[row_index]))
+        ordered_rows.sort(key=lambda item: item[0])
+        if not ordered_rows:
+            return np.empty((0, int(self.dimension or 0)), dtype=np.float32)
+        return np.vstack([row for _, row in ordered_rows]).astype(
+            np.float32, copy=False
+        )
 
     def _load_vector_manifest(self, name: str) -> _VectorShardManifest | None:
         manifest_path = self._vector_manifest_path(name)
@@ -1219,6 +1489,106 @@ class VectorStore:
         with open(tmp_manifest, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
         os.replace(tmp_manifest, manifest_path)
+
+    def _write_vector_bundle_with_sequences(
+        self,
+        name: str,
+        *,
+        vectors: np.ndarray,
+        sequences_by_path: dict[str, list[int]],
+        previous_name: str,
+        reusable_entries: dict[str, _VectorShardManifestEntry],
+    ) -> dict[str, int]:
+        shard_dir = self._vector_shards_dir(name)
+        ensure_dir(shard_dir)
+        previous_shard_dir = self._vector_shards_dir(previous_name)
+
+        grouped_rows: dict[str, list[tuple[int, int, np.ndarray]]] = {}
+        for row_index, meta in enumerate(self.metadata):
+            path_key = self._metadata_path_key(meta, row_index)
+            sequence_nos = sequences_by_path.get(path_key)
+            if sequence_nos is None or len(sequence_nos) <= len(
+                grouped_rows.get(path_key, [])
+            ):
+                raise RuntimeError(
+                    f"Missing incremental vector sequence for path: {path_key}"
+                )
+            sequence_no = sequence_nos[len(grouped_rows.get(path_key, []))]
+            grouped_rows.setdefault(path_key, []).append(
+                (sequence_no, row_index, vectors[row_index])
+            )
+
+        manifest: _VectorShardManifest = {
+            "version": _VECTOR_SHARD_STORAGE_VERSION,
+            "dimension": self.dimension,
+            "distance_metric": self.distance_metric,
+            "index_type": self.index_type,
+            "vector_count": len(self.metadata),
+            "shards": [],
+        }
+        active_files: set[str] = set()
+        reused = 0
+        written = 0
+        for path_key, rows in grouped_rows.items():
+            reusable = reusable_entries.get(path_key)
+            if reusable is not None:
+                shard_file = str(reusable.get("shard_file") or "")
+                source_path = os.path.join(previous_shard_dir, shard_file)
+                target_path = os.path.join(shard_dir, shard_file)
+                if shard_file and os.path.exists(source_path):
+                    self._copy_or_link_file(source_path, target_path)
+                    active_files.add(shard_file)
+                    manifest["shards"].append(
+                        {
+                            "path_key": path_key,
+                            "shard_file": shard_file,
+                            "digest": str(reusable.get("digest") or ""),
+                            "count": int(reusable.get("count") or len(rows)),
+                        }
+                    )
+                    reused += 1
+                    continue
+
+            sequence_nos = np.asarray([sequence_no for sequence_no, _, _ in rows])
+            shard_vectors = np.vstack([vector for _, _, vector in rows]).astype(
+                np.float32, copy=False
+            )
+            shard_bytes = self._vector_shard_bytes(
+                sequence_nos=sequence_nos,
+                vectors=shard_vectors,
+            )
+            digest = hashlib.sha256(shard_bytes).hexdigest()
+            shard_file = self._vector_shard_filename(path_key)
+            shard_path = os.path.join(shard_dir, shard_file)
+            active_files.add(shard_file)
+            tmp_path = f"{shard_path}.tmp"
+            with open(tmp_path, "wb") as handle:
+                handle.write(shard_bytes)
+            os.replace(tmp_path, shard_path)
+            manifest["shards"].append(
+                {
+                    "path_key": path_key,
+                    "shard_file": shard_file,
+                    "digest": digest,
+                    "count": len(rows),
+                }
+            )
+            written += 1
+
+        for entry_name in os.listdir(shard_dir):
+            if not entry_name.endswith(".npz") or entry_name in active_files:
+                continue
+            os.remove(os.path.join(shard_dir, entry_name))
+
+        manifest_path = self._vector_manifest_path(name)
+        tmp_manifest = f"{manifest_path}.tmp"
+        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
+        os.replace(tmp_manifest, manifest_path)
+        return {
+            "vector_shards_reused": reused,
+            "vector_shards_written": written,
+        }
 
     def load_vector_payload(self, name: str) -> dict[str, Any] | None:
         manifest = self._load_vector_manifest(name)
@@ -1405,6 +1775,74 @@ class VectorStore:
         if os.path.exists(legacy_metadata_path):
             os.remove(legacy_metadata_path)
 
+    def _write_metadata_bundle_with_sequences(
+        self,
+        name: str,
+        *,
+        sequences_by_path: dict[str, list[int]],
+    ) -> dict[str, int]:
+        shard_dir = self._metadata_shards_dir(name)
+        ensure_dir(shard_dir)
+
+        grouped_entries: dict[str, list[dict[str, Any]]] = {}
+        for row_index, meta in enumerate(self.metadata):
+            path_key = self._metadata_path_key(meta, row_index)
+            sequence_nos = sequences_by_path.get(path_key)
+            current_entries = grouped_entries.setdefault(path_key, [])
+            if sequence_nos is None or len(sequence_nos) <= len(current_entries):
+                raise RuntimeError(
+                    f"Missing incremental metadata sequence for path: {path_key}"
+                )
+            current_entries.append(
+                {"sequence_no": sequence_nos[len(current_entries)], "payload": meta}
+            )
+
+        manifest: _MetadataShardManifest = {
+            "version": _METADATA_SHARD_STORAGE_VERSION,
+            "dimension": self.dimension,
+            "distance_metric": self.distance_metric,
+            "index_type": self.index_type,
+            "vector_count": len(self.metadata),
+            "shards": [],
+        }
+        active_files: set[str] = set()
+        written = 0
+        for path_key, entries in grouped_entries.items():
+            shard_bytes = self._metadata_shard_bytes(entries)
+            digest = hashlib.sha256(shard_bytes).hexdigest()
+            shard_file = self._metadata_shard_filename(path_key)
+            shard_path = os.path.join(shard_dir, shard_file)
+            active_files.add(shard_file)
+            tmp_path = f"{shard_path}.tmp"
+            with open(tmp_path, "wb") as handle:
+                handle.write(shard_bytes)
+            os.replace(tmp_path, shard_path)
+            manifest["shards"].append(
+                {
+                    "path_key": path_key,
+                    "shard_file": shard_file,
+                    "digest": digest,
+                    "count": len(entries),
+                }
+            )
+            written += 1
+
+        for entry_name in os.listdir(shard_dir):
+            if not entry_name.endswith(".pkl") or entry_name in active_files:
+                continue
+            os.remove(os.path.join(shard_dir, entry_name))
+
+        manifest_path = self._metadata_manifest_path(name)
+        tmp_manifest = f"{manifest_path}.tmp"
+        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
+        os.replace(tmp_manifest, manifest_path)
+
+        legacy_metadata_path = self._legacy_metadata_path(name)
+        if os.path.exists(legacy_metadata_path):
+            os.remove(legacy_metadata_path)
+        return {"metadata_shards_written": written}
+
     def load_metadata_payload(self, name: str) -> dict[str, Any] | None:
         manifest = self._load_metadata_manifest(name)
         if manifest is not None:
@@ -1552,17 +1990,7 @@ class VectorStore:
 
     @staticmethod
     def _normalize_repo_overview_embedding(embedding: Any) -> np.ndarray | None:
-        try:
-            normalized = np.asarray(embedding, dtype=np.float32).reshape(-1)
-        except (TypeError, ValueError):
-            return None
-        if normalized.size == 0:
-            return None
-        if not np.isfinite(normalized).all():
-            normalized = np.nan_to_num(
-                normalized, copy=False, nan=0.0, posinf=0.0, neginf=0.0
-            )
-        return normalized.astype(np.float32, copy=False)
+        return as_float32_vector(embedding, copy_policy="contiguous")
 
     @staticmethod
     def _serialize_repo_overview_metadata(metadata: Any) -> str:

@@ -115,6 +115,84 @@ def test_graph_save_reuses_unchanged_shards(tmp_path: Path) -> None:
     assert b_after > b_before
 
 
+def test_graph_save_incremental_reuses_previous_artifact_shards(
+    tmp_path: Path,
+) -> None:
+    previous = _builder(tmp_path)
+    elem_a = _element("func:a", "load_a", relative_path="src/a.py")
+    elem_b = _element("func:b", "load_b", relative_path="src/b.py")
+    previous.element_by_name = {elem_a.name: elem_a, elem_b.name: elem_b}
+    previous.element_by_id = {elem_a.id: elem_a, elem_b.id: elem_b}
+    previous.call_graph.add_edge(elem_a.id, elem_b.id, type="calls")
+
+    assert previous.save("prev") is True
+    prev_manifest = json.loads(
+        (tmp_path / "prev_graph_manifest.json").read_text(encoding="utf-8")
+    )
+    prev_shards = {
+        entry["path_key"]: tmp_path / "prev_graph_shards" / entry["shard_file"]
+        for entry in prev_manifest["shards"]
+    }
+
+    current = _builder(tmp_path)
+    elem_b_v2 = _element("func:b", "load_b", relative_path="src/b.py")
+    elem_b_v2.metadata["refreshed"] = True
+    current.element_by_name = {elem_a.name: elem_a, elem_b_v2.name: elem_b_v2}
+    current.element_by_id = {elem_a.id: elem_a, elem_b_v2.id: elem_b_v2}
+    current.call_graph.add_edge(elem_a.id, elem_b_v2.id, type="calls")
+
+    stats = current.save_incremental(
+        "next",
+        previous_name="prev",
+        reusable_path_keys={"src/a.py"},
+    )
+
+    assert stats["graph_shards_reused"] == 1
+    next_manifest = json.loads(
+        (tmp_path / "next_graph_manifest.json").read_text(encoding="utf-8")
+    )
+    next_shards = {
+        entry["path_key"]: tmp_path / "next_graph_shards" / entry["shard_file"]
+        for entry in next_manifest["shards"]
+    }
+    assert next_shards["src/a.py"].read_bytes() == prev_shards["src/a.py"].read_bytes()
+    assert next_shards["src/b.py"].read_bytes() != prev_shards["src/b.py"].read_bytes()
+
+    loaded = _builder(tmp_path)
+    assert loaded.load("next") is True
+    assert loaded.get_related_elements(elem_a.id, max_hops=1) == {elem_a.id, elem_b.id}
+
+
+def test_graph_save_incremental_refuses_incompatible_manifest(
+    tmp_path: Path,
+) -> None:
+    previous = _builder(tmp_path)
+    elem_a = _element("func:a", "load_a", relative_path="src/a.py")
+    previous.element_by_name = {elem_a.name: elem_a}
+    previous.element_by_id = {elem_a.id: elem_a}
+
+    assert previous.save("prev") is True
+    manifest_path = tmp_path / "prev_graph_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["version"] = 0
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    current = _builder(tmp_path)
+    elem_a_v2 = _element("func:a", "load_a", relative_path="src/a.py")
+    elem_a_v2.metadata["refreshed"] = True
+    current.element_by_name = {elem_a_v2.name: elem_a_v2}
+    current.element_by_id = {elem_a_v2.id: elem_a_v2}
+
+    stats = current.save_incremental(
+        "next",
+        previous_name="prev",
+        reusable_path_keys={"src/a.py"},
+    )
+
+    assert stats["graph_shards_reused"] == 0
+    assert stats["graph_shards_written"] == 1
+
+
 def test_graph_sharded_load_keeps_lazy_adjacency_until_needed(tmp_path: Path) -> None:
     builder = _builder(tmp_path)
     elem_a = _element("func:a", "load_a", relative_path="src/a.py")

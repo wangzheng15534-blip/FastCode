@@ -1073,7 +1073,10 @@ class SnapshotStore:
 
         serializable: dict[str, Any] = {}
         for name, graph in self._ir_graph_items(ir_graphs).items():
-            if isinstance(graph, nx.Graph):
+            to_payload = getattr(graph, "to_payload", None)
+            if callable(to_payload):
+                serializable[name] = to_payload()
+            elif isinstance(graph, nx.Graph):
                 serializable[name] = nx.node_link_data(graph)
             else:
                 serializable[name] = self._graph_json_payload(graph)
@@ -1097,6 +1100,8 @@ class SnapshotStore:
             return None
         import networkx as nx
 
+        from ..ir.graph import IRGraphView
+
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
@@ -1109,6 +1114,11 @@ class SnapshotStore:
         result: dict[str, Any] = {}
         for name, graph_data in graphs_data.items():
             if (
+                isinstance(graph_data, dict)
+                and graph_data.get("storage_version") == IRGraphView.STORAGE_VERSION
+            ):
+                result[name] = IRGraphView.from_payload(graph_data)
+            elif (
                 isinstance(graph_data, dict)
                 and "nodes" in graph_data
                 and ("links" in graph_data or "edges" in graph_data)
@@ -1128,7 +1138,7 @@ class SnapshotStore:
             "containment_graph",
         }
         if graph_names.issubset(result) and all(
-            isinstance(result[name], nx.Graph) for name in graph_names
+            isinstance(result[name], (nx.Graph, IRGraphView)) for name in graph_names
         ):
             from ..ir.graph import IRGraphs
 

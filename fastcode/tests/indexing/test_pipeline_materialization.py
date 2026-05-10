@@ -58,7 +58,9 @@ def test_materialize_indexed_elements_for_storage_avoids_code_element_to_dict() 
             )
         )
 
-    assert len(vectors) == 1
+    assert isinstance(vectors, np.ndarray)
+    assert vectors.dtype == np.float32
+    assert vectors.shape == (1, 2)
     assert np.array_equal(vectors[0], embedded.metadata["embedding"])
     assert len(metadata) == 1
     assert len(all_payloads) == 2

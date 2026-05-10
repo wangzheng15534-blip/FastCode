@@ -78,7 +78,10 @@ class CodeIndexer:
         return self.extract_elements(repo_name=repo_name, repo_url=repo_url)
 
     def extract_elements(
-        self, repo_name: str | None = None, repo_url: str | None = None
+        self,
+        repo_name: str | None = None,
+        repo_url: str | None = None,
+        file_infos: list[dict[str, Any]] | None = None,
     ) -> list[CodeElement]:
         """
         Extract and embed code elements for a repository.
@@ -86,6 +89,7 @@ class CodeIndexer:
         Args:
             repo_name: Optional repository name for identification
             repo_url: Optional repository URL for identification
+            file_infos: Optional precomputed loader inventory for this run
 
         Returns:
             List of indexed code elements
@@ -96,8 +100,8 @@ class CodeIndexer:
         self.current_repo_name = repo_name
         self.current_repo_url = repo_url
 
-        # Scan files
-        files = self.loader.scan_files()
+        # Scan files unless the snapshot pipeline already did the inventory pass.
+        files = file_infos if file_infos is not None else self.loader.scan_files()
         self.logger.info(
             f"Indexing {len(files)} files for repository: {repo_name or 'Unknown'}"
         )

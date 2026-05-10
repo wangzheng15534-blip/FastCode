@@ -141,3 +141,42 @@ def test_index_files_avoids_generic_element_and_import_to_dict_calls() -> None:
         f"artifact:{function_element.id}"
     )
     assert isinstance(file_element.metadata["embedding"], np.ndarray)
+
+
+def test_extract_elements_uses_precomputed_file_inventory() -> None:
+    parse_result = FileParseResult(
+        file_path="/repo/mod.py",
+        language="python",
+        classes=[],
+        functions=[],
+        imports=[],
+        module_docstring=None,
+        total_lines=1,
+        code_lines=1,
+        comment_lines=0,
+    )
+    loader = _LoaderStub("x = 1\n")
+    loader.scan_files = lambda: (_ for _ in ()).throw(  # type: ignore[attr-defined]
+        AssertionError("extract_elements should use provided file_infos")
+    )
+    indexer = CodeIndexer(
+        {"indexing": {"levels": ["file"], "generate_repo_overview": False}},
+        cast(Any, loader),
+        cast(Any, _ParserStub(parse_result)),
+        cast(Any, _EmbedderStub()),
+        None,
+    )
+
+    elements = indexer.extract_elements(
+        repo_name="repo",
+        file_infos=[
+            {
+                "path": "/repo/mod.py",
+                "relative_path": "mod.py",
+                "size": 6,
+                "extension": ".py",
+            }
+        ],
+    )
+
+    assert [element.relative_path for element in elements] == ["mod.py"]

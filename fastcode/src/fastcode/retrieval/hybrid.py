@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import pickle
+import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
@@ -28,7 +29,7 @@ from ..ir.element import (
     deserialize_code_element,
     serialize_code_element,
 )
-from ..ir.graph import IRGraphs
+from ..ir.graph import IRGraphs, IRGraphView
 from ..query.processor import ProcessedQuery
 from ..query.selector import RepositorySelector
 from ..schemas.core_types import FusionConfig
@@ -40,6 +41,8 @@ from .core import filtering as _filtering
 from .core import fusion as _fusion
 from .core import scoring as _scoring
 from .iterative import IterativeAgent
+
+_BM25_SHARD_STORAGE_VERSION = 1
 
 
 @dataclass
@@ -169,7 +172,7 @@ class HybridRetriever:
         self.ir_graphs: IRGraphs | None = None
         self.ir_snapshot_id: str | None = None
         self._ir_graph_loader: Callable[[str], Any | None] | None = None
-        self._ir_union_graph: nx.Graph[str] | None = None
+        self._ir_union_graph: Any | None = None
         self.pg_retrieval_store: PgRetrievalStore | None = None
         self._active_snapshot_id: str | None = None
         self._last_fusion_debug: dict[str, Any] | None = None
@@ -272,13 +275,34 @@ class HybridRetriever:
             return loaded_graphs
         return None
 
-    def _ensure_ir_union_graph(self) -> nx.Graph[str] | None:
+    def _ensure_ir_union_graph(self) -> Any | None:
         cached_union = getattr(self, "_ir_union_graph", None)
         if cached_union is not None:
             return cached_union
         ir_graphs = self._ensure_ir_graphs_loaded()
         if ir_graphs is None:
             return None
+        if any(
+            isinstance(component, IRGraphView)
+            for component in [
+                ir_graphs.dependency_graph,
+                ir_graphs.call_graph,
+                ir_graphs.inheritance_graph,
+                ir_graphs.reference_graph,
+                ir_graphs.containment_graph,
+            ]
+        ):
+            compact_graph = IRGraphView.union(
+                [
+                    ir_graphs.dependency_graph,
+                    ir_graphs.call_graph,
+                    ir_graphs.inheritance_graph,
+                    ir_graphs.reference_graph,
+                    ir_graphs.containment_graph,
+                ]
+            )
+            self._ir_union_graph = compact_graph
+            return compact_graph
         graph: nx.Graph[str] = nx.Graph()
         for component in [
             ir_graphs.dependency_graph,
@@ -1532,10 +1556,14 @@ class HybridRetriever:
             return set()
         if seed not in g:
             return set()
-        related_ir_nodes = set(
-            nx.single_source_shortest_path_length(g, seed, cutoff=max_hops).keys()
-        )
-        related_ir_nodes.discard(seed)
+        reachable = getattr(g, "reachable_within", None)
+        if callable(reachable):
+            related_ir_nodes = set(cast(set[str], reachable(seed, max_hops)))
+        else:
+            related_ir_nodes = set(
+                nx.single_source_shortest_path_length(g, seed, cutoff=max_hops).keys()
+            )
+            related_ir_nodes.discard(seed)
         if not related_ir_nodes:
             return set()
 
@@ -1798,6 +1826,30 @@ class HybridRetriever:
             self.logger.error(f"Failed to save BM25 data: {e}")
             return False
 
+    def save_bm25_incremental(
+        self,
+        name: str,
+        *,
+        previous_name: str,
+        reusable_path_keys: set[str],
+    ) -> dict[str, int]:
+        """Save BM25 data while reusing unchanged path shards from a prior artifact."""
+        try:
+            stats = self._write_bm25_bundle_incremental(
+                name,
+                previous_name=previous_name,
+                reusable_path_keys=reusable_path_keys,
+            )
+            self.logger.info(
+                "Saved full BM25 data for %s with %d reused shards",
+                name,
+                stats["bm25_shards_reused"],
+            )
+            return stats
+        except Exception as e:
+            self.logger.error(f"Failed to save BM25 data incrementally: {e}")
+            return {"bm25_shards_reused": 0, "bm25_shards_written": 0}
+
     def load_bm25(self, name: str = "index") -> bool:
         """
         Load FULL BM25 index and elements from disk
@@ -1877,6 +1929,17 @@ class HybridRetriever:
     def _bm25_shard_bytes(entries: list[dict[str, Any]]) -> bytes:
         return pickle.dumps({"entries": entries}, protocol=pickle.HIGHEST_PROTOCOL)
 
+    @staticmethod
+    def _copy_or_link_file(source_path: str, target_path: str) -> None:
+        if os.path.abspath(source_path) == os.path.abspath(target_path):
+            return
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        try:
+            os.link(source_path, target_path)
+        except OSError:
+            shutil.copy2(source_path, target_path)
+
     def _load_bm25_manifest(self, name: str) -> dict[str, Any] | None:
         manifest_path = self._bm25_manifest_path(name)
         if not os.path.exists(manifest_path):
@@ -1914,7 +1977,7 @@ class HybridRetriever:
             )
 
         manifest: dict[str, Any] = {
-            "version": 1,
+            "version": _BM25_SHARD_STORAGE_VERSION,
             "element_count": len(self.full_bm25_elements),
             "shards": [],
         }
@@ -1968,6 +2031,224 @@ class HybridRetriever:
         legacy_bm25_path = self._legacy_bm25_path(name)
         if os.path.exists(legacy_bm25_path):
             os.remove(legacy_bm25_path)
+
+    def _load_bm25_sequences_by_path(
+        self,
+        name: str,
+    ) -> tuple[dict[str, list[int]], int]:
+        manifest = self._load_bm25_manifest(name)
+        if manifest is None:
+            return {}, -1
+        sequences_by_path: dict[str, list[int]] = {}
+        max_sequence_no = -1
+        shard_dir = self._bm25_shards_dir(name)
+        for shard in manifest.get("shards", []):
+            if not isinstance(shard, dict) or not shard.get("shard_file"):
+                continue
+            path_key = str(shard.get("path_key") or "")
+            if not path_key:
+                continue
+            shard_path = os.path.join(shard_dir, str(shard["shard_file"]))
+            try:
+                with open(shard_path, "rb") as handle:
+                    payload = pickle.load(handle)
+            except Exception as exc:
+                self.logger.warning(
+                    "Failed to read previous BM25 shard %s: %s",
+                    shard_path,
+                    exc,
+                )
+                continue
+            entries = payload.get("entries", []) if isinstance(payload, dict) else []
+            if not isinstance(entries, list):
+                continue
+            sequence_nos = [
+                int(entry["sequence_no"])
+                for entry in entries
+                if isinstance(entry, dict) and isinstance(entry.get("sequence_no"), int)
+            ]
+            if sequence_nos:
+                max_sequence_no = max(max_sequence_no, *sequence_nos)
+            sequences_by_path[path_key] = sequence_nos
+        return sequences_by_path, max_sequence_no
+
+    def _build_incremental_bm25_sequence_plan(
+        self,
+        *,
+        previous_name: str,
+        reusable_path_keys: set[str],
+        grouped_counts: dict[str, int],
+    ) -> tuple[dict[str, list[int]], dict[str, dict[str, Any]]]:
+        previous_manifest = self._load_bm25_manifest(previous_name)
+        if not self._bm25_manifest_supports_reuse(previous_manifest):
+            return self._fresh_incremental_bm25_sequence_plan(grouped_counts), {}
+        previous_entries = {
+            str(entry.get("path_key")): cast(dict[str, Any], entry)
+            for entry in (
+                previous_manifest.get("shards", []) if previous_manifest else []
+            )
+            if isinstance(entry, dict) and entry.get("path_key")
+        }
+        previous_sequences, max_previous_sequence_no = (
+            self._load_bm25_sequences_by_path(previous_name)
+        )
+        sequences_by_path: dict[str, list[int]] = {}
+        reusable_entries: dict[str, dict[str, Any]] = {}
+        used_sequences: set[int] = set()
+        for path_key, count in grouped_counts.items():
+            if (
+                path_key.startswith("__pathless__")
+                or path_key not in reusable_path_keys
+            ):
+                continue
+            previous_entry = previous_entries.get(path_key)
+            previous_sequence_nos = previous_sequences.get(path_key)
+            if not previous_entry or previous_sequence_nos is None:
+                continue
+            if len(previous_sequence_nos) != count:
+                continue
+            if any(
+                sequence_no in used_sequences for sequence_no in previous_sequence_nos
+            ):
+                continue
+            sequences_by_path[path_key] = list(previous_sequence_nos)
+            reusable_entries[path_key] = previous_entry
+            used_sequences.update(previous_sequence_nos)
+
+        next_sequence_no = max(max_previous_sequence_no + 1, 0)
+        for path_key, count in grouped_counts.items():
+            if path_key in sequences_by_path:
+                continue
+            while next_sequence_no in used_sequences:
+                next_sequence_no += 1
+            assigned = list(range(next_sequence_no, next_sequence_no + count))
+            sequences_by_path[path_key] = assigned
+            used_sequences.update(assigned)
+            next_sequence_no += count
+        return sequences_by_path, reusable_entries
+
+    @staticmethod
+    def _bm25_manifest_supports_reuse(manifest: dict[str, Any] | None) -> bool:
+        if manifest is None:
+            return False
+        return int(manifest.get("version") or 0) == _BM25_SHARD_STORAGE_VERSION
+
+    @staticmethod
+    def _fresh_incremental_bm25_sequence_plan(
+        grouped_counts: dict[str, int],
+    ) -> dict[str, list[int]]:
+        sequences_by_path: dict[str, list[int]] = {}
+        next_sequence_no = 0
+        for path_key, count in grouped_counts.items():
+            sequences_by_path[path_key] = list(
+                range(next_sequence_no, next_sequence_no + count)
+            )
+            next_sequence_no += count
+        return sequences_by_path
+
+    def _write_bm25_bundle_incremental(
+        self,
+        name: str,
+        *,
+        previous_name: str,
+        reusable_path_keys: set[str],
+    ) -> dict[str, int]:
+        shard_dir = self._bm25_shards_dir(name)
+        ensure_dir(shard_dir)
+        previous_shard_dir = self._bm25_shards_dir(previous_name)
+
+        grouped_counts: dict[str, int] = {}
+        for sequence_no, element in enumerate(self.full_bm25_elements):
+            path_key = self._bm25_path_key(element, sequence_no)
+            grouped_counts[path_key] = grouped_counts.get(path_key, 0) + 1
+        sequences_by_path, reusable_entries = (
+            self._build_incremental_bm25_sequence_plan(
+                previous_name=previous_name,
+                reusable_path_keys=reusable_path_keys,
+                grouped_counts=grouped_counts,
+            )
+        )
+
+        grouped_entries: dict[str, list[dict[str, Any]]] = {}
+        for row_index, (tokens, element) in enumerate(
+            zip(self.full_bm25_corpus, self.full_bm25_elements, strict=False)
+        ):
+            path_key = self._bm25_path_key(element, row_index)
+            current_entries = grouped_entries.setdefault(path_key, [])
+            sequence_nos = sequences_by_path.get(path_key)
+            if sequence_nos is None or len(sequence_nos) <= len(current_entries):
+                raise RuntimeError(
+                    f"Missing incremental BM25 sequence for path: {path_key}"
+                )
+            current_entries.append(
+                {
+                    "sequence_no": sequence_nos[len(current_entries)],
+                    "tokens": list(tokens),
+                    "element": serialize_code_element(element),
+                }
+            )
+
+        manifest: dict[str, Any] = {
+            "version": _BM25_SHARD_STORAGE_VERSION,
+            "element_count": len(self.full_bm25_elements),
+            "shards": [],
+        }
+        active_files: set[str] = set()
+        reused = 0
+        written = 0
+        for path_key, entries in grouped_entries.items():
+            reusable = reusable_entries.get(path_key)
+            if reusable is not None:
+                shard_file = str(reusable.get("shard_file") or "")
+                source_path = os.path.join(previous_shard_dir, shard_file)
+                target_path = os.path.join(shard_dir, shard_file)
+                if shard_file and os.path.exists(source_path):
+                    self._copy_or_link_file(source_path, target_path)
+                    active_files.add(shard_file)
+                    manifest["shards"].append(
+                        {
+                            "path_key": path_key,
+                            "shard_file": shard_file,
+                            "digest": str(reusable.get("digest") or ""),
+                            "count": int(reusable.get("count") or len(entries)),
+                        }
+                    )
+                    reused += 1
+                    continue
+            shard_bytes = self._bm25_shard_bytes(entries)
+            digest = hashlib.sha256(shard_bytes).hexdigest()
+            shard_file = self._bm25_shard_filename(path_key)
+            shard_path = os.path.join(shard_dir, shard_file)
+            active_files.add(shard_file)
+            tmp_path = f"{shard_path}.tmp"
+            with open(tmp_path, "wb") as handle:
+                handle.write(shard_bytes)
+            os.replace(tmp_path, shard_path)
+            manifest["shards"].append(
+                {
+                    "path_key": path_key,
+                    "shard_file": shard_file,
+                    "digest": digest,
+                    "count": len(entries),
+                }
+            )
+            written += 1
+
+        for entry_name in os.listdir(shard_dir):
+            if not entry_name.endswith(".pkl") or entry_name in active_files:
+                continue
+            os.remove(os.path.join(shard_dir, entry_name))
+
+        manifest_path = self._bm25_manifest_path(name)
+        tmp_manifest = f"{manifest_path}.tmp"
+        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp_manifest, manifest_path)
+
+        legacy_bm25_path = self._legacy_bm25_path(name)
+        if os.path.exists(legacy_bm25_path):
+            os.remove(legacy_bm25_path)
+        return {"bm25_shards_reused": reused, "bm25_shards_written": written}
 
     def _load_bm25_payload(self, name: str) -> dict[str, Any] | None:
         manifest = self._load_bm25_manifest(name)

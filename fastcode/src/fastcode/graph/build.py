@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import pickle
+import shutil
 from collections import deque
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
@@ -840,6 +841,31 @@ class CodeGraphBuilder:
             self.logger.error(f"Failed to save graph data: {e}")
             return False
 
+    def save_incremental(
+        self,
+        name: str,
+        *,
+        previous_name: str,
+        reusable_path_keys: set[str],
+    ) -> dict[str, int]:
+        """Save graph data while reusing unchanged path shards from a prior artifact."""
+        try:
+            self._ensure_materialized_graphs()
+            stats = self._write_graph_bundle_incremental(
+                name,
+                previous_name=previous_name,
+                reusable_path_keys=reusable_path_keys,
+            )
+            self.logger.info(
+                "Saved graph data to %s with %d reused shards",
+                self.persist_dir,
+                stats["graph_shards_reused"],
+            )
+            return stats
+        except Exception as e:
+            self.logger.error(f"Failed to save graph data incrementally: {e}")
+            return {"graph_shards_reused": 0, "graph_shards_written": 0}
+
     def load(self, name: str = "index") -> bool:
         """
         Load graph data from disk
@@ -992,6 +1018,17 @@ class CodeGraphBuilder:
         return pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
 
     @staticmethod
+    def _copy_or_link_file(source_path: str, target_path: str) -> None:
+        if os.path.abspath(source_path) == os.path.abspath(target_path):
+            return
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        try:
+            os.link(source_path, target_path)
+        except OSError:
+            shutil.copy2(source_path, target_path)
+
+    @staticmethod
     def _path_key_from_element(element: CodeElement, sequence_no: int) -> str:
         if element.relative_path:
             return str(element.relative_path)
@@ -1063,6 +1100,122 @@ class CodeGraphBuilder:
         except (OSError, json.JSONDecodeError):
             return None
         return cast(dict[str, Any], payload) if isinstance(payload, dict) else None
+
+    def _load_graph_sequences_by_path(
+        self,
+        name: str,
+    ) -> tuple[dict[str, list[int]], int]:
+        manifest = self._load_graph_manifest(name)
+        if manifest is None:
+            return {}, -1
+        sequences_by_path: dict[str, list[int]] = {}
+        max_sequence_no = -1
+        shard_dir = self._graph_shards_dir(name)
+        for entry in manifest.get("shards", []):
+            if not isinstance(entry, dict) or not entry.get("shard_file"):
+                continue
+            path_key = str(entry.get("path_key") or "")
+            if not path_key:
+                continue
+            shard_path = os.path.join(shard_dir, str(entry["shard_file"]))
+            try:
+                with open(shard_path, "rb") as handle:
+                    payload = pickle.load(handle)
+            except Exception as exc:
+                self.logger.warning(
+                    "Failed to read previous graph shard %s: %s",
+                    shard_path,
+                    exc,
+                )
+                continue
+            element_rows = (
+                payload.get("elements", []) if isinstance(payload, dict) else []
+            )
+            if not isinstance(element_rows, list):
+                continue
+            sequence_nos = [
+                int(row["sequence_no"])
+                for row in element_rows
+                if isinstance(row, dict) and isinstance(row.get("sequence_no"), int)
+            ]
+            if sequence_nos:
+                max_sequence_no = max(max_sequence_no, *sequence_nos)
+            sequences_by_path[path_key] = sequence_nos
+        return sequences_by_path, max_sequence_no
+
+    def _build_incremental_graph_sequence_plan(
+        self,
+        *,
+        previous_name: str,
+        reusable_path_keys: set[str],
+        grouped_counts: dict[str, int],
+    ) -> tuple[dict[str, list[int]], dict[str, dict[str, Any]]]:
+        previous_manifest = self._load_graph_manifest(previous_name)
+        if not self._graph_manifest_supports_reuse(previous_manifest):
+            return self._fresh_incremental_graph_sequence_plan(grouped_counts), {}
+        previous_entries = {
+            str(entry.get("path_key")): cast(dict[str, Any], entry)
+            for entry in (
+                previous_manifest.get("shards", []) if previous_manifest else []
+            )
+            if isinstance(entry, dict) and entry.get("path_key")
+        }
+        previous_sequences, max_previous_sequence_no = (
+            self._load_graph_sequences_by_path(previous_name)
+        )
+        sequences_by_path: dict[str, list[int]] = {}
+        reusable_entries: dict[str, dict[str, Any]] = {}
+        used_sequences: set[int] = set()
+        for path_key, count in grouped_counts.items():
+            if (
+                path_key.startswith("__pathless__")
+                or path_key not in reusable_path_keys
+            ):
+                continue
+            previous_entry = previous_entries.get(path_key)
+            previous_sequence_nos = previous_sequences.get(path_key)
+            if not previous_entry or previous_sequence_nos is None:
+                continue
+            if len(previous_sequence_nos) != count:
+                continue
+            if any(
+                sequence_no in used_sequences for sequence_no in previous_sequence_nos
+            ):
+                continue
+            sequences_by_path[path_key] = list(previous_sequence_nos)
+            reusable_entries[path_key] = previous_entry
+            used_sequences.update(previous_sequence_nos)
+
+        next_sequence_no = max(max_previous_sequence_no + 1, 0)
+        for path_key, count in grouped_counts.items():
+            if path_key in sequences_by_path:
+                continue
+            while next_sequence_no in used_sequences:
+                next_sequence_no += 1
+            assigned = list(range(next_sequence_no, next_sequence_no + count))
+            sequences_by_path[path_key] = assigned
+            used_sequences.update(assigned)
+            next_sequence_no += count
+        return sequences_by_path, reusable_entries
+
+    @staticmethod
+    def _graph_manifest_supports_reuse(manifest: dict[str, Any] | None) -> bool:
+        if manifest is None:
+            return False
+        return int(manifest.get("version") or 0) == _GRAPH_SHARD_STORAGE_VERSION
+
+    @staticmethod
+    def _fresh_incremental_graph_sequence_plan(
+        grouped_counts: dict[str, int],
+    ) -> dict[str, list[int]]:
+        sequences_by_path: dict[str, list[int]] = {}
+        next_sequence_no = 0
+        for path_key, count in grouped_counts.items():
+            sequences_by_path[path_key] = list(
+                range(next_sequence_no, next_sequence_no + count)
+            )
+            next_sequence_no += count
+        return sequences_by_path
 
     def _write_graph_bundle(self, name: str) -> None:
         shard_dir = self._graph_shards_dir(name)
@@ -1196,6 +1349,166 @@ class CodeGraphBuilder:
         legacy_graph_path = self._legacy_graph_path(name)
         if os.path.exists(legacy_graph_path):
             os.remove(legacy_graph_path)
+
+    def _write_graph_bundle_incremental(
+        self,
+        name: str,
+        *,
+        previous_name: str,
+        reusable_path_keys: set[str],
+    ) -> dict[str, int]:
+        shard_dir = self._graph_shards_dir(name)
+        ensure_dir(shard_dir)
+        previous_shard_dir = self._graph_shards_dir(previous_name)
+
+        persisted_elements = self._persisted_elements()
+        grouped_counts: dict[str, int] = {}
+        for sequence_no, element in enumerate(persisted_elements):
+            path_key = self._path_key_from_element(element, sequence_no)
+            grouped_counts[path_key] = grouped_counts.get(path_key, 0) + 1
+        sequences_by_path, reusable_entries = (
+            self._build_incremental_graph_sequence_plan(
+                previous_name=previous_name,
+                reusable_path_keys=reusable_path_keys,
+                grouped_counts=grouped_counts,
+            )
+        )
+
+        element_by_id = {element.id: element for element in persisted_elements}
+        file_path_to_path_key: dict[str, str] = {}
+        grouped_payloads: dict[str, dict[str, Any]] = {}
+        grouped_seen: dict[str, int] = {}
+
+        for row_index, element in enumerate(persisted_elements):
+            path_key = self._path_key_from_element(element, row_index)
+            sequence_nos = sequences_by_path.get(path_key)
+            seen_count = grouped_seen.get(path_key, 0)
+            if sequence_nos is None or len(sequence_nos) <= seen_count:
+                raise RuntimeError(
+                    f"Missing incremental graph sequence for path: {path_key}"
+                )
+            grouped_seen[path_key] = seen_count + 1
+            grouped = grouped_payloads.setdefault(path_key, self._empty_shard_payload())
+            grouped["elements"].append(
+                {
+                    "sequence_no": sequence_nos[seen_count],
+                    "payload": serialize_code_element(element),
+                }
+            )
+            if element.file_path:
+                file_path_to_path_key[str(element.file_path)] = path_key
+
+        for import_index, (file_path, imports) in enumerate(
+            self.imports_by_file.items()
+        ):
+            path_key = file_path_to_path_key.get(
+                str(file_path), self._imports_path_key(str(file_path), import_index)
+            )
+            grouped = grouped_payloads.setdefault(path_key, self._empty_shard_payload())
+            grouped["imports"].append(
+                {"file_path": str(file_path), "imports": list(imports)}
+            )
+
+        graph_map: dict[str, nx.DiGraph[str]] = {
+            "call": self.call_graph,
+            "dependency": self.dependency_graph,
+            "inheritance": self.inheritance_graph,
+        }
+        for graph_name, graph in graph_map.items():
+            for node_id in graph.nodes:
+                path_key = self._path_key_for_node_id(
+                    str(node_id), element_by_id=element_by_id
+                )
+                grouped = grouped_payloads.setdefault(
+                    path_key, self._empty_shard_payload()
+                )
+                grouped["graphs"][graph_name]["nodes"].append(str(node_id))
+            for source, target, attrs in graph.edges(data=True):
+                path_key = self._path_key_for_node_id(
+                    str(source), element_by_id=element_by_id
+                )
+                grouped = grouped_payloads.setdefault(
+                    path_key, self._empty_shard_payload()
+                )
+                grouped["graphs"][graph_name]["edges"].append(
+                    {
+                        "source": str(source),
+                        "target": str(target),
+                        "attrs": dict(attrs),
+                    }
+                )
+
+        manifest: dict[str, Any] = {
+            "version": _GRAPH_SHARD_STORAGE_VERSION,
+            "shards": [],
+        }
+        active_files: set[str] = set()
+        reused = 0
+        written = 0
+        for path_key, payload in grouped_payloads.items():
+            reusable = reusable_entries.get(path_key)
+            if reusable is not None:
+                shard_file = str(reusable.get("shard_file") or "")
+                source_path = os.path.join(previous_shard_dir, shard_file)
+                target_path = os.path.join(shard_dir, shard_file)
+                if shard_file and os.path.exists(source_path):
+                    self._copy_or_link_file(source_path, target_path)
+                    active_files.add(shard_file)
+                    manifest["shards"].append(
+                        {
+                            "path_key": path_key,
+                            "shard_file": shard_file,
+                            "digest": str(reusable.get("digest") or ""),
+                            "element_count": int(reusable.get("element_count") or 0),
+                            "import_count": int(reusable.get("import_count") or 0),
+                        }
+                    )
+                    reused += 1
+                    continue
+
+            payload["elements"].sort(key=lambda row: int(row.get("sequence_no", 0)))
+            payload["imports"].sort(key=lambda row: str(row.get("file_path") or ""))
+            for graph_payload in payload["graphs"].values():
+                graph_payload["nodes"] = sorted(
+                    {str(node_id) for node_id in graph_payload.get("nodes", [])}
+                )
+                graph_payload["edges"].sort(key=self._edge_sort_key)
+
+            shard_bytes = self._graph_shard_bytes(payload)
+            digest = hashlib.sha256(shard_bytes).hexdigest()
+            shard_file = self._graph_shard_filename(path_key)
+            shard_path = os.path.join(shard_dir, shard_file)
+            active_files.add(shard_file)
+            tmp_path = f"{shard_path}.tmp"
+            with open(tmp_path, "wb") as handle:
+                handle.write(shard_bytes)
+            os.replace(tmp_path, shard_path)
+            manifest["shards"].append(
+                {
+                    "path_key": path_key,
+                    "shard_file": shard_file,
+                    "digest": digest,
+                    "element_count": len(payload["elements"]),
+                    "import_count": len(payload["imports"]),
+                }
+            )
+            written += 1
+
+        for entry_name in os.listdir(shard_dir):
+            if not entry_name.endswith(".pkl") or entry_name in active_files:
+                continue
+            os.remove(os.path.join(shard_dir, entry_name))
+
+        manifest_path = self._graph_manifest_path(name)
+        tmp_manifest = f"{manifest_path}.tmp"
+        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp_manifest, manifest_path)
+
+        legacy_graph_path = self._legacy_graph_path(name)
+        if os.path.exists(legacy_graph_path):
+            os.remove(legacy_graph_path)
+        return {"graph_shards_reused": reused, "graph_shards_written": written}
 
     def _load_graph_payload(self, name: str) -> dict[str, Any] | None:
         manifest = self._load_graph_manifest(name)

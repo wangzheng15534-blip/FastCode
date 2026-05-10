@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import faiss
 import numpy as np
 import pytest
 
@@ -135,6 +136,252 @@ def test_repository_overview_persists_as_explicit_manifest_and_embedding_archive
         loaded["repo"]["embedding"],
         np.asarray([3.0, 4.0], dtype=np.float32),
     )
+
+
+def test_save_incremental_reuses_unchanged_vector_shards_double(
+    tmp_path: Path,
+) -> None:
+    previous = _disk_store(tmp_path)
+    previous.initialize(2)
+    previous.add_vectors(
+        np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+        [
+            {
+                "id": "elem:a",
+                "type": "file",
+                "name": "a.py",
+                "file_path": "/repo/pkg/a.py",
+                "relative_path": "pkg/a.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "code": "a",
+                "signature": None,
+                "docstring": None,
+                "summary": None,
+                "metadata": {"snapshot_id": "snap:old"},
+                "repo_name": "repo",
+                "repo_url": None,
+                "snapshot_id": "snap:old",
+            },
+            {
+                "id": "elem:b",
+                "type": "file",
+                "name": "b.py",
+                "file_path": "/repo/pkg/b.py",
+                "relative_path": "pkg/b.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "code": "b",
+                "signature": None,
+                "docstring": None,
+                "summary": None,
+                "metadata": {"snapshot_id": "snap:old"},
+                "repo_name": "repo",
+                "repo_url": None,
+                "snapshot_id": "snap:old",
+            },
+        ],
+    )
+    previous.save("prev")
+    prev_manifest = json.loads(
+        (tmp_path / "prev_vector_manifest.json").read_text(encoding="utf-8")
+    )
+    prev_shards = {
+        entry["path_key"]: tmp_path / "prev_vector_shards" / entry["shard_file"]
+        for entry in prev_manifest["shards"]
+    }
+
+    current = _disk_store(tmp_path)
+    current.initialize(2)
+    current.add_vectors(
+        np.asarray([[1.0, 0.0], [0.5, 0.5]], dtype=np.float32),
+        [
+            {
+                "id": "elem:a",
+                "type": "file",
+                "name": "a.py",
+                "file_path": "/repo/pkg/a.py",
+                "relative_path": "pkg/a.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "code": "a",
+                "signature": None,
+                "docstring": None,
+                "summary": None,
+                "metadata": {"snapshot_id": "snap:new"},
+                "repo_name": "repo",
+                "repo_url": None,
+                "snapshot_id": "snap:new",
+            },
+            {
+                "id": "elem:b",
+                "type": "file",
+                "name": "b.py",
+                "file_path": "/repo/pkg/b.py",
+                "relative_path": "pkg/b.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "code": "b changed",
+                "signature": None,
+                "docstring": None,
+                "summary": None,
+                "metadata": {"snapshot_id": "snap:new"},
+                "repo_name": "repo",
+                "repo_url": None,
+                "snapshot_id": "snap:new",
+            },
+        ],
+    )
+
+    stats = current.save_incremental(
+        "next",
+        previous_name="prev",
+        reusable_path_keys={"pkg/a.py"},
+    )
+
+    assert stats["vector_shards_reused"] == 1
+    next_manifest = json.loads(
+        (tmp_path / "next_vector_manifest.json").read_text(encoding="utf-8")
+    )
+    next_shards = {
+        entry["path_key"]: tmp_path / "next_vector_shards" / entry["shard_file"]
+        for entry in next_manifest["shards"]
+    }
+    assert next_shards["pkg/a.py"].read_bytes() == prev_shards["pkg/a.py"].read_bytes()
+    assert next_shards["pkg/b.py"].read_bytes() != prev_shards["pkg/b.py"].read_bytes()
+
+    loaded = _disk_store(tmp_path)
+    assert loaded.load("next") is True
+    assert {row.get("snapshot_id") for row in loaded.metadata} == {"snap:new"}
+
+
+def test_save_incremental_refuses_incompatible_previous_vector_manifest_double(
+    tmp_path: Path,
+) -> None:
+    previous = _disk_store(tmp_path)
+    previous.initialize(2)
+    previous.add_vectors(
+        np.asarray([[1.0, 0.0]], dtype=np.float32),
+        [
+            {
+                "id": "elem:a",
+                "type": "file",
+                "name": "a.py",
+                "file_path": "/repo/pkg/a.py",
+                "relative_path": "pkg/a.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "code": "a",
+                "signature": None,
+                "docstring": None,
+                "summary": None,
+                "metadata": {"snapshot_id": "snap:old"},
+                "repo_name": "repo",
+                "repo_url": None,
+                "snapshot_id": "snap:old",
+            }
+        ],
+    )
+    previous.save("prev")
+
+    current = _disk_store(tmp_path)
+    current.initialize(3)
+    current.add_vectors(
+        np.asarray([[0.0, 1.0, 0.0]], dtype=np.float32),
+        [
+            {
+                "id": "elem:a",
+                "type": "file",
+                "name": "a.py",
+                "file_path": "/repo/pkg/a.py",
+                "relative_path": "pkg/a.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "code": "a",
+                "signature": None,
+                "docstring": None,
+                "summary": None,
+                "metadata": {"snapshot_id": "snap:new"},
+                "repo_name": "repo",
+                "repo_url": None,
+                "snapshot_id": "snap:new",
+            }
+        ],
+    )
+
+    stats = current.save_incremental(
+        "next",
+        previous_name="prev",
+        reusable_path_keys={"pkg/a.py"},
+    )
+
+    assert stats["vector_shards_reused"] == 0
+    assert stats["vector_shards_written"] == 1
+    loaded = _disk_store(tmp_path)
+    assert loaded.load("next") is True
+    assert loaded.dimension == 3
+    assert loaded._vector_rows is not None
+    assert loaded._vector_rows.shape == (1, 3)
+
+
+def test_save_incremental_faiss_sidecar_matches_sequence_order_double(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "vector_store": {
+            "persist_directory": str(tmp_path),
+            "persist_faiss_binary": True,
+            "index_type": "Flat",
+            "distance_metric": "l2",
+        }
+    }
+    previous = VectorStore(config)
+    previous.initialize(2)
+    previous.add_vectors(
+        np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+        [
+            _metadata_row("pkg/a.py", element_id="elem:a", summary="a"),
+            _metadata_row("pkg/b.py", element_id="elem:b", summary="b"),
+        ],
+    )
+    previous.save("prev")
+
+    current = VectorStore(config)
+    current.initialize(2)
+    current.add_vectors(
+        np.asarray([[0.25, 0.75], [1.0, 0.0]], dtype=np.float32),
+        [
+            _metadata_row("pkg/b.py", element_id="elem:b", summary="b2"),
+            _metadata_row("pkg/a.py", element_id="elem:a", summary="a"),
+        ],
+    )
+
+    stats = current.save_incremental(
+        "next",
+        previous_name="prev",
+        reusable_path_keys={"pkg/a.py"},
+    )
+
+    assert stats["vector_shards_reused"] == 1
+    metadata_payload = current.load_metadata_payload("next")
+    assert metadata_payload is not None
+    assert [row["id"] for row in metadata_payload["metadata"]] == [
+        "elem:a",
+        "elem:b",
+    ]
+    index = faiss.read_index(str(tmp_path / "next.faiss"))
+    row0 = np.zeros(2, dtype=np.float32)
+    row1 = np.zeros(2, dtype=np.float32)
+    index.reconstruct(0, row0)
+    index.reconstruct(1, row1)
+    assert np.allclose(row0, np.asarray([1.0, 0.0], dtype=np.float32))
+    assert np.allclose(row1, np.asarray([0.25, 0.75], dtype=np.float32))
 
 
 def test_repository_overview_metadata_load_skips_embedding_archive_double(

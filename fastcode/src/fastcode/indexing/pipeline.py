@@ -54,7 +54,7 @@ from ..store.pg_retrieval import PgRetrievalStore
 from ..store.snapshot import SnapshotStore
 from ..store.unit_artifacts import UnitArtifactStore
 from ..store.vector import VectorStore
-from ..utils import compute_file_hash, ensure_dir, normalize_path
+from ..utils import as_float32_matrix, compute_file_hash, ensure_dir, normalize_path
 from .doc_ingester import KeyDocIngester
 from .embedder import CodeEmbedder
 from .global_builder import GlobalIndexBuilder
@@ -191,6 +191,7 @@ class IndexPipeline:
         repo_name: str,
         requested_ref: str | None = None,
         requested_commit: str | None = None,
+        current_files: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Resolve repo snapshot identity from git metadata or file hashes."""
         repo_path = self.loader.repo_path or ""
@@ -208,7 +209,11 @@ class IndexPipeline:
             dirty_suffix = ""
             try:
                 if repo.is_dirty(untracked_files=True):
-                    files = self.loader.scan_files()
+                    files = (
+                        current_files
+                        if current_files is not None
+                        else self.loader.scan_files()
+                    )
                     digest = hashlib.sha1()
                     for f in sorted(files, key=lambda x: x["relative_path"]):
                         digest.update(f["relative_path"].encode("utf-8"))
@@ -227,7 +232,9 @@ class IndexPipeline:
                 "snapshot_id": snapshot_id,
             }
         except Exception:
-            files = self.loader.scan_files()
+            files = (
+                current_files if current_files is not None else self.loader.scan_files()
+            )
             if not files:
                 synthetic = "empty"
             else:
@@ -1139,7 +1146,7 @@ class IndexPipeline:
         except Exception as e:
             self.logger.warning(f"Failed to hash file for incremental manifest: {e}")
         if not content_hash:
-            content_hash = None
+            return None
         return {
             "mtime": stat.st_mtime,
             "size": stat.st_size,
@@ -1190,6 +1197,32 @@ class IndexPipeline:
             artifact_key,
         )
         return False
+
+    def _manifest_has_required_fingerprints(
+        self, manifest: dict[str, Any], artifact_key: str
+    ) -> bool:
+        files = manifest.get("files", {})
+        if not isinstance(files, dict):
+            self.logger.info(
+                "incremental prefilter disabled for %s: missing file manifest",
+                artifact_key,
+            )
+            return False
+        missing = [
+            str(path)
+            for path, entry in cast(dict[str, Any], files).items()
+            if not isinstance(entry, dict)
+            or not (entry.get("blob_oid") or entry.get("content_hash"))
+        ]
+        if missing:
+            self.logger.info(
+                "incremental prefilter disabled for %s: %d files lack required "
+                "fingerprints",
+                artifact_key,
+                len(missing),
+            )
+            return False
+        return True
 
     def _build_file_manifest(
         self, elements: list[CodeElement], repo_root: str
@@ -1289,6 +1322,10 @@ class IndexPipeline:
                 continue
             fingerprint = self._file_fingerprint(abs_path)
             if fingerprint is None:
+                current_lookup[rel_path] = {
+                    "fingerprint_missing": True,
+                    "file_info": file_info,
+                }
                 continue
             current_lookup[rel_path] = {
                 **fingerprint,
@@ -1299,20 +1336,26 @@ class IndexPipeline:
         modified: list[str] = []
         deleted: list[str] = []
         unchanged: list[str] = []
+        missing_fingerprints: list[str] = []
 
         for rel_path, info in current_lookup.items():
+            if info.get("fingerprint_missing"):
+                missing_fingerprints.append(rel_path)
+                continue
             saved = manifest_files.get(rel_path)
             if saved is None:
                 added.append(rel_path)
                 continue
-            saved_hash = saved.get("content_hash")
-            current_hash = info.get("content_hash")
-            if saved_hash is not None or current_hash is not None:
-                changed = current_hash != saved_hash
+            if saved.get("blob_oid") and info.get("blob_oid"):
+                saved_identity = saved.get("blob_oid")
+                current_identity = info.get("blob_oid")
+            elif saved.get("content_hash") and info.get("content_hash"):
+                saved_identity = saved.get("content_hash")
+                current_identity = info.get("content_hash")
             else:
-                changed = info["mtime"] != saved.get("mtime") or info[
-                    "size"
-                ] != saved.get("size")
+                missing_fingerprints.append(rel_path)
+                continue
+            changed = current_identity != saved_identity
             if changed:
                 modified.append(rel_path)
             else:
@@ -1328,6 +1371,8 @@ class IndexPipeline:
             "deleted": deleted,
             "unchanged": unchanged,
             "current_lookup": current_lookup,
+            "fingerprints_complete": not missing_fingerprints,
+            "missing_fingerprint_paths": sorted(missing_fingerprints),
         }
 
     def _collect_unchanged_metadata(
@@ -1563,7 +1608,7 @@ class IndexPipeline:
         elements: Sequence[CodeElement],
         *,
         snapshot_id: str,
-    ) -> tuple[list[Any], list[CodeElementMeta], list[CodeElementMeta]]:
+    ) -> tuple[np.ndarray, list[CodeElementMeta], list[CodeElementMeta]]:
         vectors: list[Any] = []
         metadata: list[CodeElementMeta] = []
         all_payloads: list[CodeElementMeta] = []
@@ -1579,7 +1624,11 @@ class IndexPipeline:
             vectors.append(embedding)
             metadata.append(payload)
 
-        return vectors, metadata, all_payloads
+        return (
+            as_float32_matrix(vectors, copy_policy="contiguous"),
+            metadata,
+            all_payloads,
+        )
 
     def _plan_incremental_elements(
         self,
@@ -1589,6 +1638,7 @@ class IndexPipeline:
         snapshot_id: str,
         snapshot_ref: dict[str, Any],
         ref: str | None,
+        current_files: list[dict[str, Any]] | None = None,
     ) -> tuple[list[CodeElement] | None, dict[str, Any] | None]:
         ref_name = snapshot_ref.get("branch") or ref or "HEAD"
         previous_manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
@@ -1613,13 +1663,29 @@ class IndexPipeline:
             manifest, previous_artifact_key
         ):
             return None, None
+        if not self._manifest_has_required_fingerprints(
+            manifest, previous_artifact_key
+        ):
+            return None, None
 
         existing_metadata = self._load_existing_metadata(previous_artifact_key)
         if not existing_metadata:
             return None, None
 
-        current_files = self.loader.scan_files()
-        changes = self._detect_file_changes(manifest, current_files)
+        inventory = (
+            current_files if current_files is not None else self.loader.scan_files()
+        )
+        changes = self._detect_file_changes(manifest, inventory)
+        if not bool(changes.get("fingerprints_complete", True)):
+            self.logger.info(
+                "incremental prefilter disabled for %s: current files lack "
+                "required fingerprints: %s",
+                previous_artifact_key,
+                ", ".join(
+                    cast(list[str], changes.get("missing_fingerprint_paths", []))[:5]
+                ),
+            )
+            return None, None
         added = cast(list[str], changes["added"])
         modified = cast(list[str], changes["modified"])
         deleted = cast(list[str], changes["deleted"])
@@ -1687,6 +1753,8 @@ class IndexPipeline:
         all_elements = unchanged_elements + new_elements
         changed_paths = sorted(set(added + modified))
         summary = {
+            "previous_snapshot_id": previous_snapshot_id,
+            "previous_artifact_key": previous_artifact_key,
             "added": len(added),
             "modified": len(modified),
             "removed": len(deleted),
@@ -1694,6 +1762,7 @@ class IndexPipeline:
             "added_paths": sorted(added),
             "modified_paths": sorted(modified),
             "removed_paths": sorted(deleted),
+            "unchanged_paths": sorted(unchanged),
             "changed_paths": changed_paths,
             "reused_elements": len(unchanged_elements),
             "reindexed_elements": len(new_elements),
@@ -2335,8 +2404,12 @@ class IndexPipeline:
 
         repo_name = repo_info.get("name", "default")
         repo_url = repo_info.get("url", source)
+        current_files = self.loader.scan_files()
         snapshot_ref = self._resolve_snapshot_ref(
-            repo_name, requested_ref=ref, requested_commit=commit
+            repo_name,
+            requested_ref=ref,
+            requested_commit=commit,
+            current_files=current_files,
         )
         git_meta = self._build_git_meta(snapshot_ref)
         snapshot_id = snapshot_ref["snapshot_id"]
@@ -2430,10 +2503,13 @@ class IndexPipeline:
                 snapshot_id=snapshot_id,
                 snapshot_ref=snapshot_ref,
                 ref=ref,
+                current_files=current_files,
             )
             if planned_elements is None:
                 elements = self.indexer.extract_elements(
-                    repo_name=repo_name, repo_url=repo_url
+                    repo_name=repo_name,
+                    repo_url=repo_url,
+                    file_infos=current_files,
                 )
             else:
                 elements = planned_elements
@@ -2457,9 +2533,9 @@ class IndexPipeline:
                     elements, snapshot_id=snapshot_id
                 )
             )
-            if not vectors:
+            if vectors.size == 0:
                 raise RuntimeError("No embeddings produced during indexing")
-            temp_store.add_vectors(np.array(vectors), metadata)
+            temp_store.add_vectors(vectors, metadata)
 
             temp_graph = CodeGraphBuilder(self.config)
             module_resolver = None
@@ -3042,9 +3118,87 @@ class IndexPipeline:
 
             # Artifact persistence — only after fencing confirmed valid.
             self._invalidate_loaded_artifact_handle(artifact_key)
-            temp_store.save(artifact_key)
-            temp_retriever.save_bm25(artifact_key)
-            temp_graph.save(artifact_key)
+            artifact_reuse_stats: dict[str, int] = {}
+            incremental_previous_artifact_key = (
+                str(incremental_plan.get("previous_artifact_key") or "")
+                if incremental_plan is not None
+                else ""
+            )
+            reusable_path_keys = (
+                {
+                    normalize_path(str(path))
+                    for path in incremental_plan.get("unchanged_paths", [])
+                    if path
+                }
+                if incremental_plan is not None and incremental_previous_artifact_key
+                else set()
+            )
+            active_incremental_plan = incremental_plan
+            if (
+                reusable_path_keys
+                and incremental_previous_artifact_key
+                and active_incremental_plan is not None
+            ):
+                save_vector_incremental = getattr(temp_store, "save_incremental", None)
+                if callable(save_vector_incremental):
+                    artifact_reuse_stats.update(
+                        cast(
+                            dict[str, int],
+                            save_vector_incremental(
+                                artifact_key,
+                                previous_name=incremental_previous_artifact_key,
+                                reusable_path_keys=reusable_path_keys,
+                            ),
+                        )
+                    )
+                else:
+                    temp_store.save(artifact_key)
+                save_bm25_incremental = getattr(
+                    temp_retriever, "save_bm25_incremental", None
+                )
+                if callable(save_bm25_incremental):
+                    artifact_reuse_stats.update(
+                        cast(
+                            dict[str, int],
+                            save_bm25_incremental(
+                                artifact_key,
+                                previous_name=incremental_previous_artifact_key,
+                                reusable_path_keys=reusable_path_keys,
+                            ),
+                        )
+                    )
+                else:
+                    temp_retriever.save_bm25(artifact_key)
+                graph_reuse_path_keys = (
+                    reusable_path_keys
+                    if int(active_incremental_plan.get("removed", 0) or 0) == 0
+                    and set(active_incremental_plan.get("change_kinds", []) or [])
+                    <= {"embedding_text_hash"}
+                    else set()
+                )
+                if graph_reuse_path_keys:
+                    save_graph_incremental = getattr(
+                        temp_graph, "save_incremental", None
+                    )
+                    if callable(save_graph_incremental):
+                        artifact_reuse_stats.update(
+                            cast(
+                                dict[str, int],
+                                save_graph_incremental(
+                                    artifact_key,
+                                    previous_name=incremental_previous_artifact_key,
+                                    reusable_path_keys=graph_reuse_path_keys,
+                                ),
+                            )
+                        )
+                    else:
+                        temp_graph.save(artifact_key)
+                else:
+                    temp_graph.save(artifact_key)
+            else:
+                temp_store.save(artifact_key)
+                temp_retriever.save_bm25(artifact_key)
+                temp_graph.save(artifact_key)
             self._save_file_manifest(
                 artifact_key,
                 self._build_file_manifest(elements, self.loader.repo_path or ""),
@@ -3208,6 +3362,10 @@ class IndexPipeline:
                     "unchanged": len(incremental_change_set.unchanged),
                 }
             if incremental_plan is not None:
+                if artifact_reuse_stats:
+                    incremental_plan["artifact_shard_reuse"] = dict(
+                        artifact_reuse_stats
+                    )
                 result["incremental_prefilter"] = dict(incremental_plan)
                 preserved_sources = self._preservable_incremental_sources(
                     incremental_plan

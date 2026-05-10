@@ -1056,11 +1056,45 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
         )
 
         temp_store_metadata: list[dict[str, Any]] = []
+        vector_incremental_calls: list[dict[str, Any]] = []
+        bm25_incremental_calls: list[dict[str, Any]] = []
+
+        def _save_vector_incremental(
+            artifact_key: str,
+            *,
+            previous_name: str,
+            reusable_path_keys: set[str],
+        ) -> dict[str, int]:
+            vector_incremental_calls.append(
+                {
+                    "artifact_key": artifact_key,
+                    "previous_name": previous_name,
+                    "reusable_path_keys": sorted(reusable_path_keys),
+                }
+            )
+            return {"vector_shards_reused": len(reusable_path_keys)}
+
+        def _save_bm25_incremental(
+            artifact_key: str,
+            *,
+            previous_name: str,
+            reusable_path_keys: set[str],
+        ) -> dict[str, int]:
+            bm25_incremental_calls.append(
+                {
+                    "artifact_key": artifact_key,
+                    "previous_name": previous_name,
+                    "reusable_path_keys": sorted(reusable_path_keys),
+                }
+            )
+            return {"bm25_shards_reused": len(reusable_path_keys)}
+
         temp_store = SimpleNamespace(
             metadata=temp_store_metadata,
             initialize=lambda dim: None,
             add_vectors=lambda vectors, metadata: temp_store_metadata.extend(metadata),
             save=lambda artifact_key: None,
+            save_incremental=_save_vector_incremental,
         )
         temp_graph = SimpleNamespace(
             dependency_graph=SimpleNamespace(
@@ -1079,6 +1113,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             index_for_bm25=lambda elements: None,
             build_repo_overview_bm25=lambda: None,
             save_bm25=lambda artifact_key: None,
+            save_bm25_incremental=_save_bm25_incremental,
         )
 
         pipeline.loader.scan_files = lambda: [
@@ -1219,7 +1254,19 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "unchanged:1",
             "changed:2",
         }
+        assert vector_incremental_calls == [
+            {
+                "artifact_key": pipeline.snapshot_store.artifact_key_for_snapshot(
+                    "snap:repo:current"
+                ),
+                "previous_name": previous_record.artifact_key,
+                "reusable_path_keys": ["a.py"],
+            }
+        ]
+        assert bm25_incremental_calls == vector_incremental_calls
         assert result["incremental_prefilter"] == {
+            "previous_snapshot_id": "snap:repo:prev",
+            "previous_artifact_key": previous_record.artifact_key,
             "added": 0,
             "modified": 1,
             "removed": 0,
@@ -1227,6 +1274,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "added_paths": [],
             "modified_paths": ["b.py"],
             "removed_paths": [],
+            "unchanged_paths": ["a.py"],
             "changed_paths": ["b.py"],
             "ast_ir_rebuilt_elements": 1,
             "ast_ir_reused_files": 1,
@@ -1243,6 +1291,10 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
                 "embedding_text_hash",
                 "signature_hash",
             ],
+            "artifact_shard_reuse": {
+                "vector_shards_reused": 1,
+                "bm25_shards_reused": 1,
+            },
         }
         assert result["repair_queue"]["pending"] == 1
         assert result["repair_queue"]["task_type"] == "semantic_repair_frontier"
@@ -1342,6 +1394,80 @@ def test_pipeline_incremental_prefilter_falls_back_on_compatibility_mismatch() -
         ]
         pipeline.indexer.index_files = Mock(
             side_effect=AssertionError("index_files should not run")
+        )
+
+        planned_elements, plan = pipeline._plan_incremental_elements(
+            repo_name="repo",
+            repo_url=tmp,
+            snapshot_id="snap:repo:current",
+            snapshot_ref={"branch": "main", "snapshot_id": "snap:repo:current"},
+            ref=None,
+        )
+
+        assert planned_elements is None
+        assert plan is None
+        pipeline.indexer.index_files.assert_not_called()
+
+
+def test_plan_incremental_elements_disables_when_manifest_lacks_fingerprint() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_incremental_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+
+        unchanged_path = os.path.join(tmp, "a.py")
+        with open(unchanged_path, "w", encoding="utf-8") as handle:
+            handle.write("print('a')\n")
+        stat = os.stat(unchanged_path)
+
+        previous_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:prev",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+        )
+        previous_record = pipeline.snapshot_store.save_snapshot(
+            previous_snapshot, metadata={}
+        )
+        pipeline.manifest_store.publish(
+            repo_name="repo",
+            ref_name="main",
+            snapshot_id="snap:repo:prev",
+            index_run_id="run_prev",
+            status="published",
+        )
+
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_manifest.json"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            json.dump(
+                {
+                    "schema_version": 2,
+                    "compatibility": pipeline._incremental_compatibility_payload(),
+                    "compatibility_hash": pipeline._incremental_compatibility_hash(),
+                    "files": {
+                        "a.py": {
+                            "mtime": stat.st_mtime,
+                            "size": stat.st_size,
+                            "content_hash": None,
+                            "element_ids": ["unchanged:1"],
+                        }
+                    },
+                },
+                handle,
+            )
+
+        pipeline.loader.scan_files = lambda: [
+            {
+                "path": unchanged_path,
+                "relative_path": "a.py",
+                "size": stat.st_size,
+                "extension": ".py",
+            }
+        ]
+        pipeline.indexer.index_files = Mock(
+            side_effect=AssertionError("missing fingerprints must disable reuse")
         )
 
         planned_elements, plan = pipeline._plan_incremental_elements(

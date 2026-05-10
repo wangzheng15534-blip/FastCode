@@ -13,7 +13,7 @@ import networkx as nx
 import numpy as np
 
 from fastcode.ir.element import CodeElement
-from fastcode.ir.graph import IRGraphs
+from fastcode.ir.graph import IRGraphs, IRGraphView
 from fastcode.retrieval.hybrid import HybridRetriever
 
 
@@ -411,6 +411,52 @@ def test_ir_graph_expansion_loads_snapshot_graphs_lazily_and_caches_union() -> N
     assert retriever._ir_union_graph is not None
 
 
+def test_ir_graph_expansion_uses_compact_graph_view_without_networkx_walk() -> None:
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.graph_backend = "ir"
+    retriever.allow_legacy_graph_fallback = False
+
+    seed_elem = _element(
+        "service.py",
+        element_id="func:service",
+        element_type="function",
+        metadata={"ir_symbol_id": "ir:service"},
+    )
+    helper_elem = _element(
+        "service.py",
+        element_id="func:helper",
+        element_type="function",
+        metadata={"ir_symbol_id": "ir:helper"},
+    )
+    retriever.graph_builder = SimpleNamespace(
+        element_by_id={seed_elem.id: seed_elem, helper_elem.id: helper_elem}
+    )
+    retriever.set_ir_graphs(
+        IRGraphs(
+            dependency_graph=IRGraphView(),
+            call_graph=IRGraphView(edges=[("ir:service", "ir:helper", {})]),
+            inheritance_graph=IRGraphView(),
+            reference_graph=IRGraphView(),
+            containment_graph=IRGraphView(),
+        ),
+        snapshot_id="snap:1",
+    )
+
+    with patch(
+        "fastcode.retrieval.hybrid.nx.single_source_shortest_path_length",
+        side_effect=AssertionError("compact graph path must not materialize networkx"),
+    ):
+        related = retriever._get_related_ids(
+            seed_elem.id,
+            {"metadata": {"ir_symbol_id": "ir:service"}},
+            max_hops=1,
+        )
+
+    assert related == {"func:helper"}
+    assert isinstance(retriever._ir_union_graph, IRGraphView)
+
+
 def test_extract_trace_links_ignores_ungrounded_links():
     retriever = _mk_retriever()
     row = _mk_row(
@@ -590,3 +636,90 @@ def test_save_bm25_reuses_unchanged_shards(tmp_path: Path) -> None:
     b_after = shards_by_path["pkg/b.py"].stat().st_mtime_ns
     assert a_after == a_before
     assert b_after >= b_before
+
+
+def test_save_bm25_incremental_reuses_previous_artifact_shards(
+    tmp_path: Path,
+) -> None:
+    previous = _mk_retriever()
+    previous.logger = MagicMock()
+    previous.persist_dir = str(tmp_path)
+    previous.full_bm25_corpus = [["alpha"], ["beta"]]
+    previous.full_bm25_elements = [
+        _element("pkg/a.py", element_id="elem:a"),
+        _element("pkg/b.py", element_id="elem:b"),
+    ]
+
+    assert previous.save_bm25("prev") is True
+    prev_manifest = json.loads(
+        (tmp_path / "prev_bm25_manifest.json").read_text(encoding="utf-8")
+    )
+    prev_shards = {
+        entry["path_key"]: tmp_path / "prev_bm25_shards" / entry["shard_file"]
+        for entry in prev_manifest["shards"]
+    }
+
+    current = _mk_retriever()
+    current.logger = MagicMock()
+    current.persist_dir = str(tmp_path)
+    current.full_bm25_corpus = [["alpha"], ["beta", "changed"]]
+    current.full_bm25_elements = [
+        _element("pkg/a.py", element_id="elem:a"),
+        _element("pkg/b.py", element_id="elem:b", metadata={"v": 2}),
+    ]
+
+    stats = current.save_bm25_incremental(
+        "next",
+        previous_name="prev",
+        reusable_path_keys={"pkg/a.py"},
+    )
+
+    assert stats["bm25_shards_reused"] == 1
+    next_manifest = json.loads(
+        (tmp_path / "next_bm25_manifest.json").read_text(encoding="utf-8")
+    )
+    next_shards = {
+        entry["path_key"]: tmp_path / "next_bm25_shards" / entry["shard_file"]
+        for entry in next_manifest["shards"]
+    }
+    assert next_shards["pkg/a.py"].read_bytes() == prev_shards["pkg/a.py"].read_bytes()
+    assert next_shards["pkg/b.py"].read_bytes() != prev_shards["pkg/b.py"].read_bytes()
+
+    loaded = _mk_retriever()
+    loaded.logger = MagicMock()
+    loaded.persist_dir = str(tmp_path)
+    assert loaded.load_bm25("next") is True
+    assert [elem.id for elem in loaded.full_bm25_elements] == ["elem:a", "elem:b"]
+
+
+def test_save_bm25_incremental_refuses_incompatible_manifest(
+    tmp_path: Path,
+) -> None:
+    previous = _mk_retriever()
+    previous.logger = MagicMock()
+    previous.persist_dir = str(tmp_path)
+    previous.full_bm25_corpus = [["alpha"]]
+    previous.full_bm25_elements = [_element("pkg/a.py", element_id="elem:a")]
+
+    assert previous.save_bm25("prev") is True
+    manifest_path = tmp_path / "prev_bm25_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["version"] = 0
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    current = _mk_retriever()
+    current.logger = MagicMock()
+    current.persist_dir = str(tmp_path)
+    current.full_bm25_corpus = [["alpha", "changed"]]
+    current.full_bm25_elements = [
+        _element("pkg/a.py", element_id="elem:a", metadata={"v": 2})
+    ]
+
+    stats = current.save_bm25_incremental(
+        "next",
+        previous_name="prev",
+        reusable_path_keys={"pkg/a.py"},
+    )
+
+    assert stats["bm25_shards_reused"] == 0
+    assert stats["bm25_shards_written"] == 1

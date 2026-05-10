@@ -46,6 +46,7 @@ dependencies = [
     # Database
     "psycopg[binary]",
     "psycopg_pool",
+    "pgvector",
     # Utilities
     "tqdm",
     "numpy",

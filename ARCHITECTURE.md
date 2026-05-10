@@ -100,6 +100,12 @@ The repo currently enforces these rules in code, tests, and module-local
    - Active hot paths should prefer typed records or explicit field serializers
      over generic `to_dict()`, `from_dict()`, `row_to_dict()`, or recursive
      `safe_jsonable()` cleanup.
+   - Vector and graph hot paths should keep data in native-backed carriers
+     (`np.ndarray`, FAISS, pgvector adapters, `IRGraphView`) until a storage,
+     API, export, or compatibility boundary requires materialization.
+   - Vector boundary helpers must make ownership/copy behavior explicit; a
+     view-oriented path must not mutate caller-owned buffers while normalizing or
+     sanitizing values.
 
 5. Inner packages do not read environment directly.
    - `indexing`, `query`, `retrieval`, `store`, `mcp`, `schemas`, and related
@@ -179,6 +185,11 @@ Current hardened properties:
 - snapshot-level regression coverage around reuse and concurrency
 - explicit storage materialization for vector-store, PG retrieval, and
   unit-artifact boundaries instead of generic `CodeElement.to_dict()` expansion
+- native vector staging via `np.ndarray[np.float32]` through indexing, vector
+  store insertion/search, embedding cache payloads, and PostgreSQL pgvector
+  binding, with literal fallback only when the Python pgvector adapter is absent
+- compact IR graph persistence/loading through `IRGraphView`, with NetworkX
+  reserved for compatibility/export and projection algorithms that still need it
 
 ### Incrementality
 
@@ -188,12 +199,19 @@ What already works:
 
 - unchanged files can bypass repeated parse and embedding work via manifest-first
   planning in the active path
+- manifest-first incremental planning now refuses reuse when prior or current
+  file entries lack content fingerprints instead of trusting size/mtime fallback
+- a single loader inventory can be shared across snapshot identity,
+  incremental planning, and the AST extraction path during a pipeline run
 - file-level `content_hash` / `blob_oid` metadata is persisted on AST-derived IR
   file units
 - incremental plans can rebuild changed AST IR and merge it with the previous
   snapshot instead of rebuilding unchanged-file AST IR
 - changed-unit embeddings can be reused when stable unit identity and
   `embedding_text_hash` match
+- persisted vector/BM25 path shards, plus conservative legacy graph path shards,
+  can reuse compatible previous snapshot artifact files for unchanged paths
+  under the new artifact key
 - embeddings are deduplicated and cached with model-aware keys
 - helper-backed semantic resolvers can scope work to changed paths
 - package/path repair-frontier logic can scope semantic refresh and SCIP reruns
@@ -201,10 +219,14 @@ What already works:
 
 What is still missing before stable-release claims:
 
-- file-native artifact shard reuse as the primary execution and publication model
+- file-native artifact shard reuse as the primary execution model; persistence
+  reuse exists for vector/BM25 and conservative graph shards, but not yet for all
+  IR graph, relational fact, SCIP/tool, and temporary build surfaces
 - truly incremental SCIP/tool-backed extraction in widened and unsupported cases
 - one shared inventory/fingerprint planner across snapshot identity, incremental
-  planning, SCIP scope, file-artifact reuse, and publication
+  planning, SCIP scope, file-artifact reuse, and publication; loader inventory
+  sharing exists for the active AST path, but not yet as a canonical planner
+  object across every stage
 - deterministic cache invalidation across schema, model, and tool changes
 
 ## Retrieval and query flow

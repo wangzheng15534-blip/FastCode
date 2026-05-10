@@ -72,7 +72,7 @@ This audit checked current source and regression tests directly, not git history
 - A turn-journal/context-compiler v0 exists: typed `EvidenceRef`, `ToolObservation`, `RiskState`, `AcceptanceContract`, `TurnIntent`, `TurnPlan`, `WorkingMemoryArtifact`, `TurnJournal`, and `HandoffArtifact`; typed cache records; REST/web/MCP facades for turn context, ref expansion, and handoff.
 
 **Still only partially implemented against the non-functional goals:**
-- Incremental update is not file-shard-native end to end. The pipeline still rehydrates a full combined element list and rebuilds vector/BM25/legacy graph artifacts from that set, and scoped SCIP still widens or falls back to repo/tool scope in important cases.
+- Incremental update is not file-shard-native end to end. The pipeline still rehydrates a full combined element list and builds temporary whole-snapshot artifacts, but persisted vector/BM25 shards and conservative legacy graph shards now reuse previous artifact files for unchanged paths. Scoped SCIP still widens or falls back to repo/tool scope in important cases.
 - Embedding identity is still mostly local to `CodeEmbedder`; there is no shared `embedding_fingerprint` contract enforced uniformly across snapshots, vector stores, repository overviews, query embeddings, and PG/vector rows.
 - Snapshot artifact handles are not yet a full serving isolation solution because public `FastCode.query()` and `FastCode.query_snapshot()` still take the service-wide state lock around the query.
 - FP/FCIS dataflow is much better but not complete. Store hot paths have many typed-record adapters and regression guards, while query/retrieval/API compatibility surfaces still pass raw dict-shaped payloads in several places.
@@ -147,10 +147,15 @@ This audit checked current source and regression tests directly, not git history
   - `IndexPipeline._plan_incremental_elements()` reuses unchanged element metadata from the previous artifact manifest
   - compatible snapshots call `CodeIndexer.index_files()` only for added/modified files instead of falling back to full `extract_elements()`
   - integration coverage proves unchanged files bypass full extraction when compatibility checks match
+  - a pipeline run now shares one loader inventory across snapshot identity, manifest diffing, and full AST extraction
   - `build_ir_from_ast()` now persists file-level `content_hash`/`blob_oid` metadata on file units
   - incremental plans now build AST IR from changed elements and merge with the previous snapshot rather than rebuilding AST IR from unchanged files
   - changed-unit embeddings can be reused when stable unit identity and `embedding_text_hash` match
   - package/path repair-frontier logic can scope semantic refresh and SCIP reruns when API or edge surfaces change
+  - manifest-first incremental planning now refuses reuse when prior or current file entries lack content fingerprints instead of trusting size/mtime fallback
+  - persisted vector and BM25 path shards now reuse compatible previous snapshot artifact shards for unchanged paths under the new artifact key
+  - legacy graph path shards reuse compatible previous snapshot artifact shards only for conservative implementation-local changes, avoiding reuse when removals or edge/API/signature changes could stale graph edges
+  - incremental result metadata now reports `artifact_shard_reuse` counts for vector/BM25/graph publication
 - Embedding cache hardening:
   - `CodeEmbedder` now uses cache-aware batch embedding in the active indexing path
   - identical embedding texts are deduplicated before provider calls
@@ -197,6 +202,7 @@ This audit checked current source and regression tests directly, not git history
 - Object materialization hardening:
   - PostgreSQL semantic fallback now keeps candidate vectors in NumPy arrays and only JSON-decodes metadata for ranked results returned across the Python boundary
   - repository overview persistence now writes an explicit JSON manifest plus NumPy embedding archive, lets metadata-only callers skip the embedding archive entirely, and only JSON-decodes ranked overview metadata for returned rows
+  - `utils/vectors.py` now centralizes float32 vector/matrix ownership policy so view-oriented call sites do not mutate caller-owned arrays while sanitizing non-finite values
   - PostgreSQL relational fact persistence uses explicit typed payload serializers instead of repeated record `to_dict()` expansion
 - Async endpoint hardening:
   - REST API repository load/index/cache-load/multi-index/upload paths offload blocking work with `asyncio.to_thread`
@@ -253,15 +259,17 @@ This audit checked current source and regression tests directly, not git history
 **What is already true in code:**
 - `fastcode.indexing.pipeline._plan_incremental_elements()` reuses unchanged element metadata from the previous artifact manifest and only reindexes added/modified files.
 - `fastcode.tests.integration.test_snapshot_pipeline.test_pipeline_incremental_prefilter_only_indexes_changed_files` proves unchanged files bypass `extract_elements()` and only changed files are passed to `index_files()`.
+- `run_index_pipeline()` now shares a precomputed loader inventory through snapshot identity, incremental planning, and full AST extraction.
 - `fastcode.indexing.embedder.CodeEmbedder` uses cache-aware `embed_code_elements()`, deduplicates identical texts, and keys cache entries by provider/model/dimension/normalization/max-sequence-length identity.
 - `build_ir_from_ast()` persists file-level `content_hash` / `blob_oid` metadata on file units.
 - incremental plans can build AST IR from changed elements and merge it with the previous snapshot instead of rebuilding AST IR from unchanged files.
 - changed-unit embeddings can be reused when stable unit identity and `embedding_text_hash` match.
 - helper-backed semantic resolvers already scope helper input to changed `target_paths`, so helper work is narrower than full-repo in the happy path.
 - package/path repair-frontier logic can scope semantic refresh and SCIP reruns when changed API or edge surfaces are known.
+- manifest-first incremental planning now disables reuse when prior or current file entries lack required fingerprints.
 
 **What is not yet true:**
-- the pipeline still rehydrates a full combined `elements` list and rebuilds downstream whole-snapshot vector/BM25/legacy graph artifacts from that set, so reuse is not yet file-shard-native end to end.
+- the pipeline still rehydrates a full combined `elements` list and builds temporary downstream vector/BM25/legacy graph objects from that set, but persisted path shards now avoid rewriting unchanged vector/BM25 and conservative graph artifacts.
 - optional SCIP now has scoped paths, but language detection and unsupported/widened cases can still pay near full compiler/indexer cost.
 - file-unit `content_hash` / `blob_oid` metadata exists, but file identity is not yet a single canonical planner anchor shared by inventory, incremental planning, SCIP, file-artifact reuse, and downstream publication.
 - helper-backed runtimes still pay per-run process startup cost; the Go helper currently uses `go run`, which also implies repeated compile/build overhead.
@@ -585,16 +593,17 @@ The template philosophy remains correct for Python: use one importable package w
 
 ### P0.2 True incremental source/index caching
 
-**Gap:** The current release path is partially incremental, not gracefully incremental end to end. The manifest-driven prefilter can skip unchanged-file parse and embedding, changed AST IR can be merged with the previous snapshot, and some semantic/SCIP work can be scoped. Snapshot publication still materializes combined repo-level artifacts, and widened SCIP/helper/tool startup costs can still scale close to a full reindex.
+**Gap:** The current release path is partially incremental, not gracefully incremental end to end. The manifest-driven prefilter can skip unchanged-file parse and embedding, changed AST IR can be merged with the previous snapshot, persisted vector/BM25/selected graph shards can reuse unchanged path artifacts, and some semantic/SCIP work can be scoped. The pipeline still materializes combined in-memory repo-level artifacts, and widened SCIP/helper/tool startup costs can still scale close to a full reindex.
 
 **Why this is core-level:** This is the largest remaining architecture gap between a hardened prototype and a stable release. On medium and large repos, important parts of “incremental” behavior can still scale like full reindex even when parse and embedding reuse are working.
 
 **Current failure modes:**
-- repository inventory and file hashing are recomputed repeatedly across snapshot identity, incremental planning, and SCIP language detection.
-- `run_index_pipeline()` rehydrates unchanged metadata into one full `elements` list and publishes whole-snapshot vector/BM25/legacy graph artifacts instead of preserving file-native artifact shards through the backend boundary.
+- repository inventory and file hashing are still not represented by one canonical planner object across snapshot identity, incremental planning, SCIP language detection, file-artifact reuse, and publication.
+- `run_index_pipeline()` still rehydrates unchanged metadata into one full `elements` list and builds temporary whole-snapshot vector/BM25/legacy graph objects before persistence.
+- persisted vector/BM25 path shards reuse compatible previous artifact files for unchanged paths, and legacy graph shard reuse is intentionally conservative; IR graph and relational fact publication are still whole-snapshot.
 - optional SCIP has scoped paths, but `detect_scip_languages()` still walks the repository and unsupported/widened tool paths still invoke repo/package-scale indexers even when only one file changed.
-- file units now carry `content_hash` / `blob_oid` metadata, but file identity is not yet the single shared planner anchor across inventory, snapshot diffing, SCIP scope, file-artifact stores, and publication.
-- unchanged files are skipped before parse/embedding and before changed-file AST merge, but not yet before every relational fact, IR graph, vector/BM25, legacy graph, or compiler/indexer publication step.
+- file units now carry `content_hash` / `blob_oid` metadata, and the manifest-first prefilter now disables reuse when required fingerprints are missing; file identity is not yet the single shared planner anchor across inventory, snapshot diffing, SCIP scope, file-artifact stores, and publication.
+- unchanged files are skipped before parse/embedding, before changed-file AST merge, and before persisted vector/BM25 artifact-shard rewrites, but not yet before every relational fact, IR graph, compiler/indexer, or temporary artifact-build step.
 
 **Required work:**
 - Promote the existing manifest-first prefilter into the canonical `plan_changes` stage:
@@ -609,7 +618,8 @@ The template philosophy remains correct for Python: use one importable package w
 - Make file fingerprints first-class and mandatory:
   - prefer git `blob_oid` when available
   - otherwise persist `content_hash`
-  - fall back to size/mtime only as an explicit degraded mode
+  - do not trust size/mtime for reuse unless a future degraded mode makes that
+    risk explicit
   - use the same identity contract in inventory, file units, manifest planning,
     SCIP scoping, and artifact publication
 - Add a `FileArtifactStore` keyed by `(repo, rel_path, blob_oid/content_hash)` for:
@@ -630,7 +640,9 @@ The template philosophy remains correct for Python: use one importable package w
   - package/workspace or repo-wide rebuild when toolchain/build graph changes
 - Remove avoidable repeated tool startup:
   - replace `go run` helper execution with packaged binaries, cached build artifacts, or daemonized helper mode
-- Treat “missing file fingerprints” as a reason to disable incremental mode, not to silently claim success.
+- Keep treating “missing file fingerprints” as a reason to disable incremental
+  mode, not to silently claim success; the manifest-first prefilter now does
+  this, but the rule still needs to hold after the planner is centralized.
 
 **Exit criteria:**
 - A one-file edit does not trigger full-repo parsing, full-repo embedding, or whole-repo downstream artifact rebuild when file-shard reuse is valid.
@@ -854,8 +866,9 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - `indexing/embedder.py` now stores cached embeddings as native `float32` byte buffers
   - `store/cache.py` now writes typed dialogue/session/query payloads as explicit JSON envelopes and embedding payloads as length-prefixed buffer envelopes; generic `get()/set()` remains for legacy or untyped callers
   - `store/vector.py` now persists repository overview metadata as an explicit JSON manifest plus NumPy embedding archive and lets metadata-only overview callers avoid loading embedding payloads
-  - `store/pg_retrieval.py` no longer duplicates embeddings into JSON metadata, but still materializes `list[float]`/vector-literal form at the PG vector boundary
-  - `store/pg_retrieval.py` still receives fallback search vectors through DB row arrays, but ranks them as a NumPy matrix before metadata inflation
+  - `indexing/pipeline.py` now stages embedded elements as a single `np.ndarray[np.float32]` matrix instead of a Python list of arrays before vector-store insertion, and vector-store search/repository-overview ranking uses explicit float32 boundary helpers
+  - `DBRuntime` registers the pgvector Psycopg adapter when available, and `store/pg_retrieval.py` now passes native float32 vectors at the active PG boundary instead of duplicating new rows into `list[float]` array payloads; SQL vector literals remain only as an adapter-missing fallback
+  - `store/pg_retrieval.py` still keeps legacy `embedding_arr` read fallback support, but ranks fallback candidates as a NumPy matrix before metadata inflation
 - unit artifact persistence is narrower, but still dict-shaped:
   - `store/unit_artifacts.py` no longer uses generic row normalization on list/load paths and now serializes only the metadata subtree explicitly
   - it still persists unit metadata as JSON text plus a dict-shaped compatibility payload for callers
@@ -875,6 +888,7 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - persisted BM25 reload paths in `retrieval/hybrid.py` and `main/fastcode.py` now rehydrate `CodeElement` objects through an explicit adapter instead of `CodeElement(**payload)` mass-assignment
 - graph artifact boundaries are narrower:
   - `graph/build.py` now writes compatibility graph element indices through explicit `serialize_code_element(...)` payloads and rehydrates persisted `element_by_name` / `element_by_id` entries through `deserialize_code_element(...)` on load/merge instead of `CodeElement.to_dict()` / `CodeElement(**payload)` round-trips
+  - IR graph snapshots now persist and reload compact `IRGraphView` payloads backed by `python-igraph`; retrieval graph expansion uses the compact reachability API instead of materializing a NetworkX union graph when compact views are available
 
 **Direction:** "Zero-copy" is only realistic where data remains in native buffers or immutable typed views end to end. In pure Python object graphs, the release target should be:
 - zero extra copies across native/vector boundaries where possible
@@ -919,17 +933,19 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - `retrieval/hybrid.py` and `retrieval/core/fusion.py` now defer `CodeElement` materialization to explicit final result serializers instead of expanding full dataclass payloads through `to_dict()` in keyword/graph/doc-projection helper paths
 - PostgreSQL retrieval path:
   - `store/pg_retrieval.py` now strips raw embedding arrays from `metadata_json` before insert so vector payloads are not duplicated in JSON storage
-  - it still converts embeddings to Python lists/vector literals for the current pgvector/array insert path
+  - the active insert/search path passes native float32 arrays through the pgvector Psycopg adapter; vector literals are retained only for the degraded case where the Python adapter is unavailable
 - vector retrieval path:
   - `store/vector.py` keeps shard-backed vector rows hot after load, rebuilds FAISS lazily only when a compatibility operation needs it, persists repository overviews as an explicit JSON manifest plus NumPy embedding archive, and vectorizes repository-overview ranking before result metadata assembly
+  - `utils/vectors.py` gives vector hot paths explicit view/contiguous/mutable ownership policies and avoids mutating caller-owned arrays during non-finite sanitization
   - full repository-overview consumers still decode JSON metadata into Python dicts because selector/BM25 flows currently operate on Python text/metadata payloads
 - PostgreSQL retrieval result path:
   - semantic fallback now delays JSON metadata inflation until after vectorized NumPy ranking
   - direct pgvector/keyword result rows still materialize JSON payloads at the retrieval boundary
 - graph path:
-  - hot graph operations still use `networkx`, which is fundamentally Python-object heavy
+  - IR graph expansion now uses compact `IRGraphView` reachability on the active retrieval path when compact graph payloads are available
+  - projection graph algorithms still use `networkx`, which is a named compatibility/materialization boundary until a projection-native rewrite
   - compatibility `graph/build.py` loads now retain compact shard adjacency payloads and only materialize `networkx` lazily for save/merge/path/stats compatibility paths
-  - snapshot IR graph storage/load still reconstructs full `networkx` graph objects from JSON, and IR graph expansion still depends on that representation even though query handles now defer the first load and cache a combined traversal graph per snapshot
+  - snapshot IR graph storage/load no longer has to reconstruct full `networkx` graph objects for active retrieval; legacy node-link graph payloads remain supported
 - IR/store path:
   - `IRSnapshot.to_dict()/from_dict()` and record `to_dict()/from_dict()` patterns are still common interchange mechanisms
   - DB rows are routinely converted with `row_to_dict()` before typed reconstruction

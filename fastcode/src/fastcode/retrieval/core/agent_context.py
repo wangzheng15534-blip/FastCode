@@ -5,8 +5,9 @@ This module is pure: no I/O, no logging, no framework imports.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 
 def _string(value: Any) -> str:
@@ -21,28 +22,30 @@ def _string_or_none(value: Any) -> str | None:
 
 
 def _string_tuple(value: Any) -> tuple[str, ...]:
-    if isinstance(value, tuple):
-        return tuple(str(item) for item in value)
-    if isinstance(value, list):
-        return tuple(str(item) for item in value)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        sequence = cast(Sequence[Any], value)
+        return tuple(str(item) for item in sequence)
     if value is None:
         return ()
     return (str(value),)
 
 
 def _dict_value(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict):
+    if not isinstance(value, Mapping):
         return {}
-    return {str(key): item for key, item in value.items()}
+    mapping = cast(Mapping[Any, Any], value)
+    return {str(key): item for key, item in mapping.items()}
 
 
 def _dict_tuple(value: Any) -> tuple[dict[str, Any], ...]:
-    if not isinstance(value, (list, tuple)):
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
         return ()
     items: list[dict[str, Any]] = []
-    for item in value:
-        if isinstance(item, dict):
-            items.append({str(key): sub_item for key, sub_item in item.items()})
+    sequence = cast(Sequence[Any], value)
+    for item in sequence:
+        if isinstance(item, Mapping):
+            mapping = cast(Mapping[Any, Any], item)
+            items.append({str(key): sub_item for key, sub_item in mapping.items()})
     return tuple(items)
 
 

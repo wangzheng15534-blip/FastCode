@@ -7,6 +7,7 @@ import json
 import logging
 import pickle
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, cast
 
@@ -718,7 +719,7 @@ class CacheManager:
         records: list[HandoffArtifactRecord] = []
         try:
             if self.backend == "disk":
-                iterable = self.cache.iterkeys()
+                iterable: Iterable[Any] = self.cache.iterkeys()
             elif self.backend == "redis":
                 iterable = self.cache.scan_iter(match="handoff_*")
             else:

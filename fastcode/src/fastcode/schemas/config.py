@@ -17,6 +17,10 @@ def _string_list(values: list[str]) -> tuple[str, ...]:
     return tuple(str(value) for value in values)
 
 
+def _dict_any() -> dict[str, Any]:
+    return {}
+
+
 class _BoundaryModel(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -196,7 +200,7 @@ class RetrievalSettings(_BoundaryModel):
     min_repo_similarity: float = 0.1
     max_files_to_search: int = Field(default=15, ge=1)
     enable_agency_mode: bool = False
-    adaptive_fusion: dict[str, Any] = Field(default_factory=dict)
+    adaptive_fusion: dict[str, Any] = Field(default_factory=_dict_any)
 
 
 @dataclass(frozen=True)
@@ -217,7 +221,7 @@ class RetrievalConfig:
     min_repo_similarity: float = 0.1
     max_files_to_search: int = 15
     enable_agency_mode: bool = False
-    adaptive_fusion: dict[str, Any] = field(default_factory=dict)
+    adaptive_fusion: dict[str, Any] = field(default_factory=_dict_any)
 
     @classmethod
     def from_settings(cls, settings: RetrievalSettings) -> RetrievalConfig:
@@ -434,18 +438,18 @@ class FastCodeSettings(_BoundaryModel):
     repository: RepositorySettings = Field(default_factory=RepositorySettings)
     parser: ParserSettings = Field(default_factory=ParserSettings)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
-    indexing: dict[str, Any] = Field(default_factory=dict)
+    indexing: dict[str, Any] = Field(default_factory=_dict_any)
     vector_store: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     generation: GenerationSettings = Field(default_factory=GenerationSettings)
     query: QuerySettings = Field(default_factory=QuerySettings)
-    graph: dict[str, Any] = Field(default_factory=dict)
-    docs_integration: dict[str, Any] = Field(default_factory=dict)
-    agent: dict[str, Any] = Field(default_factory=dict)
+    graph: dict[str, Any] = Field(default_factory=_dict_any)
+    docs_integration: dict[str, Any] = Field(default_factory=_dict_any)
+    agent: dict[str, Any] = Field(default_factory=_dict_any)
     cache: CacheSettings = Field(default_factory=CacheSettings)
     evaluation: EvaluationSettings = Field(default_factory=EvaluationSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
-    terminus: dict[str, Any] = Field(default_factory=dict)
+    terminus: dict[str, Any] = Field(default_factory=_dict_any)
     projection: StorageSettings = Field(default_factory=StorageSettings)
 
 
@@ -456,18 +460,18 @@ class FastCodeConfig:
     repository: RepositoryConfig = field(default_factory=RepositoryConfig)
     parser: ParserConfig = field(default_factory=ParserConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
-    indexing: dict[str, Any] = field(default_factory=dict)
+    indexing: dict[str, Any] = field(default_factory=_dict_any)
     vector_store: VectorStoreConfig = field(default_factory=VectorStoreConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     query: QueryConfig = field(default_factory=QueryConfig)
-    graph: dict[str, Any] = field(default_factory=dict)
-    docs_integration: dict[str, Any] = field(default_factory=dict)
-    agent: dict[str, Any] = field(default_factory=dict)
+    graph: dict[str, Any] = field(default_factory=_dict_any)
+    docs_integration: dict[str, Any] = field(default_factory=_dict_any)
+    agent: dict[str, Any] = field(default_factory=_dict_any)
     cache: CacheConfig = field(default_factory=CacheConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    terminus: dict[str, Any] = field(default_factory=dict)
+    terminus: dict[str, Any] = field(default_factory=_dict_any)
     projection: StorageConfig = field(default_factory=StorageConfig)
 
     @classmethod

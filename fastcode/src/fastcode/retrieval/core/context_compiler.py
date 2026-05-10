@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import time
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 
 from . import fcx as _fcx
 from .agent_context import (
@@ -24,6 +25,13 @@ from .agent_context import (
 )
 
 COMPILER_FINGERPRINT = "fcx-v1"
+
+
+def _mapping_summary(value: Any) -> str:
+    if not isinstance(value, Mapping):
+        return ""
+    mapping = cast(Mapping[str, Any], value)
+    return str(mapping.get("summary") or "")
 
 
 def build_evidence_refs_from_sources(
@@ -167,29 +175,32 @@ def compile_working_memory(
     }
 
     stable_records: list[str] = []
-    l0 = (session_prefix or {}).get("l0")
-    l1 = (session_prefix or {}).get("l1")
-    projection_id = str((session_prefix or {}).get("projection_id") or "")
-    if isinstance(l0, dict):
+    prefix: Mapping[str, Any] = session_prefix or {}
+    l0 = prefix.get("l0")
+    l1 = prefix.get("l1")
+    projection_id = str(prefix.get("projection_id") or "")
+    if isinstance(l0, Mapping):
+        summary = _mapping_summary(l0)
         stable_records.append(
             _fcx.render_record(
                 "L0",
                 fields={
                     "p": projection_id or "proj",
-                    "tok": len(str(l0.get("summary") or "")),
+                    "tok": len(summary),
                 },
-                tail=str(l0.get("summary") or ""),
+                tail=summary,
             )
         )
-    if isinstance(l1, dict):
+    if isinstance(l1, Mapping):
+        summary = _mapping_summary(l1)
         stable_records.append(
             _fcx.render_record(
                 "L1",
                 fields={
                     "p": projection_id or "proj",
-                    "tok": len(str(l1.get("summary") or "")),
+                    "tok": len(summary),
                 },
-                tail=str(l1.get("summary") or ""),
+                tail=summary,
             )
         )
     stable_records.append(

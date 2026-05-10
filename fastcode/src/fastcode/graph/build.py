@@ -1090,6 +1090,20 @@ class CodeGraphBuilder:
             },
         }
 
+    @staticmethod
+    def _sort_graph_shard_payload(payload: dict[str, Any]) -> None:
+        elements = cast(list[dict[str, Any]], payload["elements"])
+        imports = cast(list[dict[str, Any]], payload["imports"])
+        graphs = cast(dict[str, dict[str, Any]], payload["graphs"])
+        elements.sort(key=lambda row: int(row.get("sequence_no", 0)))
+        imports.sort(key=lambda row: str(row.get("file_path") or ""))
+        for graph_payload in graphs.values():
+            graph_payload["nodes"] = sorted(
+                {str(node_id) for node_id in graph_payload.get("nodes", [])}
+            )
+            edges = cast(list[dict[str, Any]], graph_payload["edges"])
+            edges.sort(key=CodeGraphBuilder._edge_sort_key)
+
     def _load_graph_manifest(self, name: str) -> dict[str, Any] | None:
         manifest_path = self._graph_manifest_path(name)
         if not os.path.exists(manifest_path):
@@ -1292,13 +1306,7 @@ class CodeGraphBuilder:
         }
         active_files: set[str] = set()
         for path_key, payload in grouped_payloads.items():
-            payload["elements"].sort(key=lambda row: int(row.get("sequence_no", 0)))
-            payload["imports"].sort(key=lambda row: str(row.get("file_path") or ""))
-            for graph_payload in payload["graphs"].values():
-                graph_payload["nodes"] = sorted(
-                    {str(node_id) for node_id in graph_payload.get("nodes", [])}
-                )
-                graph_payload["edges"].sort(key=self._edge_sort_key)
+            self._sort_graph_shard_payload(payload)
 
             shard_bytes = self._graph_shard_bytes(payload)
             digest = hashlib.sha256(shard_bytes).hexdigest()
@@ -1466,13 +1474,7 @@ class CodeGraphBuilder:
                     reused += 1
                     continue
 
-            payload["elements"].sort(key=lambda row: int(row.get("sequence_no", 0)))
-            payload["imports"].sort(key=lambda row: str(row.get("file_path") or ""))
-            for graph_payload in payload["graphs"].values():
-                graph_payload["nodes"] = sorted(
-                    {str(node_id) for node_id in graph_payload.get("nodes", [])}
-                )
-                graph_payload["edges"].sort(key=self._edge_sort_key)
+            self._sort_graph_shard_payload(payload)
 
             shard_bytes = self._graph_shard_bytes(payload)
             digest = hashlib.sha256(shard_bytes).hexdigest()

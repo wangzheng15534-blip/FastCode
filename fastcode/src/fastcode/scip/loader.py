@@ -17,8 +17,11 @@ from .models import SCIPIndex
 
 logger = logging.getLogger(__name__)
 
+ProtobufDecodeError: type[Exception]
 try:
-    from google.protobuf.message import DecodeError as ProtobufDecodeError
+    from google.protobuf.message import DecodeError as _ProtobufDecodeError
+
+    ProtobufDecodeError = cast(type[Exception], _ProtobufDecodeError)
 except Exception:  # pragma: no cover - optional dependency
     ProtobufDecodeError = ValueError
 

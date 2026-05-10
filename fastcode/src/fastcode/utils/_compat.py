@@ -62,7 +62,7 @@ def setup_logging(config: dict[str, Any]) -> logging.Logger:
 def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
     """Load configuration from YAML file"""
     with open(config_path) as f:
-        config = yaml.safe_load(f) or {}
+        config = cast(dict[str, Any], yaml.safe_load(f) or {})
 
     # Resolve relative paths against FastCode project root inferred from config path.
     config_file = Path(config_path).resolve()
@@ -82,7 +82,7 @@ def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
 def load_runtime_config(config_path: str = "config/config.yaml") -> FastCodeConfig:
     """Load configuration from YAML into the canonical frozen runtime config."""
     with open(config_path) as f:
-        config = yaml.safe_load(f) or {}
+        config = cast(dict[str, Any], yaml.safe_load(f) or {})
 
     config_file = Path(config_path).resolve()
     if config_file.parent.name == "config":

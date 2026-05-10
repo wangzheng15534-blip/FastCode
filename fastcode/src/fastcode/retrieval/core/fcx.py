@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, cast
 
 
 def _render_value(value: Any) -> str:
@@ -11,8 +12,9 @@ def _render_value(value: Any) -> str:
         return "1" if value else "0"
     if value is None:
         return "-"
-    if isinstance(value, (list, tuple)):
-        return ",".join(_render_value(item) for item in value if item is not None)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        sequence = cast(Sequence[Any], value)
+        return ",".join(_render_value(item) for item in sequence if item is not None)
     text = str(value)
     if not text:
         return "-"

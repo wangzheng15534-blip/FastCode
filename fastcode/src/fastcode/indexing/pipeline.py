@@ -201,6 +201,13 @@ class IndexPipeline:
         current_files: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Resolve repo snapshot identity from git metadata or file hashes."""
+
+        def file_identity(file_info: Mapping[str, Any]) -> str:
+            precomputed = file_info.get("content_hash") or file_info.get("blob_oid")
+            if precomputed:
+                return str(precomputed)
+            return compute_file_hash(str(file_info["path"]))
+
         repo_path = self.loader.repo_path or ""
         try:
             repo = Repo(repo_path)
@@ -224,7 +231,7 @@ class IndexPipeline:
                     digest = hashlib.sha1()
                     for f in sorted(files, key=lambda x: x["relative_path"]):
                         digest.update(f["relative_path"].encode("utf-8"))
-                        digest.update(compute_file_hash(f["path"]).encode("utf-8"))
+                        digest.update(file_identity(f).encode("utf-8"))
                     working_tree_hash = digest.hexdigest()
                     tree_id = f"{tree_id}:dirty:{working_tree_hash}"
                     dirty_suffix = f":dirty:{working_tree_hash}"
@@ -249,7 +256,7 @@ class IndexPipeline:
                 for f in sorted(files, key=lambda x: x["relative_path"]):
                     digest.update(f["relative_path"].encode("utf-8"))
                     try:
-                        digest.update(compute_file_hash(f["path"]).encode("utf-8"))
+                        digest.update(file_identity(f).encode("utf-8"))
                     except Exception:
                         digest.update(str(f.get("size", 0)).encode("utf-8"))
                 synthetic = digest.hexdigest()
@@ -1142,7 +1149,39 @@ class IndexPipeline:
             self.vector_store.persist_dir, f"{artifact_key}_metadata.pkl"
         )
 
-    def _file_fingerprint(self, abs_path: str) -> dict[str, Any] | None:
+    def _scan_files_for_pipeline(self) -> list[dict[str, Any]]:
+        try:
+            return self.loader.scan_files(include_fingerprints=True)
+        except TypeError as exc:
+            if "unexpected keyword" not in str(exc):
+                raise
+            # Some tests and legacy integrations replace scan_files with a
+            # zero-argument callable. The planner still computes missing
+            # fingerprints at use sites in that compatibility path.
+            return self.loader.scan_files()
+
+    def _repository_info_for_pipeline(
+        self, current_files: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        try:
+            return self.loader.get_repository_info(files=current_files)
+        except TypeError as exc:
+            if "unexpected keyword" not in str(exc):
+                raise
+            return self.loader.get_repository_info()
+
+    def _file_fingerprint(
+        self, abs_path: str, file_info: Mapping[str, Any] | None = None
+    ) -> dict[str, Any] | None:
+        if file_info is not None:
+            content_hash = file_info.get("content_hash") or file_info.get("blob_oid")
+            if content_hash:
+                return {
+                    "mtime": float(file_info.get("mtime") or 0.0),
+                    "size": int(file_info.get("size") or 0),
+                    "content_hash": str(content_hash),
+                    "blob_oid": str(file_info.get("blob_oid") or content_hash),
+                }
         try:
             stat = os.stat(abs_path)
         except OSError:
@@ -1158,18 +1197,38 @@ class IndexPipeline:
             "mtime": stat.st_mtime,
             "size": stat.st_size,
             "content_hash": content_hash,
+            "blob_oid": content_hash,
         }
 
     def _incremental_compatibility_payload(self) -> dict[str, Any]:
+        embedding_fingerprint_record = getattr(
+            self.embedder, "embedding_fingerprint_record", None
+        )
+        embedding_fingerprint = getattr(self.embedder, "embedding_fingerprint", None)
+        fallback_embedding_identity = {
+            "provider": getattr(self.embedder, "provider", None),
+            "model": getattr(self.embedder, "model_name", None),
+            "dimension": getattr(self.embedder, "embedding_dim", None),
+            "max_seq_length": getattr(self.embedder, "max_seq_length", None),
+            "normalize": getattr(self.embedder, "normalize", None),
+        }
+        if callable(embedding_fingerprint_record):
+            fingerprint = embedding_fingerprint_record()
+            to_payload = getattr(fingerprint, "to_payload", None)
+            embedding_identity = (
+                to_payload()
+                if callable(to_payload)
+                else embedding_fingerprint()
+                if callable(embedding_fingerprint)
+                else fallback_embedding_identity
+            )
+        elif callable(embedding_fingerprint):
+            embedding_identity = embedding_fingerprint()
+        else:
+            embedding_identity = fallback_embedding_identity
         return {
             "schema_version": 2,
-            "embedding": {
-                "provider": getattr(self.embedder, "provider", None),
-                "model": getattr(self.embedder, "model_name", None),
-                "dimension": getattr(self.embedder, "embedding_dim", None),
-                "max_seq_length": getattr(self.embedder, "max_seq_length", None),
-                "normalize": getattr(self.embedder, "normalize", None),
-            },
+            "embedding": embedding_identity,
             "indexing": {
                 "levels": list(getattr(self.indexer, "levels", []) or []),
                 "include_imports": getattr(self.indexer, "include_imports", None),
@@ -1231,8 +1290,22 @@ class IndexPipeline:
             return False
         return True
 
+    def _file_info_by_relative_path(
+        self, current_files: Sequence[Mapping[str, Any]] | None
+    ) -> dict[str, Mapping[str, Any]]:
+        if current_files is None:
+            return {}
+        return {
+            normalize_path(str(file_info.get("relative_path") or "")): file_info
+            for file_info in current_files
+            if file_info.get("relative_path")
+        }
+
     def _build_file_manifest(
-        self, elements: list[CodeElement], repo_root: str
+        self,
+        elements: list[CodeElement],
+        repo_root: str,
+        current_files: Sequence[Mapping[str, Any]] | None = None,
     ) -> dict[str, Any]:
         manifest: dict[str, Any] = {
             "schema_version": 2,
@@ -1241,19 +1314,23 @@ class IndexPipeline:
             "compatibility_hash": self._incremental_compatibility_hash(),
             "files": {},
         }
+        file_info_by_path = self._file_info_by_relative_path(current_files)
 
         for elem in elements:
-            rel_path = elem.relative_path or elem.file_path
+            rel_path = normalize_path(elem.relative_path or elem.file_path)
             if not rel_path:
                 continue
             if rel_path not in manifest["files"]:
                 abs_path = os.path.join(repo_root, rel_path)
-                fingerprint = self._file_fingerprint(abs_path)
+                fingerprint = self._file_fingerprint(
+                    abs_path, file_info=file_info_by_path.get(rel_path)
+                )
                 if fingerprint is None:
                     manifest["files"][rel_path] = {
                         "mtime": 0.0,
                         "size": 0,
                         "content_hash": None,
+                        "blob_oid": None,
                         "element_ids": [],
                     }
                 else:
@@ -1327,7 +1404,8 @@ class IndexPipeline:
             abs_path = str(file_info.get("path") or "")
             if not rel_path or not abs_path:
                 continue
-            fingerprint = self._file_fingerprint(abs_path)
+            rel_path = normalize_path(rel_path)
+            fingerprint = self._file_fingerprint(abs_path, file_info=file_info)
             if fingerprint is None:
                 current_lookup[rel_path] = {
                     "fingerprint_missing": True,
@@ -2583,12 +2661,12 @@ class IndexPipeline:
             load_repository_cb(source, is_url=resolved_is_url)
 
         self._checkout_target_ref(ref=ref, commit=commit)
-        repo_info = self.loader.get_repository_info()
+        current_files = self._scan_files_for_pipeline()
+        repo_info = self._repository_info_for_pipeline(current_files)
         self._set_repo_info(repo_info)
 
         repo_name = repo_info.get("name", "default")
         repo_url = repo_info.get("url", source)
-        current_files = self.loader.scan_files()
         snapshot_ref = self._resolve_snapshot_ref(
             repo_name,
             requested_ref=ref,
@@ -2787,6 +2865,7 @@ class IndexPipeline:
                 branch=snapshot_ref.get("branch"),
                 commit_id=snapshot_ref.get("commit_id"),
                 tree_id=snapshot_ref.get("tree_id"),
+                file_fingerprints=self._file_info_by_relative_path(current_files),
             )
 
             ast_snapshot.metadata["repo_root"] = self.loader.repo_path or ""
@@ -3385,7 +3464,11 @@ class IndexPipeline:
                 temp_graph.save(artifact_key)
             self._save_file_manifest(
                 artifact_key,
-                self._build_file_manifest(elements, self.loader.repo_path or ""),
+                self._build_file_manifest(
+                    elements,
+                    self.loader.repo_path or "",
+                    current_files=current_files,
+                ),
             )
 
             self.snapshot_store.save_snapshot(

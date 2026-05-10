@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 
-from fastcode.indexing.embedder import CodeEmbedder
+from fastcode.indexing.embedder import CodeEmbedder, EmbeddingFingerprint
 
 
 class _MemoryCache:
@@ -105,6 +105,7 @@ def test_embedding_cache_writes_float32_buffer_payload() -> None:
     assert cached["embedding_dtype"] == "float32"
     assert cached["embedding_shape"] == (3,)
     assert isinstance(cached["embedding_bytes"], bytes)
+    assert cached["embedding_fingerprint"] == embedder.embedding_fingerprint()
     assert np.array_equal(first, second)
     assert embedder.raw_batches == [["buffered text"]]
 
@@ -172,6 +173,21 @@ def test_embedding_cache_key_is_model_aware() -> None:
     )
 
 
+def test_embedding_fingerprint_record_is_typed_and_matches_payload() -> None:
+    cache = _MemoryCache()
+    embedder = _CountingEmbedder(cache)
+
+    fingerprint = embedder.embedding_fingerprint_record()
+
+    assert isinstance(fingerprint, EmbeddingFingerprint)
+    assert fingerprint.to_payload() == embedder.embedding_fingerprint()
+    assert fingerprint.stable_json() == (
+        '{"cache_version":null,"dimension":3,"max_seq_length":512,'
+        '"model":"model-a","normalize":true,"ollama_url":null,'
+        '"provider":"sentence_transformers","version":2}'
+    )
+
+
 def test_embedding_cache_disabled_uses_raw_embedding_each_time() -> None:
     cache = _MemoryCache()
     embedder = _CountingEmbedder(cache)
@@ -181,6 +197,68 @@ def test_embedding_cache_disabled_uses_raw_embedding_each_time() -> None:
     embedder.embed_text("same text")
 
     assert embedder.raw_batches == [["same text"], ["same text"]]
+
+
+def test_embedder_initialization_does_not_load_model(
+    monkeypatch: Any,
+) -> None:
+    def _boom_load_model(self: CodeEmbedder) -> Any:
+        raise AssertionError("model should load lazily")
+
+    monkeypatch.setattr(CodeEmbedder, "_load_model", _boom_load_model)
+
+    embedder = CodeEmbedder(
+        {
+            "embedding": {
+                "provider": "sentence_transformers",
+                "model": "test-model",
+                "dimension": 3,
+            },
+            "cache": {"enabled": False},
+        }
+    )
+
+    assert embedder.model is None
+    assert embedder.embedding_dim == 3
+
+
+def test_embedder_loads_model_on_first_uncached_embedding(
+    monkeypatch: Any,
+) -> None:
+    load_calls: list[str] = []
+
+    class _FakeModel:
+        def get_embedding_dimension(self) -> int:
+            return 2
+
+        def encode(self, texts: list[str], **_kwargs: Any) -> np.ndarray:
+            return np.asarray(
+                [[float(index), float(index + 1)] for index, _ in enumerate(texts)],
+                dtype=np.float32,
+            )
+
+    def _load_model(self: CodeEmbedder) -> _FakeModel:
+        load_calls.append(self.model_name)
+        return _FakeModel()
+
+    monkeypatch.setattr(CodeEmbedder, "_load_model", _load_model)
+    embedder = CodeEmbedder(
+        {
+            "embedding": {
+                "provider": "sentence_transformers",
+                "model": "lazy-test-model",
+            },
+            "cache": {"enabled": False},
+        }
+    )
+
+    assert load_calls == []
+
+    embeddings = embedder.embed_batch(["a", "b"])
+
+    assert load_calls == ["lazy-test-model"]
+    assert embeddings.shape == (2, 2)
+    assert embedder.embedding_dim == 2
 
 
 def test_embed_code_elements_persists_embedding_text_hash() -> None:
@@ -193,6 +271,7 @@ def test_embed_code_elements_persists_embedding_text_hash() -> None:
     metadata = batch[0]["metadata"]
     assert "embedding_text_hash" in metadata
     assert metadata["embedding_text_hash"]
+    assert metadata["embedding_fingerprint"] == embedder.embedding_fingerprint()
     assert batch[0]["embedding_artifact_ref"] == embedder.embedding_artifact_ref(
         batch[0]["embedding_text"]
     )

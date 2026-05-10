@@ -133,6 +133,31 @@ def _build(elements: list[CodeElement] | None = None) -> IRSnapshot:
     )
 
 
+def test_build_ir_from_ast_uses_supplied_file_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom_hash(_path: str) -> str:
+        raise AssertionError("file should not be rehashed when fingerprint is supplied")
+
+    monkeypatch.setattr("fastcode.scip.ast_adapter.compute_file_hash", _boom_hash)
+    snapshot = build_ir_from_ast(
+        repo_name="test_repo",
+        snapshot_id="snap:test:fingerprint",
+        elements=[_elem(name="f", relative_path="pkg/a.py")],
+        repo_root="/tmp/repo",
+        file_fingerprints={
+            "pkg/a.py": {
+                "content_hash": "content-123",
+                "blob_oid": "blob-456",
+            }
+        },
+    )
+
+    file_unit = next(unit for unit in snapshot.units if unit.kind == "file")
+    assert file_unit.metadata["content_hash"] == "content-123"
+    assert file_unit.metadata["blob_oid"] == "blob-456"
+
+
 _repo_root = "/tmp/test_repo"
 
 _element_types_with_symbols = st.sampled_from(

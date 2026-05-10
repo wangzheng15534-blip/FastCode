@@ -1302,6 +1302,72 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
         assert result["repair_queue"]["scope_roots"] == ["."]
 
 
+def test_incremental_diff_reuses_inventory_fingerprints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_fingerprints_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+
+        def _boom_hash(_path: str) -> str:
+            raise AssertionError("pre-fingerprinted inventory should not be rehashed")
+
+        monkeypatch.setattr("fastcode.indexing.pipeline.compute_file_hash", _boom_hash)
+
+        changes = pipeline._detect_file_changes(
+            {
+                "files": {
+                    "a.py": {
+                        "content_hash": "hash-a",
+                        "blob_oid": "hash-a",
+                        "element_ids": ["elem:a"],
+                    }
+                }
+            },
+            [
+                {
+                    "path": os.path.join(tmp, "a.py"),
+                    "relative_path": "a.py",
+                    "size": 12,
+                    "mtime": 123.0,
+                    "content_hash": "hash-a",
+                    "blob_oid": "hash-a",
+                }
+            ],
+        )
+
+        assert changes["unchanged"] == ["a.py"]
+        assert changes["added"] == []
+        assert changes["modified"] == []
+
+
+def test_snapshot_ref_reuses_inventory_fingerprints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_snapshot_ref_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+
+        def _boom_hash(_path: str) -> str:
+            raise AssertionError("snapshot identity should use inventory fingerprints")
+
+        monkeypatch.setattr("fastcode.indexing.pipeline.compute_file_hash", _boom_hash)
+
+        snapshot_ref = pipeline._resolve_snapshot_ref(
+            "repo",
+            current_files=[
+                {
+                    "path": os.path.join(tmp, "a.py"),
+                    "relative_path": "a.py",
+                    "size": 12,
+                    "mtime": 123.0,
+                    "content_hash": "hash-a",
+                    "blob_oid": "hash-a",
+                }
+            ],
+        )
+
+        assert snapshot_ref["snapshot_id"].startswith("snap:repo:")
+
+
 def test_pipeline_incremental_prefilter_falls_back_on_compatibility_mismatch() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_incremental_") as tmp:
         pipeline = _make_minimal_pipeline(tmp)
@@ -1407,6 +1473,35 @@ def test_pipeline_incremental_prefilter_falls_back_on_compatibility_mismatch() -
         assert planned_elements is None
         assert plan is None
         pipeline.indexer.index_files.assert_not_called()
+
+
+def test_incremental_compatibility_uses_typed_embedding_fingerprint_payload() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_embedding_fp_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        payload = {
+            "version": 2,
+            "provider": "sentence_transformers",
+            "model": "typed-model",
+            "dimension": 3,
+            "max_seq_length": 512,
+            "normalize": True,
+            "ollama_url": None,
+            "cache_version": "v1",
+        }
+
+        class _Fingerprint:
+            def to_payload(self) -> dict[str, Any]:
+                return dict(payload)
+
+        def _embedding_fingerprint_record() -> _Fingerprint:
+            return _Fingerprint()
+
+        pipeline.embedder = SimpleNamespace(
+            embedding_fingerprint_record=_embedding_fingerprint_record,
+            embedding_fingerprint=lambda: {"legacy": True},
+        )
+
+        assert pipeline._incremental_compatibility_payload()["embedding"] == payload
 
 
 def test_plan_incremental_elements_disables_when_manifest_lacks_fingerprint() -> None:

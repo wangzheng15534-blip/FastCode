@@ -10,6 +10,7 @@ import json
 import logging
 import platform
 import urllib.request
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -20,6 +21,35 @@ import torch
 from sentence_transformers import SentenceTransformer
 
 _EMBEDDING_CACHE_FORMAT = "ndarray.float32.v1"
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingFingerprint:
+    """Stable embedding model/config identity for reuse decisions."""
+
+    version: int
+    provider: str
+    model: str
+    dimension: int
+    max_seq_length: int
+    normalize: bool
+    ollama_url: str | None = None
+    cache_version: str | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "provider": self.provider,
+            "model": self.model,
+            "dimension": self.dimension,
+            "max_seq_length": self.max_seq_length,
+            "normalize": self.normalize,
+            "ollama_url": self.ollama_url,
+            "cache_version": self.cache_version,
+        }
+
+    def stable_json(self) -> str:
+        return json.dumps(self.to_payload(), sort_keys=True, separators=(",", ":"))
 
 
 class CodeEmbedder:
@@ -55,21 +85,29 @@ class CodeEmbedder:
             )
 
         self.model: SentenceTransformer | None = None
-        self.embedding_dim: int = 0
-        if self.provider == "ollama":
-            self.logger.info(
-                f"Using Ollama embeddings model: {self.model_name} ({self.ollama_url})"
-            )
-            probe = self._embed_text_ollama("embedding dimension probe")
-            self.embedding_dim = len(probe)
-        else:
-            self.logger.info(f"Loading embedding model: {self.model_name}")
-            self.model = self._load_model()
-            dim = self.model.get_embedding_dimension()
-            self.embedding_dim = dim if dim is not None else 0
+        self._embedding_dim: int = int(
+            self.embedding_config.get("dimension")
+            or self.embedding_config.get("embedding_dim")
+            or 0
+        )
 
         self._initialize_embedding_cache()
-        self.logger.info(f"Embedding dimension: {self.embedding_dim}")
+        self.logger.info(
+            "Embedding provider configured: %s model=%s dimension=%s",
+            self.provider,
+            self.model_name,
+            self._embedding_dim or "lazy",
+        )
+
+    @property
+    def embedding_dim(self) -> int:
+        if self._embedding_dim:
+            return self._embedding_dim
+        return self._ensure_embedding_dimension()
+
+    @embedding_dim.setter
+    def embedding_dim(self, value: int) -> None:
+        self._embedding_dim = int(value or 0)
 
     def _initialize_embedding_cache(self) -> None:
         cache_config = self.config.get("cache", {})
@@ -96,6 +134,49 @@ class CodeEmbedder:
         model = SentenceTransformer(self.model_name, device=self.device)
         model.max_seq_length = self.max_seq_length
         return model
+
+    def _ensure_model_loaded(self) -> SentenceTransformer:
+        if self.model is None:
+            self.logger.info(f"Loading embedding model: {self.model_name}")
+            self.model = self._load_model()
+            dim = self.model.get_embedding_dimension()
+            if dim is not None:
+                self._embedding_dim = int(dim)
+            self.logger.info(f"Embedding dimension: {self._embedding_dim}")
+        return self.model
+
+    def _ensure_embedding_dimension(self) -> int:
+        if self._embedding_dim:
+            return self._embedding_dim
+        if self.provider == "ollama":
+            self.logger.info(
+                f"Probing Ollama embeddings model: {self.model_name} ({self.ollama_url})"
+            )
+            probe = self._embed_text_ollama("embedding dimension probe")
+            self._embedding_dim = len(probe)
+            return self._embedding_dim
+        model = self._ensure_model_loaded()
+        dim = model.get_embedding_dimension()
+        self._embedding_dim = int(dim or 0)
+        return self._embedding_dim
+
+    def embedding_fingerprint_record(self) -> EmbeddingFingerprint:
+        """Return the model/config identity used for embedding reuse decisions."""
+        cache_version = self.embedding_config.get("cache_version")
+        return EmbeddingFingerprint(
+            version=2,
+            provider=str(self.provider),
+            model=str(self.model_name),
+            dimension=int(self.embedding_dim),
+            max_seq_length=int(self.max_seq_length),
+            normalize=bool(self.normalize),
+            ollama_url=str(self.ollama_url) if self.provider == "ollama" else None,
+            cache_version=str(cache_version) if cache_version is not None else None,
+        )
+
+    def embedding_fingerprint(self) -> dict[str, Any]:
+        """Compatibility payload for callers that persist JSON metadata."""
+        return self.embedding_fingerprint_record().to_payload()
 
     def embed_text(self, text: str) -> np.ndarray:
         """
@@ -128,7 +209,10 @@ class CodeEmbedder:
 
         if self.provider == "ollama":
             vectors = [self._embed_text_ollama(t) for t in texts]
-            return np.array(vectors, dtype=np.float32)
+            matrix = np.asarray(vectors, dtype=np.float32)
+            if matrix.ndim == 2 and matrix.shape[1]:
+                self._embedding_dim = int(matrix.shape[1])
+            return matrix
 
         encode_kwargs: dict[str, Any] = {
             "batch_size": self.batch_size,
@@ -142,26 +226,17 @@ class CodeEmbedder:
         if platform.system() == "Darwin":
             encode_kwargs["pool"] = None
 
-        if self.model is None:
-            raise RuntimeError(
-                "Model not loaded (provider != ollama but model is None)"
-            )
-        raw: Any = self.model.encode(texts, **encode_kwargs)
+        model = self._ensure_model_loaded()
+        raw: Any = model.encode(texts, **encode_kwargs)
+        if isinstance(raw, np.ndarray) and raw.ndim == 2 and raw.shape[1]:
+            self._embedding_dim = int(raw.shape[1])
         return cast(np.ndarray, raw)
 
     def _embedding_cache_key(self, text: str) -> str:
-        identity = {
-            "version": 2,
-            "provider": self.provider,
-            "model": self.model_name,
-            "dimension": self.embedding_dim,
-            "max_seq_length": self.max_seq_length,
-            "normalize": self.normalize,
-            "ollama_url": self.ollama_url if self.provider == "ollama" else None,
-            "cache_version": self.embedding_config.get("cache_version"),
-        }
-        payload = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-        digest = hashlib.sha256(f"{payload}\0{text}".encode()).hexdigest()
+        fingerprint = self.embedding_fingerprint_record()
+        digest = hashlib.sha256(
+            f"{fingerprint.stable_json()}\0{text}".encode()
+        ).hexdigest()
         return f"embedding_v2_{digest}"
 
     def embedding_artifact_ref(self, text: str) -> str:
@@ -215,11 +290,13 @@ class CodeEmbedder:
         embedding_array = np.ascontiguousarray(
             np.asarray(embedding, dtype=np.float32).reshape(-1)
         )
+        fingerprint_payload = self.embedding_fingerprint()
         payload = {
             "embedding_format": _EMBEDDING_CACHE_FORMAT,
             "embedding_dtype": "float32",
             "embedding_shape": tuple(int(dim) for dim in embedding_array.shape),
             "embedding_bytes": embedding_array.tobytes(order="C"),
+            "embedding_fingerprint": fingerprint_payload,
             "provider": self.provider,
             "model": self.model_name,
             "dimension": self.embedding_dim,
@@ -296,7 +373,10 @@ class CodeEmbedder:
         vector = body.get("embedding")
         if not vector:
             raise RuntimeError("Ollama embedding response missing 'embedding'")
-        return np.array(vector, dtype=np.float32)
+        embedding = np.asarray(vector, dtype=np.float32)
+        if embedding.ndim == 1 and embedding.size:
+            self._embedding_dim = int(embedding.size)
+        return embedding
 
     def embed_code_elements(
         self, elements: list[CodeElementMeta]
@@ -323,6 +403,7 @@ class CodeEmbedder:
             f"✓ Successfully generated embeddings for {len(embeddings)} code elements"
         )
 
+        fingerprint_payload = self.embedding_fingerprint()
         # Add embeddings to elements
         for elem, text, embedding in zip(elements, texts, embeddings, strict=True):
             elem["embedding"] = embedding
@@ -332,6 +413,7 @@ class CodeEmbedder:
             metadata["embedding_text_hash"] = hashlib.sha256(
                 text.encode("utf-8")
             ).hexdigest()
+            metadata["embedding_fingerprint"] = dict(fingerprint_payload)
             elem["metadata"] = metadata
 
         return elements

@@ -14,6 +14,7 @@ from typing import Any
 from git import GitCommandError, Repo
 
 from ..utils import (
+    compute_file_hash,
     ensure_dir,
     get_repo_name_from_url,
     is_supported_file,
@@ -247,7 +248,7 @@ class RepositoryLoader:
 
         return patterns
 
-    def scan_files(self) -> list[dict[str, Any]]:
+    def scan_files(self, *, include_fingerprints: bool = False) -> list[dict[str, Any]]:
         """
         Scan repository and collect file metadata
 
@@ -292,7 +293,8 @@ class RepositoryLoader:
 
                 # Check file size
                 try:
-                    file_size = os.path.getsize(file_path)
+                    stat = os.stat(file_path)
+                    file_size = stat.st_size
                     if file_size > max_file_size_bytes:
                         self.logger.warning(
                             f"Skipping large file: {relative_path} "
@@ -300,14 +302,22 @@ class RepositoryLoader:
                         )
                         continue
 
-                    files.append(
-                        {
-                            "path": normalize_path(file_path),
-                            "relative_path": normalize_path(relative_path),
-                            "size": file_size,
-                            "extension": Path(file_path).suffix,
-                        }
-                    )
+                    file_entry: dict[str, Any] = {
+                        "path": normalize_path(file_path),
+                        "relative_path": normalize_path(relative_path),
+                        "size": file_size,
+                        "mtime": stat.st_mtime,
+                        "extension": Path(file_path).suffix,
+                    }
+                    if include_fingerprints:
+                        content_hash = compute_file_hash(file_path) or None
+                        file_entry["content_hash"] = content_hash
+                        # The current planner uses content hashes as the working-tree
+                        # identity. Git blob OIDs can be added later without changing
+                        # downstream consumers that already read this key.
+                        file_entry["blob_oid"] = content_hash
+
+                    files.append(file_entry)
 
                     total_size += file_size
 
@@ -347,7 +357,9 @@ class RepositoryLoader:
             self.logger.error(f"Failed to read {file_path}: {e}")
             return None
 
-    def get_repository_info(self) -> dict[str, Any]:
+    def get_repository_info(
+        self, files: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         """
         Get repository metadata
 
@@ -376,7 +388,7 @@ class RepositoryLoader:
             self.logger.debug("Not a git repository or git info unavailable")
 
         # Count files
-        files = self.scan_files()
+        files = files if files is not None else self.scan_files()
         info.update(
             {
                 "file_count": len(files),

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Mapping
 
 from ..ir.element import CodeElement
 from ..ir.types import (
@@ -89,6 +90,7 @@ def build_ir_from_ast(
     branch: str | None = None,
     commit_id: str | None = None,
     tree_id: str | None = None,
+    file_fingerprints: Mapping[str, Mapping[str, object]] | None = None,
 ) -> IRSnapshot:
     file_units: dict[str, IRCodeUnit] = {}
     units: list[IRCodeUnit] = []
@@ -104,8 +106,23 @@ def build_ir_from_ast(
         if unit is not None:
             unit.source_set.add(STRUCTURE_SOURCE)
             return unit
-        abs_path = os.path.join(repo_root, rel_path) if repo_root else rel_path
-        content_hash = compute_file_hash(abs_path) or None
+        fingerprint = (
+            file_fingerprints.get(rel_path) if file_fingerprints is not None else None
+        )
+        content_hash = (
+            str(fingerprint.get("content_hash") or fingerprint.get("blob_oid"))
+            if fingerprint
+            and (fingerprint.get("content_hash") or fingerprint.get("blob_oid"))
+            else None
+        )
+        if content_hash is None:
+            abs_path = os.path.join(repo_root, rel_path) if repo_root else rel_path
+            content_hash = compute_file_hash(abs_path) or None
+        blob_oid = (
+            str(fingerprint.get("blob_oid"))
+            if fingerprint and fingerprint.get("blob_oid")
+            else content_hash
+        )
         unit = IRCodeUnit(
             unit_id=_doc_id(snapshot_id, rel_path),
             kind="file",
@@ -115,7 +132,7 @@ def build_ir_from_ast(
             source_set={STRUCTURE_SOURCE},
             metadata={
                 "source_priority": STRUCTURE_PRIORITY,
-                "blob_oid": content_hash,
+                "blob_oid": blob_oid,
                 "content_hash": content_hash,
                 "stable_unit_id": _hash_id("file", rel_path),
             },

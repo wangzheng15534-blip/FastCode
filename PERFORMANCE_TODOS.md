@@ -1,0 +1,670 @@
+# FastCode Performance TODOs
+
+This tracker is separate from `IMPLEMENTATION_TODOS.md` and focuses only on
+non-functional performance goals:
+
+- efficient incremental update
+- zero-copy or copy-minimal native data flow
+- materialization minimization
+
+It intentionally excludes cross-project design work. It also does not track
+broad cleanup, style issues, packaging, API hardening, or release process items
+unless they directly affect these three goals.
+
+## Audit Verdict - May 10, 2026
+
+FastCode has real partial passes, but the implementation is not yet
+performance-native end to end.
+
+Implementation update, May 11, 2026:
+
+- The active snapshot pipeline now scans a fingerprinted file inventory once
+  and reuses it for repository info, incremental diffing, AST file units, and
+  file manifest publication.
+- `CodeEmbedder` now loads/probes providers lazily and exposes a shared
+  embedding fingerprint method used by incremental compatibility checks.
+- Legacy `np.array(vectors)` insertion paths in `FastCode` now use the explicit
+  vector boundary helper.
+- Vector shard load/write paths avoid the old `.tolist()` plus row-by-row
+  `vstack` pattern in the primary sharded artifact path.
+- `IRGraphView.reachable_within()` now uses cutoff neighborhood traversal
+  instead of all-node distance calculation.
+- PG retrieval metadata JSON now rejects leaked NumPy arrays instead of
+  silently list-materializing them; embeddings remain bound through vector
+  columns.
+- Scoped SCIP reruns now use repo-root filtered execution by default, cache
+  filtered SCIP artifacts by tool/profile plus target-file and package-marker
+  fingerprints, and report cache hits/misses and scope-copy counts.
+- Embedding identity now has a typed `EmbeddingFingerprint` owned by
+  `CodeEmbedder`; cache keys, cache payloads, embedded element metadata, and
+  incremental compatibility payloads are derived from the same fingerprint
+  payload.
+
+- Incremental indexing can skip unchanged-file parse and embedding work, reuse
+  changed-unit embeddings, merge changed AST IR with a previous snapshot, and
+  reuse persisted vector/BM25 and limited graph shards.
+- The active indexing path still rehydrates a full combined element list, builds
+  full temporary vector/BM25/legacy graph artifacts, loads the previous full IR
+  snapshot for merge, writes full snapshot JSON, rebuilds whole IR graph
+  materializations, and rewrites relational fact rows for the whole snapshot.
+- Vector flow uses NumPy/FAISS/pgvector in important places, but old list-vector
+  paths, eager model/probe startup, row-by-row vector shard assembly, JSON/list
+  embedding payloads, and fallback `.tolist()` paths still exist.
+- `IRGraphView` uses `python-igraph`, but NetworkX remains in active hot paths:
+  legacy graph building, IR merge matching, projection transforms, MCP/main
+  graph helpers, and compatibility persistence.
+- Existing perf benchmarks are useful baselines, but they do not yet enforce
+  budgeted update cost, peak RSS, materialization count, bytes read/written, or
+  graph-engine selection criteria.
+
+Stable performance claims should wait until the exit criteria in this file are
+met with benchmark output from representative repositories.
+
+## P0 - Make Incremental Update The Execution Model
+
+### P0.1 Canonical File Inventory And Fingerprint Planner
+
+**Gap:** file identity is recomputed by multiple stages instead of being carried
+as one canonical planner object.
+
+Evidence:
+
+- `RepositoryLoader.get_repository_info()` calls `scan_files()` after the
+  pipeline already calls `scan_files()` (`fastcode/src/fastcode/indexing/loader.py:350`,
+  `fastcode/src/fastcode/indexing/pipeline.py:2402`).
+- `RepositoryLoader.scan_files()` returns path, relative path, size, and
+  extension, but not content hash or git blob identity
+  (`fastcode/src/fastcode/indexing/loader.py:250`).
+- `IndexPipeline._file_fingerprint()` hashes files for incremental manifests
+  (`fastcode/src/fastcode/indexing/pipeline.py:1138`), and
+  `build_ir_from_ast()` hashes the same files again for file units
+  (`fastcode/src/fastcode/scip/ast_adapter.py:84`).
+
+TODO:
+
+- [ ] Introduce a typed `FileInventory` / `FileFingerprint` planner record that
+  carries normalized path, size, mtime, content hash, git blob oid when
+  available, language, package root, and supported-tool eligibility.
+- [x] Build it once per index run and pass it through snapshot identity,
+  incremental planning, AST extraction, SCIP scope, artifact reuse, IR file
+  units, and publication.
+- [ ] Prefer git tree/blob identities when available, with content hashing as a
+  fallback for untracked or non-git inputs.
+- [x] Remove duplicate scan/hash calls from repository info, manifest diffing,
+  AST IR construction, and artifact manifest publication.
+- [x] Add a regression that fails when a one-file update hashes unchanged files
+  more than once per run.
+
+Exit criteria:
+
+- one file inventory is visible in pipeline metrics
+- unchanged files do not perform repeated content reads or hashes in a one-file
+  body edit benchmark
+- file counts and total sizes are derived from the shared inventory, not a
+  second scan
+
+### P0.2 Replace Full Temporary Artifacts With Delta-First Builders
+
+**Gap:** shard reuse currently happens at publication time after full temporary
+objects have already been built.
+
+Evidence:
+
+- `_plan_incremental_elements()` reconstructs unchanged `CodeElement` objects
+  and returns `all_elements = unchanged_elements + new_elements`
+  (`fastcode/src/fastcode/indexing/pipeline.py:1633`).
+- `run_index_pipeline()` still materializes all elements into a temporary
+  vector store, builds a full legacy graph, and builds full BM25 over `elements`
+  (`fastcode/src/fastcode/indexing/pipeline.py:2528`).
+- Incremental vector/BM25/graph shard reuse happens later during artifact
+  persistence (`fastcode/src/fastcode/indexing/pipeline.py:3119`).
+
+TODO:
+
+- [ ] Split indexing into unchanged artifact handles plus changed-file deltas,
+  so unchanged paths are not reconstructed into full `CodeElement` objects for
+  vector/BM25/legacy graph staging.
+- [ ] Add vector-store APIs that publish a new snapshot from previous shard
+  handles plus changed matrix rows, without first building a full temporary
+  matrix.
+- [ ] Add lexical index APIs that publish from previous shard handles plus
+  changed token rows, without constructing a full `BM25Okapi` corpus in memory.
+- [ ] Add graph publication APIs that update adjacency shards for affected
+  paths and affected cross-file edges only.
+- [ ] Keep a compatibility path for full rebuilds, but record degraded/full
+  fallback reasons in metrics.
+
+Exit criteria:
+
+- body-only one-file update does not instantiate full vector, BM25, or legacy
+  graph builders for unchanged files
+- artifact metrics include changed rows, reused rows, copied/linked shards,
+  written shards, deleted shards, and fallback reason
+- benchmark proves one-file update cost is materially below full reindex for
+  parse, embedding, vector, BM25, graph, persistence, and peak RSS
+
+### P0.3 Incremental IR Snapshot And Relational Fact Persistence
+
+**Gap:** changed AST IR is merged with the previous snapshot, but persistence
+still rewrites whole-snapshot surfaces.
+
+Evidence:
+
+- Incremental AST IR narrows to changed paths before `build_ir_from_ast()`
+  (`fastcode/src/fastcode/indexing/pipeline.py:2580`).
+- The previous full snapshot is loaded and merged in memory
+  (`fastcode/src/fastcode/indexing/pipeline.py:2920`).
+- `apply_incremental_update()` merges list-shaped units, supports, relations,
+  and embeddings (`fastcode/src/fastcode/indexing/incremental.py:344`).
+- `save_snapshot()` writes one full `ir_snapshot.json`
+  (`fastcode/src/fastcode/store/snapshot.py:963`).
+- `save_relational_facts()` deletes and reinserts all documents, symbols,
+  occurrences, edges, and attachments for the snapshot
+  (`fastcode/src/fastcode/store/snapshot.py:1694`).
+- `IRGraphBuilder.build_graphs()` and `save_ir_graphs()` rebuild and persist
+  whole IR graph payloads during indexing
+  (`fastcode/src/fastcode/indexing/pipeline.py:3248`).
+
+TODO:
+
+- [ ] Introduce per-file or per-unit IR artifact shards with a snapshot manifest
+  that maps paths and stable unit ids to shard references.
+- [ ] Save changed IR shards and metadata deltas instead of rewriting a whole
+  `ir_snapshot.json` on every incremental update.
+- [ ] Add relational fact delta operations: delete removed/modified-path facts,
+  upsert changed facts, preserve unchanged rows, and update snapshot-level
+  manifest tables atomically.
+- [ ] Build IR graph deltas from changed relations and only rebuild global
+  derived views when edge changes cross declared invalidation thresholds.
+- [ ] Preserve source-owned evidence with explicit per-source invalidation
+  contracts, not only path-level tombstone/relink heuristics.
+
+Exit criteria:
+
+- one-file update writes only changed IR/fact/graph shards plus compact
+  manifests
+- full relational delete/insert is reserved for forced rebuilds and schema
+  migrations
+- benchmark captures changed row counts and database write amplification
+
+### P0.4 Tool And SCIP Scope Must Be Artifact-Native
+
+**Gap:** scoped SCIP is useful, but it still materializes package copies and can
+fall back to package or repo-scale tool work.
+
+Evidence:
+
+- `_incremental_scip_scope()` can skip or return package scope, but not a true
+  per-file artifact reuse plan (`fastcode/src/fastcode/indexing/pipeline.py:1800`).
+- `_run_scoped_scip_frontier()` copies scope roots with `shutil.copytree()`,
+  runs language indexers per scope/language, then filters resulting artifacts
+  to target paths (`fastcode/src/fastcode/indexing/pipeline.py:2113`).
+- Full fallback language detection and indexer execution still exist in the
+  active pipeline (`fastcode/src/fastcode/indexing/pipeline.py:2710`).
+- Helper-backed semantic resolvers narrow helper target files, but still start
+  external helper processes per resolver run
+  (`fastcode/src/fastcode/semantic/resolvers/helper_backed.py:138`).
+
+TODO:
+
+- [x] Cache scoped SCIP output by language, package root, tool profile,
+  dependency/package-marker fingerprint, and target file fingerprints.
+- [ ] Extend the same artifact-native cache contract to helper-backed semantic
+  tools and unsupported/widened SCIP tool surfaces.
+- [x] Reuse previous scoped SCIP facts for unchanged file/package scopes instead
+  of rerunning the scoped indexer.
+- [x] Replace temporary copied package roots with repo-root filtered execution
+  by default; keep copied roots only as an explicit compatibility mode.
+- [ ] Persist explicit degraded metadata when unsupported, widened, or
+  dependency-frontier changes require a full tool rerun.
+- [ ] Add edit-class benchmarks: body-only, signature/API, import/dependency,
+  package manifest, file delete, and rename.
+
+Exit criteria:
+
+- scoped tool work reports artifact cache hits/misses by language and package
+  root
+- unchanged packages are not copied or re-indexed in package-local body edits
+- full repo tool rerun is visible as an explicit degraded mode with a reason
+
+## P0 - Make Vector Flow Copy-Minimal
+
+### P0.5 First-Class Embedding Fingerprint Contract
+
+**Gap:** embedding cache keys are model-aware, but embedding identity is still
+mostly local to `CodeEmbedder`.
+
+Evidence:
+
+- `_embedding_cache_key()` includes provider, model, dimension, sequence length,
+  normalize flag, Ollama URL, and cache version
+  (`fastcode/src/fastcode/indexing/embedder.py:152`).
+- `_incremental_compatibility_payload()` repeats a subset of embedding identity
+  fields inside the pipeline (`fastcode/src/fastcode/indexing/pipeline.py:1156`).
+- Embedding vectors are persisted in multiple surfaces: vector store shards,
+  IR snapshot embeddings, PG rows, repository overviews, query embeddings, and
+  cache payloads.
+
+TODO:
+
+- [x] Add a typed `EmbeddingFingerprint` value owned by the embedding boundary.
+- [ ] Persist the same fingerprint in file manifests, vector manifests, IR
+  embeddings, PG metadata, repository overview artifacts, query embedding cache
+  entries, and incremental compatibility checks.
+- [ ] Make embedding reuse depend on fingerprint plus prepared-text hash, not
+  ad hoc local key construction.
+- [ ] Add tests that patch stale fingerprint surfaces and prove reuse is refused
+  consistently.
+
+Exit criteria:
+
+- all embedding-bearing artifacts expose the same fingerprint fields
+- model/provider/config changes invalidate every embedding reuse path
+- body-only updates reuse unchanged embeddings without revalidating through
+  unrelated serializers
+
+### P0.6 Lazy Embedder Startup And Provider Batching
+
+**Gap:** embedding setup still performs heavyweight work at object construction
+and the Ollama path embeds one text per HTTP request.
+
+Evidence:
+
+- `CodeEmbedder.__init__()` loads the sentence-transformer model or probes
+  Ollama for dimension immediately (`fastcode/src/fastcode/indexing/embedder.py:57`).
+- `_embed_batch_uncached()` calls `_embed_text_ollama()` once per text for the
+  Ollama provider (`fastcode/src/fastcode/indexing/embedder.py:116`).
+
+TODO:
+
+- [x] Defer model load and Ollama dimension probing until the first operation
+  that actually needs embeddings.
+- [x] Persist configured embedding dimension when available so non-embedding
+  paths do not require provider startup.
+- [ ] Add provider-level batch APIs where supported, and bounded concurrency
+  where only per-text APIs exist.
+- [ ] Expose provider startup time, request count, batch count, and cache hit
+  count in pipeline metrics.
+
+Exit criteria:
+
+- metadata-only and cache-load flows do not load/probe embedding providers
+- Ollama indexing reports fewer provider calls than texts when batch/concurrent
+  mode is configured
+- benchmarks separate provider time from local pipeline materialization time
+
+### P0.7 Remove Legacy List-Vector Paths
+
+**Gap:** active compatibility paths still collect embeddings into Python lists
+and convert with `np.array()`.
+
+Evidence:
+
+- `FastCode.index_repository()` builds `vectors: list[Any]` and converts with
+  `np.array(vectors)` (`fastcode/src/fastcode/main/fastcode.py:420`).
+- multi-repository indexing repeats the list-to-array path
+  (`fastcode/src/fastcode/main/fastcode.py:1564`).
+- `as_float32_matrix()` is available as the explicit vector boundary helper
+  (`fastcode/src/fastcode/utils/vectors.py:41`).
+
+TODO:
+
+- [x] Route every vector-store insertion through `as_float32_matrix()` with an
+  explicit copy policy.
+- [ ] Remove or quarantine old direct index paths that bypass the snapshot
+  pipeline and duplicate vector/BM25/graph staging.
+- [ ] Add tests that fail when hot vector insertion paths use raw
+  `np.array(vectors)` or list materialization.
+
+Exit criteria:
+
+- no active indexing path converts embedding lists with raw `np.array()`
+- copy policy is visible at every vector-store, pgvector, and cache boundary
+
+### P0.8 Vector Shards: Preallocate, Memory Map, Avoid Row Loops
+
+**Gap:** vector storage uses native arrays, but shard write/load paths still
+assemble row lists and stack/copy frequently.
+
+Evidence:
+
+- `_append_vector_rows()` copies the first matrix and uses `np.vstack()` for
+  later appends (`fastcode/src/fastcode/store/vector.py:1031`).
+- `_vector_matrix_ordered_by_sequences()` builds `ordered_rows` then stacks rows
+  (`fastcode/src/fastcode/store/vector.py:1368`).
+- `_write_vector_bundle()` and `_write_vector_bundle_with_sequences()` group row
+  arrays and stack each shard (`fastcode/src/fastcode/store/vector.py:1408`,
+  `fastcode/src/fastcode/store/vector.py:1493`).
+- `load_vector_payload()` iterates `sequence_nos.tolist()` and row-by-row
+  appends before stacking (`fastcode/src/fastcode/store/vector.py:1593`).
+- shard bytes are written with `np.savez_compressed()`, which favors compact
+  artifacts over direct memory mapping (`fastcode/src/fastcode/store/vector.py:1206`).
+
+TODO:
+
+- [x] Preallocate destination matrices from sequence plans and fill by slice or
+  index arrays instead of row-list plus `vstack`.
+- [ ] Store shard vectors in a format that supports memory mapping for large
+  shards, or make compression an explicit tradeoff controlled by config.
+- [x] Keep sequence numbers as arrays and avoid `.tolist()` during hot loads.
+- [ ] Support lazy shard handles for search and publication so unchanged shards
+  are not loaded merely to publish a new snapshot.
+- [ ] Add allocation benchmarks around vector append, incremental save,
+  incremental load, and search on small and medium repositories.
+
+Exit criteria:
+
+- unchanged vector shards can be linked into a new snapshot without loading
+  vectors into Python
+- changed vector shards write through contiguous matrix slices
+- peak allocation for vector load/save scales with changed rows, not full rows,
+  in incremental update benchmarks
+
+### P0.9 Enforce Native pgvector Boundaries
+
+**Gap:** PG retrieval stores vectors through vector-specific columns, but JSON
+fallbacks can still list-materialize arrays if embeddings leak into metadata.
+
+Evidence:
+
+- `_json_safe_payload()` recursively converts NumPy arrays with `.tolist()`
+  (`fastcode/src/fastcode/store/pg_retrieval.py:216`).
+- `upsert_elements()` serializes metadata JSON per element and binds vector
+  parameters separately (`fastcode/src/fastcode/store/pg_retrieval.py:258`).
+
+TODO:
+
+- [x] Make array-in-JSON a hard error on hot PG upsert paths, except for
+  explicitly marked compatibility exports.
+- [ ] Use batched insert/update APIs for PG vector and search-document rows
+  instead of one `execute()` pair per element.
+- [ ] Preserve embeddings only in vector columns or vector artifacts; metadata
+  should carry embedding refs and fingerprints, not numeric arrays.
+
+Exit criteria:
+
+- tests fail if an embedding array reaches metadata JSON serialization during
+  active PG upsert
+- PG upsert metrics report row count, batch count, and vector adapter path
+
+## P0 - Minimize Graph And Object Materialization
+
+### P0.10 Replace NetworkX In Hot Graph Paths With `igraph`/`IRGraphView`
+
+**Gap:** compact graph persistence exists, but active algorithms still build or
+convert to NetworkX in multiple hot paths.
+
+Evidence:
+
+- `IRGraphView` is backed by `python-igraph`, but `copy()` and
+  `to_undirected()` materialize NetworkX graphs
+  (`fastcode/src/fastcode/ir/graph.py:20`).
+- `IRGraphView.reachable_within()` calls `distances()` for all nodes rather
+  than a cutoff BFS (`fastcode/src/fastcode/ir/graph.py:177`).
+- `graph/build.py` keeps lazy adjacency payloads but materializes NetworkX for
+  path/stats/merge compatibility (`fastcode/src/fastcode/graph/build.py:220`).
+- `retrieval/hybrid.py` uses `IRGraphView.union()` when compact views are
+  available, but falls back to NetworkX expansion otherwise
+  (`fastcode/src/fastcode/retrieval/hybrid.py:278`).
+- `main/fastcode.py` and `mcp/graph_tools.py` still call NetworkX graph
+  algorithms directly.
+
+TODO:
+
+- [ ] Add `IRGraphView` methods for cutoff reachability, shortest path,
+  component stats, degree, neighbor iteration, and undirected views without
+  NetworkX conversion.
+- [ ] Change retrieval and main/MCP graph helpers to depend on those methods
+  instead of direct `nx.*` calls where compact graph handles exist.
+- [ ] Keep NetworkX only for explicit compatibility/export/debug surfaces.
+- [ ] Add an architecture/perf guard that fails when new hot-path graph code
+  imports NetworkX outside approved modules.
+
+Exit criteria:
+
+- query-time graph expansion on compact IR graphs does not materialize a
+  NetworkX union graph
+- cutoff reachability cost scales with the requested frontier, not all nodes
+- NetworkX import locations are documented as compatibility boundaries
+
+### P0.11 Rewrite Projection Graph Algorithms Around Native Graph Handles
+
+**Gap:** projection building constructs NetworkX graphs even when IR graphs are
+already compact, then converts to `igraph` only for part of clustering.
+
+Evidence:
+
+- `ProjectionTransformer.build()` constructs weighted undirected and directed
+  NetworkX graphs (`fastcode/src/fastcode/indexing/projection_transform.py:94`).
+- `_build_weighted_graph()` and `_build_directed_weighted_graph()` add snapshot
+  and IR graph edges into NetworkX (`fastcode/src/fastcode/indexing/projection_transform.py:279`,
+  `fastcode/src/fastcode/indexing/projection_transform.py:358`).
+- scope BFS, Steiner tree fallback, greedy modularity, PageRank, and centrality
+  use NetworkX (`fastcode/src/fastcode/indexing/projection_transform.py:404`).
+- Leiden clustering converts the NetworkX graph to `igraph` only after the
+  NetworkX graph has already been built (`fastcode/src/fastcode/indexing/projection_transform.py:532`).
+
+TODO:
+
+- [ ] Define a projection-native graph representation backed by `igraph` or
+  `IRGraphView` plus compact side tables for node attributes and edge weights.
+- [ ] Implement scope BFS, hub compression, PageRank/centrality, and Leiden
+  directly on the native representation.
+- [ ] Replace NetworkX Steiner usage with a bounded native approximation or
+  explicitly mark query-scope Steiner as a compatibility fallback.
+- [ ] Benchmark NetworkX vs `igraph` on representative projection scopes before
+  locking the implementation.
+
+Exit criteria:
+
+- projection build does not construct a full NetworkX graph on the primary path
+- graph-engine choice is backed by benchmark output
+- projection memory use is measured for snapshot, entity, and query scopes
+
+### P0.12 Replace All-Pairs IR Merge Matching
+
+**Gap:** AST/SCIP alignment does all-pairs candidate scoring and then uses
+NetworkX max-weight matching.
+
+Evidence:
+
+- `_select_matches()` loops over every AST unit and every SCIP unit, then builds
+  a NetworkX graph for matching (`fastcode/src/fastcode/ir/merge.py:221`).
+- `merge_ir()` clones list-shaped units, supports, relations, and embeddings for
+  whole snapshots (`fastcode/src/fastcode/ir/merge.py:338`).
+- Existing IR merge benchmarks are baselines, not budget gates
+  (`fastcode/tests/benchmarks/bench_ir_merge.py`).
+
+TODO:
+
+- [ ] Bucket candidates by path, kind, normalized name, stable unit id, and span
+  before scoring.
+- [ ] Cap candidate fanout per unit and record when candidates are dropped or
+  widened.
+- [ ] Replace NetworkX matching with a smaller native or specialized matching
+  implementation, or prove NetworkX is not the bottleneck after candidate
+  pruning.
+- [ ] Avoid whole-snapshot clone work when merging changed-path deltas.
+
+Exit criteria:
+
+- merge candidate count is near-linear in units for normal repositories
+- benchmark reports candidate pairs, selected pairs, match time, clone time, and
+  peak allocation
+- one-file updates do not rerun all-pairs matching for unchanged files
+
+### P0.13 Snapshot, IR Graph, And Embedding Persistence Should Be Sharded
+
+**Gap:** persistence still serializes large whole-snapshot JSON payloads and
+list-shaped embedding vectors.
+
+Evidence:
+
+- `_snapshot_file_payload()` builds full JSON lists for units, supports,
+  relations, embeddings, and metadata (`fastcode/src/fastcode/store/snapshot.py:342`).
+- `_embedding_payload()` stores vectors as JSON lists
+  (`fastcode/src/fastcode/store/snapshot.py:329`).
+- `save_ir_graphs()` writes graph JSON payloads
+  (`fastcode/src/fastcode/store/snapshot.py:1069`).
+- `load_snapshot()` loads one whole snapshot payload
+  (`fastcode/src/fastcode/store/snapshot.py:1154`).
+
+TODO:
+
+- [ ] Split snapshot persistence into manifests plus unit/relation/support and
+  embedding shards.
+- [ ] Store embedding vectors in NumPy or vector-store artifacts referenced from
+  IR embedding records instead of JSON lists.
+- [ ] Store IR graph edges as compact typed arrays or adjacency shards, with
+  JSON only for small metadata manifests.
+- [ ] Add lazy snapshot readers for metadata, path/unit subsets, relations, and
+  embeddings.
+
+Exit criteria:
+
+- loading snapshot metadata does not load unit/relation/embedding arrays
+- changed-path update rewrites only affected snapshot shards
+- IR snapshot embedding JSON lists are removed from active persistence
+
+### P0.14 Lexical Retrieval Must Stop Rebuilding Full BM25 On Load
+
+**Gap:** BM25 artifacts can be sharded, but query load reconstructs a full
+`BM25Okapi` object from materialized corpus and element lists.
+
+Evidence:
+
+- `index_for_bm25()` builds a full corpus and `BM25Okapi`
+  (`fastcode/src/fastcode/retrieval/hybrid.py:220`).
+- `load_bm25()` reloads all corpus and element payloads and rebuilds
+  `BM25Okapi` (`fastcode/src/fastcode/retrieval/hybrid.py:1853`).
+- `_load_bm25_payload()` materializes ordered corpus and element lists from
+  shards (`fastcode/src/fastcode/retrieval/hybrid.py:2253`).
+
+TODO:
+
+- [ ] Choose and implement a shard-native lexical index strategy: incremental
+  BM25 statistics, a compact inverted index, or an embedded search engine.
+- [ ] Make query-time lexical retrieval read only needed postings/statistics,
+  not every element payload.
+- [ ] Preserve current BM25 output semantics with golden ranking tests during
+  migration.
+
+Exit criteria:
+
+- loading lexical retrieval for a snapshot does not rebuild a full corpus object
+- one-file update changes only lexical shards for affected paths and global
+  statistics
+- query benchmark reports lexical load time separately from ranking time
+
+### P0.15 Public Query Paths Must Not Serialize All Reads Behind The State Lock
+
+**Gap:** request-local artifact handles exist, but public query entrypoints still
+serialize reads behind the service state lock.
+
+Evidence:
+
+- `FastCode.query_snapshot()` and `FastCode.query()` hold `_state_lock()` around
+  the full query call (`fastcode/src/fastcode/main/fastcode.py:1000`).
+- `FastCode.query_stream()` holds `_state_lock()` for the generator duration
+  (`fastcode/src/fastcode/main/fastcode.py:1113`).
+
+TODO:
+
+- [ ] Split mutation locks from read locks and serve immutable loaded artifact
+  handles without serializing independent queries.
+- [ ] Keep load/index/delete/publish operations fenced, but let queries share a
+  read snapshot handle.
+- [ ] Add concurrent query benchmarks with and without background mutations.
+
+Exit criteria:
+
+- N concurrent snapshot queries scale better than one-at-a-time serialized
+  execution
+- streaming query lock duration does not include the full response generation
+  path unless a mutation is active
+
+## P1 - Enforcement And Benchmark Evidence
+
+### P1.1 Performance Envelope By Edit Class
+
+TODO:
+
+- [ ] Add benchmark fixtures for body-only edit, signature/API edit,
+  import/dependency edit, package manifest edit, delete, rename, and new file.
+- [ ] For each fixture, record full reindex cost and incremental update cost.
+- [ ] Track wall time, provider calls, files scanned, files hashed, bytes read,
+  bytes written, changed vectors, reused vectors, BM25 shards, graph shards,
+  database rows, peak RSS, and Python allocation peaks.
+- [ ] Store benchmark reports in a repeatable artifact format that can be
+  compared across commits.
+
+Exit criteria:
+
+- performance claims are tied to fixture output, not source inspection alone
+- one-file edit budgets are visible and fail CI when a regression exceeds the
+  accepted threshold
+
+### P1.2 Materialization Boundary Guards
+
+TODO:
+
+- [ ] Extend architecture tests to guard hot paths against `safe_jsonable()`,
+  generic `to_dict()` / `from_dict()` round trips, `row_to_dict()`, `.tolist()`,
+  and raw `np.array(vectors)` unless the call site is annotated as an allowed
+  boundary.
+- [ ] Add runtime counters for explicit materialization boundaries: JSON encode,
+  JSON decode, pickle load/dump, NetworkX conversion, vector list conversion,
+  snapshot full load, and graph full load.
+- [ ] Add tests that patch old generic conversion helpers to raise in active
+  indexing, retrieval, and persistence paths.
+
+Exit criteria:
+
+- new materialization points require an explicit boundary annotation
+- hot-path tests fail if old generic conversion shortcuts return
+
+### P1.3 Graph Engine Decision Record
+
+TODO:
+
+- [ ] Benchmark NetworkX and `igraph` for IR graph build, cutoff reachability,
+  shortest path, projection scope, clustering, PageRank/centrality, and merge
+  matching workloads.
+- [ ] Record memory use and wall time for small, medium, and large synthetic
+  snapshots plus at least one real representative repository.
+- [ ] Decide the canonical hot-path graph engine based on data.
+- [ ] Keep compatibility exporters isolated after the decision.
+
+Exit criteria:
+
+- the NetworkX-to-`igraph` migration is justified by measured data
+- modules do not immediately convert native graph handles back to NetworkX on
+  the primary path
+
+### P1.4 Allocation And IO Profiling For Index Pipeline
+
+TODO:
+
+- [ ] Add opt-in pipeline profiling that reports allocation peaks by stage.
+- [ ] Track temporary directories, copied bytes, hard-linked bytes, and deleted
+  bytes for scoped tool runs and artifact publication.
+- [ ] Track snapshot store bytes written for IR, graph, vector, lexical, unit
+  artifact, PG, and relational fact surfaces.
+
+Exit criteria:
+
+- incremental update reports enough data to explain whether cost is CPU,
+  provider, graph, serialization, database, or filesystem dominated
+- regressions can be attributed to a stage without manual profiling
+
+## Do Not Count These As Done
+
+- Shard reuse after full temporary artifact construction does not satisfy
+  delta-first execution.
+- Compact graph persistence does not satisfy graph materialization minimization
+  if a later hot path converts back to NetworkX.
+- Buffer-backed embedding cache entries do not satisfy zero-copy vector flow if
+  active paths still create list vectors, JSON vector lists, or full stacked
+  matrices for unchanged data.
+- Baseline benchmark tests do not satisfy performance gates unless they enforce
+  budgets or produce comparable reports used in release decisions.

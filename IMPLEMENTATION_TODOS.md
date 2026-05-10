@@ -84,6 +84,42 @@ This audit checked current source and regression tests directly, not git history
 - real PostgreSQL migration/locking/outbox/redo/fact semantics under integration load
 - release gate, compatibility policy, artifact migration policy, dependency/supply-chain review, and deployment/operator runbooks
 
+## Source-level audit - May 11, 2026
+
+This pass checked current source against the non-functional goals and excludes
+the agent-integration design track. New performance-specific items are tracked
+in [PERFORMANCE_TODOS.md](./PERFORMANCE_TODOS.md); this section records the
+release-level implications.
+
+**Newly recorded non-functional gaps:**
+- The materialization enforcement story is incomplete. The guard test covers
+  only selected hot files, while semantic patching, MCP/main graph helpers,
+  projection transforms, snapshot persistence, and query-time symbol-index
+  registration can still full-materialize object graphs without failing that
+  guard.
+- Embedder laziness is overclaimed if interpreted broadly. Constructor startup
+  is lazy, but compatibility fingerprinting and cache-hit validation can still
+  touch `embedding_dim` and therefore load/probe providers before actual
+  embedding work when dimension is not configured.
+- Semantic resolver patching remains copy-heavy: applying a resolver patch
+  clones whole snapshot collections via `to_dict() -> from_dict()` and
+  recursive JSON cleanup even when the patch touches a small path frontier.
+- Shell graph tools are not aligned with compact graph design. MCP graph tools
+  full-load snapshots, rebuild NetworkX graphs, and linearly scan units per
+  request instead of using loaded artifact handles plus compact graph/symbol
+  indexes.
+- Local repository indexing still copies a whole local working tree into the
+  workspace before incremental planning, so repeated local runs can pay
+  repository-size filesystem cost before discovering a small edit.
+- PostgreSQL relational fact persistence is both whole-snapshot and
+  row-at-a-time, so the production-storage path still lacks delta writes and a
+  bulk-write baseline.
+
+**Release implication:** the project remains a hardened pre-release. The code
+has many real partial passes, but stable language around "incremental",
+"zero-copy", "native graph", and "query serving concurrency" must stay scoped
+until the new TODOs have implementation, enforcement, and benchmark evidence.
+
 ## Landed hardening
 
 - Resolver contract expanded with:

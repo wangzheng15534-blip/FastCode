@@ -164,6 +164,11 @@ Still incomplete:
 
 - store, query, and projection records are not fully typed end to end
 - several shell and persistence paths still expose raw dict payloads
+- semantic resolver patch application still clones whole IR collections through
+  generic dict round trips instead of a delta-native typed patch path
+- materialization guard coverage is narrower than the full architecture target;
+  MCP/main graph helpers, projection transforms, snapshot persistence, and
+  query-time symbol-index registration still need explicit boundary treatment
 
 ## Indexing pipeline
 
@@ -222,12 +227,16 @@ What is still missing before stable-release claims:
 - file-native artifact shard reuse as the primary execution model; persistence
   reuse exists for vector/BM25 and conservative graph shards, but not yet for all
   IR graph, relational fact, SCIP/tool, and temporary build surfaces
+- local path loading still copies whole working trees into the workspace before
+  incremental planning unless the source is already at the destination path
 - truly incremental SCIP/tool-backed extraction in widened and unsupported cases
 - one shared inventory/fingerprint planner across snapshot identity, incremental
   planning, SCIP scope, file-artifact reuse, and publication; loader inventory
   sharing exists for the active AST path, but not yet as a canonical planner
   object across every stage
 - deterministic cache invalidation across schema, model, and tool changes
+- non-starting embedding fingerprint checks; some compatibility and cache-hit
+  paths can still force provider startup when dimension is not configured
 
 ## Retrieval and query flow
 
@@ -250,6 +259,12 @@ Current hardened properties:
 - agency-mode preserves cheap detected intent
 - caller-filter handling is fixed after rerank
 - semantic escalation can drive real IR-graph expansion
+
+Known serving/materialization gap:
+
+- public shell graph tools do not yet consistently use immutable artifact
+  handles or compact graph/symbol indexes; some MCP and composition-root graph
+  helpers still full-load snapshots or materialize NetworkX graphs per request
 
 ## Agent Context Integration
 

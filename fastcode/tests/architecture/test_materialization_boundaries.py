@@ -1,0 +1,175 @@
+"""Guard hot paths against accidental object/vector materialization."""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
+
+HOT_PATHS = [
+    PACKAGE_ROOT / "indexing" / "pipeline.py",
+    PACKAGE_ROOT / "store" / "pg_retrieval.py",
+    PACKAGE_ROOT / "store" / "vector.py",
+    PACKAGE_ROOT / "retrieval" / "hybrid.py",
+]
+VECTOR_INSERTION_PATHS = [
+    PACKAGE_ROOT / "main" / "fastcode.py",
+    PACKAGE_ROOT / "indexing" / "pipeline.py",
+    PACKAGE_ROOT / "store" / "vector.py",
+]
+
+ALLOWED_SAFE_JSONABLE: set[tuple[str, int]] = set()
+ALLOWED_TOLIST_FUNCTIONS = {
+    # Repository overview manifests are a storage/export boundary for string labels,
+    # not embedding vectors or ranked candidate rows.
+    ("store/vector.py", "_load_repo_overview_embeddings"),
+}
+ALLOWED_GENERIC_DICT_CALLS = {
+    # SCIP cache payloads are an explicit artifact boundary.
+    ("indexing/pipeline.py", "_load_scoped_scip_cache", "from_dict"),
+    ("indexing/pipeline.py", "_save_scoped_scip_cache", "to_dict"),
+    # Legacy object fallback and typed config adapters are compatibility/config
+    # boundaries, not row-shaped persistence or vector materialization paths.
+    ("indexing/pipeline.py", "_legacy_element_mapping", "to_dict"),
+    ("retrieval/hybrid.py", "_project_doc_priors", "from_dict"),
+    ("retrieval/hybrid.py", "_apply_doc_projection_to_code", "from_dict"),
+    ("retrieval/hybrid.py", "_adaptive_fuse_channels", "from_dict"),
+    ("retrieval/hybrid.py", "_compute_adaptive_fusion_params", "from_dict"),
+}
+
+
+def _rel(path: Path) -> str:
+    return path.relative_to(PACKAGE_ROOT).as_posix()
+
+
+def _parents(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+    parents: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+    return parents
+
+
+def _enclosing_function(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str | None:
+    current: ast.AST | None = node
+    while current is not None:
+        if isinstance(current, ast.FunctionDef):
+            return current.name
+        current = parents.get(current)
+    return None
+
+
+def _call_name(node: ast.Call) -> str | None:
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+def _qualified_call_name(node: ast.Call) -> str | None:
+    func = node.func
+    if not isinstance(func, ast.Attribute):
+        return None
+    value = func.value
+    if isinstance(value, ast.Name):
+        return f"{value.id}.{func.attr}"
+    return func.attr
+
+
+def test_hot_paths_do_not_use_generic_safe_jsonable() -> None:
+    violations: list[str] = []
+    for path in HOT_PATHS:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if _call_name(node) != "safe_jsonable":
+                continue
+            key = (_rel(path), node.lineno)
+            if key not in ALLOWED_SAFE_JSONABLE:
+                violations.append(f"{key[0]}:{key[1]}")
+    assert not violations, "generic safe_jsonable in hot paths:\n" + "\n".join(
+        violations
+    )
+
+
+def test_pg_retrieval_does_not_materialize_embedding_lists_on_active_path() -> None:
+    path = PACKAGE_ROOT / "store" / "pg_retrieval.py"
+    tree = ast.parse(path.read_text())
+    violations: list[str] = []
+
+    parents = _parents(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if _call_name(node) != "tolist":
+            continue
+        if _enclosing_function(node, parents) != "_json_safe_payload":
+            violations.append(f"{_rel(path)}:{node.lineno}")
+    assert not violations, (
+        "embedding/list materialization in pg retrieval:\n" + "\n".join(violations)
+    )
+
+
+def test_hot_paths_do_not_use_unapproved_tolist_materialization() -> None:
+    violations: list[str] = []
+    for path in HOT_PATHS:
+        rel_path = _rel(path)
+        tree = ast.parse(path.read_text())
+        parents = _parents(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or _call_name(node) != "tolist":
+                continue
+            function_name = _enclosing_function(node, parents) or "<module>"
+            if (rel_path, function_name) in ALLOWED_TOLIST_FUNCTIONS:
+                continue
+            violations.append(f"{rel_path}:{node.lineno}:{function_name}")
+    assert not violations, "unapproved .tolist() in hot paths:\n" + "\n".join(
+        violations
+    )
+
+
+def test_hot_paths_do_not_use_raw_np_array_vectors() -> None:
+    violations: list[str] = []
+    for path in VECTOR_INSERTION_PATHS:
+        rel_path = _rel(path)
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if _qualified_call_name(node) != "np.array":
+                continue
+            first_arg = node.args[0] if node.args else None
+            if isinstance(first_arg, ast.Name) and first_arg.id in {
+                "vectors",
+                "query_vectors",
+                "embeddings",
+            }:
+                violations.append(f"{rel_path}:{node.lineno}")
+    assert not violations, "raw np.array(vector-list) in hot paths:\n" + "\n".join(
+        violations
+    )
+
+
+def test_hot_paths_do_not_use_generic_row_or_record_round_trips() -> None:
+    violations: list[str] = []
+    for path in HOT_PATHS:
+        rel_path = _rel(path)
+        tree = ast.parse(path.read_text())
+        parents = _parents(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _call_name(node)
+            if name not in {"row_to_dict", "to_dict", "from_dict"}:
+                continue
+            function_name = _enclosing_function(node, parents) or "<module>"
+            if (rel_path, function_name, name) in ALLOWED_GENERIC_DICT_CALLS:
+                continue
+            violations.append(f"{rel_path}:{node.lineno}:{function_name}:{name}")
+    assert not violations, (
+        "generic dict conversion round trips in hot paths:\n" + "\n".join(violations)
+    )

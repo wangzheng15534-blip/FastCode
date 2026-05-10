@@ -39,6 +39,10 @@ Implementation update, May 11, 2026:
   `CodeEmbedder`; cache keys, cache payloads, embedded element metadata, and
   incremental compatibility payloads are derived from the same fingerprint
   payload.
+- Architecture guards now fail new hot-path uses of generic JSON conversion,
+  unapproved `.tolist()` materialization, raw `np.array(vector-list)`
+  insertion, and generic row/object dict round trips unless the call site is
+  documented as an explicit compatibility or storage boundary.
 
 - Incremental indexing can skip unchanged-file parse and embedding work, reuse
   changed-unit embeddings, merge changed AST IR with a previous snapshot, and
@@ -608,7 +612,7 @@ Exit criteria:
 
 TODO:
 
-- [ ] Extend architecture tests to guard hot paths against `safe_jsonable()`,
+- [x] Extend architecture tests to guard hot paths against `safe_jsonable()`,
   generic `to_dict()` / `from_dict()` round trips, `row_to_dict()`, `.tolist()`,
   and raw `np.array(vectors)` unless the call site is annotated as an allowed
   boundary.

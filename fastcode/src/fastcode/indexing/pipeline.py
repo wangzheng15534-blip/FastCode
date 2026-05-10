@@ -1086,6 +1086,15 @@ class IndexPipeline:
             self.snapshot_store.update_snapshot_metadata(snapshot_id, metadata)
         return result
 
+    @staticmethod
+    def _with_materialization_metrics(
+        metrics: dict[str, Any] | None,
+        counters: MaterializationCounters,
+    ) -> dict[str, Any]:
+        merged = dict(metrics or {})
+        merged.update(counters.as_metrics())
+        return merged
+
     def _apply_semantic_resolvers(
         self,
         *,
@@ -2696,19 +2705,31 @@ class IndexPipeline:
 
         existing = self.snapshot_store.get_snapshot_record(snapshot_id)
         if existing and not force:
-            artifact_key = existing.artifact_key
-            loaded = self._load_artifacts_by_key(artifact_key)
-            return self._backfill_result_layer_metadata(
-                snapshot_id=snapshot_id,
-                enable_scip=enable_scip,
-                result={
-                    "status": "reused",
-                    "repo_name": repo_name,
-                    "snapshot_id": snapshot_id,
-                    "artifact_key": artifact_key,
-                    "loaded": loaded,
-                },
+            materialization_counters = MaterializationCounters()
+            materialization_token = set_materialization_counters(
+                materialization_counters
             )
+            try:
+                artifact_key = existing.artifact_key
+                loaded = self._load_artifacts_by_key(artifact_key)
+                result = self._backfill_result_layer_metadata(
+                    snapshot_id=snapshot_id,
+                    enable_scip=enable_scip,
+                    result={
+                        "status": "reused",
+                        "repo_name": repo_name,
+                        "snapshot_id": snapshot_id,
+                        "artifact_key": artifact_key,
+                        "loaded": loaded,
+                    },
+                )
+                result["pipeline_metrics"] = self._with_materialization_metrics(
+                    cast(dict[str, Any], result.get("pipeline_metrics", {})),
+                    materialization_counters,
+                )
+                return result
+            finally:
+                reset_materialization_counters(materialization_token)
 
         idempotency_key = hashlib.sha1(
             f"{repo_name}:{snapshot_id}:{bool(publish)}:{bool(enable_scip)}".encode()
@@ -2744,20 +2765,33 @@ class IndexPipeline:
         ):
             existing_snapshot = self.snapshot_store.get_snapshot_record(snapshot_id)
             if existing_snapshot:
-                loaded = self._load_artifacts_by_key(existing_snapshot.artifact_key)
-                return self._backfill_result_layer_metadata(
-                    snapshot_id=snapshot_id,
-                    enable_scip=enable_scip,
-                    result={
-                        "status": existing_run_status,
-                        "run_id": run_id,
-                        "repo_name": repo_name,
-                        "snapshot_id": snapshot_id,
-                        "artifact_key": existing_snapshot.artifact_key,
-                        "loaded": loaded,
-                        "warnings": json.loads(existing_run_warnings_json or "[]"),
-                    },
+                materialization_counters = MaterializationCounters()
+                materialization_token = set_materialization_counters(
+                    materialization_counters
                 )
+                try:
+                    loaded = self._load_artifacts_by_key(existing_snapshot.artifact_key)
+                    increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+                    result = self._backfill_result_layer_metadata(
+                        snapshot_id=snapshot_id,
+                        enable_scip=enable_scip,
+                        result={
+                            "status": existing_run_status,
+                            "run_id": run_id,
+                            "repo_name": repo_name,
+                            "snapshot_id": snapshot_id,
+                            "artifact_key": existing_snapshot.artifact_key,
+                            "loaded": loaded,
+                            "warnings": json.loads(existing_run_warnings_json or "[]"),
+                        },
+                    )
+                    result["pipeline_metrics"] = self._with_materialization_metrics(
+                        cast(dict[str, Any], result.get("pipeline_metrics", {})),
+                        materialization_counters,
+                    )
+                    return result
+                finally:
+                    reset_materialization_counters(materialization_token)
         self.index_run_store.mark_started(run_id)
         lock_name = f"index:{snapshot_id}"
         fencing_token: int | None = self.snapshot_store.acquire_lock(
@@ -3605,10 +3639,13 @@ class IndexPipeline:
                         snapshot_id=snapshot_id, stage_id=stage_id
                     )
 
-            pipeline_metrics = dict(
-                merged_snapshot.metadata.get("pipeline_metrics", {})
+            pipeline_metrics = self._with_materialization_metrics(
+                cast(
+                    dict[str, Any],
+                    merged_snapshot.metadata.get("pipeline_metrics", {}),
+                ),
+                materialization_counters,
             )
-            pipeline_metrics.update(materialization_counters.as_metrics())
             merged_snapshot.metadata["pipeline_metrics"] = pipeline_metrics
             self.snapshot_store.update_snapshot_metadata(
                 snapshot_id,

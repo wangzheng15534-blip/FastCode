@@ -25,6 +25,10 @@ from fastcode.store.index_run import IndexRunStore
 from fastcode.store.manifest import ManifestStore
 from fastcode.store.snapshot import SnapshotStore
 from fastcode.store.unit_artifacts import UnitArtifactStore
+from fastcode.utils.materialization import (
+    BOUNDARY_PICKLE_LOAD,
+    increment_materialization_boundary,
+)
 
 
 def test_snapshot_store_persists_and_loads_snapshot():
@@ -509,6 +513,61 @@ def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
         ]
         assert materialization_counts["json_encode"] >= 1
         assert materialization_counts["vector_list_conversion"] == 1
+
+
+def test_reused_snapshot_result_reports_materialization_metrics() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_reused_metrics_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        snapshot_id = "snap:repo:reused"
+        snapshot = IRSnapshot(repo_name="repo", snapshot_id=snapshot_id)
+        layers = pipeline._default_pipeline_layers(enable_scip=False)
+        pipeline.snapshot_store.save_snapshot(
+            snapshot,
+            metadata={
+                "pipeline_layers": layers,
+                "pipeline_metrics": {
+                    "never_silent_fallback": True,
+                    "materialization_boundary_counts": {"json_encode": 99},
+                },
+            },
+        )
+
+        def _load_existing_artifacts(_artifact_key: str) -> bool:
+            increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
+            return True
+
+        with (
+            patch.object(
+                pipeline,
+                "_resolve_snapshot_ref",
+                return_value={
+                    "repo_name": "repo",
+                    "branch": "main",
+                    "commit_id": "c1",
+                    "tree_id": "t1",
+                    "snapshot_id": snapshot_id,
+                },
+            ),
+            patch.object(pipeline, "_build_git_meta", return_value={}),
+            patch.object(
+                pipeline,
+                "_load_artifacts_by_key",
+                side_effect=_load_existing_artifacts,
+            ),
+        ):
+            result = pipeline.run_index_pipeline(
+                source=tmp,
+                is_url=False,
+                enable_scip=False,
+                publish=False,
+            )
+
+        counts = result["pipeline_metrics"]["materialization_boundary_counts"]
+        assert result["status"] == "reused"
+        assert counts["pickle_load"] == 1
+        assert counts["snapshot_full_load"] == 1
+        assert counts["json_decode"] >= 1
+        assert counts.get("json_encode") is None
 
 
 def test_pipeline_layer_helpers_report_semantic_gap_metrics() -> None:

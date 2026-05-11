@@ -8,7 +8,7 @@ import json
 import os
 import pickle
 import threading
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from datetime import datetime
 from typing import Any, cast
 
@@ -937,16 +937,44 @@ class FastCode:
         name: str | None = None,
         path: str | None = None,
     ) -> str | None:
-        if not self.snapshot_symbol_index.has_snapshot(snapshot_id):
-            snap = self.snapshot_store.load_snapshot(snapshot_id)
-            if snap:
-                self.snapshot_symbol_index.register_snapshot(snap)
+        self._ensure_snapshot_symbol_index(snapshot_id)
         return self.snapshot_symbol_index.resolve_symbol(
             snapshot_id,
             symbol_id=symbol_id,
             name=name,
             path=path,
         )
+
+    def _register_snapshot_symbols_from_payload(self, snapshot_id: str) -> bool:
+        load_payload = getattr(
+            self.snapshot_store,
+            "load_snapshot_symbol_index_payload",
+            None,
+        )
+        register_payload = getattr(
+            self.snapshot_symbol_index,
+            "register_snapshot_symbol_payload",
+            None,
+        )
+        if not callable(load_payload) or not callable(register_payload):
+            return False
+
+        payload = load_payload(snapshot_id)
+        if not isinstance(payload, Mapping):
+            return False
+        registered = register_payload(payload)
+        if isinstance(registered, bool) and not registered:
+            return False
+        return self.snapshot_symbol_index.has_snapshot(snapshot_id)
+
+    def _ensure_snapshot_symbol_index(self, snapshot_id: str) -> None:
+        if self.snapshot_symbol_index.has_snapshot(snapshot_id):
+            return
+        if self._register_snapshot_symbols_from_payload(snapshot_id):
+            return
+        snap = self.snapshot_store.load_snapshot(snapshot_id)
+        if snap:
+            self.snapshot_symbol_index.register_snapshot(snap)
 
     @staticmethod
     def _projection_scope_key(

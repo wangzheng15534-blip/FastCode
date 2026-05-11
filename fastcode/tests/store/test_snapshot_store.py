@@ -1250,6 +1250,125 @@ class TestSnapshotStoreRelationalFacts:
             )
         )["payload"] == {"text": "summary"}
 
+    def test_save_relational_facts_batches_postgres_inserts_double(self) -> None:
+        class _FakePostgresRuntime:
+            backend = "postgres"
+
+            def __init__(self) -> None:
+                self.executes: list[tuple[str, tuple[Any, ...]]] = []
+                self.batches: list[tuple[str, list[tuple[Any, ...]]]] = []
+                self.commits = 0
+
+            def connect(self) -> _FakePostgresRuntime:
+                return self
+
+            def __enter__(self) -> _FakePostgresRuntime:
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def execute(
+                self, _conn: object, sql: str, params: tuple[Any, ...] = ()
+            ) -> _FakeCursor:
+                self.executes.append((sql, params))
+                return _FakeCursor()
+
+            def executemany(
+                self, _conn: object, sql: str, params_seq: list[tuple[Any, ...]]
+            ) -> _FakeCursor:
+                self.batches.append((sql, list(params_seq)))
+                return _FakeCursor()
+
+            def commit(self) -> None:
+                self.commits += 1
+
+        store = _make_store()
+        runtime = _FakePostgresRuntime()
+        store.db_runtime = runtime  # type: ignore[assignment]
+        snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:batch",
+            documents=[
+                IRDocument(doc_id="doc:a", path="a.py", language="python"),
+                IRDocument(doc_id="doc:b", path="b.py", language="python"),
+            ],
+            symbols=[
+                IRSymbol(
+                    symbol_id="sym:a",
+                    external_symbol_id=None,
+                    path="a.py",
+                    display_name="a",
+                    kind="function",
+                    language="python",
+                )
+            ],
+            occurrences=[
+                IROccurrence(
+                    occurrence_id="occ:a",
+                    symbol_id="sym:a",
+                    doc_id="doc:a",
+                    role="definition",
+                    start_line=1,
+                    start_col=0,
+                    end_line=1,
+                    end_col=1,
+                    source="ast",
+                )
+            ],
+            edges=[
+                IREdge(
+                    edge_id="edge:a",
+                    src_id="sym:a",
+                    dst_id="sym:b",
+                    edge_type="call",
+                    source="ast",
+                    confidence="resolved",
+                ),
+                IREdge(
+                    edge_id="edge:a",
+                    src_id="sym:a",
+                    dst_id="sym:b",
+                    edge_type="call",
+                    source="ast",
+                    confidence="resolved",
+                ),
+            ],
+            attachments=[
+                IRAttachment(
+                    attachment_id="att:a",
+                    target_id="sym:a",
+                    target_type="symbol",
+                    attachment_type="summary",
+                    source="fc_structure",
+                    confidence="derived",
+                    payload={"text": "summary"},
+                )
+            ],
+        )
+
+        store.save_relational_facts(snapshot)
+
+        assert len(runtime.executes) == 5
+        assert all("DELETE FROM" in sql for sql, _params in runtime.executes)
+        assert len(runtime.batches) == 5
+        row_counts = {
+            "snapshot_documents": 2,
+            "symbols": 1,
+            "occurrences": 1,
+            "edges": 2,
+            "attachments": 1,
+        }
+        for table_name, expected_count in row_counts.items():
+            matching = [
+                params
+                for sql, params in runtime.batches
+                if f"INSERT INTO {table_name}" in sql
+            ]
+            assert matching
+            assert len(matching[0]) == expected_count
+        assert runtime.commits == 1
+
     @given(snap=snapshot_st())
     @settings(max_examples=15)
     @pytest.mark.edge

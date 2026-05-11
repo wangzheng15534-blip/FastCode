@@ -1754,23 +1754,41 @@ class SnapshotStore:
                 "DELETE FROM attachments WHERE snapshot_id=?",
                 (snapshot.snapshot_id,),
             )
-            for doc in snapshot.documents:
-                self.db_runtime.execute(
+            document_rows = [
+                (
+                    snapshot.snapshot_id,
+                    doc.doc_id,
+                    doc.path,
+                    doc.language,
+                    json.dumps(self._document_payload(doc), ensure_ascii=False),
+                )
+                for doc in snapshot.documents
+            ]
+            if document_rows:
+                self.db_runtime.executemany(
                     conn,
                     """
                     INSERT INTO snapshot_documents (snapshot_id, doc_id, path, language, metadata_json)
                     VALUES (?, ?, ?, ?, ?)
                     """,
-                    (
-                        snapshot.snapshot_id,
-                        doc.doc_id,
-                        doc.path,
-                        doc.language,
-                        json.dumps(self._document_payload(doc), ensure_ascii=False),
-                    ),
+                    document_rows,
                 )
-            for sym in snapshot.symbols:
-                self.db_runtime.execute(
+            symbol_rows = [
+                (
+                    snapshot.snapshot_id,
+                    sym.symbol_id,
+                    sym.path,
+                    sym.display_name,
+                    sym.qualified_name,
+                    sym.kind,
+                    sym.language,
+                    sym.source_priority,
+                    json.dumps(self._symbol_payload(sym), ensure_ascii=False),
+                )
+                for sym in snapshot.symbols
+            ]
+            if symbol_rows:
+                self.db_runtime.executemany(
                     conn,
                     """
                     INSERT INTO symbols (
@@ -1778,20 +1796,26 @@ class SnapshotStore:
                         language, source_priority, metadata_json
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (
-                        snapshot.snapshot_id,
-                        sym.symbol_id,
-                        sym.path,
-                        sym.display_name,
-                        sym.qualified_name,
-                        sym.kind,
-                        sym.language,
-                        sym.source_priority,
-                        json.dumps(self._symbol_payload(sym), ensure_ascii=False),
-                    ),
+                    symbol_rows,
                 )
-            for occ in snapshot.occurrences:
-                self.db_runtime.execute(
+            occurrence_rows = [
+                (
+                    snapshot.snapshot_id,
+                    occ.occurrence_id,
+                    occ.symbol_id,
+                    occ.doc_id,
+                    occ.role,
+                    occ.start_line,
+                    occ.start_col,
+                    occ.end_line,
+                    occ.end_col,
+                    occ.source,
+                    json.dumps(self._occurrence_payload(occ), ensure_ascii=False),
+                )
+                for occ in snapshot.occurrences
+            ]
+            if occurrence_rows:
+                self.db_runtime.executemany(
                     conn,
                     """
                     INSERT INTO occurrences (
@@ -1799,33 +1823,15 @@ class SnapshotStore:
                         start_col, end_line, end_col, source, metadata_json
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (
-                        snapshot.snapshot_id,
-                        occ.occurrence_id,
-                        occ.symbol_id,
-                        occ.doc_id,
-                        occ.role,
-                        occ.start_line,
-                        occ.start_col,
-                        occ.end_line,
-                        occ.end_col,
-                        occ.source,
-                        json.dumps(self._occurrence_payload(occ), ensure_ascii=False),
-                    ),
+                    occurrence_rows,
                 )
             seen_edge_ids: set[str] = set()
+            edge_rows: list[tuple[Any, ...]] = []
             for edge in snapshot.edges:
                 if edge.edge_id in seen_edge_ids:
                     continue
                 seen_edge_ids.add(edge.edge_id)
-                self.db_runtime.execute(
-                    conn,
-                    """
-                    INSERT INTO edges (
-                        snapshot_id, edge_id, src_id, dst_id, edge_type, source, confidence,
-                        doc_id, metadata_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                edge_rows.append(
                     (
                         snapshot.snapshot_id,
                         edge.edge_id,
@@ -1836,18 +1842,23 @@ class SnapshotStore:
                         edge.confidence,
                         edge.doc_id,
                         json.dumps(self._edge_payload(edge), ensure_ascii=False),
-                    ),
+                    )
                 )
-            for attachment in snapshot.attachments:
-                attachment_payload = self._attachment_payload(attachment)
-                self.db_runtime.execute(
+            if edge_rows:
+                self.db_runtime.executemany(
                     conn,
                     """
-                    INSERT INTO attachments (
-                        snapshot_id, attachment_id, target_id, target_type, attachment_type,
-                        source, confidence, payload_json, metadata_json
+                    INSERT INTO edges (
+                        snapshot_id, edge_id, src_id, dst_id, edge_type, source, confidence,
+                        doc_id, metadata_json
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
+                    edge_rows,
+                )
+            attachment_rows: list[tuple[Any, ...]] = []
+            for attachment in snapshot.attachments:
+                attachment_payload = self._attachment_payload(attachment)
+                attachment_rows.append(
                     (
                         snapshot.snapshot_id,
                         attachment.attachment_id,
@@ -1858,7 +1869,18 @@ class SnapshotStore:
                         attachment.confidence,
                         json.dumps(attachment_payload["payload"], ensure_ascii=False),
                         json.dumps(attachment_payload["metadata"], ensure_ascii=False),
-                    ),
+                    )
+                )
+            if attachment_rows:
+                self.db_runtime.executemany(
+                    conn,
+                    """
+                    INSERT INTO attachments (
+                        snapshot_id, attachment_id, target_id, target_type, attachment_type,
+                        source, confidence, payload_json, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    attachment_rows,
                 )
             conn.commit()
 

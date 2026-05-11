@@ -151,6 +151,13 @@ class DBRuntime:
         cur.execute(self.adapt_sql(sql), params)
         return cur
 
+    def executemany(
+        self, conn: Any, sql: str, params_seq: list[tuple[Any, ...]]
+    ) -> Any:
+        cur = conn.cursor()
+        cur.executemany(self.adapt_sql(sql), params_seq)
+        return cur
+
     @staticmethod
     def _configure_postgres_connection(conn: Any) -> None:
         if register_vector is None:

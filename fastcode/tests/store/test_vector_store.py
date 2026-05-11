@@ -39,6 +39,53 @@ def _disk_store(tmp_path: Path) -> VectorStore:
     return VectorStore({"vector_store": {"persist_directory": str(tmp_path)}})
 
 
+def _meta(element_id: str, path: str) -> dict[str, Any]:
+    return {
+        "id": element_id,
+        "type": "function",
+        "name": element_id,
+        "file_path": f"/repo/{path}",
+        "relative_path": path,
+        "language": "python",
+        "start_line": 1,
+        "end_line": 1,
+        "code": "return 1",
+        "signature": None,
+        "docstring": None,
+        "summary": None,
+        "metadata": {},
+        "repo_name": "repo",
+        "repo_url": None,
+    }
+
+
+def test_add_vectors_uses_growing_row_buffer_without_vstack_double(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store()
+    store.initialize(2)
+
+    def _boom_vstack(_values: object) -> np.ndarray:
+        raise AssertionError("vector row appends should not use np.vstack")
+
+    monkeypatch.setattr("fastcode.store.vector.np.vstack", _boom_vstack)
+
+    store.add_vectors(
+        np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+        [_meta("a", "a.py"), _meta("b", "b.py")],
+    )
+    store.add_vectors(
+        np.asarray([[0.5, 0.5]], dtype=np.float32),
+        [_meta("c", "c.py")],
+    )
+
+    rows = store._vector_matrix_for_persist()
+    assert rows.shape == (3, 2)
+    assert store._vector_rows is not None
+    assert store._vector_rows.shape[0] >= 3
+    assert store.search(np.asarray([1.0, 0.0], dtype=np.float32), k=1)
+
+
 def test_repository_overview_search_only_materializes_returned_metadata_double() -> (
     None
 ):

@@ -109,6 +109,7 @@ class VectorStore:
         self.index: Any = None  # faiss index types are untyped
         self.metadata: list[CodeElementMeta] = []  # Store metadata for each vector
         self._vector_rows: np.ndarray | None = None
+        self._vector_row_count = 0
 
         self.persist_dir: str = self.vector_config.get(
             "persist_directory", "./data/vector_store"
@@ -157,6 +158,7 @@ class VectorStore:
         self.index = self._create_index(dimension)
         self.metadata: list[CodeElementMeta] = []
         self._vector_rows = np.empty((0, dimension), dtype=np.float32)
+        self._vector_row_count = 0
         self.logger.info(
             f"Initialized {self.index_type} index with {self.distance_metric} distance"
         )
@@ -741,6 +743,7 @@ class VectorStore:
                 self.dimension = dimension
                 self.metadata = metadata
                 self._vector_rows = vectors.astype(np.float32, copy=False)
+                self._vector_row_count = len(vectors)
                 self.index = None
             else:
                 index_path = self._legacy_index_path(name)
@@ -755,6 +758,7 @@ class VectorStore:
                 self.distance_metric = data.get("distance_metric", "cosine")
                 self.index_type = data.get("index_type", "HNSW")
                 self._vector_rows = None
+                self._vector_row_count = 0
 
                 # Set search parameters for HNSW
                 if self.index_type == "HNSW" and hasattr(self.index, "hnsw"):
@@ -778,6 +782,7 @@ class VectorStore:
             self.index = None
             self.metadata: list[CodeElementMeta] = []
             self._vector_rows = None
+            self._vector_row_count = 0
         self.logger.info("Cleared vector store")
 
     def merge_from_index(self, index_name: str) -> bool:
@@ -887,11 +892,12 @@ class VectorStore:
             # For now, we'll just track metadata
             # In production, consider storing vectors separately
             self.metadata = metadata_to_keep
-            if (
-                self._vector_rows is not None
-                and len(self._vector_rows) == len(indices_to_keep) + num_deleted
-            ):
-                self._vector_rows = self._vector_rows[indices_to_keep]
+            rows = self._valid_vector_rows(
+                expected_count=len(indices_to_keep) + num_deleted
+            )
+            if rows is not None:
+                self._vector_rows = rows[indices_to_keep].copy()
+                self._vector_row_count = len(indices_to_keep)
             self.index = None
 
             self.logger.warning(
@@ -1039,22 +1045,55 @@ class VectorStore:
     def _append_vector_rows(self, vectors: np.ndarray) -> None:
         if vectors.ndim != 2:
             return
-        if self._vector_rows is None or self._vector_rows.size == 0:
-            self._vector_rows = vectors.copy()
+        if vectors.shape[0] == 0:
             return
-        self._vector_rows = np.vstack([self._vector_rows, vectors]).astype(
-            np.float32, copy=False
+        if self.dimension is None:
+            return
+
+        required_count = self._vector_row_count + vectors.shape[0]
+        rows = self._vector_rows
+        if rows is None or rows.ndim != 2 or rows.shape[1] != vectors.shape[1]:
+            rows = np.empty(
+                (max(required_count, 1), vectors.shape[1]), dtype=np.float32
+            )
+            self._vector_rows = rows
+            self._vector_row_count = 0
+            required_count = vectors.shape[0]
+
+        if rows.shape[0] < required_count:
+            new_capacity = max(required_count, 1, rows.shape[0] * 2)
+            grown = np.empty((new_capacity, rows.shape[1]), dtype=np.float32)
+            if self._vector_row_count:
+                grown[: self._vector_row_count] = rows[: self._vector_row_count]
+            self._vector_rows = grown
+            rows = grown
+
+        start = self._vector_row_count
+        rows[start : start + vectors.shape[0]] = vectors.astype(np.float32, copy=False)
+        self._vector_row_count += vectors.shape[0]
+
+    def _valid_vector_rows(
+        self, *, expected_count: int | None = None
+    ) -> np.ndarray | None:
+        count = int(
+            expected_count if expected_count is not None else len(self.metadata)
         )
+        if self._vector_rows is None or self._vector_row_count != count:
+            return None
+        if self._vector_rows.ndim != 2 or self._vector_rows.shape[0] < count:
+            return None
+        return self._vector_rows[:count].astype(np.float32, copy=False)
 
     def _vector_rows_for_search(self) -> np.ndarray | None:
-        if self._vector_rows is None or len(self._vector_rows) != len(self.metadata):
+        rows = self._valid_vector_rows()
+        if rows is None:
             return None
         if (
             self.vector_rows_search_threshold > 0
-            and len(self._vector_rows) > self.vector_rows_search_threshold
+            and len(rows) > self.vector_rows_search_threshold
         ):
             return None
-        return self._vector_rows.astype(np.float32, copy=False)
+        return rows
 
     def _search_with_vector_rows(
         self,
@@ -1165,15 +1204,15 @@ class VectorStore:
         if self.dimension is None:
             return False
         self.index = self._create_index(self.dimension)
-        if self._vector_rows is not None and self._vector_rows.size > 0:
-            self.index.add(self._vector_rows.astype(np.float32, copy=False))
+        rows = self._valid_vector_rows()
+        if rows is not None and rows.size > 0:
+            self.index.add(rows)
         return True
 
     def _vector_matrix_for_persist(self) -> np.ndarray:
-        if self._vector_rows is not None and len(self._vector_rows) == len(
-            self.metadata
-        ):
-            return self._vector_rows.astype(np.float32, copy=False)
+        rows = self._valid_vector_rows()
+        if rows is not None:
+            return rows
 
         if self.index is None or self.dimension is None:
             raise RuntimeError("Vector rows unavailable for persistence")
@@ -1182,6 +1221,7 @@ class VectorStore:
         for i in range(len(self.metadata)):
             self.index.reconstruct(int(i), vectors[i])
         self._vector_rows = vectors
+        self._vector_row_count = len(vectors)
         return vectors
 
     def _persist_optional_faiss_binary(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 from fastcode.utils.vectors import as_float32_matrix, as_float32_vector
@@ -38,3 +40,22 @@ def test_as_float32_matrix_contiguous_owns_backend_ready_layout() -> None:
     assert matrix.dtype == np.float32
     assert matrix.flags.c_contiguous
     assert matrix.tolist() == [[1.0, 3.0], [2.0, 4.0]]
+
+
+def test_as_float32_matrix_sequence_preallocates_without_vstack(
+    monkeypatch: Any,
+) -> None:
+    def _boom_vstack(_values: object) -> np.ndarray:
+        raise AssertionError("sequence conversion should preallocate rows")
+
+    monkeypatch.setattr("fastcode.utils.vectors.np.vstack", _boom_vstack)
+
+    matrix = as_float32_matrix(
+        [
+            np.array([1.0, 2.0], dtype=np.float64),
+            np.array([3.0, 4.0], dtype=np.float64),
+        ]
+    )
+
+    assert matrix.dtype == np.float32
+    assert matrix.tolist() == [[1.0, 2.0], [3.0, 4.0]]

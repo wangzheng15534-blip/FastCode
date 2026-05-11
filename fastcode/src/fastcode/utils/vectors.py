@@ -67,10 +67,12 @@ def as_float32_matrix(
         valid_vectors = [vector for vector in vectors if vector is not None]
         if not valid_vectors:
             return np.empty((0, 0), dtype=np.float32)
-        try:
-            matrix = np.vstack(valid_vectors).astype(np.float32, copy=False)
-        except ValueError:
+        dimension = int(valid_vectors[0].shape[0])
+        if any(vector.shape[0] != dimension for vector in valid_vectors):
             return np.empty((0, 0), dtype=np.float32)
+        matrix = np.empty((len(valid_vectors), dimension), dtype=np.float32)
+        for row_index, vector in enumerate(valid_vectors):
+            matrix[row_index] = vector
 
     if matrix.size and not bool(np.isfinite(matrix).all()):
         matrix = np.nan_to_num(matrix, copy=True, nan=0.0, posinf=0.0, neginf=0.0)

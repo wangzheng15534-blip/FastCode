@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from ...ir.types import (
@@ -12,24 +13,101 @@ from ...ir.types import (
     IRUnitSupport,
     resolution_rank,
 )
-from ...utils import safe_jsonable
 from .base import ResolutionPatch, ResolutionTier
 
 
+def _patch_jsonable(value: Any) -> Any:
+    """Normalize resolver-owned metadata without dataclass/object expansion."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Mapping):
+        return {
+            str(key): _patch_jsonable(item)
+            for key, item in cast(Mapping[Any, Any], value).items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_patch_jsonable(item) for item in cast(Sequence[Any], value)]
+    if isinstance(value, set):
+        return [
+            _patch_jsonable(item) for item in sorted(cast(set[Any], value), key=str)
+        ]
+    return repr(value)
+
+
+def _metadata(value: Mapping[str, Any] | None) -> dict[str, Any]:
+    return cast(dict[str, Any], _patch_jsonable(dict(value or {})))
+
+
 def _clone_unit(unit: IRCodeUnit) -> IRCodeUnit:
-    return IRCodeUnit.from_dict(unit.to_dict())
+    return IRCodeUnit(
+        unit_id=unit.unit_id,
+        kind=unit.kind,
+        path=unit.path,
+        language=unit.language,
+        display_name=unit.display_name,
+        qualified_name=unit.qualified_name,
+        signature=unit.signature,
+        docstring=unit.docstring,
+        summary=unit.summary,
+        start_line=unit.start_line,
+        start_col=unit.start_col,
+        end_line=unit.end_line,
+        end_col=unit.end_col,
+        parent_unit_id=unit.parent_unit_id,
+        primary_anchor_symbol_id=unit.primary_anchor_symbol_id,
+        anchor_symbol_ids=list(unit.anchor_symbol_ids),
+        candidate_anchor_symbol_ids=list(unit.candidate_anchor_symbol_ids),
+        anchor_coverage=unit.anchor_coverage,
+        source_set=set(unit.source_set),
+        metadata=_metadata(unit.metadata),
+    )
 
 
 def _clone_support(support: IRUnitSupport) -> IRUnitSupport:
-    return IRUnitSupport.from_dict(support.to_dict())
+    return IRUnitSupport(
+        support_id=support.support_id,
+        unit_id=support.unit_id,
+        source=support.source,
+        support_kind=support.support_kind,
+        external_id=support.external_id,
+        role=support.role,
+        path=support.path,
+        display_name=support.display_name,
+        qualified_name=support.qualified_name,
+        signature=support.signature,
+        enclosing_external_id=support.enclosing_external_id,
+        start_line=support.start_line,
+        start_col=support.start_col,
+        end_line=support.end_line,
+        end_col=support.end_col,
+        metadata=_metadata(support.metadata),
+    )
 
 
 def _clone_relation(relation: IRRelation) -> IRRelation:
-    return IRRelation.from_dict(relation.to_dict())
+    return IRRelation(
+        relation_id=relation.relation_id,
+        src_unit_id=relation.src_unit_id,
+        dst_unit_id=relation.dst_unit_id,
+        relation_type=relation.relation_type,
+        resolution_state=relation.resolution_state,
+        support_sources=set(relation.support_sources),
+        support_ids=list(relation.support_ids),
+        pending_capabilities=set(relation.pending_capabilities),
+        metadata=_metadata(relation.metadata),
+    )
 
 
 def _clone_embedding(embedding: IRUnitEmbedding) -> IRUnitEmbedding:
-    return IRUnitEmbedding.from_dict(embedding.to_dict())
+    return IRUnitEmbedding(
+        embedding_id=embedding.embedding_id,
+        unit_id=embedding.unit_id,
+        source=embedding.source,
+        vector=list(embedding.vector) if embedding.vector is not None else None,
+        embedding_text=embedding.embedding_text,
+        model_id=embedding.model_id,
+        metadata=_metadata(embedding.metadata),
+    )
 
 
 def _source_preference(relation: IRRelation) -> int:
@@ -94,7 +172,7 @@ def _merge_relation(existing: IRRelation, candidate: IRRelation) -> IRRelation:
             existing.resolution_state
         ):
             existing.resolution_state = candidate.resolution_state
-        existing.metadata = safe_jsonable(
+        existing.metadata = _metadata(
             {**(existing.metadata or {}), **(candidate.metadata or {})}
         )
         return existing
@@ -118,28 +196,28 @@ def apply_resolution_patch(snapshot: IRSnapshot, patch: ResolutionPatch) -> IRSn
     units = [_clone_unit(unit) for unit in snapshot.units]
     supports = [_clone_support(support) for support in snapshot.supports]
     embeddings = [_clone_embedding(embedding) for embedding in snapshot.embeddings]
-    metadata: dict[str, Any] = safe_jsonable(snapshot.metadata)
+    metadata: dict[str, Any] = _metadata(snapshot.metadata)
     for key, value in (patch.metadata_updates or {}).items():
         if key == "semantic_resolver_runs":
             existing = cast(list[Any], metadata.get(key) or [])
             incoming = cast(list[Any], value if isinstance(value, list) else [value])
-            metadata[key] = safe_jsonable([*existing, *incoming])
+            metadata[key] = _patch_jsonable([*existing, *incoming])
             continue
-        metadata[key] = safe_jsonable(value)
+        metadata[key] = _patch_jsonable(value)
 
     unit_by_id = {unit.unit_id: unit for unit in units}
     for unit_id, updates in patch.unit_metadata_updates.items():
         unit = unit_by_id.get(unit_id)
         if unit is None:
             continue
-        unit.metadata = safe_jsonable({**(unit.metadata or {}), **(updates or {})})
+        unit.metadata = _metadata({**(unit.metadata or {}), **(updates or {})})
 
     support_by_id = {support.support_id: support for support in supports}
     for support in patch.supports:
         materialized = _clone_support(support)
         if materialized.support_id in support_by_id:
             existing = support_by_id[materialized.support_id]
-            existing.metadata = safe_jsonable(
+            existing.metadata = _metadata(
                 {**(existing.metadata or {}), **(materialized.metadata or {})}
             )
             if not existing.source and materialized.source:

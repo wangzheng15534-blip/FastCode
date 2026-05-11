@@ -9,6 +9,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
 
 HOT_PATHS = [
     PACKAGE_ROOT / "indexing" / "pipeline.py",
+    PACKAGE_ROOT / "semantic" / "resolvers" / "patching.py",
     PACKAGE_ROOT / "store" / "pg_retrieval.py",
     PACKAGE_ROOT / "store" / "vector.py",
     PACKAGE_ROOT / "retrieval" / "hybrid.py",

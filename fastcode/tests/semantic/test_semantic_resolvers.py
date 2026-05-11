@@ -14,7 +14,13 @@ import pytest
 
 from fastcode.indexing.pipeline import IndexPipeline
 from fastcode.ir.element import CodeElement
-from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
+from fastcode.ir.types import (
+    IRCodeUnit,
+    IRRelation,
+    IRSnapshot,
+    IRUnitEmbedding,
+    IRUnitSupport,
+)
 from fastcode.main import FastCode
 from fastcode.semantic.resolvers import (
     PYTHON_RESOLVER_EXTRACTOR,
@@ -216,6 +222,81 @@ def test_apply_resolution_patch_promotes_relation_and_unions_supports():
     assert relation.resolution_state == "anchored"
     assert relation.support_sources == {"fc_structure", PYTHON_RESOLVER_SOURCE}
     assert set(relation.support_ids) == {"sup:ast", "sup:resolver"}
+
+
+def test_apply_resolution_patch_avoids_generic_ir_dict_round_trips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom_to_dict(self: object) -> dict[str, Any]:
+        raise AssertionError(f"{type(self).__name__}.to_dict should stay cold")
+
+    def _boom_from_dict(cls: type[object], _payload: dict[str, Any]) -> object:
+        raise AssertionError(f"{cls.__name__}.from_dict should stay cold")
+
+    for cls in (IRCodeUnit, IRUnitSupport, IRRelation, IRUnitEmbedding):
+        monkeypatch.setattr(cls, "to_dict", _boom_to_dict)
+        monkeypatch.setattr(cls, "from_dict", classmethod(_boom_from_dict))
+
+    src = _symbol_unit("unit:src", "a.py", "caller", element_id="elem:src")
+    dst = _symbol_unit("unit:dst", "b.py", "callee", element_id="elem:dst")
+    old_support = IRUnitSupport(
+        support_id="sup:old",
+        unit_id="unit:src",
+        source="fc_structure",
+        support_kind="call_resolution",
+        metadata={"source": "fc_structure"},
+    )
+    old_relation = IRRelation(
+        relation_id="rel:old",
+        src_unit_id="unit:src",
+        dst_unit_id="unit:dst",
+        relation_type="call",
+        resolution_state="candidate",
+        support_sources={"fc_structure"},
+        support_ids=["sup:old"],
+        metadata={"source": "fc_structure"},
+    )
+    embedding = IRUnitEmbedding(
+        embedding_id="emb:src",
+        unit_id="unit:src",
+        source="fc_embedding",
+        vector=[1.0, 2.0],
+        metadata={"source": "fc_embedding"},
+    )
+    snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:1",
+        units=[_file_unit("a.py"), src, dst],
+        supports=[old_support],
+        relations=[old_relation],
+        embeddings=[embedding],
+        metadata={"existing": True},
+    )
+    new_relation = IRRelation(
+        relation_id="rel:new",
+        src_unit_id="unit:src",
+        dst_unit_id="unit:dst",
+        relation_type="call",
+        resolution_state="anchored",
+        support_sources={PYTHON_RESOLVER_SOURCE},
+        support_ids=["sup:new"],
+        metadata={"source": PYTHON_RESOLVER_SOURCE},
+    )
+
+    updated = apply_resolution_patch(
+        snapshot,
+        ResolutionPatch(
+            relations=[new_relation],
+            unit_metadata_updates={"unit:src": {"resolver": "python"}},
+            metadata_updates={"semantic_resolver_runs": {"language": "python"}},
+        ),
+    )
+
+    assert updated is not snapshot
+    assert updated.units[1] is not src
+    assert updated.units[1].metadata["resolver"] == "python"
+    assert updated.relations[0].resolution_state == "anchored"
+    assert updated.embeddings[0].vector == [1.0, 2.0]
 
 
 def test_apply_resolution_patch_records_resolver_run_metadata():

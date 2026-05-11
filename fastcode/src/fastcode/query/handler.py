@@ -8,7 +8,7 @@ import json
 import logging
 import threading
 import traceback
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 from ..retrieval.core import snapshot as _snapshot
@@ -83,6 +83,37 @@ class QueryPipeline:
     # ------------------------------------------------------------------
     # Public query methods
     # ------------------------------------------------------------------
+
+    def _register_snapshot_symbols_from_payload(self, snapshot_id: str) -> bool:
+        load_payload = getattr(
+            self.snapshot_store,
+            "load_snapshot_symbol_index_payload",
+            None,
+        )
+        register_payload = getattr(
+            self.snapshot_symbol_index,
+            "register_snapshot_symbol_payload",
+            None,
+        )
+        if not callable(load_payload) or not callable(register_payload):
+            return False
+
+        payload = load_payload(snapshot_id)
+        if not isinstance(payload, Mapping):
+            return False
+        registered = register_payload(payload)
+        if isinstance(registered, bool) and not registered:
+            return False
+        return self.snapshot_symbol_index.has_snapshot(snapshot_id)
+
+    def _ensure_snapshot_symbol_index(self, snapshot_id: str) -> None:
+        if self.snapshot_symbol_index.has_snapshot(snapshot_id):
+            return
+        if self._register_snapshot_symbols_from_payload(snapshot_id):
+            return
+        loaded_snapshot = self.snapshot_store.load_snapshot(snapshot_id)
+        if loaded_snapshot:
+            self.snapshot_symbol_index.register_snapshot(loaded_snapshot)
 
     def _semantic_escalation_budget(
         self,
@@ -184,10 +215,7 @@ class QueryPipeline:
                 raise RuntimeError(
                     f"failed to load artifacts for snapshot: {snapshot_id}"
                 )
-            if not self.snapshot_symbol_index.has_snapshot(snapshot_id):
-                loaded_snapshot = self.snapshot_store.load_snapshot(snapshot_id)
-                if loaded_snapshot:
-                    self.snapshot_symbol_index.register_snapshot(loaded_snapshot)
+            self._ensure_snapshot_symbol_index(snapshot_id)
 
             merged_filters = dict(filters or {})
             merged_filters["snapshot_id"] = snapshot_id
@@ -219,10 +247,7 @@ class QueryPipeline:
                 raise RuntimeError(
                     f"failed to load artifacts for snapshot: {snapshot_id}"
                 )
-            if not self.snapshot_symbol_index.has_snapshot(snapshot_id):
-                loaded_snapshot = self.snapshot_store.load_snapshot(snapshot_id)
-                if loaded_snapshot:
-                    self.snapshot_symbol_index.register_snapshot(loaded_snapshot)
+            self._ensure_snapshot_symbol_index(snapshot_id)
 
             merged_filters = dict(filters or {})
             merged_filters["snapshot_id"] = snapshot_id

@@ -15,6 +15,7 @@ from fastcode.main import FastCode
 from fastcode.query.handler import QueryPipeline
 from fastcode.query.processor import ProcessedQuery
 from fastcode.retrieval.hybrid import HybridRetriever
+from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 
 
 def _processed_query(
@@ -229,6 +230,58 @@ def test_query_snapshot_uses_loaded_artifact_handle() -> None:
     handle_retriever.retrieve.assert_called_once()
     assert result["artifact_key"] == "art_snap_1"
     assert result["snapshot_id"] == "snap:1"
+
+
+def test_query_snapshot_registers_compact_symbol_index_without_full_snapshot_load() -> (
+    None
+):
+    processed_query = _processed_query(
+        question="Where is auth?",
+        filters={"snapshot_id": "snap:1"},
+    )
+    pipeline = _query_pipeline()
+    pipeline.snapshot_store.get_snapshot_record.return_value = SimpleNamespace(
+        artifact_key="art_snap_1"
+    )
+    pipeline.snapshot_store.load_snapshot_symbol_index_payload.return_value = {
+        "schema_version": "snapshot_symbol_index.v1",
+        "snapshot_id": "snap:1",
+        "symbols": [
+            {
+                "canonical": "sym:auth",
+                "aliases": ["scip:auth"],
+                "names": ["AuthService"],
+                "path": "src/auth.py",
+            }
+        ],
+    }
+    pipeline.snapshot_store.load_snapshot.side_effect = AssertionError(
+        "query_snapshot should not full-load IRSnapshot when symbol sidecar exists"
+    )
+    pipeline.snapshot_symbol_index = SnapshotSymbolIndex()
+    handle_retriever = MagicMock()
+    handle_retriever.enable_agency_mode = False
+    handle_retriever.iterative_agent = None
+    handle_retriever.retrieve.return_value = [
+        {"element": {"relative_path": "src/auth.py"}, "total_score": 1.0}
+    ]
+    pipeline.load_snapshot_artifacts = MagicMock(
+        return_value=SimpleNamespace(
+            artifact_key="art_snap_1",
+            retriever=handle_retriever,
+            graph_builder=MagicMock(),
+        )
+    )
+    pipeline.query_processor.process.return_value = processed_query
+
+    result = pipeline.query_snapshot("Where is auth?", snapshot_id="snap:1")
+
+    assert result["snapshot_id"] == "snap:1"
+    assert (
+        pipeline.snapshot_symbol_index.resolve_symbol("snap:1", name="AuthService")
+        == "sym:auth"
+    )
+    pipeline.snapshot_store.load_snapshot.assert_not_called()
 
 
 def test_query_pipeline_skips_semantic_escalation_without_snapshot_scope() -> None:

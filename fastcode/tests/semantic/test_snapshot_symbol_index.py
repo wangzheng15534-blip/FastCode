@@ -139,6 +139,31 @@ def test_snapshot_symbol_index_canonical_and_alias_resolution():
     assert idx.resolve_symbol("snap:1", name="foo") == "scip:snap:1:foo"
 
 
+def test_register_snapshot_symbol_payload_uses_compact_maps():
+    idx = SnapshotSymbolIndex()
+
+    registered = idx.register_snapshot_symbol_payload(
+        {
+            "schema_version": "snapshot_symbol_index.v1",
+            "snapshot_id": "snap:compact",
+            "symbols": [
+                {
+                    "canonical": "sym:auth",
+                    "aliases": ["scip:auth", "ast:auth"],
+                    "names": ["AuthService", "pkg.auth.AuthService"],
+                    "path": "src/auth.py",
+                }
+            ],
+        }
+    )
+
+    assert registered is True
+    assert idx.has_snapshot("snap:compact")
+    assert idx.canonicalize_symbol("snap:compact", "scip:auth") == "sym:auth"
+    assert idx.resolve_symbol("snap:compact", name="AuthService") == "sym:auth"
+    assert idx.resolve_symbol("snap:compact", path="src/auth.py") == "sym:auth"
+
+
 def test_register_snapshot_basic_property():
     """Registering a snapshot stores it so has_snapshot returns True."""
     idx = SnapshotSymbolIndex()

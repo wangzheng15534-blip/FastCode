@@ -46,6 +46,8 @@ from .records import (
 
 
 class SnapshotStore:
+    SYMBOL_INDEX_FILENAME = "symbol_index.json"
+
     _SNAPSHOT_FIELDS = (
         "snapshot_id",
         "repo_name",
@@ -968,6 +970,56 @@ class SnapshotStore:
         ensure_dir(path)
         return path
 
+    def snapshot_symbol_index_path(self, snapshot_id: str) -> str:
+        safe = self.artifact_key_for_snapshot(snapshot_id)
+        return os.path.join(
+            self.snapshot_root,
+            safe,
+            self.SYMBOL_INDEX_FILENAME,
+        )
+
+    @classmethod
+    def _snapshot_symbol_index_payload(cls, snapshot: IRSnapshot) -> dict[str, Any]:
+        symbols: list[dict[str, Any]] = []
+        for unit in snapshot.units:
+            if unit.kind in {"file", "doc"}:
+                continue
+            canonical = unit.unit_id
+            if not canonical:
+                continue
+            metadata = cls._json_mapping_payload(unit.metadata)
+            aliases = {canonical}
+            if unit.primary_anchor_symbol_id:
+                aliases.add(unit.primary_anchor_symbol_id)
+            aliases.update(cls._string_list_payload(unit.anchor_symbol_ids))
+            aliases.update(cls._string_list_payload(unit.candidate_anchor_symbol_ids))
+            metadata_aliases = metadata.get("aliases")
+            aliases.update(cls._string_list_payload(metadata_aliases))
+
+            names = list(
+                dict.fromkeys(
+                    name
+                    for name in (
+                        str(unit.display_name) if unit.display_name else "",
+                        str(unit.qualified_name) if unit.qualified_name else "",
+                    )
+                    if name
+                )
+            )
+            symbols.append(
+                {
+                    "canonical": canonical,
+                    "aliases": sorted(alias for alias in aliases if alias),
+                    "names": names,
+                    "path": unit.path or None,
+                }
+            )
+        return {
+            "schema_version": "snapshot_symbol_index.v1",
+            "snapshot_id": snapshot.snapshot_id,
+            "symbols": symbols,
+        }
+
     def save_snapshot(
         self, snapshot: IRSnapshot, metadata: dict[str, Any] | None = None
     ) -> SnapshotRecord:
@@ -994,6 +1046,24 @@ class SnapshotStore:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_ir_path, ir_path)
+
+        symbol_index_path = os.path.join(snap_dir, self.SYMBOL_INDEX_FILENAME)
+        tmp_symbol_index_path = f"{symbol_index_path}.tmp"
+        with open(tmp_symbol_index_path, "w", encoding="utf-8") as f:
+            symbol_index_payload = self._snapshot_symbol_index_payload(snapshot)
+            increment_materialization_boundary(
+                BOUNDARY_JSON_ENCODE,
+                items=len(symbol_index_payload["symbols"]),
+            )
+            json.dump(
+                symbol_index_payload,
+                f,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_symbol_index_path, symbol_index_path)
 
         artifact_key = self.artifact_key_for_snapshot(snapshot.snapshot_id)
         increment_materialization_boundary(BOUNDARY_JSON_ENCODE)
@@ -1058,6 +1128,36 @@ class SnapshotStore:
             created_at=utc_now(),
             metadata_json=metadata_json,
         )
+
+    def load_snapshot_symbol_index_payload(
+        self, snapshot_id: str
+    ) -> dict[str, Any] | None:
+        record = self.get_snapshot_record(snapshot_id)
+        if not record:
+            return None
+        path = self.snapshot_symbol_index_path(snapshot_id)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, encoding="utf-8") as f:
+                increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+                data = json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            logging.getLogger(__name__).warning(
+                "snapshot symbol index at %s is not valid JSON, skipping", path
+            )
+            return None
+        payload = self._payload_mapping(data)
+        if payload.get("snapshot_id") != snapshot_id:
+            return None
+        symbols = self._sequence_items(payload.get("symbols"))
+        return {
+            "schema_version": str(
+                payload.get("schema_version") or "snapshot_symbol_index.v1"
+            ),
+            "snapshot_id": snapshot_id,
+            "symbols": [item for item in symbols if isinstance(item, Mapping)],
+        }
 
     def update_snapshot_metadata(
         self, snapshot_id: str, metadata: dict[str, Any]

@@ -660,6 +660,41 @@ class TestSnapshotSaveLoadProperties:
         assert loaded.relations[0].support_sources == {"fc_structure"}
         assert loaded.embeddings[0].vector == [0.25, 0.5]
 
+    def test_save_snapshot_writes_compact_symbol_index_payload(self) -> None:
+        store = _make_store()
+        snap = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:symbol-index",
+            symbols=[
+                IRSymbol(
+                    symbol_id="sym:auth",
+                    external_symbol_id="scip:auth",
+                    path="src/auth.py",
+                    display_name="AuthService",
+                    kind="class",
+                    language="python",
+                    qualified_name="pkg.auth.AuthService",
+                    source_priority=100,
+                    source_set={"scip"},
+                    metadata={"aliases": ["ast:auth"]},
+                )
+            ],
+        )
+
+        store.save_snapshot(snap)
+        payload = store.load_snapshot_symbol_index_payload(snap.snapshot_id)
+
+        assert payload is not None
+        assert payload["snapshot_id"] == snap.snapshot_id
+        assert payload["symbols"] == [
+            {
+                "canonical": "sym:auth",
+                "aliases": ["ast:auth", "scip:auth", "sym:auth"],
+                "names": ["AuthService", "pkg.auth.AuthService"],
+                "path": "src/auth.py",
+            }
+        ]
+
     def test_load_snapshot_legacy_payload_uses_explicit_deserializers(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

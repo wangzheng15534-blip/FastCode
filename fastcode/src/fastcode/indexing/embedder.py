@@ -21,6 +21,7 @@ import torch
 from sentence_transformers import SentenceTransformer
 
 _EMBEDDING_CACHE_FORMAT = "ndarray.float32.v1"
+_EMBEDDING_TEXT_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,9 +31,10 @@ class EmbeddingFingerprint:
     version: int
     provider: str
     model: str
-    dimension: int
+    dimension: int | None
     max_seq_length: int
     normalize: bool
+    text_schema_version: int = _EMBEDDING_TEXT_SCHEMA_VERSION
     ollama_url: str | None = None
     cache_version: str | None = None
 
@@ -44,6 +46,7 @@ class EmbeddingFingerprint:
             "dimension": self.dimension,
             "max_seq_length": self.max_seq_length,
             "normalize": self.normalize,
+            "text_schema_version": self.text_schema_version,
             "ollama_url": self.ollama_url,
             "cache_version": self.cache_version,
         }
@@ -85,11 +88,12 @@ class CodeEmbedder:
             )
 
         self.model: SentenceTransformer | None = None
-        self._embedding_dim: int = int(
+        self._configured_embedding_dim: int = int(
             self.embedding_config.get("dimension")
             or self.embedding_config.get("embedding_dim")
             or 0
         )
+        self._embedding_dim: int = self._configured_embedding_dim
 
         self._initialize_embedding_cache()
         self.logger.info(
@@ -108,6 +112,8 @@ class CodeEmbedder:
     @embedding_dim.setter
     def embedding_dim(self, value: int) -> None:
         self._embedding_dim = int(value or 0)
+        if not hasattr(self, "_configured_embedding_dim"):
+            self._configured_embedding_dim = self._embedding_dim
 
     def _initialize_embedding_cache(self) -> None:
         cache_config = self.config.get("cache", {})
@@ -160,23 +166,38 @@ class CodeEmbedder:
         self._embedding_dim = int(dim or 0)
         return self._embedding_dim
 
-    def embedding_fingerprint_record(self) -> EmbeddingFingerprint:
+    def _fingerprint_dimension(self, *, resolve_dimension: bool) -> int | None:
+        if resolve_dimension:
+            return int(self.embedding_dim)
+        configured = int(getattr(self, "_configured_embedding_dim", 0) or 0)
+        if configured:
+            return configured
+        return None
+
+    def embedding_fingerprint_record(
+        self, *, resolve_dimension: bool = False
+    ) -> EmbeddingFingerprint:
         """Return the model/config identity used for embedding reuse decisions."""
         cache_version = self.embedding_config.get("cache_version")
         return EmbeddingFingerprint(
             version=2,
             provider=str(self.provider),
             model=str(self.model_name),
-            dimension=int(self.embedding_dim),
+            dimension=self._fingerprint_dimension(resolve_dimension=resolve_dimension),
             max_seq_length=int(self.max_seq_length),
             normalize=bool(self.normalize),
+            text_schema_version=_EMBEDDING_TEXT_SCHEMA_VERSION,
             ollama_url=str(self.ollama_url) if self.provider == "ollama" else None,
             cache_version=str(cache_version) if cache_version is not None else None,
         )
 
-    def embedding_fingerprint(self) -> dict[str, Any]:
+    def embedding_fingerprint(
+        self, *, resolve_dimension: bool = False
+    ) -> dict[str, Any]:
         """Compatibility payload for callers that persist JSON metadata."""
-        return self.embedding_fingerprint_record().to_payload()
+        return self.embedding_fingerprint_record(
+            resolve_dimension=resolve_dimension
+        ).to_payload()
 
     def embed_text(self, text: str) -> np.ndarray:
         """
@@ -257,7 +278,12 @@ class CodeEmbedder:
             return None
         if embedding.ndim != 1:
             return None
-        if self.embedding_dim and embedding.size != self.embedding_dim:
+        known_dim = int(
+            getattr(self, "_configured_embedding_dim", 0)
+            or getattr(self, "_embedding_dim", 0)
+            or 0
+        )
+        if known_dim and embedding.size != known_dim:
             return None
         return embedding
 
@@ -290,7 +316,10 @@ class CodeEmbedder:
         embedding_array = np.ascontiguousarray(
             np.asarray(embedding, dtype=np.float32).reshape(-1)
         )
-        fingerprint_payload = self.embedding_fingerprint()
+        previous_dim = int(getattr(self, "_embedding_dim", 0) or 0)
+        if not previous_dim:
+            self._embedding_dim = int(embedding_array.size)
+        fingerprint_payload = self.embedding_fingerprint(resolve_dimension=True)
         payload = {
             "embedding_format": _EMBEDDING_CACHE_FORMAT,
             "embedding_dtype": "float32",
@@ -299,9 +328,10 @@ class CodeEmbedder:
             "embedding_fingerprint": fingerprint_payload,
             "provider": self.provider,
             "model": self.model_name,
-            "dimension": self.embedding_dim,
+            "dimension": int(embedding_array.size),
             "max_seq_length": self.max_seq_length,
             "normalize": self.normalize,
+            "text_schema_version": _EMBEDDING_TEXT_SCHEMA_VERSION,
             "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
         }
         if hasattr(self._embedding_cache, "set_cached_embedding_payload"):
@@ -403,7 +433,7 @@ class CodeEmbedder:
             f"✓ Successfully generated embeddings for {len(embeddings)} code elements"
         )
 
-        fingerprint_payload = self.embedding_fingerprint()
+        fingerprint_payload = self.embedding_fingerprint(resolve_dimension=True)
         # Add embeddings to elements
         for elem, text, embedding in zip(elements, texts, embeddings, strict=True):
             elem["embedding"] = embedding

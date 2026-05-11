@@ -1223,13 +1223,6 @@ class IndexPipeline:
             self.embedder, "embedding_fingerprint_record", None
         )
         embedding_fingerprint = getattr(self.embedder, "embedding_fingerprint", None)
-        fallback_embedding_identity = {
-            "provider": getattr(self.embedder, "provider", None),
-            "model": getattr(self.embedder, "model_name", None),
-            "dimension": getattr(self.embedder, "embedding_dim", None),
-            "max_seq_length": getattr(self.embedder, "max_seq_length", None),
-            "normalize": getattr(self.embedder, "normalize", None),
-        }
         if callable(embedding_fingerprint_record):
             fingerprint = embedding_fingerprint_record()
             to_payload = getattr(fingerprint, "to_payload", None)
@@ -1238,12 +1231,12 @@ class IndexPipeline:
                 if callable(to_payload)
                 else embedding_fingerprint()
                 if callable(embedding_fingerprint)
-                else fallback_embedding_identity
+                else self._fallback_embedding_identity()
             )
         elif callable(embedding_fingerprint):
             embedding_identity = embedding_fingerprint()
         else:
-            embedding_identity = fallback_embedding_identity
+            embedding_identity = self._fallback_embedding_identity()
         return {
             "schema_version": 2,
             "embedding": embedding_identity,
@@ -1258,6 +1251,18 @@ class IndexPipeline:
                 ),
             },
             "parser": self.config.get("parser", {}),
+        }
+
+    def _fallback_embedding_identity(self) -> dict[str, Any]:
+        return {
+            "provider": getattr(self.embedder, "provider", None),
+            "model": getattr(self.embedder, "model_name", None),
+            "dimension": (
+                getattr(self.embedder, "_configured_embedding_dim", None)
+                or getattr(self.embedder, "_embedding_dim", None)
+            ),
+            "max_seq_length": getattr(self.embedder, "max_seq_length", None),
+            "normalize": getattr(self.embedder, "normalize", None),
         }
 
     def _incremental_compatibility_hash(self) -> str:

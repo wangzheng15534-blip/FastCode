@@ -184,7 +184,7 @@ def test_embedding_fingerprint_record_is_typed_and_matches_payload() -> None:
     assert fingerprint.stable_json() == (
         '{"cache_version":null,"dimension":3,"max_seq_length":512,'
         '"model":"model-a","normalize":true,"ollama_url":null,'
-        '"provider":"sentence_transformers","version":2}'
+        '"provider":"sentence_transformers","text_schema_version":1,"version":2}'
     )
 
 
@@ -220,6 +220,66 @@ def test_embedder_initialization_does_not_load_model(
 
     assert embedder.model is None
     assert embedder.embedding_dim == 3
+
+
+def test_embedding_fingerprint_without_configured_dimension_does_not_load_model(
+    monkeypatch: Any,
+) -> None:
+    def _boom_load_model(self: CodeEmbedder) -> Any:
+        raise AssertionError("fingerprint should not load model")
+
+    monkeypatch.setattr(CodeEmbedder, "_load_model", _boom_load_model)
+    embedder = CodeEmbedder(
+        {
+            "embedding": {
+                "provider": "sentence_transformers",
+                "model": "test-model",
+            },
+            "cache": {"enabled": False},
+        }
+    )
+
+    payload = embedder.embedding_fingerprint()
+
+    assert payload["dimension"] is None
+    assert payload["text_schema_version"] == 1
+    assert embedder.model is None
+
+
+def test_cache_hit_validation_without_configured_dimension_does_not_load_model(
+    monkeypatch: Any,
+) -> None:
+    def _boom_load_model(self: CodeEmbedder) -> Any:
+        raise AssertionError("cache-hit validation should not load model")
+
+    monkeypatch.setattr(CodeEmbedder, "_load_model", _boom_load_model)
+    embedder = CodeEmbedder(
+        {
+            "embedding": {
+                "provider": "sentence_transformers",
+                "model": "test-model",
+            },
+            "cache": {"enabled": False},
+        }
+    )
+    cache = _MemoryCache()
+    embedder._embedding_cache = cache
+    embedder._embedding_cache_enabled = True
+    cache.set(
+        "key",
+        {
+            "embedding_format": "ndarray.float32.v1",
+            "embedding_dtype": "float32",
+            "embedding_shape": (3,),
+            "embedding_bytes": np.asarray([1.0, 2.0, 3.0], dtype=np.float32).tobytes(),
+        },
+    )
+
+    cached = embedder._get_cached_embedding("key")
+
+    assert cached is not None
+    assert cached.shape == (3,)
+    assert embedder.model is None
 
 
 def test_embedder_loads_model_on_first_uncached_embedding(

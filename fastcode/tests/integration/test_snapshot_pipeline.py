@@ -1581,6 +1581,45 @@ def test_incremental_compatibility_uses_typed_embedding_fingerprint_payload() ->
         assert pipeline._incremental_compatibility_payload()["embedding"] == payload
 
 
+def test_incremental_compatibility_does_not_touch_embedding_dim_property() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_embedding_lazy_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        payload = {
+            "version": 2,
+            "provider": "sentence_transformers",
+            "model": "typed-model",
+            "dimension": None,
+            "max_seq_length": 512,
+            "normalize": True,
+            "text_schema_version": 1,
+            "ollama_url": None,
+            "cache_version": None,
+        }
+
+        class _Fingerprint:
+            def to_payload(self) -> dict[str, Any]:
+                return dict(payload)
+
+        class _LazyEmbedder:
+            provider = "sentence_transformers"
+            model_name = "typed-model"
+            max_seq_length = 512
+            normalize = True
+
+            @property
+            def embedding_dim(self) -> int:
+                raise AssertionError(
+                    "compatibility planning should not probe dimension"
+                )
+
+            def embedding_fingerprint_record(self) -> _Fingerprint:
+                return _Fingerprint()
+
+        pipeline.embedder = _LazyEmbedder()
+
+        assert pipeline._incremental_compatibility_payload()["embedding"] == payload
+
+
 def test_plan_incremental_elements_disables_when_manifest_lacks_fingerprint() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_incremental_") as tmp:
         pipeline = _make_minimal_pipeline(tmp)

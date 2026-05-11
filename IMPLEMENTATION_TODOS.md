@@ -64,7 +64,10 @@ This audit checked current source and regression tests directly, not git history
   `fastcode/src/fastcode/store/records.py`, `fastcode/src/fastcode/store/cache.py`
 
 **Really implemented:**
-- Architecture gates are active and green for import layers, no Pydantic in core, package-root purity, explicit translation, and settings flow. Verified with `uv run pytest fastcode/tests/architecture -q` (`11 passed`).
+- Architecture gates are active and green for import layers, no Pydantic in core,
+  package-root purity, explicit translation, settings flow, and materialization
+  boundaries. Verified with `uv run pytest fastcode/tests/architecture -q`
+  (`16 passed`).
 - Incremental indexing has moved beyond the May 4 audit: `build_ir_from_ast()` now persists file-level `content_hash`/`blob_oid` metadata, incremental planning rebuilds AST IR from changed elements, changed-unit embeddings can be reused when `embedding_text_hash` matches, and package/path repair-frontier logic can run scoped SCIP/semantic refresh.
 - Embedding cache reuse is active for repeated texts and writes `float32` buffer payloads. Focused cache/materialization tests pass.
 - `LoadedSnapshotArtifacts` plus an artifact-key LRU exist in `IndexPipeline`, and `QueryPipeline.query_snapshot()` can use request-local retriever/graph handles without its own snapshot-query lock.
@@ -93,27 +96,31 @@ release-level implications.
 
 **Newly recorded non-functional gaps:**
 - The materialization enforcement story is incomplete. The guard test covers
-  only selected hot files, while semantic patching, MCP/main graph helpers,
-  projection transforms, snapshot persistence, and query-time symbol-index
-  registration can still full-materialize object graphs without failing that
+  only selected hot files plus semantic patching, while MCP/main graph helpers,
+  projection transforms, snapshot persistence, and query-time compact
+  symbol-index registration can still add materialization without failing that
   guard.
-- Embedder laziness is overclaimed if interpreted broadly. Constructor startup
-  is lazy, but compatibility fingerprinting and cache-hit validation can still
-  touch `embedding_dim` and therefore load/probe providers before actual
-  embedding work when dimension is not configured.
+- Embedder laziness is no longer overclaimed for compatibility fingerprinting
+  and all-cache-hit validation: those paths avoid provider startup when
+  dimension is not configured. Provider batching and provider timing metrics
+  remain open performance work.
 - Semantic resolver patching remains copy-heavy: applying a resolver patch
-  clones whole snapshot collections via `to_dict() -> from_dict()` and
-  recursive JSON cleanup even when the patch touches a small path frontier.
+  still copies whole snapshot collections, but the old generic
+  `to_dict() -> from_dict()` clone path and generic JSON cleanup have been
+  replaced with explicit field copies and patch-local serializers.
 - Shell graph tools are not aligned with compact graph design. MCP graph tools
   full-load snapshots, rebuild NetworkX graphs, and linearly scan units per
   request instead of using loaded artifact handles plus compact graph/symbol
   indexes.
+- Query-time symbol-index registration now has a compact snapshot sidecar and
+  avoids full `IRSnapshot` loads for current snapshots. Legacy snapshots without
+  the sidecar still need a backfill or relational-fact read path.
 - Local repository indexing still copies a whole local working tree into the
   workspace before incremental planning, so repeated local runs can pay
   repository-size filesystem cost before discovering a small edit.
-- PostgreSQL relational fact persistence is both whole-snapshot and
-  row-at-a-time, so the production-storage path still lacks delta writes and a
-  bulk-write baseline.
+- PostgreSQL relational fact persistence is still whole-snapshot. Full rebuild
+  inserts are now batched per table, but the production-storage path still lacks
+  delta writes by changed path.
 
 **Release implication:** the project remains a hardened pre-release. The code
 has many real partial passes, but stable language around "incremental",
@@ -240,6 +247,9 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
   - repository overview persistence now writes an explicit JSON manifest plus NumPy embedding archive, lets metadata-only callers skip the embedding archive entirely, and only JSON-decodes ranked overview metadata for returned rows
   - `utils/vectors.py` now centralizes float32 vector/matrix ownership policy so view-oriented call sites do not mutate caller-owned arrays while sanitizing non-finite values
   - PostgreSQL relational fact persistence uses explicit typed payload serializers instead of repeated record `to_dict()` expansion
+  - snapshot persistence writes a compact symbol-index sidecar, and query-time
+    snapshot serving can register symbol aliases from that sidecar instead of
+    full-loading the `IRSnapshot`
 - Async endpoint hardening:
   - REST API repository load/index/cache-load/multi-index/upload paths offload blocking work with `asyncio.to_thread`
   - web UI upload and upload+index paths offload ZIP extraction, repository load, and indexing

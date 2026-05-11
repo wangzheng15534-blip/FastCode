@@ -49,6 +49,19 @@ Implementation update, May 11, 2026:
 - Active-path regressions now patch generic conversion shortcuts to raise across
   indexing, retrieval, and persistence coverage, so the optimized adapters stay
   on the exercised paths.
+- Embedding fingerprint lookup and cache-hit validation no longer start
+  providers merely to discover an unconfigured dimension, and the prepared-text
+  schema version is part of the fingerprint payload.
+- `VectorStore` in-memory row append and the generic vector sequence helper no
+  longer grow homogeneous matrices through repeated `np.vstack()` calls.
+- Semantic resolver patching no longer clones IR objects through generic
+  `to_dict() -> from_dict()` round trips, and the materialization guard now
+  covers that patching path.
+- PostgreSQL relational fact full-rebuild persistence now batches inserts per
+  fact table; true delta fact persistence is still open.
+- Snapshot persistence now writes a compact symbol-index sidecar, and
+  `QueryPipeline.query_snapshot()` uses it to register symbol aliases without a
+  full `IRSnapshot` load when the sidecar is available.
 
 - Incremental indexing can skip unchanged-file parse and embedding work, reuse
   changed-unit embeddings, merge changed AST IR with a previous snapshot, and
@@ -58,8 +71,8 @@ Implementation update, May 11, 2026:
   snapshot for merge, writes full snapshot JSON, rebuilds whole IR graph
   materializations, and rewrites relational fact rows for the whole snapshot.
 - Vector flow uses NumPy/FAISS/pgvector in important places, but old list-vector
-  paths, eager model/probe startup, row-by-row vector shard assembly, JSON/list
-  embedding payloads, and fallback `.tolist()` paths still exist.
+  paths, JSON/list embedding payloads, compression-vs-mmap tradeoffs, and
+  fallback materialization paths still exist.
 - `IRGraphView` uses `python-igraph`, but NetworkX remains in active hot paths:
   legacy graph building, IR merge matching, projection transforms, MCP/main
   graph helpers, and compatibility persistence.
@@ -78,46 +91,39 @@ on efficient update, copy-minimal native flow, and materialization.
 
 New or sharpened findings:
 
-- Materialization guard coverage is narrower than the implementation summary
-  implies. `fastcode/tests/architecture/test_materialization_boundaries.py`
-  currently scans `indexing/pipeline.py`, `store/pg_retrieval.py`,
-  `store/vector.py`, `retrieval/hybrid.py`, and selected vector insertion
-  paths. It does not guard several still-hot materialization surfaces,
-  including semantic patch application, MCP graph tools, `main` graph helpers,
-  projection graph transforms, snapshot persistence, and query-time snapshot
-  symbol-index loads.
-- Embedding fingerprint construction can still force provider startup.
-  `IndexPipeline._incremental_compatibility_payload()` builds a fallback
-  identity containing `self.embedder.embedding_dim` before it knows whether the
-  fallback is needed, and `CodeEmbedder.embedding_fingerprint_record()` also
-  resolves `embedding_dim`. When dimension is not configured, compatibility
-  planning can load/probe the provider before embedding work is actually
-  required.
-- Cache-hit validation can also start providers. `CodeEmbedder._get_cached_embedding()`
-  checks cached vector size through `self.embedding_dim`, so an all-cache-hit
-  path may still load/probe the model when dimension was not configured.
-- Semantic resolver patching is a full-snapshot materialization path.
-  `semantic/resolvers/patching.py` clones units, supports, relations, and
-  embeddings via `to_dict() -> from_dict()` and repeatedly applies
-  `safe_jsonable()` while applying every resolver patch.
+- Materialization guard coverage is still narrower than the implementation
+  summary target. `fastcode/tests/architecture/test_materialization_boundaries.py`
+  now covers semantic patch application in addition to the earlier indexing,
+  vector, PG retrieval, retrieval, and selected vector insertion paths. It still
+  does not guard MCP graph tools, `main` graph helpers, projection graph
+  transforms, snapshot persistence, or the compact query-time symbol-index
+  registration path.
+- Provider-starting embedding fingerprint construction and cache-hit validation
+  were found in this audit and are now fixed for the compatibility and
+  all-cache-hit paths that previously touched `embedding_dim` before actual
+  embedding work.
+- Semantic resolver patching remains a full-collection copy path, but the
+  generic `to_dict() -> from_dict()` object clones and generic `safe_jsonable()`
+  calls found in this audit have been replaced with explicit field copies and
+  patch-local serializers.
 - MCP graph tools and some `FastCode` graph helpers bypass compact snapshot
   handles. `mcp/server.py` loads a full `IRSnapshot` for graph tools, and
   `mcp/graph_tools.py` rebuilds NetworkX graphs from that snapshot per request
   while resolving symbols through repeated linear scans.
-- Query snapshot serving still full-loads snapshots for symbol-index
-  registration when a snapshot is not already registered, even when request
-  local artifact handles are available.
+- Query snapshot serving now uses compact snapshot symbol-index sidecars for
+  symbol-index registration when available. Legacy snapshots without the
+  sidecar still fall back to full snapshot load.
 - Local repository loading is not copy-minimal. `RepositoryLoader.load_from_path()`
   copies the whole working tree into the workspace before the incremental
   planner can decide that most files are unchanged.
-- Vector preallocation is partial. Shard load/write paths are better, but
-  `VectorStore._append_vector_rows()` still grows in-memory rows with
-  `np.vstack()`, and the generic `as_float32_matrix()` sequence path also stacks
-  per-row vectors.
-- PostgreSQL relational fact persistence remains whole-snapshot and
-  row-at-a-time. `SnapshotStore.save_relational_facts()` deletes all fact rows
-  for a snapshot and issues one insert per document, symbol, occurrence, edge,
-  and attachment.
+- Vector preallocation is still partial. Shard load/write paths, in-memory
+  vector-row append, and homogeneous `as_float32_matrix()` sequence conversion
+  avoid the old row-list/`vstack` pattern, but memory-mapped shard handles and
+  lazy unchanged-shard publication are still open.
+- PostgreSQL relational fact persistence remains whole-snapshot. The row-at-a-time
+  insert baseline found in this audit has been replaced with per-table batched
+  inserts on the full-rebuild path, but delta delete/upsert by changed path is
+  still open.
 
 ## P0 - Make Incremental Update The Execution Model
 
@@ -233,7 +239,7 @@ TODO:
 - [ ] Add relational fact delta operations: delete removed/modified-path facts,
   upsert changed facts, preserve unchanged rows, and update snapshot-level
   manifest tables atomically.
-- [ ] Batch PostgreSQL fact writes with `executemany`, `COPY`, or a backend
+- [x] Batch PostgreSQL fact writes with `executemany`, `COPY`, or a backend
   equivalent on full rebuild paths; row-at-a-time fact insertion should not be
   the release-grade baseline.
 - [ ] Build IR graph deltas from changed relations and only rebuild global
@@ -313,12 +319,12 @@ TODO:
 - [ ] Persist the same fingerprint in file manifests, vector manifests, IR
   embeddings, PG metadata, repository overview artifacts, query embedding cache
   entries, and incremental compatibility checks.
-- [ ] Make fingerprint lookup non-starting: compatibility planning and cache-hit
+- [x] Make fingerprint lookup non-starting: compatibility planning and cache-hit
   validation must not load a sentence-transformer model or probe Ollama merely
   to learn an embedding dimension.
 - [ ] Make embedding reuse depend on fingerprint plus prepared-text hash, not
   ad hoc local key construction.
-- [ ] Add an explicit prepared-text schema version to the fingerprint so
+- [x] Add an explicit prepared-text schema version to the fingerprint so
   `_prepare_code_text()` changes invalidate cache entries without relying on
   operator-managed `cache_version`.
 - [ ] Add tests that patch stale fingerprint surfaces and prove reuse is refused
@@ -333,20 +339,16 @@ Exit criteria:
 
 ### P0.6 Lazy Embedder Startup And Provider Batching
 
-**Gap:** embedding setup is lazy at construction, but compatibility and
-cache-hit paths can still trigger provider startup before embedding work is
-needed, and the Ollama path embeds one text per HTTP request.
+**Gap:** embedding setup is lazy at construction, and the compatibility/cache-hit
+startup gaps found in the follow-up audit have been fixed. Provider batching is
+still incomplete: the Ollama path embeds one text per HTTP request.
 
 Evidence:
 
-- `IndexPipeline._incremental_compatibility_payload()` builds a fallback
-  identity with `self.embedder.embedding_dim`, and
-  `CodeEmbedder.embedding_fingerprint_record()` resolves `embedding_dim`
-  (`fastcode/src/fastcode/indexing/pipeline.py:1221`,
-  `fastcode/src/fastcode/indexing/embedder.py:163`).
-- `CodeEmbedder._get_cached_embedding()` validates cached vector size through
-  `self.embedding_dim`, so all-cache-hit paths can still load/probe when
-  dimension is not configured (`fastcode/src/fastcode/indexing/embedder.py:260`).
+- Historical fixed evidence: `IndexPipeline._incremental_compatibility_payload()`,
+  `CodeEmbedder.embedding_fingerprint_record()`, and
+  `CodeEmbedder._get_cached_embedding()` previously touched `embedding_dim`
+  early enough to start providers before embedding work.
 - `_embed_batch_uncached()` calls `_embed_text_ollama()` once per text for the
   Ollama provider (`fastcode/src/fastcode/indexing/embedder.py:116`).
 
@@ -356,7 +358,7 @@ TODO:
   that actually needs embeddings.
 - [x] Persist configured embedding dimension when available so non-embedding
   paths do not require provider startup.
-- [ ] Stop `_incremental_compatibility_payload()` and cache-hit validation from
+- [x] Stop `_incremental_compatibility_payload()` and cache-hit validation from
   touching `embedding_dim` when no configured or persisted dimension is
   available.
 - [ ] Add provider-level batch APIs where supported, and bounded concurrency
@@ -401,20 +403,17 @@ Exit criteria:
 
 ### P0.8 Vector Shards: Preallocate, Memory Map, Avoid Row Loops
 
-**Gap:** vector storage uses native arrays, but shard write/load paths still
-assemble row lists and stack/copy frequently.
+**Gap:** vector storage uses native arrays, and the original row-list/`vstack`
+load/write/append hot spots are largely fixed. Large shards are still not
+memory-map-native, and unchanged-shard publication still lacks lazy handles.
 
 Evidence:
 
-- `_append_vector_rows()` copies the first matrix and uses `np.vstack()` for
-  later appends (`fastcode/src/fastcode/store/vector.py:1031`).
-- `_vector_matrix_ordered_by_sequences()` builds `ordered_rows` then stacks rows
-  (`fastcode/src/fastcode/store/vector.py:1368`).
-- `_write_vector_bundle()` and `_write_vector_bundle_with_sequences()` group row
-  arrays and stack each shard (`fastcode/src/fastcode/store/vector.py:1408`,
-  `fastcode/src/fastcode/store/vector.py:1493`).
-- `load_vector_payload()` iterates `sequence_nos.tolist()` and row-by-row
-  appends before stacking (`fastcode/src/fastcode/store/vector.py:1593`).
+- Historical fixed evidence: `_append_vector_rows()`,
+  `_vector_matrix_ordered_by_sequences()`, `_write_vector_bundle()`,
+  `_write_vector_bundle_with_sequences()`, `load_vector_payload()`, and the
+  homogeneous sequence path in `as_float32_matrix()` previously grew matrices
+  through row lists, `np.vstack()`, or `.tolist()`.
 - shard bytes are written with `np.savez_compressed()`, which favors compact
   artifacts over direct memory mapping (`fastcode/src/fastcode/store/vector.py:1206`).
 
@@ -422,9 +421,9 @@ TODO:
 
 - [x] Preallocate destination matrices from sequence plans and fill by slice or
   index arrays instead of row-list plus `vstack`.
-- [ ] Replace `VectorStore._append_vector_rows()` growth-by-`vstack` with a
+- [x] Replace `VectorStore._append_vector_rows()` growth-by-`vstack` with a
   planned append buffer or direct backend insertion path.
-- [ ] Give `as_float32_matrix()` a shape-aware preallocation path for
+- [x] Give `as_float32_matrix()` a shape-aware preallocation path for
   homogeneous vector sequences so approved helper usage does not hide a row-list
   materialization cost.
 - [ ] Store shard vectors in a format that supports memory mapping for large
@@ -657,9 +656,11 @@ TODO:
   handles without serializing independent queries.
 - [ ] Keep load/index/delete/publish operations fenced, but let queries share a
   read snapshot handle.
-- [ ] Build query-time symbol indexes from compact symbol/fact records or cached
-  snapshot metadata instead of full-loading `IRSnapshot` solely to register
-  aliases.
+- [x] Build query-time symbol indexes from compact symbol-index sidecars instead
+  of full-loading `IRSnapshot` solely to register aliases when current snapshot
+  artifacts are available.
+- [ ] Backfill or derive compact symbol indexes for legacy snapshots that lack
+  the sidecar, preferably from relational facts when available.
 - [ ] Add concurrent query benchmarks with and without background mutations.
 
 Exit criteria:
@@ -735,26 +736,30 @@ Exit criteria:
 
 ### P0.18 Make Semantic Patch Application Delta-Native
 
-**Gap:** semantic resolver patches currently clone whole snapshot collections
-through generic dict round trips before applying a usually small patch.
+**Gap:** semantic resolver patches still copy whole snapshot collections before
+applying a usually small patch, although the generic dict round trips have been
+removed.
 
 Evidence:
 
-- `apply_resolution_patch()` clones all units, supports, embeddings, and
-  relations, using helper clones that call `to_dict() -> from_dict()`
-  (`fastcode/src/fastcode/semantic/resolvers/patching.py:17`,
-  `fastcode/src/fastcode/semantic/resolvers/patching.py:106`).
-- Patch metadata and unit metadata updates pass through generic
-  `safe_jsonable()` during the resolver hot path
-  (`fastcode/src/fastcode/semantic/resolvers/patching.py:121`).
+- `apply_resolution_patch()` still clones all units, supports, embeddings, and
+  relations through explicit helper copies
+  (`fastcode/src/fastcode/semantic/resolvers/patching.py:41`,
+  `fastcode/src/fastcode/semantic/resolvers/patching.py:196`).
+- Patch metadata and unit metadata updates now pass through a patch-local
+  serializer, but this is still recursive metadata normalization during the
+  resolver hot path
+  (`fastcode/src/fastcode/semantic/resolvers/patching.py:37`).
 
 TODO:
 
 - [ ] Replace full snapshot cloning with structural sharing or path/unit-scoped
   copy-on-write updates for units, supports, relations, and embeddings.
-- [ ] Add explicit metadata serializers for resolver patch payloads instead of
-  recursive `safe_jsonable()` on already-typed IR data.
-- [ ] Add materialization guards and counters around semantic patch application.
+- [x] Avoid generic IR object clones and generic JSON conversion in resolver
+  patch application.
+- [ ] Replace patch-local recursive metadata normalization with explicit
+  metadata serializers for resolver patch payloads.
+- [ ] Add runtime materialization counters around semantic patch application.
 - [ ] Benchmark helper-backed semantic upgrade on unchanged, body-only,
   signature/API, and inheritance-change edit classes.
 
@@ -794,9 +799,10 @@ TODO:
   generic `to_dict()` / `from_dict()` round trips, `row_to_dict()`, `.tolist()`,
   and raw `np.array(vectors)` unless the call site is annotated as an allowed
   boundary.
-- [ ] Expand the guard allowlist/scope to cover semantic patching, MCP/main
-  graph helpers, projection transforms, snapshot persistence, and query-time
-  snapshot symbol-index loads; the current guard only covers a subset of hot
+- [x] Expand the guard allowlist/scope to cover semantic patching.
+- [ ] Expand the guard allowlist/scope to cover MCP/main graph helpers,
+  projection transforms, snapshot persistence, and query-time compact
+  symbol-index registration; the current guard only covers a subset of hot
   materialization paths.
 - [x] Add runtime counters for explicit materialization boundaries: JSON encode,
   JSON decode, pickle load/dump, NetworkX conversion, vector list conversion,

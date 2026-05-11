@@ -159,16 +159,19 @@ Already-landed areas include:
   index-storage boundaries
 - explicit snapshot-file serializers in `store/snapshot.py` instead of routing
   persistence through `IRSnapshot.to_dict()` / `IRSnapshot.from_dict()`
+- compact snapshot symbol-index sidecars for query-time alias registration
+  without loading the whole `IRSnapshot` on current snapshots
 
 Still incomplete:
 
 - store, query, and projection records are not fully typed end to end
 - several shell and persistence paths still expose raw dict payloads
-- semantic resolver patch application still clones whole IR collections through
-  generic dict round trips instead of a delta-native typed patch path
+- semantic resolver patch application still copies whole IR collections, though
+  it no longer uses generic dict round trips
 - materialization guard coverage is narrower than the full architecture target;
   MCP/main graph helpers, projection transforms, snapshot persistence, and
-  query-time symbol-index registration still need explicit boundary treatment
+  query-time compact symbol-index registration still need explicit guard
+  treatment
 
 ## Indexing pipeline
 

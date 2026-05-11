@@ -856,6 +856,12 @@ class FastCode:
         )
         if not resolved:
             return None
+        load_record = getattr(self.snapshot_store, "load_snapshot_symbol_record", None)
+        if callable(load_record):
+            record = load_record(snapshot_id, resolved)
+            if isinstance(record, Mapping):
+                return {str(key): value for key, value in record.items()}
+
         snapshot = self.snapshot_store.load_snapshot(snapshot_id)
         if not snapshot:
             return None

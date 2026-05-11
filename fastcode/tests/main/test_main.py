@@ -458,6 +458,39 @@ def test_resolve_snapshot_symbol_uses_compact_payload_without_full_snapshot_load
     assert fc.resolve_snapshot_symbol("snap:1", name="AuthService") == "sym:auth"
 
 
+def test_find_symbol_uses_compact_symbol_record_without_full_snapshot_load():
+    fc = FastCode.__new__(FastCode)
+    fc.snapshot_symbol_index = SnapshotSymbolIndex()
+    fc.snapshot_store = SimpleNamespace(
+        load_snapshot_symbol_index_payload=lambda snapshot_id: {
+            "schema_version": "snapshot_symbol_index.v1",
+            "snapshot_id": snapshot_id,
+            "symbols": [
+                {
+                    "canonical": "sym:auth",
+                    "aliases": ["scip:auth"],
+                    "names": ["AuthService"],
+                    "path": "src/auth.py",
+                }
+            ],
+        },
+        load_snapshot_symbol_record=lambda _snapshot_id, symbol_id: {
+            "symbol_id": symbol_id,
+            "display_name": "AuthService",
+            "path": "src/auth.py",
+        },
+        load_snapshot=lambda _snapshot_id: (_ for _ in ()).throw(
+            AssertionError("find_symbol should not full-load IRSnapshot")
+        ),
+    )
+
+    assert fc.find_symbol("snap:1", name="AuthService") == {
+        "symbol_id": "sym:auth",
+        "display_name": "AuthService",
+        "path": "src/auth.py",
+    }
+
+
 def test_process_semantic_repair_frontier_widens_topology_dirty_scopes():
     fc = FastCode.__new__(FastCode)
     fc.pipeline = SimpleNamespace(

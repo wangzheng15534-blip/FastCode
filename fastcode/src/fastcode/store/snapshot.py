@@ -980,6 +980,11 @@ class SnapshotStore:
 
     @classmethod
     def _snapshot_symbol_index_payload(cls, snapshot: IRSnapshot) -> dict[str, Any]:
+        records = {
+            symbol.symbol_id: cls._symbol_payload(symbol)
+            for symbol in snapshot.symbols
+            if symbol.symbol_id
+        }
         symbols: list[dict[str, Any]] = []
         for unit in snapshot.units:
             if unit.kind in {"file", "doc"}:
@@ -1018,6 +1023,7 @@ class SnapshotStore:
             "schema_version": "snapshot_symbol_index.v1",
             "snapshot_id": snapshot.snapshot_id,
             "symbols": symbols,
+            "records": records,
         }
 
     def save_snapshot(
@@ -1151,13 +1157,36 @@ class SnapshotStore:
         if payload.get("snapshot_id") != snapshot_id:
             return None
         symbols = self._sequence_items(payload.get("symbols"))
+        raw_records = payload.get("records")
+        records: dict[str, Mapping[str, Any]] = {}
+        if isinstance(raw_records, Mapping):
+            records = {
+                str(symbol_id): record
+                for symbol_id, record in raw_records.items()
+                if isinstance(record, Mapping)
+            }
         return {
             "schema_version": str(
                 payload.get("schema_version") or "snapshot_symbol_index.v1"
             ),
             "snapshot_id": snapshot_id,
             "symbols": [item for item in symbols if isinstance(item, Mapping)],
+            "records": records,
         }
+
+    def load_snapshot_symbol_record(
+        self, snapshot_id: str, symbol_id: str
+    ) -> dict[str, Any] | None:
+        payload = self.load_snapshot_symbol_index_payload(snapshot_id)
+        if payload is None:
+            return None
+        records = payload.get("records")
+        if not isinstance(records, Mapping):
+            return None
+        record = records.get(symbol_id)
+        if not isinstance(record, Mapping):
+            return None
+        return {str(key): value for key, value in record.items()}
 
     def update_snapshot_metadata(
         self, snapshot_id: str, metadata: dict[str, Any]

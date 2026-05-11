@@ -694,6 +694,26 @@ class TestSnapshotSaveLoadProperties:
                 "path": "src/auth.py",
             }
         ]
+        assert store.load_snapshot_symbol_record(
+            snap.snapshot_id,
+            "sym:auth",
+        ) == {
+            "symbol_id": "sym:auth",
+            "external_symbol_id": "scip:auth",
+            "path": "src/auth.py",
+            "display_name": "AuthService",
+            "kind": "class",
+            "language": "python",
+            "qualified_name": "pkg.auth.AuthService",
+            "signature": None,
+            "start_line": None,
+            "start_col": None,
+            "end_line": None,
+            "end_col": None,
+            "source_priority": 100,
+            "source_set": ["scip"],
+            "metadata": {"aliases": ["ast:auth"]},
+        }
 
     def test_load_snapshot_legacy_payload_uses_explicit_deserializers(
         self, monkeypatch: pytest.MonkeyPatch

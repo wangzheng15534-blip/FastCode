@@ -8,11 +8,10 @@ import json
 import os
 import pickle
 import threading
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Iterable, Mapping
 from datetime import datetime
 from typing import Any, cast
 
-import networkx as nx
 from rank_bm25 import BM25Okapi
 
 from ..graph.build import CodeGraphBuilder
@@ -870,6 +869,53 @@ class FastCode:
                 return symbol.to_dict()
         return None
 
+    @staticmethod
+    def _bounded_graph_distances(
+        graph: Any,
+        seed: str,
+        max_hops: int,
+        *,
+        direction: str,
+    ) -> dict[str, int]:
+        try:
+            if seed not in graph:
+                return {}
+        except TypeError:
+            return {}
+
+        native_distances = getattr(graph, "distances_within", None)
+        if callable(native_distances):
+            result = native_distances(seed, max_hops, mode=direction)
+            if isinstance(result, Mapping):
+                return {str(node): int(distance) for node, distance in result.items()}
+
+        neighbor_fn = getattr(
+            graph,
+            "predecessors" if direction == "in" else "successors",
+            None,
+        )
+        if not callable(neighbor_fn):
+            neighbor_fn = getattr(graph, "neighbors", None)
+        if not callable(neighbor_fn):
+            return {}
+
+        distances: dict[str, int] = {seed: 0}
+        queue: list[str] = [seed]
+        cursor = 0
+        while cursor < len(queue):
+            node = queue[cursor]
+            cursor += 1
+            distance = distances[node]
+            if distance >= max_hops:
+                continue
+            for neighbor in cast(Iterable[Any], neighbor_fn(node)):
+                neighbor_id = str(neighbor)
+                if neighbor_id in distances:
+                    continue
+                distances[neighbor_id] = distance + 1
+                queue.append(neighbor_id)
+        return {node: distance for node, distance in distances.items() if node != seed}
+
     def get_graph_callees(
         self, snapshot_id: str, symbol_id: str, max_hops: int = 1
     ) -> list[dict[str, Any]]:
@@ -878,14 +924,13 @@ class FastCode:
         if not ir_graphs:
             return []
         g = ir_graphs.call_graph
-        if symbol_id not in g:
-            return []
-        dist = nx.single_source_shortest_path_length(g, symbol_id, cutoff=max_hops)
-        return [
-            {"symbol_id": node, "distance": d}
-            for node, d in dist.items()
-            if node != symbol_id
-        ]
+        dist = self._bounded_graph_distances(
+            g,
+            symbol_id,
+            max_hops,
+            direction="out",
+        )
+        return [{"symbol_id": node, "distance": d} for node, d in dist.items()]
 
     def get_graph_callers(
         self, snapshot_id: str, symbol_id: str, max_hops: int = 1
@@ -894,15 +939,13 @@ class FastCode:
         ir_graphs = self.snapshot_store.load_ir_graphs(snapshot_id)
         if not ir_graphs:
             return []
-        g = ir_graphs.call_graph.reverse(copy=False)
-        if symbol_id not in g:
-            return []
-        dist = nx.single_source_shortest_path_length(g, symbol_id, cutoff=max_hops)
-        return [
-            {"symbol_id": node, "distance": d}
-            for node, d in dist.items()
-            if node != symbol_id
-        ]
+        dist = self._bounded_graph_distances(
+            ir_graphs.call_graph,
+            symbol_id,
+            max_hops,
+            direction="in",
+        )
+        return [{"symbol_id": node, "distance": d} for node, d in dist.items()]
 
     def get_graph_dependencies(
         self, snapshot_id: str, doc_id: str, max_hops: int = 1
@@ -912,14 +955,13 @@ class FastCode:
         if not ir_graphs:
             return []
         g = ir_graphs.dependency_graph
-        if doc_id not in g:
-            return []
-        dist = nx.single_source_shortest_path_length(g, doc_id, cutoff=max_hops)
-        return [
-            {"doc_id": node, "distance": d}
-            for node, d in dist.items()
-            if node != doc_id
-        ]
+        dist = self._bounded_graph_distances(
+            g,
+            doc_id,
+            max_hops,
+            direction="out",
+        )
+        return [{"doc_id": node, "distance": d} for node, d in dist.items()]
 
     def get_branch_manifest(
         self, repo_name: str, ref_name: str

@@ -183,6 +183,35 @@ class IRGraphView:
             str(names[index]) for index in self._graph.neighbors(vertex, mode="out")
         )
 
+    def distances_within(
+        self, seed: str, max_hops: int, *, mode: str = "out"
+    ) -> dict[str, int]:
+        seed_index = self._name_to_index.get(str(seed))
+        if seed_index is None or max_hops <= 0:
+            return {}
+        if mode not in {"in", "out", "all"}:
+            mode = "out"
+        distances: dict[int, int] = {seed_index: 0}
+        queue: list[int] = [seed_index]
+        cursor = 0
+        while cursor < len(queue):
+            vertex = queue[cursor]
+            cursor += 1
+            distance = distances[vertex]
+            if distance >= max_hops:
+                continue
+            for neighbor in self._graph.neighbors(vertex, mode=mode):
+                neighbor_index = int(neighbor)
+                if neighbor_index in distances:
+                    continue
+                distances[neighbor_index] = distance + 1
+                queue.append(neighbor_index)
+        return {
+            self._node_names[index]: distance
+            for index, distance in distances.items()
+            if index != seed_index
+        }
+
     def reachable_within(self, seed: str, max_hops: int) -> set[str]:
         seed_index = self._name_to_index.get(str(seed))
         if seed_index is None or max_hops <= 0:

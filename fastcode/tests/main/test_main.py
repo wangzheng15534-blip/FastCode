@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from fastcode.ir.element import CodeElement
+from fastcode.ir.graph import IRGraphs, IRGraphView
 from fastcode.ir.types import IRCodeUnit, IRSnapshot
 from fastcode.main import FastCode
 from fastcode.retrieval.core.agent_context import (
@@ -489,6 +490,44 @@ def test_find_symbol_uses_compact_symbol_record_without_full_snapshot_load():
         "display_name": "AuthService",
         "path": "src/auth.py",
     }
+
+
+def test_graph_helpers_use_compact_bounded_traversal_without_networkx():
+    fc = FastCode.__new__(FastCode)
+    graphs = IRGraphs(
+        dependency_graph=IRGraphView(
+            edges=[
+                ("doc:a", "doc:b", {}),
+                ("doc:b", "doc:c", {}),
+            ]
+        ),
+        call_graph=IRGraphView(
+            edges=[
+                ("sym:a", "sym:b", {}),
+                ("sym:b", "sym:c", {}),
+                ("sym:caller", "sym:a", {}),
+            ]
+        ),
+        inheritance_graph=IRGraphView(),
+        reference_graph=IRGraphView(),
+        containment_graph=IRGraphView(),
+    )
+    fc.snapshot_store = SimpleNamespace(load_ir_graphs=lambda _snapshot_id: graphs)
+
+    with patch(
+        "networkx.single_source_shortest_path_length",
+        side_effect=AssertionError("main graph helpers should use compact traversal"),
+    ):
+        assert fc.get_graph_callees("snap:1", "sym:a", max_hops=2) == [
+            {"symbol_id": "sym:b", "distance": 1},
+            {"symbol_id": "sym:c", "distance": 2},
+        ]
+        assert fc.get_graph_callers("snap:1", "sym:a", max_hops=1) == [
+            {"symbol_id": "sym:caller", "distance": 1},
+        ]
+        assert fc.get_graph_dependencies("snap:1", "doc:a", max_hops=1) == [
+            {"doc_id": "doc:b", "distance": 1},
+        ]
 
 
 def test_process_semantic_repair_frontier_widens_topology_dirty_scopes():

@@ -65,6 +65,19 @@ class TestIRGraphBuilder:
         assert graph.reachable_within("a", 1) == {"b"}
         assert graph.reachable_within("a", 2) == {"b", "c"}
 
+    def test_ir_graph_view_distances_within_respects_direction(self):
+        graph = IRGraphView(
+            edges=[
+                ("a", "b", {}),
+                ("b", "c", {}),
+                ("x", "a", {}),
+            ]
+        )
+
+        assert graph.distances_within("a", 2, mode="out") == {"b": 1, "c": 2}
+        assert graph.distances_within("a", 2, mode="in") == {"x": 1}
+        assert graph.distances_within("a", 1, mode="all") == {"b": 1, "x": 1}
+
     def test_import_edge_goes_to_dependency_property(self):
         """HAPPY: import edges populate dependency graph."""
         builder = IRGraphBuilder()

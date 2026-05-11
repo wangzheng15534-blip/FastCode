@@ -36,6 +36,12 @@ class RepositoryLoader:
         self.max_file_size_mb = self.repo_config.get("max_file_size_mb", 5)
         self.ignore_patterns = self.repo_config.get("ignore_patterns", [])
         self.supported_extensions = self.repo_config.get("supported_extensions", [])
+        configured_local_source_mode = str(
+            self.repo_config.get("local_source_mode") or "in_place"
+        )
+        self.local_source_mode = (
+            "copy" if configured_local_source_mode == "copy" else "in_place"
+        )
         self.safe_repo_root = os.path.abspath(self.config.get("repo_root", "./repos"))
         ensure_dir(self.safe_repo_root)
         configured_backup_root = self.repo_config.get("backup_directory")
@@ -50,6 +56,10 @@ class RepositoryLoader:
         self.temp_dir = None
         self.repo_path = None
         self.repo_name = None
+        self.repo_source_path = None
+        self.repo_load_mode = None
+        self.repo_is_workspace_copy = False
+        self.last_load_stats: dict[str, Any] = {}
 
     def _backup_existing_repo(self, repo_path: str) -> str | None:
         """Move existing repository directory to backup workspace."""
@@ -102,6 +112,16 @@ class RepositoryLoader:
 
         # Get repository name
         self.repo_name = get_repo_name_from_url(url)
+        self.repo_source_path = url
+        self.repo_load_mode = "clone"
+        self.repo_is_workspace_copy = True
+        self.last_load_stats = {
+            "mode": "clone",
+            "source_path": url,
+            "repo_path": None,
+            "copied_bytes": 0,
+            "copied_files": 0,
+        }
 
         self.repo_path = self._prepare_repo_path(self.repo_name, target_dir)
 
@@ -115,6 +135,7 @@ class RepositoryLoader:
                 Repo.clone_from(url, self.repo_path)
 
             self.logger.info(f"Successfully cloned to {self.repo_path}")
+            self.last_load_stats["repo_path"] = self.repo_path
             return self.repo_path
 
         except GitCommandError as e:
@@ -123,14 +144,15 @@ class RepositoryLoader:
 
     def load_from_path(self, path: str, target_dir: str | None = None) -> str:
         """
-        Copy local repository into repository workspace and load it.
+        Load a local repository path.
 
         Args:
             path: Local path to repository
-            target_dir: Optional destination root (defaults to configured repo_root)
+            target_dir: Optional destination root. Supplying a target directory
+                requests an isolated workspace copy.
 
         Returns:
-            Path to copied repository
+            Path to the loaded repository root
         """
         if not os.path.exists(path):
             raise ValueError(f"Path does not exist: {path}")
@@ -140,6 +162,7 @@ class RepositoryLoader:
 
         source_path = os.path.abspath(path)
         self.repo_name = os.path.basename(source_path)
+        self.repo_source_path = source_path
         destination_root = (
             os.path.abspath(target_dir) if target_dir else self.safe_repo_root
         )
@@ -148,15 +171,70 @@ class RepositoryLoader:
         # If source is already in workspace destination, use it directly.
         if os.path.abspath(source_path) == os.path.abspath(destination_path):
             self.repo_path = source_path
+            self.repo_load_mode = "workspace"
+            self.repo_is_workspace_copy = True
+            self.last_load_stats = {
+                "mode": "workspace",
+                "source_path": source_path,
+                "repo_path": self.repo_path,
+                "copied_bytes": 0,
+                "copied_files": 0,
+            }
             self.logger.info(f"Loaded repository from workspace path {self.repo_path}")
+            return self.repo_path
+
+        if target_dir is None and self.local_source_mode == "in_place":
+            self.repo_path = source_path
+            self.repo_load_mode = "in_place"
+            self.repo_is_workspace_copy = False
+            self.last_load_stats = {
+                "mode": "in_place",
+                "source_path": source_path,
+                "repo_path": self.repo_path,
+                "copied_bytes": 0,
+                "copied_files": 0,
+            }
+            self.logger.info("Loaded local repository in place: %s", self.repo_path)
             return self.repo_path
 
         self.repo_path = self._prepare_repo_path(self.repo_name, target_dir)
 
         # Copy entire working tree, including untracked files.
-        shutil.copytree(source_path, self.repo_path, symlinks=True)
+        copied_bytes = 0
+        copied_files = 0
 
-        self.logger.info(f"Copied repository from {source_path} to {self.repo_path}")
+        def _copy2_counting(src: str, dst: str) -> str:
+            nonlocal copied_bytes, copied_files
+            try:
+                copied_bytes += os.stat(src).st_size
+                copied_files += 1
+            except OSError:
+                pass
+            return shutil.copy2(src, dst)
+
+        shutil.copytree(
+            source_path,
+            self.repo_path,
+            symlinks=True,
+            copy_function=_copy2_counting,
+        )
+        self.repo_load_mode = "copy"
+        self.repo_is_workspace_copy = True
+        self.last_load_stats = {
+            "mode": "copy",
+            "source_path": source_path,
+            "repo_path": self.repo_path,
+            "copied_bytes": copied_bytes,
+            "copied_files": copied_files,
+        }
+
+        self.logger.info(
+            "Copied repository from %s to %s (%d files, %d bytes)",
+            source_path,
+            self.repo_path,
+            copied_files,
+            copied_bytes,
+        )
         return self.repo_path
 
     def load_from_zip(self, zip_path: str, target_dir: str | None = None) -> str:
@@ -181,6 +259,16 @@ class RepositoryLoader:
         # Get repository name from ZIP filename (without .zip extension)
         zip_basename = os.path.basename(zip_path)
         self.repo_name = os.path.splitext(zip_basename)[0]
+        self.repo_source_path = os.path.abspath(zip_path)
+        self.repo_load_mode = "zip"
+        self.repo_is_workspace_copy = True
+        self.last_load_stats = {
+            "mode": "zip",
+            "source_path": self.repo_source_path,
+            "repo_path": None,
+            "copied_bytes": 0,
+            "copied_files": 0,
+        }
 
         extract_path = self._prepare_repo_path(self.repo_name, target_dir)
 
@@ -204,6 +292,7 @@ class RepositoryLoader:
                 shutil.rmtree(root_dir)
 
             self.repo_path = extract_path
+            self.last_load_stats["repo_path"] = self.repo_path
 
             self.logger.info(f"Successfully extracted to {self.repo_path}")
 
@@ -373,6 +462,16 @@ class RepositoryLoader:
             "name": self.repo_name,
             "path": self.repo_path,
         }
+        if self.last_load_stats:
+            info.update(
+                {
+                    "load_mode": self.last_load_stats.get("mode"),
+                    "source_path": self.last_load_stats.get("source_path"),
+                    "workspace_copy": self.repo_is_workspace_copy,
+                    "copied_bytes": self.last_load_stats.get("copied_bytes", 0),
+                    "copied_files": self.last_load_stats.get("copied_files", 0),
+                }
+            )
 
         # Try to get git info
         try:

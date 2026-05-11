@@ -17,6 +17,7 @@ repository:
   clone_depth: 1  # Shallow clone for faster processing
   max_file_size_mb: 5  # Skip files larger than this
   backup_directory: "./repo_backup"  # Backup replaced repos before overwrite
+  local_source_mode: "in_place"  # "copy" keeps old workspace-copy isolation
   ignore_patterns:
     - "*.pyc"
     - "__pycache__"

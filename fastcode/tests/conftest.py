@@ -39,6 +39,18 @@ if os.getenv("MUTANT_UNDER_TEST"):
         settings(suppress_health_check=[HealthCheck.differing_executors]),
     )
     settings.load_profile("mutmut")
+elif not os.getenv("HYPOTHESIS_PROFILE"):
+    # The default suite runs many property tests under xdist and shared CI-like
+    # load. Wall-clock deadlines and generation-speed health checks make those
+    # tests flaky without improving correctness coverage.
+    settings.register_profile(
+        "fastcode",
+        settings(
+            deadline=None,
+            suppress_health_check=[HealthCheck.too_slow],
+        ),
+    )
+    settings.load_profile("fastcode")
 
 
 def _probe_ollama_embeddings(url: str, model: str) -> str | None:

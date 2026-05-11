@@ -159,8 +159,9 @@ Already-landed areas include:
   index-storage boundaries
 - explicit snapshot-file serializers in `store/snapshot.py` instead of routing
   persistence through `IRSnapshot.to_dict()` / `IRSnapshot.from_dict()`
-- compact snapshot symbol-index sidecars for query-time alias registration
-  without loading the whole `IRSnapshot` on current snapshots
+- compact snapshot symbol-index sidecars for query-time alias registration and
+  single-symbol record lookup without loading the whole `IRSnapshot` on current
+  snapshots
 
 Still incomplete:
 

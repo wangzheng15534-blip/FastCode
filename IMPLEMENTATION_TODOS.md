@@ -113,8 +113,10 @@ release-level implications.
   request instead of using loaded artifact handles plus compact graph/symbol
   indexes.
 - Query-time symbol-index registration now has a compact snapshot sidecar and
-  avoids full `IRSnapshot` loads for current snapshots. Legacy snapshots without
-  the sidecar still need a backfill or relational-fact read path.
+  avoids full `IRSnapshot` loads for current snapshots. Single-symbol
+  `find_symbol()` lookups can also return sidecar symbol records without
+  scanning a full snapshot. Legacy snapshots without the sidecar still need a
+  backfill or relational-fact read path.
 - Local repository indexing still copies a whole local working tree into the
   workspace before incremental planning, so repeated local runs can pay
   repository-size filesystem cost before discovering a small edit.
@@ -248,8 +250,8 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
   - `utils/vectors.py` now centralizes float32 vector/matrix ownership policy so view-oriented call sites do not mutate caller-owned arrays while sanitizing non-finite values
   - PostgreSQL relational fact persistence uses explicit typed payload serializers instead of repeated record `to_dict()` expansion
   - snapshot persistence writes a compact symbol-index sidecar, and query-time
-    snapshot serving can register symbol aliases from that sidecar instead of
-    full-loading the `IRSnapshot`
+    snapshot serving can register symbol aliases or return single-symbol
+    records from that sidecar instead of full-loading the `IRSnapshot`
 - Async endpoint hardening:
   - REST API repository load/index/cache-load/multi-index/upload paths offload blocking work with `asyncio.to_thread`
   - web UI upload and upload+index paths offload ZIP extraction, repository load, and indexing

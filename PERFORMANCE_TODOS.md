@@ -62,6 +62,9 @@ Implementation update, May 11, 2026:
 - Snapshot persistence now writes a compact symbol-index sidecar, and
   `QueryPipeline.query_snapshot()` uses it to register symbol aliases without a
   full `IRSnapshot` load when the sidecar is available.
+- The same compact sidecar now carries symbol records for `FastCode.find_symbol()`,
+  so current snapshots can answer single-symbol lookups without materializing
+  all snapshot units and symbols.
 
 - Incremental indexing can skip unchanged-file parse and embedding work, reuse
   changed-unit embeddings, merge changed AST IR with a previous snapshot, and
@@ -113,6 +116,8 @@ New or sharpened findings:
 - Query snapshot serving now uses compact snapshot symbol-index sidecars for
   symbol-index registration when available. Legacy snapshots without the
   sidecar still fall back to full snapshot load.
+- `FastCode.resolve_snapshot_symbol()` and `FastCode.find_symbol()` also use the
+  compact sidecar for alias maps and single-symbol records on current snapshots.
 - Local repository loading is not copy-minimal. `RepositoryLoader.load_from_path()`
   copies the whole working tree into the workspace before the incremental
   planner can decide that most files are unchanged.
@@ -659,6 +664,8 @@ TODO:
 - [x] Build query-time symbol indexes from compact symbol-index sidecars instead
   of full-loading `IRSnapshot` solely to register aliases when current snapshot
   artifacts are available.
+- [x] Serve `FastCode.find_symbol()` from compact sidecar symbol records when
+  available instead of full-loading the snapshot and scanning all symbols.
 - [ ] Backfill or derive compact symbol indexes for legacy snapshots that lack
   the sidecar, preferably from relational facts when available.
 - [ ] Add concurrent query benchmarks with and without background mutations.

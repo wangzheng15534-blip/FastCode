@@ -57,8 +57,11 @@ Implementation update through May 13, 2026:
 - Semantic resolver patching no longer clones IR objects through generic
   `to_dict() -> from_dict()` round trips, and the materialization guard now
   covers that patching path.
-- PostgreSQL relational fact full-rebuild persistence now batches inserts per
-  fact table; true delta fact persistence is still open.
+- PostgreSQL relational fact persistence now has a safe incremental delta path:
+  when a prior snapshot is known and the semantic frontier did not widen, it
+  copies unchanged rows from the previous snapshot and upserts only changed-path
+  rows. Full rebuild remains the fallback for widened/repair, missing prior
+  snapshot, and non-Postgres paths.
 - Snapshot persistence now writes a compact symbol-index sidecar, and
   `QueryPipeline.query_snapshot()` uses it to register symbol aliases without a
   full `IRSnapshot` load when the sidecar is available.
@@ -83,8 +86,9 @@ Implementation update through May 13, 2026:
   reuse persisted vector/BM25 and limited graph shards.
 - The active indexing path still rehydrates a full combined element list, builds
   full temporary vector/BM25/legacy graph artifacts, loads the previous full IR
-  snapshot for merge, writes full snapshot JSON, rebuilds whole IR graph
-  materializations, and rewrites relational fact rows for the whole snapshot.
+  snapshot for merge, writes full snapshot JSON, and rebuilds whole IR graph
+  materializations. PostgreSQL relational facts use a changed-path delta only
+  for safe incremental plans; other paths still fall back to full publication.
 - Vector flow uses NumPy/FAISS/pgvector in important places, but old list-vector
   paths, JSON/list embedding payloads, compression-vs-mmap tradeoffs, and
   fallback materialization paths still exist.
@@ -139,10 +143,11 @@ New or sharpened findings:
   vector-row append, and homogeneous `as_float32_matrix()` sequence conversion
   avoid the old row-list/`vstack` pattern, but memory-mapped shard handles and
   lazy unchanged-shard publication are still open.
-- PostgreSQL relational fact persistence remains whole-snapshot. The row-at-a-time
-  insert baseline found in this audit has been replaced with per-table batched
-  inserts on the full-rebuild path, but delta delete/upsert by changed path is
-  still open.
+- PostgreSQL relational fact persistence is no longer always whole-snapshot:
+  safe incremental plans copy unchanged previous rows and upsert changed-path
+  rows. Full rebuild still applies to widened/repair paths, missing prior
+  snapshots, and non-Postgres backends, and true file-shard-native IR snapshot
+  and graph persistence remain open.
 
 ## P0 - Make Incremental Update The Execution Model
 
@@ -229,25 +234,29 @@ Exit criteria:
 
 ### P0.3 Incremental IR Snapshot And Relational Fact Persistence
 
-**Gap:** changed AST IR is merged with the previous snapshot, but persistence
-still rewrites whole-snapshot surfaces.
+**Gap:** changed AST IR is merged with the previous snapshot, and PostgreSQL
+relational facts can now publish changed-path deltas for safe incremental
+plans, but core snapshot and graph persistence still rewrite whole-snapshot
+surfaces.
 
 Evidence:
 
 - Incremental AST IR narrows to changed paths before `build_ir_from_ast()`
-  (`fastcode/src/fastcode/indexing/pipeline.py:2580`).
+  (`fastcode/src/fastcode/indexing/pipeline.py:2971`).
 - The previous full snapshot is loaded and merged in memory
-  (`fastcode/src/fastcode/indexing/pipeline.py:2920`).
+  (`fastcode/src/fastcode/indexing/pipeline.py:3304`).
 - `apply_incremental_update()` merges list-shaped units, supports, relations,
   and embeddings (`fastcode/src/fastcode/indexing/incremental.py:344`).
 - `save_snapshot()` writes one full `ir_snapshot.json`
-  (`fastcode/src/fastcode/store/snapshot.py:963`).
-- `save_relational_facts()` deletes and reinserts all documents, symbols,
-  occurrences, edges, and attachments for the snapshot
-  (`fastcode/src/fastcode/store/snapshot.py:1694`).
+  (`fastcode/src/fastcode/store/snapshot.py:1034`).
+- `save_relational_facts_delta()` copies unchanged relational rows from the
+  previous snapshot and upserts changed-path rows for safe PostgreSQL
+  incremental plans (`fastcode/src/fastcode/store/snapshot.py:2277`), while
+  `save_relational_facts()` remains the full fallback
+  (`fastcode/src/fastcode/store/snapshot.py:1866`).
 - `IRGraphBuilder.build_graphs()` and `save_ir_graphs()` rebuild and persist
   whole IR graph payloads during indexing
-  (`fastcode/src/fastcode/indexing/pipeline.py:3248`).
+  (`fastcode/src/fastcode/indexing/pipeline.py:3629`).
 
 TODO:
 
@@ -255,9 +264,12 @@ TODO:
   that maps paths and stable unit ids to shard references.
 - [ ] Save changed IR shards and metadata deltas instead of rewriting a whole
   `ir_snapshot.json` on every incremental update.
-- [ ] Add relational fact delta operations: delete removed/modified-path facts,
-  upsert changed facts, preserve unchanged rows, and update snapshot-level
-  manifest tables atomically.
+- [x] Add PostgreSQL relational fact delta operations for safe incremental
+  plans: preserve unchanged rows by copying from the previous snapshot, exclude
+  changed/removed paths, and upsert changed-path facts.
+- [ ] Extend relational fact delta semantics to widened/repair flows and real
+  backend integration evidence, or explicitly keep those paths full-rebuild
+  with measured cost and release-gate limits.
 - [x] Batch PostgreSQL fact writes with `executemany`, `COPY`, or a backend
   equivalent on full rebuild paths; row-at-a-time fact insertion should not be
   the release-grade baseline.

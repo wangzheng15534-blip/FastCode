@@ -222,6 +222,9 @@ What already works:
 - persisted vector/BM25 path shards, plus conservative legacy graph path shards,
   can reuse compatible previous snapshot artifact files for unchanged paths
   under the new artifact key
+- PostgreSQL relational facts can publish safe changed-path deltas by copying
+  unchanged rows from the previous snapshot and upserting changed-path rows when
+  a prior snapshot is known and semantic scope did not widen
 - embeddings are deduplicated and cached with model-aware keys
 - helper-backed semantic resolvers can scope work to changed paths
 - package/path repair-frontier logic can scope semantic refresh and SCIP reruns
@@ -233,8 +236,9 @@ What already works:
 What is still missing before stable-release claims:
 
 - file-native artifact shard reuse as the primary execution model; persistence
-  reuse exists for vector/BM25 and conservative graph shards, but not yet for all
-  IR graph, relational fact, SCIP/tool, and temporary build surfaces
+  reuse exists for vector/BM25, conservative graph shards, and safe PostgreSQL
+  relational fact deltas, but not yet for IR graph, snapshot JSON,
+  widened/repair relational fact, SCIP/tool, and temporary build surfaces
 - local path loading is read-only and in-place by default, and hardlink
   workspace-copy mode avoids duplicating bytes on compatible filesystems; byte
   copy mode still needs content-addressed reuse before incremental planning

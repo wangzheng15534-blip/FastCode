@@ -75,7 +75,12 @@ This audit checked current source and regression tests directly, not git history
 - A turn-journal/context-compiler v0 exists: typed `EvidenceRef`, `ToolObservation`, `RiskState`, `AcceptanceContract`, `TurnIntent`, `TurnPlan`, `WorkingMemoryArtifact`, `TurnJournal`, and `HandoffArtifact`; typed cache records; REST/web/MCP facades for turn context, ref expansion, and handoff.
 
 **Still only partially implemented against the non-functional goals:**
-- Incremental update is not file-shard-native end to end. The pipeline still rehydrates a full combined element list and builds temporary whole-snapshot artifacts, but persisted vector/BM25 shards and conservative legacy graph shards now reuse previous artifact files for unchanged paths. Scoped SCIP still widens or falls back to repo/tool scope in important cases.
+- Incremental update is not file-shard-native end to end. The pipeline still
+  rehydrates a full combined element list and builds temporary whole-snapshot
+  artifacts, but persisted vector/BM25 shards, conservative legacy graph
+  shards, and safe PostgreSQL relational fact publication now reuse prior
+  snapshot work for unchanged paths. Scoped SCIP still widens or falls back to
+  repo/tool scope in important cases.
 - Embedding identity is still mostly local to `CodeEmbedder`; there is no shared `embedding_fingerprint` contract enforced uniformly across snapshots, vector stores, repository overviews, query embeddings, and PG/vector rows.
 - Snapshot artifact handles are closer to serving isolation: public
   `FastCode.query()`, `FastCode.query_snapshot()`, and `FastCode.query_stream()`
@@ -128,9 +133,12 @@ release-level implications.
   can isolate the workspace without duplicating file bytes on compatible
   filesystems. The remaining copy-minimization gap is content-addressed reuse
   for byte-copy fallback and explicit copy mode.
-- PostgreSQL relational fact persistence is still whole-snapshot. Full rebuild
-  inserts are now batched per table, but the production-storage path still lacks
-  delta writes by changed path.
+- PostgreSQL relational fact persistence now has a safe changed-path delta for
+  incremental plans with a prior snapshot and no semantic frontier widening:
+  unchanged rows are copied from the previous snapshot and changed-path rows are
+  upserted. Full rebuild remains for widened/repair flows, missing previous
+  snapshots, and non-Postgres paths, and real backend load evidence is still
+  required.
 
 **Release implication:** the project remains a hardened pre-release. The code
 has many real partial passes, but stable language around "incremental",
@@ -656,10 +664,17 @@ The template philosophy remains correct for Python: use one importable package w
 **Current failure modes:**
 - repository inventory and file hashing are still not represented by one canonical planner object across snapshot identity, incremental planning, SCIP language detection, file-artifact reuse, and publication.
 - `run_index_pipeline()` still rehydrates unchanged metadata into one full `elements` list and builds temporary whole-snapshot vector/BM25/legacy graph objects before persistence.
-- persisted vector/BM25 path shards reuse compatible previous artifact files for unchanged paths, and legacy graph shard reuse is intentionally conservative; IR graph and relational fact publication are still whole-snapshot.
+- persisted vector/BM25 path shards reuse compatible previous artifact files
+  for unchanged paths, and legacy graph shard reuse is intentionally
+  conservative; PostgreSQL relational facts have a safe changed-path delta, but
+  IR graph publication and snapshot JSON are still whole-snapshot.
 - optional SCIP has scoped paths, but `detect_scip_languages()` still walks the repository and unsupported/widened tool paths still invoke repo/package-scale indexers even when only one file changed.
 - file units now carry `content_hash` / `blob_oid` metadata, and the manifest-first prefilter now disables reuse when required fingerprints are missing; file identity is not yet the single shared planner anchor across inventory, snapshot diffing, SCIP scope, file-artifact stores, and publication.
-- unchanged files are skipped before parse/embedding, before changed-file AST merge, and before persisted vector/BM25 artifact-shard rewrites, but not yet before every relational fact, IR graph, compiler/indexer, or temporary artifact-build step.
+- unchanged files are skipped before parse/embedding, before changed-file AST
+  merge, before persisted vector/BM25 artifact-shard rewrites, and before safe
+  PostgreSQL relational fact upserts. They are not yet skipped before every IR
+  graph, compiler/indexer, repair/widened relational fact, or temporary
+  artifact-build step.
 
 **Required work:**
 - Promote the existing manifest-first prefilter into the canonical `plan_changes` stage:
@@ -910,7 +925,9 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - `utils/json.py:safe_jsonable()` recursively converts dict/list/set/object trees
   - `api/routes.py` and `api/web.py` now use explicit source/dialogue serializers, but other API payloads still pass through dict-shaped records
 - store persistence still serializes JSON payloads at DB boundaries, but some hot rows now avoid full object expansion:
-- `store/snapshot.py` relational facts now use explicit field serializers instead of `json.dumps(obj.to_dict())`
+- `store/snapshot.py` relational facts now use explicit field serializers
+  instead of `json.dumps(obj.to_dict())`, and safe PostgreSQL incremental
+  plans can copy unchanged previous rows plus upsert only changed-path rows
 - `store/snapshot.py` snapshot/snapshot-ref lookup helpers now use explicit typed row reconstruction and explicit compatibility serializers on active lookup paths
 - `store/snapshot.py` snapshot-file save/load paths now use store-owned explicit IR payload serializers instead of `IRSnapshot.to_dict()` / `IRSnapshot.from_dict()` round-trips, and non-`networkx` graph persistence now uses a narrow JSON walker instead of generic object normalization
 - active `store/snapshot.py` SCIP artifact, redo-task, and publish-outbox paths now materialize rows through explicit typed record adapters instead of `row_to_dict()`
@@ -938,6 +955,9 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - `indexing/pipeline.py` now materializes unit-artifact refresh/replace rows through explicit `CodeElement`/mapping serializers instead of a generic `to_dict()` fallback, and it no longer mutates input metadata while enriching those rows
 - snapshot indexing materialization is narrower:
   - `indexing/pipeline.py` now stages vector-store and PG retrieval payloads from explicit serialized element views instead of expanding each `CodeElement` with `to_dict()` and mutating live element metadata for transport-only fields
+  - PostgreSQL relational fact publication now avoids whole-table rewrite for
+    safe incremental plans by copying unchanged rows from the previous snapshot
+    and upserting only changed-path rows
 - retrieval result assembly is narrower:
   - `retrieval/hybrid.py` and `retrieval/core/fusion.py` now materialize result elements through explicit `serialize_code_element(...)` payloads instead of repeated `CodeElement.to_dict()` calls for keyword hits, file/type helpers, graph expansion, projected-only doc backfill, and BM25 persistence
   - `retrieval/iterative.py` now uses the same explicit serializer for agent-found file/class/function result rows instead of expanding full `CodeElement.to_dict()` payloads during selection-to-result conversion

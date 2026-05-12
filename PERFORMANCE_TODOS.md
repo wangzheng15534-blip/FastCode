@@ -16,7 +16,7 @@ unless they directly affect these three goals.
 FastCode has real partial passes, but the implementation is not yet
 performance-native end to end.
 
-Implementation update, May 11, 2026:
+Implementation update through May 13, 2026:
 
 - The active snapshot pipeline now scans a fingerprinted file inventory once
   and reuses it for repository info, incremental diffing, AST file units, and
@@ -68,6 +68,11 @@ Implementation update, May 11, 2026:
 - `FastCode` composition-root graph helpers now traverse compact
   `IRGraphView` handles with bounded native/generic adjacency expansion for
   callees, callers, and dependencies instead of calling NetworkX traversal.
+- MCP graph tools now use compact saved IR graph handles plus the snapshot
+  symbol sidecar for directed path, impact, caller, and Steiner questions when
+  current artifacts are available. Cached cluster reads can also format results
+  from the sidecar without loading the full snapshot; projection rebuilds and
+  legacy snapshots still fall back to full snapshot materialization.
 - Local repository indexing now defaults to read-only in-place loading for
   local paths, records whether a workspace copy was made, reports copied
   bytes/files when copy mode is requested, and refuses ref checkout against
@@ -84,8 +89,8 @@ Implementation update, May 11, 2026:
   paths, JSON/list embedding payloads, compression-vs-mmap tradeoffs, and
   fallback materialization paths still exist.
 - `IRGraphView` uses `python-igraph`, but NetworkX remains in active hot paths:
-  legacy graph building, IR merge matching, projection transforms, MCP graph
-  helpers, and compatibility persistence.
+  legacy graph building, IR merge matching, projection transforms, and
+  compatibility/fallback graph surfaces.
 - Existing perf benchmarks are useful baselines, but they do not yet enforce
   budgeted update cost, peak RSS, materialization count, bytes read/written, or
   graph-engine selection criteria.
@@ -116,10 +121,9 @@ New or sharpened findings:
   generic `to_dict() -> from_dict()` object clones and generic `safe_jsonable()`
   calls found in this audit have been replaced with explicit field copies and
   patch-local serializers.
-- MCP graph tools still bypass compact snapshot handles. `mcp/server.py` loads
-  a full `IRSnapshot` for graph tools, and `mcp/graph_tools.py` rebuilds
-  NetworkX graphs from that snapshot per request while resolving symbols
-  through repeated linear scans.
+- MCP graph tools now have a compact-artifact path for directed path, impact,
+  caller, and Steiner queries. Legacy snapshots, missing compact graph/symbol
+  artifacts, and projection rebuild fallbacks still load a full `IRSnapshot`.
 - Query snapshot serving now uses compact snapshot symbol-index sidecars for
   symbol-index registration when available. Legacy snapshots without the
   sidecar still fall back to full snapshot load.
@@ -503,9 +507,11 @@ Evidence:
 - `retrieval/hybrid.py` uses `IRGraphView.union()` when compact views are
   available, but falls back to NetworkX expansion otherwise
   (`fastcode/src/fastcode/retrieval/hybrid.py:278`).
-- `mcp/graph_tools.py` still calls NetworkX graph algorithms directly. Main
-  composition-root callees/callers/dependencies now use compact bounded graph
-  traversal when graph artifacts are available.
+- `mcp/graph_tools.py` still imports NetworkX for legacy compatibility
+  fallback, but directed path, impact, caller, and Steiner wrappers use compact
+  saved graph handles when available. Main composition-root
+  callees/callers/dependencies also use compact bounded graph traversal when
+  graph artifacts are available.
 
 TODO:
 
@@ -515,8 +521,10 @@ TODO:
   neighbor iteration, and undirected views without NetworkX conversion.
 - [x] Change active retrieval graph expansion to use compact reachability when
   compact graph handles exist.
-- [ ] Change MCP graph helpers and retrieval compatibility fallback paths to
-  avoid direct `nx.*` calls where compact graph handles exist.
+- [x] Change MCP directed path, impact, caller, and Steiner helpers to use
+  compact graph handles and sidecar symbol maps when available.
+- [ ] Change MCP projection rebuild and retrieval compatibility fallback paths
+  to avoid direct `nx.*` calls where compact graph handles exist.
 - [x] Change main composition-root callees/callers/dependencies helpers to use
   bounded compact graph traversal instead of direct NetworkX traversal.
 - [ ] Keep NetworkX only for explicit compatibility/export/debug surfaces.
@@ -695,20 +703,24 @@ Exit criteria:
 
 ### P0.16 Make Shell Graph Tools Artifact-Handle Native
 
-**Gap:** MCP graph helper paths still load full snapshots and materialize
-NetworkX graphs for per-request graph questions. Main composition-root
-callees/callers/dependencies now use compact graph handles on the primary path.
+**Gap:** MCP graph helper paths now have a compact primary path for directed
+path, impact, caller, and Steiner questions, but legacy snapshots, missing
+compact artifacts, and projection rebuild fallback still load full snapshots
+and may materialize NetworkX graphs. Main composition-root
+callees/callers/dependencies also use compact graph handles on the primary
+path.
 
 Evidence:
 
-- MCP graph tools call `fc.snapshot_store.load_snapshot(snapshot_id)` before
-  directed path, impact, cluster, Steiner, and caller computations
-  (`fastcode/src/fastcode/mcp/server.py:846`).
-- `mcp/graph_tools.py` rebuilds selected graphs with
-  `IRGraphBuilder().build_graphs(snapshot)` and composes NetworkX graphs per
-  request (`fastcode/src/fastcode/mcp/graph_tools.py:107`).
-- `resolve_unit_id()` and `format_path_node()` repeatedly scan `snapshot.units`
-  linearly (`fastcode/src/fastcode/mcp/graph_tools.py:54`).
+- MCP wrappers now first call `load_ir_graphs()` and
+  `load_snapshot_symbol_index_payload()` and use `GraphToolContext` when both
+  compact artifacts are present.
+- Directed path, impact, caller, and Steiner compact paths avoid
+  `load_snapshot()` and `IRGraphBuilder.build_graphs()`.
+- Cached cluster formatting can use the sidecar-backed context; cluster
+  projection rebuild still needs the full `IRSnapshot`.
+- Legacy fallback still rebuilds selected graphs with
+  `IRGraphBuilder().build_graphs(snapshot)` and composes NetworkX graphs.
 - `FastCode.get_graph_callees()`, `get_graph_callers()`, and
   `get_graph_dependencies()` now use bounded compact graph traversal when graph
   artifacts are available, with compatibility fallback only when compact graph
@@ -716,21 +728,23 @@ Evidence:
 
 TODO:
 
-- [ ] Route shell graph tools through `LoadedSnapshotArtifacts` and compact
-  `IRGraphView`/fact indexes when those artifacts exist.
-- [ ] Add per-snapshot symbol lookup maps for MCP graph tools instead of
-  repeated linear scans over full snapshot units.
+- [x] Route MCP directed path, impact, caller, and Steiner tools through compact
+  saved graph handles and sidecar-backed symbol maps when those artifacts exist.
+- [ ] Route MCP cluster projection rebuild and any future graph tools through
+  compact artifact handles where possible.
+- [x] Add per-snapshot symbol lookup maps for MCP graph tools instead of
+  repeated linear scans over full snapshot units on the compact path.
 - [x] Route main composition-root callees/callers/dependencies helpers through
   compact graph handles.
 - [ ] Keep full `IRSnapshot` + NetworkX rebuild only as an explicit
   compatibility fallback with materialization metrics and degraded reason.
-- [ ] Add MCP graph-tool regression tests that patch `load_snapshot()` or
+- [x] Add MCP graph-tool regression tests that patch `load_snapshot()` or
   `IRGraphBuilder.build_graphs()` to fail when compact handles are available.
 
 Exit criteria:
 
-- directed path, impact, caller, and dependency queries do not full-load
-  snapshots on the primary path
+- directed path, impact, caller, and Steiner queries do not full-load snapshots
+  on the primary path
 - graph tool cost scales with selected frontier/path size rather than full
   snapshot node count
 

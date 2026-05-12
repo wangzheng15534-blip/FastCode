@@ -170,9 +170,10 @@ Still incomplete:
 - semantic resolver patch application still copies whole IR collections, though
   it no longer uses generic dict round trips
 - materialization guard coverage is narrower than the full architecture target;
-  MCP graph helpers, projection transforms, snapshot persistence, and
-  query-time compact symbol-index registration still need explicit guard
-  treatment
+  projection transforms, snapshot persistence, and query-time compact
+  symbol-index registration still need explicit guard treatment. MCP graph
+  tools have focused compact-path regressions, but not a broad architecture
+  import/materialization guard.
 
 ## Indexing pipeline
 
@@ -272,9 +273,11 @@ Current hardened properties:
 Known serving/materialization gap:
 
 - public shell graph tools do not yet consistently use immutable artifact
-  handles or compact graph/symbol indexes; MCP graph helpers still full-load
-  snapshots or materialize NetworkX graphs per request, while main
-  composition-root graph helpers use compact graph handles on the primary path
+  handles or compact graph/symbol indexes. MCP directed path, impact, caller,
+  and Steiner tools use compact graph/symbol sidecars on current snapshots, but
+  legacy snapshots, missing compact artifacts, and projection rebuild fallback
+  still full-load snapshots or materialize NetworkX graphs. Main
+  composition-root graph helpers use compact graph handles on the primary path.
 
 ## Agent Context Integration
 

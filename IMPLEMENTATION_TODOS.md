@@ -97,9 +97,10 @@ release-level implications.
 **Newly recorded non-functional gaps:**
 - The materialization enforcement story is incomplete. The guard test covers
   selected hot files, semantic patching, and the main graph helper compact
-  traversal regression, while MCP graph helpers, projection transforms,
-  snapshot persistence, and query-time compact symbol-index registration can
-  still add materialization without failing that guard.
+  traversal regression. MCP graph tools now have focused compact-path
+  regressions, but projection transforms, snapshot persistence, and query-time
+  compact symbol-index registration can still add materialization without
+  failing an architecture-level guard.
 - Embedder laziness is no longer overclaimed for compatibility fingerprinting
   and all-cache-hit validation: those paths avoid provider startup when
   dimension is not configured. Provider batching and provider timing metrics
@@ -108,10 +109,11 @@ release-level implications.
   still copies whole snapshot collections, but the old generic
   `to_dict() -> from_dict()` clone path and generic JSON cleanup have been
   replaced with explicit field copies and patch-local serializers.
-- Shell graph tools are not aligned with compact graph design. MCP graph tools
-  full-load snapshots, rebuild NetworkX graphs, and linearly scan units per
-  request instead of using loaded artifact handles plus compact graph/symbol
-  indexes.
+- Shell graph tools are partially aligned with compact graph design. MCP
+  directed path, impact, caller, and Steiner tools now use saved IR graph
+  handles plus sidecar symbol maps when available; legacy snapshots, missing
+  compact artifacts, and projection rebuild fallback still load full snapshots
+  and may rebuild NetworkX graphs.
 - Query-time symbol-index registration now has a compact snapshot sidecar and
   avoids full `IRSnapshot` loads for current snapshots. Single-symbol
   `find_symbol()` lookups can also return sidecar symbol records without
@@ -993,6 +995,7 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 - graph path:
   - IR graph expansion now uses compact `IRGraphView` reachability on the active retrieval path when compact graph payloads are available
   - main composition-root callees/callers/dependencies now use compact bounded graph traversal when graph artifacts are available
+  - MCP directed path, impact, caller, and Steiner tools now use compact saved graph handles and sidecar symbol maps on current snapshots
   - projection graph algorithms still use `networkx`, which is a named compatibility/materialization boundary until a projection-native rewrite
   - compatibility `graph/build.py` loads now retain compact shard adjacency payloads and only materialize `networkx` lazily for save/merge/path/stats compatibility paths
   - snapshot IR graph storage/load no longer has to reconstruct full `networkx` graph objects for active retrieval; legacy node-link graph payloads remain supported
@@ -1273,6 +1276,9 @@ This item should be treated as the implementation slice of the broader P0.6a sch
   - `indexing/projection_transform.py` prefers `igraph` and falls back to `networkx`
   - main composition-root callees/callers/dependencies already use compact
     graph handles instead of importing NetworkX directly
+  - MCP graph tools still import `networkx` for legacy fallback, but the
+    directed path, impact, caller, and Steiner primary paths use compact saved
+    graph handles when available
 - this means the project currently pays:
   - dependency weight for both graph stacks
   - Python-object overhead in core graph operations

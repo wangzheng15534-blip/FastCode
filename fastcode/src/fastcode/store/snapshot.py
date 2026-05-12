@@ -1016,7 +1016,12 @@ class SnapshotStore:
                     "canonical": canonical,
                     "aliases": sorted(alias for alias in aliases if alias),
                     "names": names,
+                    "display_name": unit.display_name,
+                    "qualified_name": unit.qualified_name,
+                    "kind": unit.kind,
                     "path": unit.path or None,
+                    "start_line": unit.start_line,
+                    "language": unit.language,
                 }
             )
         return {

@@ -7,15 +7,20 @@ the production code extracted from mcp.server.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot
 from fastcode.mcp.graph_tools import (
+    GraphToolContext,
     compute_directed_path,
+    compute_directed_path_for_snapshot,
     compute_find_callers,
+    compute_find_callers_for_snapshot,
     compute_impact_analysis,
+    compute_impact_analysis_for_snapshot,
     compute_steiner_path,
+    compute_steiner_path_for_snapshot,
     extract_cluster_data,
     format_path_node,
     resolve_unit_id,
@@ -69,6 +74,144 @@ def _snapshot(units: list[IRCodeUnit], relations: list[IRRelation]) -> IRSnapsho
         units=units,
         relations=relations,
     )
+
+
+def _symbol_index_payload(
+    units: list[IRCodeUnit], snapshot_id: str
+) -> dict[str, object]:
+    return {
+        "schema_version": "snapshot_symbol_index.v1",
+        "snapshot_id": snapshot_id,
+        "symbols": [
+            {
+                "canonical": unit.unit_id,
+                "aliases": [
+                    alias
+                    for alias in {
+                        unit.unit_id,
+                        unit.primary_anchor_symbol_id,
+                        *unit.anchor_symbol_ids,
+                        *unit.candidate_anchor_symbol_ids,
+                    }
+                    if alias
+                ],
+                "names": [
+                    name for name in [unit.display_name, unit.qualified_name] if name
+                ],
+                "display_name": unit.display_name,
+                "qualified_name": unit.qualified_name,
+                "kind": unit.kind,
+                "path": unit.path,
+                "start_line": unit.start_line,
+            }
+            for unit in units
+            if unit.kind not in {"file", "doc"}
+        ],
+        "records": {
+            unit.unit_id: {
+                "symbol_id": unit.unit_id,
+                "display_name": unit.display_name,
+                "kind": unit.kind,
+                "path": unit.path,
+                "start_line": unit.start_line,
+            }
+            for unit in units
+            if unit.kind not in {"file", "doc"}
+        },
+    }
+
+
+def _graph_context(
+    units: list[IRCodeUnit],
+    relations: list[IRRelation],
+) -> GraphToolContext:
+    snapshot = _snapshot(units, relations)
+    graphs = IRGraphBuilder().build_graphs(snapshot)
+    payload = _symbol_index_payload(units, snapshot.snapshot_id)
+    return GraphToolContext.from_symbol_payload(
+        snapshot_id=snapshot.snapshot_id,
+        graphs=graphs,
+        payload=payload,
+    )
+
+
+def _compact_fc(
+    units: list[IRCodeUnit], relations: list[IRRelation]
+) -> SimpleNamespace:
+    snapshot = _snapshot(units, relations)
+    graphs = IRGraphBuilder().build_graphs(snapshot)
+    payload = _symbol_index_payload(units, snapshot.snapshot_id)
+
+    def _load_snapshot(_snapshot_id: str) -> IRSnapshot:
+        raise AssertionError("compact graph MCP path should not full-load IRSnapshot")
+
+    return SimpleNamespace(
+        snapshot_id=snapshot.snapshot_id,
+        snapshot_store=SimpleNamespace(
+            load_ir_graphs=lambda _snapshot_id: graphs,
+            load_snapshot_symbol_index_payload=lambda _snapshot_id: payload,
+            load_snapshot=_load_snapshot,
+        ),
+    )
+
+
+class TestCompactGraphToolContext:
+    def test_wrappers_use_compact_artifacts_without_snapshot_or_graph_rebuild(self):
+        units = [
+            _unit("u:A", name="entry", qualified_name="pkg.entry", path="a.py"),
+            _unit("u:B", name="middle", path="b.py"),
+            _unit("u:C", name="target", path="c.py"),
+        ]
+        rels = [
+            _rel("u:A", "u:B", "call"),
+            _rel("u:B", "u:C", "call"),
+        ]
+        fc = _compact_fc(units, rels)
+
+        with patch.object(
+            IRGraphBuilder,
+            "build_graphs",
+            side_effect=AssertionError(
+                "compact graph MCP path must not rebuild graphs"
+            ),
+        ):
+            path = compute_directed_path_for_snapshot(
+                fc,
+                "pkg.entry",
+                "target",
+                fc.snapshot_id,
+            )
+            impact = compute_impact_analysis_for_snapshot(
+                fc,
+                "target",
+                fc.snapshot_id,
+            )
+            callers = compute_find_callers_for_snapshot(
+                fc,
+                "target",
+                fc.snapshot_id,
+            )
+            steiner = compute_steiner_path_for_snapshot(
+                fc,
+                ["entry", "target"],
+                fc.snapshot_id,
+            )
+
+        assert path["found"] is True
+        assert path["path_length"] == 2
+        assert [node["display_name"] for node in path["path"]] == [
+            "entry",
+            "middle",
+            "target",
+        ]
+        assert impact["total_count"] == 2
+        assert callers["total_count"] == 2
+        assert steiner["found"] is True
+        assert {node["symbol_id"] for node in steiner["nodes"]} == {
+            "u:A",
+            "u:B",
+            "u:C",
+        }
 
 
 # ===========================================================================

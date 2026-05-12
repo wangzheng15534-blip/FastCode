@@ -35,11 +35,11 @@ from mcp.server.fastmcp import FastMCP
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.main.fastcode import FastCode
 from fastcode.mcp.graph_tools import (
-    compute_directed_path,
-    compute_find_callers,
-    compute_impact_analysis,
-    compute_leiden_clusters,
-    compute_steiner_path,
+    compute_directed_path_for_snapshot,
+    compute_find_callers_for_snapshot,
+    compute_impact_analysis_for_snapshot,
+    compute_leiden_clusters_for_snapshot,
+    compute_steiner_path_for_snapshot,
 )
 
 # ---------------------------------------------------------------------------
@@ -843,22 +843,15 @@ def directed_path(
     import json
 
     fc = _get_fastcode()
-    snapshot = fc.snapshot_store.load_snapshot(snapshot_id)
-    if not snapshot:
-        return json.dumps(
-            {
-                "found": False,
-                "path": [],
-                "path_length": 0,
-                "error": f"Snapshot not found: {snapshot_id}",
-            }
-        )
-
-    if graph_types is None:
-        graph_types = ["call", "dependency"]
-
     return json.dumps(
-        compute_directed_path(from_symbol, to_symbol, snapshot, max_hops, graph_types)
+        compute_directed_path_for_snapshot(
+            fc,
+            from_symbol,
+            to_symbol,
+            snapshot_id,
+            max_hops,
+            graph_types,
+        )
     )
 
 
@@ -888,20 +881,15 @@ def impact_analysis(
     import json
 
     fc = _get_fastcode()
-    snapshot = fc.snapshot_store.load_snapshot(snapshot_id)
-    if not snapshot:
-        return json.dumps(
-            {
-                "affected": [],
-                "total_count": 0,
-                "error": f"Snapshot not found: {snapshot_id}",
-            }
+    return json.dumps(
+        compute_impact_analysis_for_snapshot(
+            fc,
+            symbol,
+            snapshot_id,
+            max_hops,
+            graph_types,
         )
-
-    if graph_types is None:
-        graph_types = ["call", "dependency"]
-
-    return json.dumps(compute_impact_analysis(symbol, snapshot, max_hops, graph_types))
+    )
 
 
 @mcp.tool()
@@ -923,18 +911,7 @@ def leiden_clusters(
     import json
 
     fc = _get_fastcode()
-    snapshot = fc.snapshot_store.load_snapshot(snapshot_id)
-    if not snapshot:
-        return json.dumps(
-            {
-                "clusters": [],
-                "xrefs": [],
-                "total_clusters": 0,
-                "error": f"Snapshot not found: {snapshot_id}",
-            }
-        )
-
-    return json.dumps(compute_leiden_clusters(snapshot, fc))
+    return json.dumps(compute_leiden_clusters_for_snapshot(fc, snapshot_id))
 
 
 @mcp.tool()
@@ -957,18 +934,7 @@ def steiner_path(
     import json
 
     fc = _get_fastcode()
-    snapshot = fc.snapshot_store.load_snapshot(snapshot_id)
-    if not snapshot:
-        return json.dumps(
-            {
-                "found": False,
-                "nodes": [],
-                "edges": [],
-                "error": f"Snapshot not found: {snapshot_id}",
-            }
-        )
-
-    return json.dumps(compute_steiner_path(terminals, snapshot))
+    return json.dumps(compute_steiner_path_for_snapshot(fc, terminals, snapshot_id))
 
 
 @mcp.tool()
@@ -993,17 +959,9 @@ def find_callers(
     import json
 
     fc = _get_fastcode()
-    snapshot = fc.snapshot_store.load_snapshot(snapshot_id)
-    if not snapshot:
-        return json.dumps(
-            {
-                "callers": [],
-                "total_count": 0,
-                "error": f"Snapshot not found: {snapshot_id}",
-            }
-        )
-
-    return json.dumps(compute_find_callers(symbol, snapshot, max_hops))
+    return json.dumps(
+        compute_find_callers_for_snapshot(fc, symbol, snapshot_id, max_hops)
+    )
 
 
 @mcp.tool()

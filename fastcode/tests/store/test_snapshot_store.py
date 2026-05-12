@@ -691,7 +691,12 @@ class TestSnapshotSaveLoadProperties:
                 "canonical": "sym:auth",
                 "aliases": ["ast:auth", "scip:auth", "sym:auth"],
                 "names": ["AuthService", "pkg.auth.AuthService"],
+                "display_name": "AuthService",
+                "qualified_name": "pkg.auth.AuthService",
+                "kind": "class",
                 "path": "src/auth.py",
+                "start_line": None,
+                "language": "python",
             }
         ]
         assert store.load_snapshot_symbol_record(

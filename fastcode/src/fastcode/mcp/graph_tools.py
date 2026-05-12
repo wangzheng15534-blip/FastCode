@@ -12,6 +12,9 @@ from __future__ import annotations
 import builtins
 import contextlib
 from collections import deque
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from itertools import pairwise
 from typing import Any, cast
 
 import networkx as nx
@@ -53,17 +56,337 @@ _ALL_GRAPH_ATTRS = [
     "containment_graph",
 ]
 
+
+def _empty_str_map() -> dict[str, str]:
+    return {}
+
+
+def _empty_record_map() -> dict[str, dict[str, Any]]:
+    return {}
+
+
+@dataclass
+class GraphToolContext:
+    """Compact graph-tool view backed by saved graph and symbol sidecars."""
+
+    snapshot_id: str
+    graphs: Any
+    canonical_by_alias: dict[str, str] = field(default_factory=_empty_str_map)
+    canonical_by_name: dict[str, str] = field(default_factory=_empty_str_map)
+    canonical_by_lower_name: dict[str, str] = field(default_factory=_empty_str_map)
+    records_by_id: dict[str, dict[str, Any]] = field(default_factory=_empty_record_map)
+
+    @classmethod
+    def from_symbol_payload(
+        cls,
+        *,
+        snapshot_id: str,
+        graphs: Any,
+        payload: Mapping[str, Any],
+    ) -> GraphToolContext:
+        context = cls(snapshot_id=snapshot_id, graphs=graphs)
+        for item in _sequence_items(payload.get("symbols")):
+            if not isinstance(item, Mapping):
+                continue
+            item_payload = cast("Mapping[str, Any]", item)
+            canonical = _text_or_none(item_payload.get("canonical"))
+            if not canonical:
+                continue
+            names = _string_items(item_payload.get("names"))
+            display_name = _text_or_none(item_payload.get("display_name")) or (
+                names[0] if names else None
+            )
+            qualified_name = _text_or_none(item_payload.get("qualified_name"))
+            if qualified_name is None:
+                qualified_name = next(
+                    (name for name in names if name != display_name),
+                    None,
+                )
+            aliases = {canonical}
+            aliases.update(_string_items(item_payload.get("aliases")))
+            for alias in aliases:
+                context.canonical_by_alias[alias] = canonical
+
+            context._register_name(display_name, canonical)
+            context._register_name(qualified_name, canonical)
+            for name in names:
+                context._register_name(name, canonical)
+
+            context.records_by_id[canonical] = {
+                "symbol_id": canonical,
+                "display_name": display_name,
+                "kind": _text_or_none(item_payload.get("kind")),
+                "path": _text_or_none(item_payload.get("path")),
+                "start_line": _int_or_none(item_payload.get("start_line")),
+            }
+
+        raw_records = payload.get("records")
+        if isinstance(raw_records, Mapping):
+            records_payload = cast("Mapping[str, Any]", raw_records)
+            for key, record_value in records_payload.items():
+                if not isinstance(record_value, Mapping):
+                    continue
+                record = cast("Mapping[str, Any]", record_value)
+                record_symbol = _text_or_none(record.get("symbol_id")) or str(key)
+                canonical = (
+                    context.canonical_by_alias.get(record_symbol)
+                    or context.canonical_by_alias.get(str(key))
+                    or record_symbol
+                )
+                context._merge_record(canonical, record)
+
+        return context
+
+    def _register_name(self, name: str | None, canonical: str) -> None:
+        if not name:
+            return
+        self.canonical_by_name.setdefault(name, canonical)
+        self.canonical_by_lower_name.setdefault(name.lower(), canonical)
+
+    def _merge_record(self, canonical: str, record: Mapping[str, Any]) -> None:
+        existing = self.records_by_id.setdefault(
+            canonical,
+            {
+                "symbol_id": canonical,
+                "display_name": None,
+                "kind": None,
+                "path": None,
+                "start_line": None,
+            },
+        )
+        for key in ("display_name", "kind", "path"):
+            value = _text_or_none(record.get(key))
+            if value and not existing.get(key):
+                existing[key] = value
+        start_line = _int_or_none(record.get("start_line"))
+        if start_line is not None and existing.get("start_line") is None:
+            existing["start_line"] = start_line
+
+    def resolve_unit_id(self, query: str) -> str | None:
+        if query in self.canonical_by_alias:
+            return self.canonical_by_alias[query]
+        if query in self.records_by_id or _graphs_contain(self.graphs, query):
+            return query
+        if query in self.canonical_by_name:
+            return self.canonical_by_name[query]
+        return self.canonical_by_lower_name.get(query.lower())
+
+    def format_node(self, unit_id: str) -> dict[str, Any]:
+        record = self.records_by_id.get(unit_id)
+        if record is None:
+            return {
+                "symbol_id": unit_id,
+                "display_name": None,
+                "kind": None,
+                "path": None,
+                "start_line": None,
+            }
+        return {
+            "symbol_id": unit_id,
+            "display_name": record.get("display_name"),
+            "kind": record.get("kind"),
+            "path": record.get("path"),
+            "start_line": record.get("start_line"),
+        }
+
+
+class _CombinedGraph:
+    def __init__(self, graphs: Any, graph_types: Iterable[str]) -> None:
+        self._items: list[tuple[str, Any]] = []
+        for graph_type in graph_types:
+            attr = GRAPH_TYPE_MAP.get(graph_type)
+            if not attr:
+                continue
+            graph = getattr(graphs, attr, None)
+            if graph is not None:
+                self._items.append((graph_type, graph))
+
+    def number_of_nodes(self) -> int:
+        total = 0
+        for _, graph in self._items:
+            count = getattr(graph, "number_of_nodes", None)
+            if callable(count):
+                count_value: Any = count()
+                total += int(count_value)
+        return total
+
+    def __contains__(self, node: object) -> bool:
+        return isinstance(node, str) and any(
+            _graph_contains(graph, node) for _, graph in self._items
+        )
+
+    def successors(self, node: str) -> list[str]:
+        return _unique_neighbors(
+            neighbor
+            for _, graph in self._items
+            for neighbor in _graph_neighbors(graph, node, "successors")
+        )
+
+    def predecessors(self, node: str) -> list[str]:
+        return _unique_neighbors(
+            neighbor
+            for _, graph in self._items
+            for neighbor in _graph_neighbors(graph, node, "predecessors")
+        )
+
+    def undirected_neighbors(self, node: str) -> list[str]:
+        return _unique_neighbors([*self.successors(node), *self.predecessors(node)])
+
+    def edge_types(self, source: str, target: str) -> list[str]:
+        edge_types: list[str] = []
+        for graph_type, graph in self._items:
+            has_edge = getattr(graph, "has_edge", None)
+            if callable(has_edge) and bool(has_edge(source, target)):
+                edge_types.append(graph_type)
+        return edge_types
+
+    def undirected_edge_types(self, source: str, target: str) -> list[str]:
+        return sorted(
+            {*self.edge_types(source, target), *self.edge_types(target, source)}
+        )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def resolve_unit_id(query: str, snapshot: IRSnapshot) -> str | None:
+def _sequence_items(value: Any) -> Sequence[Any]:
+    if isinstance(value, Sequence) and not isinstance(
+        value,
+        (str, bytes, bytearray, memoryview),
+    ):
+        return cast("Sequence[Any]", value)
+    if isinstance(value, (set, frozenset)):
+        return tuple(cast("Iterable[Any]", value))
+    return ()
+
+
+def _string_items(value: Any) -> list[str]:
+    return [str(item) for item in _sequence_items(value) if item]
+
+
+def _text_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if text else None
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _graph_contains(graph: Any, node: str) -> bool:
+    try:
+        return node in graph
+    except TypeError:
+        nodes = getattr(graph, "nodes", None)
+        if callable(nodes):
+            node_values: Any = nodes()
+            return node in {str(item) for item in node_values}
+    return False
+
+
+def _graphs_contain(graphs: Any, node: str) -> bool:
+    return any(
+        _graph_contains(getattr(graphs, attr, None), node) for attr in _ALL_GRAPH_ATTRS
+    )
+
+
+def _graph_neighbors(graph: Any, node: str, method_name: str) -> list[str]:
+    method = getattr(graph, method_name, None)
+    if not callable(method):
+        return []
+    try:
+        neighbor_values: Any = method(node)
+        return [str(neighbor) for neighbor in neighbor_values]
+    except Exception:
+        return []
+
+
+def _unique_neighbors(neighbors: Iterable[Any]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for neighbor in neighbors:
+        neighbor_id = str(neighbor)
+        if neighbor_id in seen:
+            continue
+        seen.add(neighbor_id)
+        result.append(neighbor_id)
+    return result
+
+
+def _shortest_path(
+    graph: _CombinedGraph,
+    source: str,
+    target: str,
+    *,
+    max_hops: int | None = None,
+    undirected: bool = False,
+) -> list[str] | None:
+    if source == target:
+        return [source]
+    queue: deque[list[str]] = deque([[source]])
+    visited: set[str] = {source}
+    while queue:
+        path = queue.popleft()
+        if max_hops is not None and len(path) - 1 >= max_hops:
+            continue
+        node = path[-1]
+        neighbors = (
+            graph.undirected_neighbors(node) if undirected else graph.successors(node)
+        )
+        for neighbor in neighbors:
+            if neighbor in visited:
+                continue
+            next_path = [*path, neighbor]
+            if neighbor == target:
+                return next_path
+            visited.add(neighbor)
+            queue.append(next_path)
+    return None
+
+
+def _distances_within(
+    graph: _CombinedGraph,
+    seed: str,
+    max_hops: int,
+    *,
+    direction: str,
+) -> dict[str, int]:
+    distances: dict[str, int] = {seed: 0}
+    queue: deque[str] = deque([seed])
+    while queue:
+        node = queue.popleft()
+        distance = distances[node]
+        if distance >= max_hops:
+            continue
+        neighbors = (
+            graph.predecessors(node) if direction == "in" else graph.successors(node)
+        )
+        for neighbor in neighbors:
+            if neighbor in distances:
+                continue
+            distances[neighbor] = distance + 1
+            queue.append(neighbor)
+    return {node: distance for node, distance in distances.items() if node != seed}
+
+
+def resolve_unit_id(query: str, snapshot: IRSnapshot | GraphToolContext) -> str | None:
     """Resolve a symbol query to a unit_id from snapshot units.
 
     Tries exact unit_id, then display_name, then qualified_name,
     then case-insensitive display_name.  Returns the first match or None.
     """
+    if isinstance(snapshot, GraphToolContext):
+        return snapshot.resolve_unit_id(query)
+
     for unit in snapshot.units:
         if unit.unit_id == query:
             return unit.unit_id
@@ -80,8 +403,13 @@ def resolve_unit_id(query: str, snapshot: IRSnapshot) -> str | None:
     return None
 
 
-def format_path_node(unit_id: str, snapshot: IRSnapshot) -> dict[str, Any]:
+def format_path_node(
+    unit_id: str, snapshot: IRSnapshot | GraphToolContext
+) -> dict[str, Any]:
     """Build a metadata dict for a graph node."""
+    if isinstance(snapshot, GraphToolContext):
+        return snapshot.format_node(unit_id)
+
     for unit in snapshot.units:
         if unit.unit_id == unit_id:
             return {
@@ -145,7 +473,7 @@ def build_combined_graph(
 def compute_directed_path(
     from_symbol: str,
     to_symbol: str,
-    snapshot: IRSnapshot,
+    snapshot: IRSnapshot | GraphToolContext,
     max_hops: int = 5,
     graph_types: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -185,6 +513,71 @@ def compute_directed_path(
             "found": True,
             "path": [format_path_node(from_id, snapshot)],
             "path_length": 0,
+            "error": None,
+        }
+
+    if isinstance(snapshot, GraphToolContext):
+        combined_view = _CombinedGraph(snapshot.graphs, graph_types)
+        if combined_view.number_of_nodes() == 0:
+            return {
+                "found": False,
+                "path": [],
+                "path_length": 0,
+                "error": "Selected graph types are empty (no nodes or edges).",
+            }
+        if from_id not in combined_view or to_id not in combined_view:
+            missing: list[str] = []
+            if from_id not in combined_view:
+                missing.append(from_symbol)
+            if to_id not in combined_view:
+                missing.append(to_symbol)
+            return {
+                "found": False,
+                "path": [],
+                "path_length": 0,
+                "error": f"Symbol(s) not in graph: {missing}",
+            }
+
+        compact_path = _shortest_path(
+            combined_view,
+            from_id,
+            to_id,
+            max_hops=max_hops + 1,
+        )
+        if compact_path is None:
+            reverse_path = _shortest_path(
+                combined_view,
+                to_id,
+                from_id,
+                max_hops=max_hops + 1,
+            )
+            if reverse_path is not None:
+                return {
+                    "found": False,
+                    "path": [],
+                    "path_length": 0,
+                    "error": (
+                        f"No directed path from '{from_symbol}' to '{to_symbol}'. "
+                        f"A reverse path exists (from '{to_symbol}' to '{from_symbol}')."
+                    ),
+                }
+            return {
+                "found": False,
+                "path": [],
+                "path_length": 0,
+                "error": f"No directed path between '{from_symbol}' and '{to_symbol}' within max_hops={max_hops}.",
+            }
+        if len(compact_path) - 1 > max_hops:
+            return {
+                "found": False,
+                "path": [],
+                "path_length": len(compact_path) - 1,
+                "error": f"Shortest path length {len(compact_path) - 1} exceeds max_hops={max_hops}.",
+            }
+        return {
+            "found": True,
+            "path": [format_path_node(nid, snapshot) for nid in compact_path],
+            "path_length": len(compact_path) - 1,
             "error": None,
         }
 
@@ -252,7 +645,7 @@ def compute_directed_path(
 
 def compute_impact_analysis(
     symbol: str,
-    snapshot: IRSnapshot,
+    snapshot: IRSnapshot | GraphToolContext,
     max_hops: int = 3,
     graph_types: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -275,6 +668,40 @@ def compute_impact_analysis(
             "total_count": 0,
             "error": f"Symbol not found: {symbol}",
         }
+
+    if isinstance(snapshot, GraphToolContext):
+        combined_view = _CombinedGraph(snapshot.graphs, graph_types)
+        if combined_view.number_of_nodes() == 0:
+            return {
+                "affected": [],
+                "total_count": 0,
+                "error": "Selected graph types are empty (no nodes or edges).",
+            }
+        if unit_id not in combined_view:
+            return {
+                "affected": [],
+                "total_count": 0,
+                "error": f"Symbol not in graph: {symbol}",
+            }
+
+        visited = _distances_within(
+            combined_view,
+            unit_id,
+            max_hops,
+            direction="in",
+        )
+        affected: list[dict[str, Any]] = []
+        for nid, dist in sorted(visited.items(), key=lambda kv: kv[1]):
+            node_info = format_path_node(nid, snapshot)
+            node_info["distance"] = dist
+            edge_types: set[str] = set()
+            for successor in combined_view.successors(nid):
+                if successor in visited or successor == unit_id:
+                    edge_types.update(combined_view.edge_types(nid, successor))
+            node_info["edge_types"] = sorted(edge_types)
+            affected.append(node_info)
+
+        return {"affected": affected, "total_count": len(affected), "error": None}
 
     graphs = IRGraphBuilder().build_graphs(snapshot)
     combined: nx.DiGraph[str] | None = None
@@ -402,7 +829,7 @@ def compute_leiden_clusters(
 
 def compute_steiner_path(
     terminals: list[str],
-    snapshot: IRSnapshot,
+    snapshot: IRSnapshot | GraphToolContext,
 ) -> dict[str, Any]:
     """Find a small undirected explanatory subgraph connecting terminal symbols."""
     if not terminals or len(terminals) < 2:
@@ -434,6 +861,74 @@ def compute_steiner_path(
         terminal_ids.append(tid)
 
     terminal_ids = list(dict.fromkeys(terminal_ids))
+
+    if isinstance(snapshot, GraphToolContext):
+        combined_view = _CombinedGraph(snapshot.graphs, VALID_GRAPH_TYPES)
+        if combined_view.number_of_nodes() == 0:
+            return {
+                "found": False,
+                "nodes": [],
+                "edges": [],
+                "error": "Graph is empty (no nodes or edges).",
+            }
+        missing = [
+            t
+            for t, tid in zip(terminals, terminal_ids, strict=False)
+            if tid not in combined_view
+        ]
+        if missing:
+            return {
+                "found": False,
+                "nodes": [],
+                "edges": [],
+                "error": f"Symbol(s) not in graph: {missing}",
+            }
+        if len(terminal_ids) == 1:
+            node = format_path_node(terminal_ids[0], snapshot)
+            return {"found": True, "nodes": [node], "edges": [], "error": None}
+
+        tree_nodes: set[str] = {terminal_ids[0]}
+        tree_edges: list[tuple[str, str]] = []
+        for terminal_id in terminal_ids[1:]:
+            best_path: list[str] | None = None
+            for existing in sorted(tree_nodes):
+                path = _shortest_path(
+                    combined_view,
+                    existing,
+                    terminal_id,
+                    undirected=True,
+                )
+                if path is None:
+                    continue
+                if best_path is None or len(path) < len(best_path):
+                    best_path = path
+            if best_path is None:
+                return {
+                    "found": False,
+                    "nodes": [],
+                    "edges": [],
+                    "error": "No connecting path found for all terminals.",
+                }
+            tree_nodes.update(best_path)
+            tree_edges.extend(pairwise(best_path))
+
+        nodes = [format_path_node(node_id, snapshot) for node_id in sorted(tree_nodes)]
+        seen_edges: set[tuple[str, str]] = set()
+        edges: list[dict[str, str]] = []
+        for source, target in tree_edges:
+            edge_key = (min(source, target), max(source, target))
+            if edge_key in seen_edges:
+                continue
+            seen_edges.add(edge_key)
+            edge_types = combined_view.undirected_edge_types(source, target)
+            edges.append(
+                {
+                    "from": source,
+                    "to": target,
+                    "type": "+".join(edge_types) if edge_types else "unknown",
+                }
+            )
+        return {"found": True, "nodes": nodes, "edges": edges, "error": None}
 
     graphs = IRGraphBuilder().build_graphs(snapshot)
     undirected: nx.Graph[str] | None = None
@@ -532,13 +1027,31 @@ def compute_steiner_path(
 
 def compute_find_callers(
     symbol: str,
-    snapshot: IRSnapshot,
+    snapshot: IRSnapshot | GraphToolContext,
     max_hops: int = 2,
 ) -> dict[str, Any]:
     """Find all symbols that call the given symbol (BFS on reversed call graph)."""
     unit_id = resolve_unit_id(symbol, snapshot)
     if not unit_id:
         return {"callers": [], "total_count": 0, "error": f"Symbol not found: {symbol}"}
+
+    if isinstance(snapshot, GraphToolContext):
+        call_view = _CombinedGraph(snapshot.graphs, ["call"])
+        if call_view.number_of_nodes() == 0:
+            return {"callers": [], "total_count": 0, "error": "Call graph is empty."}
+        if unit_id not in call_view:
+            return {
+                "callers": [],
+                "total_count": 0,
+                "error": f"Symbol not in call graph: {symbol}",
+            }
+        visited = _distances_within(call_view, unit_id, max_hops, direction="in")
+        callers: list[dict[str, Any]] = []
+        for nid, dist in sorted(visited.items(), key=lambda kv: kv[1]):
+            node_info = format_path_node(nid, snapshot)
+            node_info["distance"] = dist
+            callers.append(node_info)
+        return {"callers": callers, "total_count": len(callers), "error": None}
 
     graphs = IRGraphBuilder().build_graphs(snapshot)
     call_g = graphs.call_graph
@@ -578,6 +1091,178 @@ def compute_find_callers(
     return {"callers": callers, "total_count": len(callers), "error": None}
 
 
+def load_graph_tool_context(fc: object, snapshot_id: str) -> GraphToolContext | None:
+    snapshot_store = getattr(fc, "snapshot_store", None)
+    if snapshot_store is None:
+        return None
+    load_graphs = getattr(snapshot_store, "load_ir_graphs", None)
+    load_symbols = getattr(snapshot_store, "load_snapshot_symbol_index_payload", None)
+    if not callable(load_graphs) or not callable(load_symbols):
+        return None
+    graphs = load_graphs(snapshot_id)
+    if graphs is None:
+        return None
+    payload = load_symbols(snapshot_id)
+    if not isinstance(payload, Mapping):
+        return None
+    payload_mapping = cast("Mapping[str, Any]", payload)
+    return GraphToolContext.from_symbol_payload(
+        snapshot_id=snapshot_id,
+        graphs=graphs,
+        payload=payload_mapping,
+    )
+
+
+def _load_snapshot(fc: object, snapshot_id: str) -> IRSnapshot | None:
+    snapshot_store = getattr(fc, "snapshot_store", None)
+    if snapshot_store is None:
+        return None
+    load_snapshot = getattr(snapshot_store, "load_snapshot", None)
+    if not callable(load_snapshot):
+        return None
+    snapshot = load_snapshot(snapshot_id)
+    return cast("IRSnapshot | None", snapshot)
+
+
+def compute_directed_path_for_snapshot(
+    fc: object,
+    from_symbol: str,
+    to_symbol: str,
+    snapshot_id: str,
+    max_hops: int = 5,
+    graph_types: list[str] | None = None,
+) -> dict[str, Any]:
+    context = load_graph_tool_context(fc, snapshot_id)
+    if context is not None:
+        return compute_directed_path(
+            from_symbol,
+            to_symbol,
+            context,
+            max_hops,
+            graph_types,
+        )
+    snapshot = _load_snapshot(fc, snapshot_id)
+    if not snapshot:
+        return {
+            "found": False,
+            "path": [],
+            "path_length": 0,
+            "error": f"Snapshot not found: {snapshot_id}",
+        }
+    if graph_types is None:
+        graph_types = ["call", "dependency"]
+    return compute_directed_path(
+        from_symbol,
+        to_symbol,
+        snapshot,
+        max_hops,
+        graph_types,
+    )
+
+
+def compute_impact_analysis_for_snapshot(
+    fc: object,
+    symbol: str,
+    snapshot_id: str,
+    max_hops: int = 3,
+    graph_types: list[str] | None = None,
+) -> dict[str, Any]:
+    context = load_graph_tool_context(fc, snapshot_id)
+    if context is not None:
+        return compute_impact_analysis(symbol, context, max_hops, graph_types)
+    snapshot = _load_snapshot(fc, snapshot_id)
+    if not snapshot:
+        return {
+            "affected": [],
+            "total_count": 0,
+            "error": f"Snapshot not found: {snapshot_id}",
+        }
+    if graph_types is None:
+        graph_types = ["call", "dependency"]
+    return compute_impact_analysis(symbol, snapshot, max_hops, graph_types)
+
+
+def _compute_cached_leiden_clusters(
+    fc: object,
+    context: GraphToolContext,
+) -> dict[str, Any] | None:
+    projection_store = getattr(fc, "projection_store", None)
+    if projection_store is None or not getattr(projection_store, "enabled", False):
+        return None
+    from ..ir.projection import ProjectionScope
+
+    scope = ProjectionScope(
+        scope_kind="full",
+        snapshot_id=context.snapshot_id,
+        scope_key="full",
+    )
+    cached_id = projection_store.find_cached_projection_id(scope, "default")
+    if not cached_id:
+        return None
+    l1_data = projection_store.get_layer(cached_id, "L1")
+    if not l1_data:
+        return None
+    return extract_cluster_data(l1_data, context)
+
+
+def compute_leiden_clusters_for_snapshot(
+    fc: object,
+    snapshot_id: str,
+) -> dict[str, Any]:
+    context = load_graph_tool_context(fc, snapshot_id)
+    if context is not None:
+        cached = _compute_cached_leiden_clusters(fc, context)
+        if cached is not None:
+            return cached
+    snapshot = _load_snapshot(fc, snapshot_id)
+    if not snapshot:
+        return {
+            "clusters": [],
+            "xrefs": [],
+            "total_clusters": 0,
+            "error": f"Snapshot not found: {snapshot_id}",
+        }
+    return compute_leiden_clusters(snapshot, fc)
+
+
+def compute_steiner_path_for_snapshot(
+    fc: object,
+    terminals: list[str],
+    snapshot_id: str,
+) -> dict[str, Any]:
+    context = load_graph_tool_context(fc, snapshot_id)
+    if context is not None:
+        return compute_steiner_path(terminals, context)
+    snapshot = _load_snapshot(fc, snapshot_id)
+    if not snapshot:
+        return {
+            "found": False,
+            "nodes": [],
+            "edges": [],
+            "error": f"Snapshot not found: {snapshot_id}",
+        }
+    return compute_steiner_path(terminals, snapshot)
+
+
+def compute_find_callers_for_snapshot(
+    fc: object,
+    symbol: str,
+    snapshot_id: str,
+    max_hops: int = 2,
+) -> dict[str, Any]:
+    context = load_graph_tool_context(fc, snapshot_id)
+    if context is not None:
+        return compute_find_callers(symbol, context, max_hops)
+    snapshot = _load_snapshot(fc, snapshot_id)
+    if not snapshot:
+        return {
+            "callers": [],
+            "total_count": 0,
+            "error": f"Snapshot not found: {snapshot_id}",
+        }
+    return compute_find_callers(symbol, snapshot, max_hops)
+
+
 # ---------------------------------------------------------------------------
 # Shared data extraction
 # ---------------------------------------------------------------------------
@@ -585,7 +1270,7 @@ def compute_find_callers(
 
 def extract_cluster_data(
     l1_data: dict[str, Any],
-    snapshot: IRSnapshot,
+    snapshot: IRSnapshot | GraphToolContext,
 ) -> dict[str, Any]:
     """Extract structured cluster data from L1 projection data."""
     clusters: list[dict[str, Any]] = []

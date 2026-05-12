@@ -77,7 +77,10 @@ This audit checked current source and regression tests directly, not git history
 **Still only partially implemented against the non-functional goals:**
 - Incremental update is not file-shard-native end to end. The pipeline still rehydrates a full combined element list and builds temporary whole-snapshot artifacts, but persisted vector/BM25 shards and conservative legacy graph shards now reuse previous artifact files for unchanged paths. Scoped SCIP still widens or falls back to repo/tool scope in important cases.
 - Embedding identity is still mostly local to `CodeEmbedder`; there is no shared `embedding_fingerprint` contract enforced uniformly across snapshots, vector stores, repository overviews, query embeddings, and PG/vector rows.
-- Snapshot artifact handles are not yet a full serving isolation solution because public `FastCode.query()` and `FastCode.query_snapshot()` still take the service-wide state lock around the query.
+- Snapshot artifact handles are closer to serving isolation: public
+  `FastCode.query()`, `FastCode.query_snapshot()`, and `FastCode.query_stream()`
+  now share the read side of the service state lock while mutations keep the
+  write side. Endpoint-level concurrency tests and benchmarks are still open.
 - FP/FCIS dataflow is much better but not complete. Store hot paths have many typed-record adapters and regression guards, while query/retrieval/API compatibility surfaces still pass raw dict-shaped payloads in several places.
 - Agent-native context bundles are not implemented. The v0 turn compiler is real, but there are no durable `ContextBundle`, `DistillationRecord`, or `ActivationRecord` records, no bundle cache/invalidation path, and no source-ref-preserving distillation reuse.
 
@@ -265,9 +268,9 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
   - CORS defaults are no longer wildcard; allowed origins and credentials are controlled by explicit environment settings
   - REST API and web examples now bind localhost by default, with public binding documented as an explicit trusted-operator decision
 - Service singleton lock hardening:
-  - `FastCode` now exposes a service-level reentrant state lock around repository load/index, snapshot pipeline, projection build, query/query-stream, multi-repo cache load, delete, cleanup, and shutdown flows
+  - `FastCode` now exposes a service-level reentrant read/write state lock: repository load/index, snapshot pipeline, projection build, multi-repo cache load, delete, cleanup, and shutdown flows use the write side, while query/query-stream use the read side
   - REST and web load+index/upload+index helpers now execute the combined mutation under one service critical section, preventing interleaving between repository replacement and indexing
-  - Regression tests cover query serialization against load, index, delete, refresh, and cleanup/unload-style mutations
+  - Regression tests cover query serialization against load, index, delete, refresh, and cleanup/unload-style mutations, plus concurrent query read sharing
 - Snapshot artifact-handle hardening:
   - `IndexPipeline` now exposes `LoadedSnapshotArtifacts` handles and an artifact-key LRU cache
   - `QueryPipeline.query_snapshot()` can use request-local retriever/graph handles instead of mutating the singleton retriever state
@@ -808,12 +811,12 @@ The template philosophy remains correct for Python: use one importable package w
 
 ### P0.4 Snapshot artifact handle caching for query serving
 
-**Status:** partially implemented. `LoadedSnapshotArtifacts` handles and an artifact-key LRU now exist in `IndexPipeline`, and `QueryPipeline.query_snapshot()` can consume request-local retriever/graph handles without swapping singleton query state.
+**Status:** partially implemented. `LoadedSnapshotArtifacts` handles and an artifact-key LRU now exist in `IndexPipeline`, and `QueryPipeline.query_snapshot()` can consume request-local retriever/graph handles without swapping singleton query state. Public `FastCode` query entrypoints now share a read lock instead of serializing independent reads behind the mutation lock.
 
-**Remaining gap:** this is not yet a full serving isolation/read-scalability closure. The public `FastCode.query()` and `FastCode.query_snapshot()` entrypoints still acquire the service-wide state lock around query execution, so concurrent reads remain serialized at the composition root even though the lower query handler can use request-local handles.
+**Remaining gap:** this is not yet a full serving isolation/read-scalability closure. Streaming queries still hold a read lock for the generator duration to fence mutations, and endpoint-level concurrency tests plus benchmarks are still needed.
 
 **Required work:**
-- Narrow the public `FastCode` service lock so immutable snapshot queries can run concurrently while mutations remain serialized.
+- [x] Narrow the public `FastCode` service lock so immutable snapshot queries can run concurrently while mutations remain serialized.
 - Keep artifact-handle load/cache mutation internally locked without serializing the full query.
 - Treat `LoadedSnapshotArtifacts` contents as read-only serving handles and document which contained stores/retrievers are safe to share across concurrent reads.
 - Keep serving-time artifact load separate from repair/rebuild behavior.
@@ -1069,7 +1072,8 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 
 **Remaining follow-up:**
 - Add endpoint-level concurrency tests for upload vs query with real ASGI request scheduling.
-- Narrow or split the public `FastCode` state lock so request-local immutable artifact handles can actually serve independent reads concurrently while mutations stay serialized.
+- Add benchmark evidence for concurrent snapshot queries with and without
+  background mutations.
 
 **Exit criteria:**
 - Concurrent mutation/query behavior is either serialized by design or explicitly rejected with clear errors.

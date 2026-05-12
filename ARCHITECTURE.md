@@ -269,6 +269,9 @@ Current hardened properties:
 - agency-mode preserves cheap detected intent
 - caller-filter handling is fixed after rerank
 - semantic escalation can drive real IR-graph expansion
+- public query entrypoints share a read side of the service state lock, so
+  independent reads can overlap while repository load/index/delete/cleanup
+  mutations remain write-fenced
 
 Known serving/materialization gap:
 
@@ -867,13 +870,15 @@ Landed:
   without swapping singleton serving state
 - regression tests cover mutation/query serialization and lower-level artifact
   handle isolation
+- public `FastCode.query()`, `FastCode.query_snapshot()`, and
+  `FastCode.query_stream()` share the service read lock instead of serializing
+  independent reads behind the mutation lock
 - several blocking API and web paths are offloaded with `asyncio.to_thread`
 
 Open concerns:
 
-- public `FastCode.query()` and `FastCode.query_snapshot()` still hold the
-  service lock for the whole query, so independent immutable snapshot reads are
-  serialized at the composition root
+- streaming queries still hold the service read lock for the generator duration,
+  which fences mutations until the stream completes
 - endpoint-level concurrency coverage under real ASGI scheduling
 - real backend behavior under concurrent traffic
 

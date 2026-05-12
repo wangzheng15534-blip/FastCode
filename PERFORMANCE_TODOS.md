@@ -669,21 +669,23 @@ Exit criteria:
 
 ### P0.15 Public Query Paths Must Not Serialize All Reads Behind The State Lock
 
-**Gap:** request-local artifact handles exist, but public query entrypoints still
-serialize reads behind the service state lock.
+**Gap:** request-local artifact handles exist, and public query entrypoints now
+share the read side of a service read/write lock. Benchmark evidence and
+streaming lock-duration refinement are still open.
 
 Evidence:
 
-- `FastCode.query_snapshot()` and `FastCode.query()` hold `_state_lock()` around
-  the full query call (`fastcode/src/fastcode/main/fastcode.py:1000`).
-- `FastCode.query_stream()` holds `_state_lock()` for the generator duration
-  (`fastcode/src/fastcode/main/fastcode.py:1113`).
+- `FastCode.query_snapshot()`, `FastCode.query()`, and
+  `FastCode.query_stream()` now use `_state_read_lock()`, so independent reads
+  can overlap while load/index/delete/cleanup still use the write side.
+- `FastCode.query_stream()` still holds a read lock for the generator duration,
+  which fences mutations but no longer serializes other reads.
 
 TODO:
 
-- [ ] Split mutation locks from read locks and serve immutable loaded artifact
+- [x] Split mutation locks from read locks and serve immutable loaded artifact
   handles without serializing independent queries.
-- [ ] Keep load/index/delete/publish operations fenced, but let queries share a
+- [x] Keep load/index/delete/publish operations fenced, but let queries share a
   read snapshot handle.
 - [x] Build query-time symbol indexes from compact symbol-index sidecars instead
   of full-loading `IRSnapshot` solely to register aliases when current snapshot
@@ -698,8 +700,8 @@ Exit criteria:
 
 - N concurrent snapshot queries scale better than one-at-a-time serialized
   execution
-- streaming query lock duration does not include the full response generation
-  path unless a mutation is active
+- streaming queries share the read side with other reads; further work is needed
+  if mutation wait time must exclude the full response generation path
 
 ### P0.16 Make Shell Graph Tools Artifact-Handle Native
 

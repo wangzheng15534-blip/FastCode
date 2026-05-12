@@ -9,6 +9,7 @@ import os
 import pickle
 import threading
 from collections.abc import Callable, Generator, Iterable, Mapping
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, cast
 
@@ -66,6 +67,88 @@ from ..utils import (
     prepare_runtime_config_mapping,
     setup_logging,
 )
+
+
+class _ReadWriteStateLock:
+    """Reentrant writer lock with shared read sections for immutable queries."""
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition(threading.RLock())
+        self._readers = 0
+        self._reader_depths: dict[int, int] = {}
+        self._writer: int | None = None
+        self._write_depth = 0
+
+    def __enter__(self) -> "_ReadWriteStateLock":
+        self._acquire_write()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._release_write()
+
+    @contextmanager
+    def read_lock(self) -> Generator[None, None, None]:
+        self._acquire_read()
+        try:
+            yield
+        finally:
+            self._release_read()
+
+    @contextmanager
+    def write_lock(self) -> Generator[None, None, None]:
+        self._acquire_write()
+        try:
+            yield
+        finally:
+            self._release_write()
+
+    def _acquire_read(self) -> None:
+        ident = threading.get_ident()
+        with self._condition:
+            if self._writer == ident:
+                self._readers += 1
+                self._reader_depths[ident] = self._reader_depths.get(ident, 0) + 1
+                return
+            while self._writer is not None:
+                self._condition.wait()
+            self._readers += 1
+            self._reader_depths[ident] = self._reader_depths.get(ident, 0) + 1
+
+    def _release_read(self) -> None:
+        ident = threading.get_ident()
+        with self._condition:
+            depth = self._reader_depths.get(ident, 0)
+            if depth <= 1:
+                self._reader_depths.pop(ident, None)
+            else:
+                self._reader_depths[ident] = depth - 1
+            self._readers -= 1
+            if self._readers == 0:
+                self._condition.notify_all()
+
+    def _acquire_write(self) -> None:
+        ident = threading.get_ident()
+        with self._condition:
+            if self._writer == ident:
+                self._write_depth += 1
+                return
+            own_read_depth = self._reader_depths.get(ident, 0)
+            while self._writer is not None or self._readers > own_read_depth:
+                self._condition.wait()
+            self._writer = ident
+            self._write_depth = 1
+
+    def _release_write(self) -> None:
+        ident = threading.get_ident()
+        with self._condition:
+            if self._writer != ident:
+                raise RuntimeError(
+                    "cannot release state write lock not owned by thread"
+                )
+            self._write_depth -= 1
+            if self._write_depth == 0:
+                self._writer = None
+                self._condition.notify_all()
 
 
 class FastCode:
@@ -132,7 +215,7 @@ class FastCode:
         # Setup logging
         self.logger = setup_logging(self.config)
         self.logger.info("Initializing FastCode system")
-        self._service_state_lock = threading.RLock()
+        self._service_state_lock = _ReadWriteStateLock()
 
         # Initialize resolver attributes (will be set in index_repository)
         self.global_index_builder: GlobalIndexBuilder | None = None
@@ -310,11 +393,18 @@ class FastCode:
     def _infer_is_url(source: str) -> bool:
         return IndexPipeline._infer_is_url(source)
 
-    def _state_lock(self) -> threading.RLock:
+    def _state_lock(self) -> Any:
         lock = getattr(self, "_service_state_lock", None)
         if lock is None:
-            lock = threading.RLock()
+            lock = _ReadWriteStateLock()
             self._service_state_lock = lock
+        return lock
+
+    def _state_read_lock(self) -> Any:
+        lock = self._state_lock()
+        read_lock = getattr(lock, "read_lock", None)
+        if callable(read_lock):
+            return read_lock()
         return lock
 
     def load_repository(
@@ -1083,7 +1173,7 @@ class FastCode:
         session_id: str | None = None,
         enable_multi_turn: bool | None = None,
     ) -> dict[str, Any]:
-        with self._state_lock():
+        with self._state_read_lock():
             return self.query_handler.query_snapshot(
                 question=question,
                 repo_name=repo_name,
@@ -1107,7 +1197,7 @@ class FastCode:
         ]
         | None = None,
     ) -> dict[str, Any]:
-        with self._state_lock():
+        with self._state_read_lock():
             return self.query_handler.query(
                 question=question,
                 filters=filters,
@@ -1199,7 +1289,7 @@ class FastCode:
         ]
         | None = None,
     ) -> Generator[tuple[str | None, dict[str, Any] | None], Any, None]:
-        with self._state_lock():
+        with self._state_read_lock():
             yield from self.query_handler.query_stream(
                 question=question,
                 filters=filters,

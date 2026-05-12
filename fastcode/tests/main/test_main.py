@@ -768,7 +768,6 @@ def test_service_state_lock_serializes_query_with_mutations(
     import time
 
     fc = FastCode.__new__(FastCode)
-    fc._service_state_lock = threading.RLock()
     fc._redo_worker = None
     fc.graph_runtime = None
 
@@ -833,6 +832,51 @@ def test_service_state_lock_serializes_query_with_mutations(
     assert max_concurrent <= 1, f"query overlapped with {mutation_name}; calls={calls}"
     assert "query" in calls
     assert mutation_name in calls
+
+
+def test_service_state_lock_allows_concurrent_queries() -> None:
+    """Independent queries should share the read side of the service lock."""
+    import threading
+    import time
+
+    fc = FastCode.__new__(FastCode)
+
+    concurrent_count = 0
+    max_concurrent = 0
+    count_lock = threading.Lock()
+    start_barrier = threading.Barrier(2, timeout=5)
+    errors: list[Exception] = []
+
+    def _enter_query() -> dict[str, Any]:
+        nonlocal concurrent_count, max_concurrent
+        with count_lock:
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+        time.sleep(0.05)
+        with count_lock:
+            concurrent_count -= 1
+        return {"answer": "ok", "sources": []}
+
+    fc.query_handler = SimpleNamespace(query=lambda **_kwargs: _enter_query())
+
+    def _run_query() -> None:
+        try:
+            start_barrier.wait(timeout=5)
+            fc.query("Where is auth?")
+        except Exception as exc:
+            errors.append(exc)
+
+    first = threading.Thread(target=_run_query)
+    second = threading.Thread(target=_run_query)
+    first.start()
+    second.start()
+    first.join(timeout=10)
+    second.join(timeout=10)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert not errors, f"Threads raised: {errors}"
+    assert max_concurrent == 2
 
 
 def test_turn_context_facade_uses_typed_working_memory_payloads() -> None:

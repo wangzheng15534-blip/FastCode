@@ -2018,6 +2018,379 @@ class SnapshotStore:
                 )
             conn.commit()
 
+    @staticmethod
+    def _relational_fact_path_set(paths: Sequence[str] | None) -> set[str]:
+        return {str(path) for path in (paths or []) if str(path)}
+
+    @staticmethod
+    def _path_not_in_clause(
+        column: str, paths: Sequence[str]
+    ) -> tuple[str, tuple[str, ...]]:
+        if not paths:
+            return "", ()
+        placeholders = ", ".join("?" for _ in paths)
+        return f" AND ({column} IS NULL OR {column} NOT IN ({placeholders}))", tuple(
+            paths
+        )
+
+    def _copy_previous_relational_facts(
+        self,
+        conn: Any,
+        *,
+        snapshot_id: str,
+        previous_snapshot_id: str,
+        affected_paths: Sequence[str],
+    ) -> None:
+        doc_clause, doc_params = self._path_not_in_clause("path", affected_paths)
+        # Clauses below are generated from fixed column names and parameter placeholders.
+        self.db_runtime.execute(
+            conn,
+            f"""
+            INSERT INTO snapshot_documents (snapshot_id, doc_id, path, language, metadata_json)
+            SELECT ?, doc_id, path, language, metadata_json
+            FROM snapshot_documents
+            WHERE snapshot_id=?{doc_clause}
+            ON CONFLICT(snapshot_id, doc_id) DO NOTHING
+            """,  # noqa: S608
+            (snapshot_id, previous_snapshot_id, *doc_params),
+        )
+
+        sym_clause, sym_params = self._path_not_in_clause("path", affected_paths)
+        self.db_runtime.execute(
+            conn,
+            f"""
+            INSERT INTO symbols (
+                snapshot_id, symbol_id, path, display_name, qualified_name, kind,
+                language, source_priority, metadata_json
+            )
+            SELECT ?, symbol_id, path, display_name, qualified_name, kind,
+                language, source_priority, metadata_json
+            FROM symbols
+            WHERE snapshot_id=?{sym_clause}
+            ON CONFLICT(snapshot_id, symbol_id) DO NOTHING
+            """,  # noqa: S608
+            (snapshot_id, previous_snapshot_id, *sym_params),
+        )
+
+        occ_clause, occ_params = self._path_not_in_clause("d.path", affected_paths)
+        self.db_runtime.execute(
+            conn,
+            f"""
+            INSERT INTO occurrences (
+                snapshot_id, occurrence_id, symbol_id, doc_id, role, start_line,
+                start_col, end_line, end_col, source, metadata_json
+            )
+            SELECT ?, o.occurrence_id, o.symbol_id, o.doc_id, o.role, o.start_line,
+                o.start_col, o.end_line, o.end_col, o.source, o.metadata_json
+            FROM occurrences o
+            LEFT JOIN snapshot_documents d
+                ON d.snapshot_id=o.snapshot_id AND d.doc_id=o.doc_id
+            WHERE o.snapshot_id=?{occ_clause}
+            ON CONFLICT(snapshot_id, occurrence_id) DO NOTHING
+            """,  # noqa: S608
+            (snapshot_id, previous_snapshot_id, *occ_params),
+        )
+
+        edge_doc_clause, edge_doc_params = self._path_not_in_clause(
+            "d.path", affected_paths
+        )
+        edge_src_clause, edge_src_params = self._path_not_in_clause(
+            "src.path", affected_paths
+        )
+        edge_dst_clause, edge_dst_params = self._path_not_in_clause(
+            "dst.path", affected_paths
+        )
+        self.db_runtime.execute(
+            conn,
+            f"""
+            INSERT INTO edges (
+                snapshot_id, edge_id, src_id, dst_id, edge_type, source, confidence,
+                doc_id, metadata_json
+            )
+            SELECT ?, e.edge_id, e.src_id, e.dst_id, e.edge_type, e.source,
+                e.confidence, e.doc_id, e.metadata_json
+            FROM edges e
+            LEFT JOIN snapshot_documents d
+                ON d.snapshot_id=e.snapshot_id AND d.doc_id=e.doc_id
+            LEFT JOIN symbols src
+                ON src.snapshot_id=e.snapshot_id AND src.symbol_id=e.src_id
+            LEFT JOIN symbols dst
+                ON dst.snapshot_id=e.snapshot_id AND dst.symbol_id=e.dst_id
+            WHERE e.snapshot_id=?{edge_doc_clause}{edge_src_clause}{edge_dst_clause}
+            ON CONFLICT(snapshot_id, edge_id) DO NOTHING
+            """,  # noqa: S608
+            (
+                snapshot_id,
+                previous_snapshot_id,
+                *edge_doc_params,
+                *edge_src_params,
+                *edge_dst_params,
+            ),
+        )
+
+        att_sym_clause, att_sym_params = self._path_not_in_clause(
+            "s.path", affected_paths
+        )
+        att_doc_clause, att_doc_params = self._path_not_in_clause(
+            "d.path", affected_paths
+        )
+        self.db_runtime.execute(
+            conn,
+            f"""
+            INSERT INTO attachments (
+                snapshot_id, attachment_id, target_id, target_type, attachment_type,
+                source, confidence, payload_json, metadata_json
+            )
+            SELECT ?, a.attachment_id, a.target_id, a.target_type, a.attachment_type,
+                a.source, a.confidence, a.payload_json, a.metadata_json
+            FROM attachments a
+            LEFT JOIN symbols s
+                ON s.snapshot_id=a.snapshot_id AND s.symbol_id=a.target_id
+            LEFT JOIN snapshot_documents d
+                ON d.snapshot_id=a.snapshot_id AND d.doc_id=a.target_id
+            WHERE a.snapshot_id=?
+                AND (
+                    (a.target_type='symbol'{att_sym_clause})
+                    OR (a.target_type IN ('document', 'doc', 'file'){att_doc_clause})
+                )
+            ON CONFLICT(snapshot_id, attachment_id) DO NOTHING
+            """,  # noqa: S608
+            (
+                snapshot_id,
+                previous_snapshot_id,
+                *att_sym_params,
+                *att_doc_params,
+            ),
+        )
+
+    def _relational_fact_delta_rows(
+        self,
+        snapshot: IRSnapshot,
+        affected_paths: set[str],
+    ) -> dict[str, list[tuple[Any, ...]]]:
+        doc_path_by_id = {doc.doc_id: doc.path for doc in snapshot.documents}
+        symbol_path_by_id = {sym.symbol_id: sym.path for sym in snapshot.symbols}
+
+        document_rows = [
+            (
+                snapshot.snapshot_id,
+                doc.doc_id,
+                doc.path,
+                doc.language,
+                json.dumps(self._document_payload(doc), ensure_ascii=False),
+            )
+            for doc in snapshot.documents
+            if doc.path in affected_paths
+        ]
+        symbol_rows = [
+            (
+                snapshot.snapshot_id,
+                sym.symbol_id,
+                sym.path,
+                sym.display_name,
+                sym.qualified_name,
+                sym.kind,
+                sym.language,
+                sym.source_priority,
+                json.dumps(self._symbol_payload(sym), ensure_ascii=False),
+            )
+            for sym in snapshot.symbols
+            if sym.path in affected_paths
+        ]
+        occurrence_rows = [
+            (
+                snapshot.snapshot_id,
+                occ.occurrence_id,
+                occ.symbol_id,
+                occ.doc_id,
+                occ.role,
+                occ.start_line,
+                occ.start_col,
+                occ.end_line,
+                occ.end_col,
+                occ.source,
+                json.dumps(self._occurrence_payload(occ), ensure_ascii=False),
+            )
+            for occ in snapshot.occurrences
+            if doc_path_by_id.get(occ.doc_id) in affected_paths
+        ]
+        seen_edge_ids: set[str] = set()
+        edge_rows: list[tuple[Any, ...]] = []
+        for edge in snapshot.edges:
+            if edge.edge_id in seen_edge_ids:
+                continue
+            related_paths = {
+                doc_path_by_id.get(edge.doc_id or ""),
+                symbol_path_by_id.get(edge.src_id),
+                symbol_path_by_id.get(edge.dst_id),
+            }
+            if not any(path in affected_paths for path in related_paths if path):
+                continue
+            seen_edge_ids.add(edge.edge_id)
+            edge_rows.append(
+                (
+                    snapshot.snapshot_id,
+                    edge.edge_id,
+                    edge.src_id,
+                    edge.dst_id,
+                    edge.edge_type,
+                    edge.source,
+                    edge.confidence,
+                    edge.doc_id,
+                    json.dumps(self._edge_payload(edge), ensure_ascii=False),
+                )
+            )
+        attachment_rows: list[tuple[Any, ...]] = []
+        for attachment in snapshot.attachments:
+            related_path = None
+            snapshot_scoped = False
+            if attachment.target_type == "symbol":
+                related_path = symbol_path_by_id.get(attachment.target_id)
+            elif attachment.target_type in {"document", "doc", "file"}:
+                related_path = doc_path_by_id.get(attachment.target_id)
+            else:
+                snapshot_scoped = True
+            if not snapshot_scoped and related_path not in affected_paths:
+                continue
+            attachment_payload = self._attachment_payload(attachment)
+            attachment_rows.append(
+                (
+                    snapshot.snapshot_id,
+                    attachment.attachment_id,
+                    attachment.target_id,
+                    attachment.target_type,
+                    attachment.attachment_type,
+                    attachment.source,
+                    attachment.confidence,
+                    json.dumps(attachment_payload["payload"], ensure_ascii=False),
+                    json.dumps(attachment_payload["metadata"], ensure_ascii=False),
+                )
+            )
+        return {
+            "snapshot_documents": document_rows,
+            "symbols": symbol_rows,
+            "occurrences": occurrence_rows,
+            "edges": edge_rows,
+            "attachments": attachment_rows,
+        }
+
+    def save_relational_facts_delta(
+        self,
+        snapshot: IRSnapshot,
+        *,
+        previous_snapshot_id: str,
+        changed_paths: Sequence[str],
+        removed_paths: Sequence[str] | None = None,
+    ) -> bool:
+        if self.db_runtime.backend != "postgres" or not previous_snapshot_id:
+            return False
+
+        changed_path_set = self._relational_fact_path_set(changed_paths)
+        removed_path_set = self._relational_fact_path_set(removed_paths)
+        affected_paths = sorted(changed_path_set | removed_path_set)
+        delta_rows = self._relational_fact_delta_rows(snapshot, changed_path_set)
+
+        with self.db_runtime.connect() as conn:
+            self._copy_previous_relational_facts(
+                conn,
+                snapshot_id=snapshot.snapshot_id,
+                previous_snapshot_id=previous_snapshot_id,
+                affected_paths=affected_paths,
+            )
+            if delta_rows["snapshot_documents"]:
+                self.db_runtime.executemany(
+                    conn,
+                    """
+                    INSERT INTO snapshot_documents (snapshot_id, doc_id, path, language, metadata_json)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(snapshot_id, doc_id) DO UPDATE SET
+                        path=excluded.path,
+                        language=excluded.language,
+                        metadata_json=excluded.metadata_json
+                    """,
+                    delta_rows["snapshot_documents"],
+                )
+            if delta_rows["symbols"]:
+                self.db_runtime.executemany(
+                    conn,
+                    """
+                    INSERT INTO symbols (
+                        snapshot_id, symbol_id, path, display_name, qualified_name, kind,
+                        language, source_priority, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(snapshot_id, symbol_id) DO UPDATE SET
+                        path=excluded.path,
+                        display_name=excluded.display_name,
+                        qualified_name=excluded.qualified_name,
+                        kind=excluded.kind,
+                        language=excluded.language,
+                        source_priority=excluded.source_priority,
+                        metadata_json=excluded.metadata_json
+                    """,
+                    delta_rows["symbols"],
+                )
+            if delta_rows["occurrences"]:
+                self.db_runtime.executemany(
+                    conn,
+                    """
+                    INSERT INTO occurrences (
+                        snapshot_id, occurrence_id, symbol_id, doc_id, role, start_line,
+                        start_col, end_line, end_col, source, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(snapshot_id, occurrence_id) DO UPDATE SET
+                        symbol_id=excluded.symbol_id,
+                        doc_id=excluded.doc_id,
+                        role=excluded.role,
+                        start_line=excluded.start_line,
+                        start_col=excluded.start_col,
+                        end_line=excluded.end_line,
+                        end_col=excluded.end_col,
+                        source=excluded.source,
+                        metadata_json=excluded.metadata_json
+                    """,
+                    delta_rows["occurrences"],
+                )
+            if delta_rows["edges"]:
+                self.db_runtime.executemany(
+                    conn,
+                    """
+                    INSERT INTO edges (
+                        snapshot_id, edge_id, src_id, dst_id, edge_type, source, confidence,
+                        doc_id, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(snapshot_id, edge_id) DO UPDATE SET
+                        src_id=excluded.src_id,
+                        dst_id=excluded.dst_id,
+                        edge_type=excluded.edge_type,
+                        source=excluded.source,
+                        confidence=excluded.confidence,
+                        doc_id=excluded.doc_id,
+                        metadata_json=excluded.metadata_json
+                    """,
+                    delta_rows["edges"],
+                )
+            if delta_rows["attachments"]:
+                self.db_runtime.executemany(
+                    conn,
+                    """
+                    INSERT INTO attachments (
+                        snapshot_id, attachment_id, target_id, target_type, attachment_type,
+                        source, confidence, payload_json, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(snapshot_id, attachment_id) DO UPDATE SET
+                        target_id=excluded.target_id,
+                        target_type=excluded.target_type,
+                        attachment_type=excluded.attachment_type,
+                        source=excluded.source,
+                        confidence=excluded.confidence,
+                        payload_json=excluded.payload_json,
+                        metadata_json=excluded.metadata_json
+                    """,
+                    delta_rows["attachments"],
+                )
+            conn.commit()
+        return True
+
     def stage_snapshot(
         self, snapshot: IRSnapshot, metadata: dict[str, Any] | None = None
     ) -> str:

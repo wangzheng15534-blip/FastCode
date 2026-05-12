@@ -1429,6 +1429,193 @@ class TestSnapshotStoreRelationalFacts:
             assert len(matching[0]) == expected_count
         assert runtime.commits == 1
 
+    def test_save_relational_facts_delta_copies_previous_and_upserts_changed_paths_double(
+        self,
+    ) -> None:
+        class _FakePostgresRuntime:
+            backend = "postgres"
+
+            def __init__(self) -> None:
+                self.executes: list[tuple[str, tuple[Any, ...]]] = []
+                self.batches: list[tuple[str, list[tuple[Any, ...]]]] = []
+                self.commits = 0
+
+            def connect(self) -> _FakePostgresRuntime:
+                return self
+
+            def __enter__(self) -> _FakePostgresRuntime:
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def execute(
+                self, _conn: object, sql: str, params: tuple[Any, ...] = ()
+            ) -> _FakeCursor:
+                self.executes.append((sql, params))
+                return _FakeCursor()
+
+            def executemany(
+                self, _conn: object, sql: str, params_seq: list[tuple[Any, ...]]
+            ) -> _FakeCursor:
+                self.batches.append((sql, list(params_seq)))
+                return _FakeCursor()
+
+            def commit(self) -> None:
+                self.commits += 1
+
+        store = _make_store()
+        runtime = _FakePostgresRuntime()
+        store.db_runtime = runtime  # type: ignore[assignment]
+        snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:delta",
+            documents=[
+                IRDocument(doc_id="doc:a", path="a.py", language="python"),
+                IRDocument(doc_id="doc:b", path="b.py", language="python"),
+            ],
+            symbols=[
+                IRSymbol(
+                    symbol_id="sym:a",
+                    external_symbol_id=None,
+                    path="a.py",
+                    display_name="a",
+                    kind="function",
+                    language="python",
+                ),
+                IRSymbol(
+                    symbol_id="sym:b",
+                    external_symbol_id=None,
+                    path="b.py",
+                    display_name="b",
+                    kind="function",
+                    language="python",
+                ),
+            ],
+            occurrences=[
+                IROccurrence(
+                    occurrence_id="occ:a",
+                    symbol_id="sym:a",
+                    doc_id="doc:a",
+                    role="definition",
+                    start_line=1,
+                    start_col=0,
+                    end_line=1,
+                    end_col=1,
+                    source="ast",
+                ),
+                IROccurrence(
+                    occurrence_id="occ:b",
+                    symbol_id="sym:b",
+                    doc_id="doc:b",
+                    role="definition",
+                    start_line=1,
+                    start_col=0,
+                    end_line=1,
+                    end_col=1,
+                    source="ast",
+                ),
+            ],
+            edges=[
+                IREdge(
+                    edge_id="edge:a",
+                    src_id="sym:a",
+                    dst_id="sym:b",
+                    edge_type="call",
+                    source="ast",
+                    confidence="resolved",
+                    doc_id="doc:a",
+                ),
+                IREdge(
+                    edge_id="edge:b",
+                    src_id="sym:b",
+                    dst_id="sym:b",
+                    edge_type="call",
+                    source="ast",
+                    confidence="resolved",
+                    doc_id="doc:b",
+                ),
+            ],
+            attachments=[
+                IRAttachment(
+                    attachment_id="att:a",
+                    target_id="sym:a",
+                    target_type="symbol",
+                    attachment_type="summary",
+                    source="fc_structure",
+                    confidence="derived",
+                    payload={"text": "changed"},
+                ),
+                IRAttachment(
+                    attachment_id="att:b",
+                    target_id="sym:b",
+                    target_type="symbol",
+                    attachment_type="summary",
+                    source="fc_structure",
+                    confidence="derived",
+                    payload={"text": "unchanged"},
+                ),
+                IRAttachment(
+                    attachment_id="att:snapshot",
+                    target_id="snap:repo:delta",
+                    target_type="snapshot",
+                    attachment_type="summary",
+                    source="fc_structure",
+                    confidence="derived",
+                    payload={"text": "current snapshot"},
+                ),
+            ],
+        )
+
+        saved = store.save_relational_facts_delta(
+            snapshot,
+            previous_snapshot_id="snap:repo:prev",
+            changed_paths=["a.py"],
+            removed_paths=["old.py"],
+        )
+
+        assert saved is True
+        assert len(runtime.executes) == 5
+        assert not any("DELETE FROM" in sql for sql, _params in runtime.executes)
+        assert all(
+            params[:2] == ("snap:repo:delta", "snap:repo:prev")
+            for _sql, params in runtime.executes
+        )
+        assert any(
+            "SELECT ?, doc_id, path, language, metadata_json" in sql
+            and "path NOT IN (?, ?)" in sql
+            for sql, _params in runtime.executes
+        )
+        attachment_copy_sql = next(
+            sql for sql, _params in runtime.executes if "FROM attachments a" in sql
+        )
+        assert "a.target_type='symbol'" in attachment_copy_sql
+        assert "a.target_type IN ('document', 'doc', 'file')" in attachment_copy_sql
+
+        batches_by_table = {
+            table_name: rows
+            for table_name in (
+                "snapshot_documents",
+                "symbols",
+                "occurrences",
+                "edges",
+                "attachments",
+            )
+            for sql, rows in runtime.batches
+            if f"INSERT INTO {table_name}" in sql
+        }
+        assert {row[2] for row in batches_by_table["snapshot_documents"]} == {"a.py"}
+        assert {row[2] for row in batches_by_table["symbols"]} == {"a.py"}
+        assert {row[3] for row in batches_by_table["occurrences"]} == {"doc:a"}
+        edge_ids = {row[1] for row in batches_by_table["edges"]}
+        assert "edge:a" in edge_ids
+        assert "edge:b" not in edge_ids
+        assert {row[1] for row in batches_by_table["attachments"]} == {
+            "att:summary:sym:a",
+            "att:snapshot",
+        }
+        assert runtime.commits == 1
+
     @given(snap=snapshot_st())
     @settings(max_examples=15)
     @pytest.mark.edge

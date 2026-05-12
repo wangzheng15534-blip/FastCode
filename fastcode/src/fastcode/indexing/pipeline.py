@@ -1381,6 +1381,55 @@ class IndexPipeline:
             )
             json.dump(manifest, f, indent=2)
 
+    def _save_relational_facts_for_index(
+        self,
+        snapshot: IRSnapshot,
+        incremental_plan: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if incremental_plan is not None:
+            previous_snapshot_id = str(
+                incremental_plan.get("previous_snapshot_id") or ""
+            )
+            semantic_widened = int(
+                incremental_plan.get("semantic_frontier_widened", 0) or 0
+            )
+            changed_paths = [
+                normalize_path(str(path))
+                for path in (
+                    list(incremental_plan.get("added_paths", []) or [])
+                    + list(incremental_plan.get("modified_paths", []) or [])
+                )
+                if path
+            ]
+            removed_paths = [
+                normalize_path(str(path))
+                for path in incremental_plan.get("removed_paths", []) or []
+                if path
+            ]
+            save_delta = getattr(
+                self.snapshot_store, "save_relational_facts_delta", None
+            )
+            if (
+                previous_snapshot_id
+                and semantic_widened == 0
+                and callable(save_delta)
+                and save_delta(
+                    snapshot,
+                    previous_snapshot_id=previous_snapshot_id,
+                    changed_paths=changed_paths,
+                    removed_paths=removed_paths,
+                )
+            ):
+                return {
+                    "mode": "delta",
+                    "previous_snapshot_id": previous_snapshot_id,
+                    "changed_path_count": len(set(changed_paths)),
+                    "removed_path_count": len(set(removed_paths)),
+                }
+
+        self.snapshot_store.save_relational_facts(snapshot)
+        return {"mode": "full"}
+
     def _load_file_manifest(self, artifact_key: str) -> dict[str, Any] | None:
         manifest_path = self._manifest_path_for_artifact(artifact_key)
         if not os.path.exists(manifest_path):
@@ -3553,7 +3602,10 @@ class IndexPipeline:
                 elements=self._unit_artifact_rows(elements),
             )
             self.snapshot_store.import_git_backbone(merged_snapshot, git_meta=git_meta)
-            self.snapshot_store.save_relational_facts(merged_snapshot)
+            relational_fact_persistence = self._save_relational_facts_for_index(
+                merged_snapshot,
+                active_incremental_plan,
+            )
             if doc_chunks_payload:
                 mentions_by_chunk: dict[str, list[dict[str, Any]]] = {}
                 for mention in doc_mentions_payload:
@@ -3690,6 +3742,7 @@ class IndexPipeline:
                 "pipeline_metrics": merged_snapshot.metadata.get(
                     "pipeline_metrics", {}
                 ),
+                "relational_fact_persistence": relational_fact_persistence,
             }
             if incremental_change_set is not None:
                 result["incremental"] = {

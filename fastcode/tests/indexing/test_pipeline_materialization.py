@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import numpy as np
 
 from fastcode.indexing.pipeline import IndexPipeline
 from fastcode.ir.element import CodeElement
+from fastcode.ir.types import IRSnapshot
 
 
 def _element(
@@ -142,3 +144,95 @@ def test_unit_artifact_rows_copy_mapping_inputs_before_enrichment(
     assert "embedding_artifact_ref" not in row["metadata"]
     assert "package_root" not in row["metadata"]
     assert "package_root" not in row
+
+
+def test_save_relational_facts_for_index_uses_delta_for_safe_incremental_plan() -> None:
+    class _DeltaStore:
+        def __init__(self) -> None:
+            self.delta_call: dict[str, Any] | None = None
+
+        def save_relational_facts_delta(
+            self,
+            snapshot: IRSnapshot,
+            *,
+            previous_snapshot_id: str,
+            changed_paths: list[str],
+            removed_paths: list[str],
+        ) -> bool:
+            self.delta_call = {
+                "snapshot": snapshot,
+                "previous_snapshot_id": previous_snapshot_id,
+                "changed_paths": list(changed_paths),
+                "removed_paths": list(removed_paths),
+            }
+            return True
+
+        def save_relational_facts(self, _snapshot: IRSnapshot) -> None:
+            raise AssertionError("safe incremental plans should use delta persistence")
+
+    pipeline = IndexPipeline.__new__(IndexPipeline)
+    store = _DeltaStore()
+    pipeline.snapshot_store = store  # type: ignore[assignment]
+    snapshot = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:new")
+
+    result = pipeline._save_relational_facts_for_index(
+        snapshot,
+        {
+            "previous_snapshot_id": "snap:repo:prev",
+            "added_paths": ["./pkg/a.py"],
+            "modified_paths": ["pkg/../pkg/b.py"],
+            "removed_paths": ["old.py", ""],
+            "semantic_frontier_widened": 0,
+        },
+    )
+
+    assert result == {
+        "mode": "delta",
+        "previous_snapshot_id": "snap:repo:prev",
+        "changed_path_count": 2,
+        "removed_path_count": 1,
+    }
+    assert store.delta_call is not None
+    assert store.delta_call["snapshot"] is snapshot
+    assert store.delta_call["changed_paths"] == ["pkg/a.py", "pkg/b.py"]
+    assert store.delta_call["removed_paths"] == ["old.py"]
+
+
+def test_save_relational_facts_for_index_falls_back_when_semantic_frontier_widened() -> (
+    None
+):
+    class _FallbackStore:
+        def __init__(self) -> None:
+            self.delta_called = False
+            self.full_snapshot: IRSnapshot | None = None
+
+        def save_relational_facts_delta(
+            self,
+            _snapshot: IRSnapshot,
+            **_kwargs: object,
+        ) -> bool:
+            self.delta_called = True
+            return True
+
+        def save_relational_facts(self, snapshot: IRSnapshot) -> None:
+            self.full_snapshot = snapshot
+
+    pipeline = IndexPipeline.__new__(IndexPipeline)
+    store = _FallbackStore()
+    pipeline.snapshot_store = store  # type: ignore[assignment]
+    snapshot = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:new")
+
+    result = pipeline._save_relational_facts_for_index(
+        snapshot,
+        {
+            "previous_snapshot_id": "snap:repo:prev",
+            "added_paths": ["a.py"],
+            "modified_paths": [],
+            "removed_paths": [],
+            "semantic_frontier_widened": 1,
+        },
+    )
+
+    assert result == {"mode": "full"}
+    assert store.delta_called is False
+    assert store.full_snapshot is snapshot

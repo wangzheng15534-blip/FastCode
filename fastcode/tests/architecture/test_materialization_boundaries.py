@@ -38,6 +38,17 @@ ALLOWED_GENERIC_DICT_CALLS = {
     ("retrieval/hybrid.py", "_adaptive_fuse_channels", "from_dict"),
     ("retrieval/hybrid.py", "_compute_adaptive_fusion_params", "from_dict"),
 }
+ALLOWED_NETWORKX_IMPORTS = {
+    # Compatibility and explicit graph materialization boundaries. New hot paths
+    # should use IRGraphView/native handles before this allowlist grows.
+    "graph/build.py",
+    "indexing/projection_transform.py",
+    "ir/graph.py",
+    "ir/merge.py",
+    "mcp/graph_tools.py",
+    "retrieval/hybrid.py",
+    "store/snapshot.py",
+}
 
 
 def _rel(path: Path) -> str:
@@ -174,3 +185,24 @@ def test_hot_paths_do_not_use_generic_row_or_record_round_trips() -> None:
     assert not violations, (
         "generic dict conversion round trips in hot paths:\n" + "\n".join(violations)
     )
+
+
+def test_networkx_imports_stay_explicit_compatibility_boundaries() -> None:
+    violations: list[str] = []
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        rel_path = _rel(path)
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            imports_networkx = False
+            if isinstance(node, ast.Import):
+                imports_networkx = any(alias.name == "networkx" for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                imports_networkx = module == "networkx" or module.startswith(
+                    "networkx."
+                )
+            if not imports_networkx:
+                continue
+            if rel_path not in ALLOWED_NETWORKX_IMPORTS:
+                violations.append(f"{rel_path}:{node.lineno}")
+    assert not violations, "unapproved NetworkX imports:\n" + "\n".join(violations)

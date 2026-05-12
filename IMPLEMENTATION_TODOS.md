@@ -1021,6 +1021,9 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - IR graph expansion now uses compact `IRGraphView` reachability on the active retrieval path when compact graph payloads are available
   - main composition-root callees/callers/dependencies now use compact bounded graph traversal when graph artifacts are available
   - MCP directed path, impact, caller, and Steiner tools now use compact saved graph handles and sidecar symbol maps on current snapshots
+  - architecture tests now freeze NetworkX imports to explicit compatibility
+    boundaries, so new graph hot paths cannot add NetworkX without updating the
+    allowlist deliberately
   - projection graph algorithms still use `networkx`, which is a named compatibility/materialization boundary until a projection-native rewrite
   - compatibility `graph/build.py` loads now retain compact shard adjacency payloads and only materialize `networkx` lazily for save/merge/path/stats compatibility paths
   - snapshot IR graph storage/load no longer has to reconstruct full `networkx` graph objects for active retrieval; legacy node-link graph payloads remain supported

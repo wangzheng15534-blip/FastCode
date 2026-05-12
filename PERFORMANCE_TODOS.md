@@ -41,8 +41,9 @@ Implementation update through May 13, 2026:
   payload.
 - Architecture guards now fail new hot-path uses of generic JSON conversion,
   unapproved `.tolist()` materialization, raw `np.array(vector-list)`
-  insertion, and generic row/object dict round trips unless the call site is
-  documented as an explicit compatibility or storage boundary.
+  insertion, generic row/object dict round trips, and new unapproved NetworkX
+  imports unless the call site is documented as an explicit compatibility or
+  storage boundary.
 - Index runs now publish scoped runtime counters for explicit materialization
   boundaries, including JSON encode/decode, pickle load/dump, NetworkX
   conversion, vector list conversion, full snapshot load, and full graph load.
@@ -541,7 +542,7 @@ TODO:
 - [x] Change main composition-root callees/callers/dependencies helpers to use
   bounded compact graph traversal instead of direct NetworkX traversal.
 - [ ] Keep NetworkX only for explicit compatibility/export/debug surfaces.
-- [ ] Add an architecture/perf guard that fails when new hot-path graph code
+- [x] Add an architecture/perf guard that fails when new hot-path graph code
   imports NetworkX outside approved modules.
 
 Exit criteria:
@@ -865,6 +866,8 @@ TODO:
   and raw `np.array(vectors)` unless the call site is annotated as an allowed
   boundary.
 - [x] Expand the guard allowlist/scope to cover semantic patching.
+- [x] Add a NetworkX import boundary guard so new graph hot paths must be
+  explicitly approved before importing NetworkX.
 - [ ] Expand the guard allowlist/scope to cover MCP graph helpers, projection
   transforms, snapshot persistence, and query-time compact symbol-index
   registration; the current guard only covers a subset of hot materialization

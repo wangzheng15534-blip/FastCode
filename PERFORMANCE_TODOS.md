@@ -65,6 +65,13 @@ Implementation update, May 11, 2026:
 - The same compact sidecar now carries symbol records for `FastCode.find_symbol()`,
   so current snapshots can answer single-symbol lookups without materializing
   all snapshot units and symbols.
+- `FastCode` composition-root graph helpers now traverse compact
+  `IRGraphView` handles with bounded native/generic adjacency expansion for
+  callees, callers, and dependencies instead of calling NetworkX traversal.
+- Local repository indexing now defaults to read-only in-place loading for
+  local paths, records whether a workspace copy was made, reports copied
+  bytes/files when copy mode is requested, and refuses ref checkout against
+  in-place working trees.
 
 - Incremental indexing can skip unchanged-file parse and embedding work, reuse
   changed-unit embeddings, merge changed AST IR with a previous snapshot, and
@@ -77,8 +84,8 @@ Implementation update, May 11, 2026:
   paths, JSON/list embedding payloads, compression-vs-mmap tradeoffs, and
   fallback materialization paths still exist.
 - `IRGraphView` uses `python-igraph`, but NetworkX remains in active hot paths:
-  legacy graph building, IR merge matching, projection transforms, MCP/main
-  graph helpers, and compatibility persistence.
+  legacy graph building, IR merge matching, projection transforms, MCP graph
+  helpers, and compatibility persistence.
 - Existing perf benchmarks are useful baselines, but they do not yet enforce
   budgeted update cost, peak RSS, materialization count, bytes read/written, or
   graph-engine selection criteria.
@@ -97,10 +104,10 @@ New or sharpened findings:
 - Materialization guard coverage is still narrower than the implementation
   summary target. `fastcode/tests/architecture/test_materialization_boundaries.py`
   now covers semantic patch application in addition to the earlier indexing,
-  vector, PG retrieval, retrieval, and selected vector insertion paths. It still
-  does not guard MCP graph tools, `main` graph helpers, projection graph
-  transforms, snapshot persistence, or the compact query-time symbol-index
-  registration path.
+  vector, PG retrieval, retrieval, selected vector insertion paths, and the
+  main graph helper compact traversal regression. It still does not guard MCP
+  graph tools, projection graph transforms, snapshot persistence, or the
+  compact query-time symbol-index registration path.
 - Provider-starting embedding fingerprint construction and cache-hit validation
   were found in this audit and are now fixed for the compatibility and
   all-cache-hit paths that previously touched `embedding_dim` before actual
@@ -109,18 +116,20 @@ New or sharpened findings:
   generic `to_dict() -> from_dict()` object clones and generic `safe_jsonable()`
   calls found in this audit have been replaced with explicit field copies and
   patch-local serializers.
-- MCP graph tools and some `FastCode` graph helpers bypass compact snapshot
-  handles. `mcp/server.py` loads a full `IRSnapshot` for graph tools, and
-  `mcp/graph_tools.py` rebuilds NetworkX graphs from that snapshot per request
-  while resolving symbols through repeated linear scans.
+- MCP graph tools still bypass compact snapshot handles. `mcp/server.py` loads
+  a full `IRSnapshot` for graph tools, and `mcp/graph_tools.py` rebuilds
+  NetworkX graphs from that snapshot per request while resolving symbols
+  through repeated linear scans.
 - Query snapshot serving now uses compact snapshot symbol-index sidecars for
   symbol-index registration when available. Legacy snapshots without the
   sidecar still fall back to full snapshot load.
 - `FastCode.resolve_snapshot_symbol()` and `FastCode.find_symbol()` also use the
   compact sidecar for alias maps and single-symbol records on current snapshots.
-- Local repository loading is not copy-minimal. `RepositoryLoader.load_from_path()`
-  copies the whole working tree into the workspace before the incremental
-  planner can decide that most files are unchanged.
+- Local repository loading is copy-minimal by default for local paths:
+  `RepositoryLoader.load_from_path()` now indexes the caller-provided tree
+  in place unless `repository.local_source_mode: "copy"` is requested.
+  Content-addressed or hardlinking copy mode remains open for explicit
+  workspace-copy use cases.
 - Vector preallocation is still partial. Shard load/write paths, in-memory
   vector-row append, and homogeneous `as_float32_matrix()` sequence conversion
   avoid the old row-list/`vstack` pattern, but memory-mapped shard handles and
@@ -486,23 +495,30 @@ Evidence:
 - `IRGraphView` is backed by `python-igraph`, but `copy()` and
   `to_undirected()` materialize NetworkX graphs
   (`fastcode/src/fastcode/ir/graph.py:20`).
-- `IRGraphView.reachable_within()` calls `distances()` for all nodes rather
-  than a cutoff BFS (`fastcode/src/fastcode/ir/graph.py:177`).
+- `IRGraphView.reachable_within()` and `distances_within()` now use bounded
+  traversal, but shortest path, component stats, and undirected view helpers
+  are still incomplete without NetworkX conversion.
 - `graph/build.py` keeps lazy adjacency payloads but materializes NetworkX for
   path/stats/merge compatibility (`fastcode/src/fastcode/graph/build.py:220`).
 - `retrieval/hybrid.py` uses `IRGraphView.union()` when compact views are
   available, but falls back to NetworkX expansion otherwise
   (`fastcode/src/fastcode/retrieval/hybrid.py:278`).
-- `main/fastcode.py` and `mcp/graph_tools.py` still call NetworkX graph
-  algorithms directly.
+- `mcp/graph_tools.py` still calls NetworkX graph algorithms directly. Main
+  composition-root callees/callers/dependencies now use compact bounded graph
+  traversal when graph artifacts are available.
 
 TODO:
 
-- [ ] Add `IRGraphView` methods for cutoff reachability, shortest path,
-  component stats, degree, neighbor iteration, and undirected views without
-  NetworkX conversion.
-- [ ] Change retrieval and main/MCP graph helpers to depend on those methods
-  instead of direct `nx.*` calls where compact graph handles exist.
+- [x] Add bounded `IRGraphView` reachability/distance traversal for frontier
+  graph questions.
+- [ ] Add `IRGraphView` methods for shortest path, component stats, degree,
+  neighbor iteration, and undirected views without NetworkX conversion.
+- [x] Change active retrieval graph expansion to use compact reachability when
+  compact graph handles exist.
+- [ ] Change MCP graph helpers and retrieval compatibility fallback paths to
+  avoid direct `nx.*` calls where compact graph handles exist.
+- [x] Change main composition-root callees/callers/dependencies helpers to use
+  bounded compact graph traversal instead of direct NetworkX traversal.
 - [ ] Keep NetworkX only for explicit compatibility/export/debug surfaces.
 - [ ] Add an architecture/perf guard that fails when new hot-path graph code
   imports NetworkX outside approved modules.
@@ -679,8 +695,9 @@ Exit criteria:
 
 ### P0.16 Make Shell Graph Tools Artifact-Handle Native
 
-**Gap:** MCP and `FastCode` graph helper paths still load full snapshots and
-materialize NetworkX graphs for per-request graph questions.
+**Gap:** MCP graph helper paths still load full snapshots and materialize
+NetworkX graphs for per-request graph questions. Main composition-root
+callees/callers/dependencies now use compact graph handles on the primary path.
 
 Evidence:
 
@@ -693,8 +710,9 @@ Evidence:
 - `resolve_unit_id()` and `format_path_node()` repeatedly scan `snapshot.units`
   linearly (`fastcode/src/fastcode/mcp/graph_tools.py:54`).
 - `FastCode.get_graph_callees()`, `get_graph_callers()`, and
-  `get_graph_dependencies()` still call NetworkX traversal directly from the
-  composition root (`fastcode/src/fastcode/main/fastcode.py:868`).
+  `get_graph_dependencies()` now use bounded compact graph traversal when graph
+  artifacts are available, with compatibility fallback only when compact graph
+  handles are missing.
 
 TODO:
 
@@ -702,6 +720,8 @@ TODO:
   `IRGraphView`/fact indexes when those artifacts exist.
 - [ ] Add per-snapshot symbol lookup maps for MCP graph tools instead of
   repeated linear scans over full snapshot units.
+- [x] Route main composition-root callees/callers/dependencies helpers through
+  compact graph handles.
 - [ ] Keep full `IRSnapshot` + NetworkX rebuild only as an explicit
   compatibility fallback with materialization metrics and degraded reason.
 - [ ] Add MCP graph-tool regression tests that patch `load_snapshot()` or
@@ -716,23 +736,28 @@ Exit criteria:
 
 ### P0.17 Avoid Whole-Tree Copies Before Incremental Planning
 
-**Gap:** local path indexing copies the entire source tree into the workspace
-before the incremental planner can decide what changed.
+**Gap:** explicit local workspace-copy mode still uses a whole-tree copy before
+the incremental planner can decide what changed. Default local path indexing is
+now read-only and in-place.
 
 Evidence:
 
-- `RepositoryLoader.load_from_path()` calls `shutil.copytree(source_path,
-  self.repo_path, symlinks=True)` for normal local inputs
+- `RepositoryLoader.load_from_path()` now defaults to
+  `repository.local_source_mode: "in_place"` for local paths and only calls
+  `shutil.copytree(...)` when explicit copy mode is requested
   (`fastcode/src/fastcode/indexing/loader.py:157`).
 
 TODO:
 
-- [ ] Add a read-only source checkout mode that scans and fingerprints the
+- [x] Add a read-only source checkout mode that scans and fingerprints the
   caller-provided repository in place when mutation isolation is not required.
+- [x] Report local load mode, workspace-copy status, copied bytes, and copied
+  file counts from repository loading.
 - [ ] When a workspace copy is required, use a content-addressed or hardlinking
-  copy strategy and report copied/linked bytes in pipeline metrics.
+  copy strategy and report linked bytes in pipeline metrics.
 - [ ] Feed the canonical file inventory directly from the source checkout into
-  incremental planning before any full-tree copy.
+  incremental planning before any full-tree copy when explicit copy mode is
+  requested. The default in-place mode already scans the source tree directly.
 
 Exit criteria:
 
@@ -807,10 +832,10 @@ TODO:
   and raw `np.array(vectors)` unless the call site is annotated as an allowed
   boundary.
 - [x] Expand the guard allowlist/scope to cover semantic patching.
-- [ ] Expand the guard allowlist/scope to cover MCP/main graph helpers,
-  projection transforms, snapshot persistence, and query-time compact
-  symbol-index registration; the current guard only covers a subset of hot
-  materialization paths.
+- [ ] Expand the guard allowlist/scope to cover MCP graph helpers, projection
+  transforms, snapshot persistence, and query-time compact symbol-index
+  registration; the current guard only covers a subset of hot materialization
+  paths.
 - [x] Add runtime counters for explicit materialization boundaries: JSON encode,
   JSON decode, pickle load/dump, NetworkX conversion, vector list conversion,
   snapshot full load, and graph full load.

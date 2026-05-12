@@ -96,10 +96,10 @@ release-level implications.
 
 **Newly recorded non-functional gaps:**
 - The materialization enforcement story is incomplete. The guard test covers
-  only selected hot files plus semantic patching, while MCP/main graph helpers,
-  projection transforms, snapshot persistence, and query-time compact
-  symbol-index registration can still add materialization without failing that
-  guard.
+  selected hot files, semantic patching, and the main graph helper compact
+  traversal regression, while MCP graph helpers, projection transforms,
+  snapshot persistence, and query-time compact symbol-index registration can
+  still add materialization without failing that guard.
 - Embedder laziness is no longer overclaimed for compatibility fingerprinting
   and all-cache-hit validation: those paths avoid provider startup when
   dimension is not configured. Provider batching and provider timing metrics
@@ -117,9 +117,10 @@ release-level implications.
   `find_symbol()` lookups can also return sidecar symbol records without
   scanning a full snapshot. Legacy snapshots without the sidecar still need a
   backfill or relational-fact read path.
-- Local repository indexing still copies a whole local working tree into the
-  workspace before incremental planning, so repeated local runs can pay
-  repository-size filesystem cost before discovering a small edit.
+- Local repository indexing now defaults to read-only in-place loading for
+  local paths and only copies a whole working tree when explicit
+  workspace-copy mode is requested. The remaining copy-minimization gap is the
+  opt-in copy path, which still needs content-addressed or hardlinking reuse.
 - PostgreSQL relational fact persistence is still whole-snapshot. Full rebuild
   inserts are now batched per table, but the production-storage path still lacks
   delta writes by changed path.
@@ -991,6 +992,7 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - direct pgvector/keyword result rows still materialize JSON payloads at the retrieval boundary
 - graph path:
   - IR graph expansion now uses compact `IRGraphView` reachability on the active retrieval path when compact graph payloads are available
+  - main composition-root callees/callers/dependencies now use compact bounded graph traversal when graph artifacts are available
   - projection graph algorithms still use `networkx`, which is a named compatibility/materialization boundary until a projection-native rewrite
   - compatibility `graph/build.py` loads now retain compact shard adjacency payloads and only materialize `networkx` lazily for save/merge/path/stats compatibility paths
   - snapshot IR graph storage/load no longer has to reconstruct full `networkx` graph objects for active retrieval; legacy node-link graph payloads remain supported
@@ -1267,9 +1269,10 @@ This item should be treated as the implementation slice of the broader P0.6a sch
   - `retrieval/hybrid.py`
   - `mcp/graph_tools.py`
   - `store/snapshot.py`
-  - `main/fastcode.py`
 - `python-igraph` is already present as a dependency and is only partially used today:
   - `indexing/projection_transform.py` prefers `igraph` and falls back to `networkx`
+  - main composition-root callees/callers/dependencies already use compact
+    graph handles instead of importing NetworkX directly
 - this means the project currently pays:
   - dependency weight for both graph stacks
   - Python-object overhead in core graph operations

@@ -170,7 +170,7 @@ Still incomplete:
 - semantic resolver patch application still copies whole IR collections, though
   it no longer uses generic dict round trips
 - materialization guard coverage is narrower than the full architecture target;
-  MCP/main graph helpers, projection transforms, snapshot persistence, and
+  MCP graph helpers, projection transforms, snapshot persistence, and
   query-time compact symbol-index registration still need explicit guard
   treatment
 
@@ -225,22 +225,27 @@ What already works:
 - helper-backed semantic resolvers can scope work to changed paths
 - package/path repair-frontier logic can scope semantic refresh and SCIP reruns
   when changed API or edge surfaces are known
+- local path indexing can scan the caller-provided repository in place by
+  default, with explicit workspace-copy mode still available when isolation is
+  required
 
 What is still missing before stable-release claims:
 
 - file-native artifact shard reuse as the primary execution model; persistence
   reuse exists for vector/BM25 and conservative graph shards, but not yet for all
   IR graph, relational fact, SCIP/tool, and temporary build surfaces
-- local path loading still copies whole working trees into the workspace before
-  incremental planning unless the source is already at the destination path
+- local path loading is read-only and in-place by default, but explicit
+  workspace-copy mode still copies whole working trees before incremental
+  planning and needs content-addressed or hardlinking reuse
 - truly incremental SCIP/tool-backed extraction in widened and unsupported cases
 - one shared inventory/fingerprint planner across snapshot identity, incremental
   planning, SCIP scope, file-artifact reuse, and publication; loader inventory
   sharing exists for the active AST path, but not yet as a canonical planner
   object across every stage
 - deterministic cache invalidation across schema, model, and tool changes
-- non-starting embedding fingerprint checks; some compatibility and cache-hit
-  paths can still force provider startup when dimension is not configured
+- provider batching and provider timing visibility; compatibility and
+  all-cache-hit fingerprint checks no longer force provider startup merely to
+  discover an unconfigured dimension
 
 ## Retrieval and query flow
 
@@ -267,8 +272,9 @@ Current hardened properties:
 Known serving/materialization gap:
 
 - public shell graph tools do not yet consistently use immutable artifact
-  handles or compact graph/symbol indexes; some MCP and composition-root graph
-  helpers still full-load snapshots or materialize NetworkX graphs per request
+  handles or compact graph/symbol indexes; MCP graph helpers still full-load
+  snapshots or materialize NetworkX graphs per request, while main
+  composition-root graph helpers use compact graph handles on the primary path
 
 ## Agent Context Integration
 

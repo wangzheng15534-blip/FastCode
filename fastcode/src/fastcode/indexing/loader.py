@@ -40,7 +40,9 @@ class RepositoryLoader:
             self.repo_config.get("local_source_mode") or "in_place"
         )
         self.local_source_mode = (
-            "copy" if configured_local_source_mode == "copy" else "in_place"
+            configured_local_source_mode
+            if configured_local_source_mode in {"copy", "hardlink"}
+            else "in_place"
         )
         self.safe_repo_root = os.path.abspath(self.config.get("repo_root", "./repos"))
         ensure_dir(self.safe_repo_root)
@@ -121,6 +123,8 @@ class RepositoryLoader:
             "repo_path": None,
             "copied_bytes": 0,
             "copied_files": 0,
+            "linked_bytes": 0,
+            "linked_files": 0,
         }
 
         self.repo_path = self._prepare_repo_path(self.repo_name, target_dir)
@@ -179,6 +183,8 @@ class RepositoryLoader:
                 "repo_path": self.repo_path,
                 "copied_bytes": 0,
                 "copied_files": 0,
+                "linked_bytes": 0,
+                "linked_files": 0,
             }
             self.logger.info(f"Loaded repository from workspace path {self.repo_path}")
             return self.repo_path
@@ -193,6 +199,8 @@ class RepositoryLoader:
                 "repo_path": self.repo_path,
                 "copied_bytes": 0,
                 "copied_files": 0,
+                "linked_bytes": 0,
+                "linked_files": 0,
             }
             self.logger.info("Loaded local repository in place: %s", self.repo_path)
             return self.repo_path
@@ -202,6 +210,8 @@ class RepositoryLoader:
         # Copy entire working tree, including untracked files.
         copied_bytes = 0
         copied_files = 0
+        linked_bytes = 0
+        linked_files = 0
 
         def _copy2_counting(src: str, dst: str) -> str:
             nonlocal copied_bytes, copied_files
@@ -212,28 +222,56 @@ class RepositoryLoader:
                 pass
             return shutil.copy2(src, dst)
 
+        def _hardlink_counting(src: str, dst: str) -> str:
+            nonlocal copied_bytes, copied_files, linked_bytes, linked_files
+            try:
+                size = os.stat(src).st_size
+                os.link(src, dst)
+                linked_bytes += size
+                linked_files += 1
+                return dst
+            except OSError:
+                try:
+                    copied_bytes += os.stat(src).st_size
+                    copied_files += 1
+                except OSError:
+                    pass
+                return shutil.copy2(src, dst)
+
         shutil.copytree(
             source_path,
             self.repo_path,
             symlinks=True,
-            copy_function=_copy2_counting,
+            copy_function=(
+                _hardlink_counting
+                if self.local_source_mode == "hardlink"
+                else _copy2_counting
+            ),
         )
-        self.repo_load_mode = "copy"
+        self.repo_load_mode = (
+            "hardlink" if self.local_source_mode == "hardlink" else "copy"
+        )
         self.repo_is_workspace_copy = True
         self.last_load_stats = {
-            "mode": "copy",
+            "mode": self.repo_load_mode,
             "source_path": source_path,
             "repo_path": self.repo_path,
             "copied_bytes": copied_bytes,
             "copied_files": copied_files,
+            "linked_bytes": linked_bytes,
+            "linked_files": linked_files,
         }
 
         self.logger.info(
-            "Copied repository from %s to %s (%d files, %d bytes)",
+            "Loaded repository from %s to %s with %s mode "
+            "(%d copied files, %d copied bytes, %d linked files, %d linked bytes)",
             source_path,
             self.repo_path,
+            self.repo_load_mode,
             copied_files,
             copied_bytes,
+            linked_files,
+            linked_bytes,
         )
         return self.repo_path
 
@@ -268,6 +306,8 @@ class RepositoryLoader:
             "repo_path": None,
             "copied_bytes": 0,
             "copied_files": 0,
+            "linked_bytes": 0,
+            "linked_files": 0,
         }
 
         extract_path = self._prepare_repo_path(self.repo_name, target_dir)
@@ -470,6 +510,8 @@ class RepositoryLoader:
                     "workspace_copy": self.repo_is_workspace_copy,
                     "copied_bytes": self.last_load_stats.get("copied_bytes", 0),
                     "copied_files": self.last_load_stats.get("copied_files", 0),
+                    "linked_bytes": self.last_load_stats.get("linked_bytes", 0),
+                    "linked_files": self.last_load_stats.get("linked_files", 0),
                 }
             )
 

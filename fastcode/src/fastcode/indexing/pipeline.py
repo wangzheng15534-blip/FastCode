@@ -198,8 +198,8 @@ class IndexPipeline:
         if getattr(self.loader, "repo_load_mode", None) == "in_place":
             raise RuntimeError(
                 "Ref/commit checkout would mutate an in-place local repository. "
-                "Set repository.local_source_mode='copy' or load a workspace clone "
-                "before indexing a different ref."
+                "Set repository.local_source_mode='copy' or 'hardlink', or load "
+                "a workspace clone before indexing a different ref."
             )
         try:
             repo = Repo(self.loader.repo_path)

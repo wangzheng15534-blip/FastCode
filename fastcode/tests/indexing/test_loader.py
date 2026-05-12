@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -90,6 +91,42 @@ def test_load_from_path_copy_mode_preserves_workspace_copy(tmp_path: Path) -> No
     assert info["load_mode"] == "copy"
     assert info["workspace_copy"] is True
     assert info["copied_files"] == 1
+
+
+def test_load_from_path_hardlink_mode_preserves_workspace_copy_without_byte_copy(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    source = repo / "a.py"
+    source.write_text("print('a')\n", encoding="utf-8")
+    loader = RepositoryLoader(
+        {
+            "repo_root": str(tmp_path / "workspace"),
+            "repository": {
+                "supported_extensions": [".py"],
+                "local_source_mode": "hardlink",
+            },
+        }
+    )
+
+    loaded_path = Path(loader.load_from_path(str(repo)))
+    linked = loaded_path / "a.py"
+
+    assert loaded_path != repo
+    assert linked.read_text(encoding="utf-8") == "print('a')\n"
+    assert os.stat(source).st_ino == os.stat(linked).st_ino
+    assert loader.repo_load_mode == "hardlink"
+    assert loader.repo_is_workspace_copy is True
+    assert loader.last_load_stats["linked_files"] == 1
+    assert loader.last_load_stats["linked_bytes"] > 0
+    assert loader.last_load_stats["copied_files"] == 0
+    assert loader.last_load_stats["copied_bytes"] == 0
+    info = loader.get_repository_info()
+    assert info["load_mode"] == "hardlink"
+    assert info["workspace_copy"] is True
+    assert info["linked_files"] == 1
+    assert info["copied_files"] == 0
 
 
 def test_pipeline_refuses_checkout_on_in_place_local_repo() -> None:

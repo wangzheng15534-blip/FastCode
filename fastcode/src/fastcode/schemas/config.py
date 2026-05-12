@@ -55,7 +55,7 @@ class RepositorySettings(_BoundaryModel):
     clone_depth: int = Field(default=1, ge=1)
     max_file_size_mb: int = Field(default=5, ge=1)
     backup_directory: str = "./repo_backup"
-    local_source_mode: Literal["in_place", "copy"] = "in_place"
+    local_source_mode: Literal["in_place", "copy", "hardlink"] = "in_place"
     exclude_site_packages: bool = False
     ignore_patterns: list[str] = Field(default_factory=list)
     supported_extensions: list[str] = Field(default_factory=list)
@@ -66,7 +66,7 @@ class RepositoryConfig:
     clone_depth: int = 1
     max_file_size_mb: int = 5
     backup_directory: str = "./repo_backup"
-    local_source_mode: Literal["in_place", "copy"] = "in_place"
+    local_source_mode: Literal["in_place", "copy", "hardlink"] = "in_place"
     exclude_site_packages: bool = False
     ignore_patterns: tuple[str, ...] = ()
     supported_extensions: tuple[str, ...] = ()

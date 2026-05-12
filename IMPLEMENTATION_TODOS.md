@@ -124,8 +124,10 @@ release-level implications.
   backfill or relational-fact read path.
 - Local repository indexing now defaults to read-only in-place loading for
   local paths and only copies a whole working tree when explicit
-  workspace-copy mode is requested. The remaining copy-minimization gap is the
-  opt-in copy path, which still needs content-addressed or hardlinking reuse.
+  workspace-copy mode is requested. Explicit `local_source_mode: "hardlink"`
+  can isolate the workspace without duplicating file bytes on compatible
+  filesystems. The remaining copy-minimization gap is content-addressed reuse
+  for byte-copy fallback and explicit copy mode.
 - PostgreSQL relational fact persistence is still whole-snapshot. Full rebuild
   inserts are now batched per table, but the production-storage path still lacks
   delta writes by changed path.

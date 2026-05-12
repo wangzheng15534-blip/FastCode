@@ -227,17 +227,17 @@ What already works:
 - package/path repair-frontier logic can scope semantic refresh and SCIP reruns
   when changed API or edge surfaces are known
 - local path indexing can scan the caller-provided repository in place by
-  default, with explicit workspace-copy mode still available when isolation is
-  required
+  default, with explicit hardlink workspace-copy mode available when isolation
+  is required and the filesystem supports hardlinks
 
 What is still missing before stable-release claims:
 
 - file-native artifact shard reuse as the primary execution model; persistence
   reuse exists for vector/BM25 and conservative graph shards, but not yet for all
   IR graph, relational fact, SCIP/tool, and temporary build surfaces
-- local path loading is read-only and in-place by default, but explicit
-  workspace-copy mode still copies whole working trees before incremental
-  planning and needs content-addressed or hardlinking reuse
+- local path loading is read-only and in-place by default, and hardlink
+  workspace-copy mode avoids duplicating bytes on compatible filesystems; byte
+  copy mode still needs content-addressed reuse before incremental planning
 - truly incremental SCIP/tool-backed extraction in widened and unsupported cases
 - one shared inventory/fingerprint planner across snapshot identity, incremental
   planning, SCIP scope, file-artifact reuse, and publication; loader inventory

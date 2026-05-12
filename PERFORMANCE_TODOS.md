@@ -131,9 +131,10 @@ New or sharpened findings:
   compact sidecar for alias maps and single-symbol records on current snapshots.
 - Local repository loading is copy-minimal by default for local paths:
   `RepositoryLoader.load_from_path()` now indexes the caller-provided tree
-  in place unless `repository.local_source_mode: "copy"` is requested.
-  Content-addressed or hardlinking copy mode remains open for explicit
-  workspace-copy use cases.
+  in place unless an isolated workspace copy is requested. Explicit
+  `repository.local_source_mode: "hardlink"` creates an isolated workspace tree
+  with hardlinks when the filesystem supports them, and reports copied vs
+  linked bytes/files separately.
 - Vector preallocation is still partial. Shard load/write paths, in-memory
   vector-row append, and homogeneous `as_float32_matrix()` sequence conversion
   avoid the old row-list/`vstack` pattern, but memory-mapped shard handles and
@@ -752,15 +753,18 @@ Exit criteria:
 
 ### P0.17 Avoid Whole-Tree Copies Before Incremental Planning
 
-**Gap:** explicit local workspace-copy mode still uses a whole-tree copy before
-the incremental planner can decide what changed. Default local path indexing is
-now read-only and in-place.
+**Gap:** default local path indexing is now read-only and in-place, and explicit
+hardlink workspace mode can avoid duplicating file bytes. The remaining gap is
+that explicit byte-copy mode still copies the whole tree before the incremental
+planner can decide what changed, and there is no content-addressed workspace
+copy cache yet.
 
 Evidence:
 
 - `RepositoryLoader.load_from_path()` now defaults to
-  `repository.local_source_mode: "in_place"` for local paths and only calls
-  `shutil.copytree(...)` when explicit copy mode is requested
+  `repository.local_source_mode: "in_place"` for local paths, supports
+  `"hardlink"` for isolated workspace loads, and only byte-copies files when
+  explicit `"copy"` mode is requested or a hardlink attempt falls back
   (`fastcode/src/fastcode/indexing/loader.py:157`).
 
 TODO:
@@ -769,8 +773,9 @@ TODO:
   caller-provided repository in place when mutation isolation is not required.
 - [x] Report local load mode, workspace-copy status, copied bytes, and copied
   file counts from repository loading.
-- [ ] When a workspace copy is required, use a content-addressed or hardlinking
-  copy strategy and report linked bytes in pipeline metrics.
+- [x] Add a hardlink workspace-copy mode and report linked bytes/files.
+- [ ] Add a content-addressed workspace-copy cache for cases that still require
+  byte copies or cannot use hardlinks.
 - [ ] Feed the canonical file inventory directly from the source checkout into
   incremental planning before any full-tree copy when explicit copy mode is
   requested. The default in-place mode already scans the source tree directly.

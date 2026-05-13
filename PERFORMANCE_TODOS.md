@@ -32,6 +32,8 @@ Implementation update through May 13, 2026:
 - PG retrieval metadata JSON now rejects leaked NumPy arrays instead of
   silently list-materializing them; embeddings remain bound through vector
   columns.
+- PG retrieval upserts now batch vector and search-document writes with
+  `executemany()` and report row count, batch count, and vector adapter path.
 - Scoped SCIP reruns now use repo-root filtered execution by default, cache
   filtered SCIP artifacts by tool/profile plus target-file and package-marker
   fingerprints, and report cache hits/misses and scope-copy counts.
@@ -496,7 +498,7 @@ TODO:
 
 - [x] Make array-in-JSON a hard error on hot PG upsert paths, except for
   explicitly marked compatibility exports.
-- [ ] Use batched insert/update APIs for PG vector and search-document rows
+- [x] Use batched insert/update APIs for PG vector and search-document rows
   instead of one `execute()` pair per element.
 - [ ] Preserve embeddings only in vector columns or vector artifacts; metadata
   should carry embedding refs and fingerprints, not numeric arrays.
@@ -505,7 +507,7 @@ Exit criteria:
 
 - tests fail if an embedding array reaches metadata JSON serialization during
   active PG upsert
-- PG upsert metrics report row count, batch count, and vector adapter path
+- [x] PG upsert metrics report row count, batch count, and vector adapter path
 
 ## P0 - Minimize Graph And Object Materialization
 

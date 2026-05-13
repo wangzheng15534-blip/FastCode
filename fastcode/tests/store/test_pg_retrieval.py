@@ -33,6 +33,9 @@ class _RecordingCursor:
     def execute(self, sql: Any, params: Any = ()) -> None:
         self.calls.append((sql, params))
 
+    def executemany(self, sql: Any, params_seq: Any) -> None:
+        self.calls.append((sql, list(params_seq)))
+
 
 class _FakeConn:
     def __init__(self, cursor: Any) -> None:
@@ -156,8 +159,8 @@ def test_upsert_elements_keeps_embedding_out_of_metadata_json_double():
     )
 
     assert len(cursor.calls) == 2
-    vector_params = cursor.calls[0][1]
-    search_params = cursor.calls[1][1]
+    vector_params = cursor.calls[0][1][0]
+    search_params = cursor.calls[1][1][0]
     assert isinstance(vector_params[6], np.ndarray)
     assert vector_params[6].dtype == np.float32
     assert vector_params[6].tolist() == pytest.approx([0.1, 0.2, 0.3])
@@ -202,13 +205,58 @@ def test_upsert_elements_accepts_root_embedding_when_metadata_lacks_one_double()
         ],
     )
 
-    vector_params = cursor.calls[0][1]
+    vector_params = cursor.calls[0][1][0]
     vector_payload = json.loads(vector_params[8])
     assert isinstance(vector_params[6], np.ndarray)
     assert vector_params[6].tolist() == pytest.approx([0.5, 0.25])
     assert vector_params[7] is None
     assert "embedding" not in vector_payload
     assert vector_payload["metadata"]["embedding_text_hash"] == "hash-root-only"
+
+
+def test_upsert_elements_batches_vector_and_search_rows_double():
+    cursor = _RecordingCursor()
+    store = PgRetrievalStore.__new__(PgRetrievalStore)
+    store.enabled = True
+    store.logger = logging.getLogger(__name__)
+    store.db_runtime = _FakeDBRuntime(_FakeConn(cursor))
+
+    store.upsert_elements(
+        "snap:1",
+        [
+            {
+                "id": "elem:a",
+                "type": "function",
+                "name": "a",
+                "relative_path": "pkg/a.py",
+                "language": "python",
+                "repo_name": "repo",
+                "embedding": np.asarray([1.0, 0.0], dtype=np.float32),
+                "metadata": {"repo_name": "repo"},
+            },
+            {
+                "id": "elem:b",
+                "type": "function",
+                "name": "b",
+                "relative_path": "pkg/b.py",
+                "language": "python",
+                "repo_name": "repo",
+                "embedding": np.asarray([0.0, 1.0], dtype=np.float32),
+                "metadata": {"repo_name": "repo"},
+            },
+        ],
+    )
+
+    assert len(cursor.calls) == 2
+    assert "embedding_vectors" in str(cursor.calls[0][0])
+    assert "search_documents" in str(cursor.calls[1][0])
+    assert len(cursor.calls[0][1]) == 2
+    assert len(cursor.calls[1][1]) == 2
+    assert store.last_upsert_metrics == {
+        "row_count": 2,
+        "batch_count": 2,
+        "vector_adapter_path": "pgvector_adapter",
+    }
 
 
 def test_vector_parameter_falls_back_to_literal_without_pgvector_adapter_double(
@@ -254,7 +302,7 @@ def test_upsert_elements_ignores_unknown_top_level_payloads_double():
         ],
     )
 
-    vector_payload = json.loads(cursor.calls[0][1][8])
+    vector_payload = json.loads(cursor.calls[0][1][0][8])
     assert "opaque_payload" not in vector_payload
     assert vector_payload["metadata"]["opaque_metadata"] == "<opaque>"
 

@@ -51,6 +51,7 @@ class PgRetrievalStore:
         self.logger = logging.getLogger(__name__)
         self.enabled = self.db_runtime.backend == "postgres"
         self.backend_mode = config.get("retrieval", {}).get("backend", "pg_hybrid")
+        self.last_upsert_metrics: dict[str, Any] = {}
         if self.enabled:
             self._init_db()
 
@@ -260,98 +261,123 @@ class PgRetrievalStore:
     def upsert_elements(self, snapshot_id: str, elements: list[dict[str, Any]]) -> None:
         if not self.enabled:
             return
+        vector_rows: list[tuple[Any, ...]] = []
+        search_rows: list[tuple[Any, ...]] = []
+        for elem in elements:
+            element_id = str(elem.get("id") or "")
+            if not element_id:
+                continue
+            raw_meta = elem.get("metadata")
+            meta = cast(dict[str, Any], raw_meta) if isinstance(raw_meta, dict) else {}
+            embedding: Any = meta.get("embedding")
+            if embedding is None:
+                embedding = elem.get("embedding")
+            repo_name: str = cast(str, elem.get("repo_name") or meta.get("repo_name"))
+            relative_path = elem.get("relative_path")
+            language = elem.get("language")
+            element_type = elem.get("type")
+            text_content = " ".join(
+                [
+                    str(elem.get("name") or ""),
+                    str(elem.get("summary") or ""),
+                    str(elem.get("signature") or ""),
+                    str(elem.get("docstring") or ""),
+                    str(elem.get("code") or "")[:2000],
+                ]
+            )
+
+            serializable_elem = self._serialize_element_payload(elem)
+            metadata_json = json.dumps(serializable_elem, ensure_ascii=False)
+
+            embedding_array = self._vector_array(embedding)
+            embedding_param = self._vector_parameter(embedding_array)
+
+            vector_rows.append(
+                (
+                    snapshot_id,
+                    element_id,
+                    repo_name,
+                    relative_path,
+                    language,
+                    element_type,
+                    embedding_param,
+                    None,
+                    metadata_json,
+                )
+            )
+            search_rows.append(
+                (
+                    snapshot_id,
+                    element_id,
+                    repo_name,
+                    relative_path,
+                    language,
+                    element_type,
+                    text_content,
+                    metadata_json,
+                )
+            )
+        if not vector_rows:
+            self.last_upsert_metrics = {
+                "row_count": 0,
+                "batch_count": 0,
+                "vector_adapter_path": "none",
+            }
+            return
         with self.db_runtime.connect() as conn:
             cur = conn.cursor()
-            for elem in elements:
-                element_id = str(elem.get("id") or "")
-                if not element_id:
-                    continue
-                raw_meta = elem.get("metadata")
-                meta = (
-                    cast(dict[str, Any], raw_meta) if isinstance(raw_meta, dict) else {}
+            cur.executemany(
+                """
+                INSERT INTO embedding_vectors (
+                    snapshot_id, element_id, repo_name, relative_path, language, element_type,
+                    embedding, embedding_arr, metadata_json, updated_at
                 )
-                embedding: Any = meta.get("embedding")
-                if embedding is None:
-                    embedding = elem.get("embedding")
-                repo_name: str = cast(
-                    str, elem.get("repo_name") or meta.get("repo_name")
+                VALUES (%s, %s, %s, %s, %s, %s, %s::vector, %s, %s::jsonb, NOW())
+                ON CONFLICT (snapshot_id, element_id) DO UPDATE SET
+                    repo_name=EXCLUDED.repo_name,
+                    relative_path=EXCLUDED.relative_path,
+                    language=EXCLUDED.language,
+                    element_type=EXCLUDED.element_type,
+                    embedding=EXCLUDED.embedding,
+                    embedding_arr=EXCLUDED.embedding_arr,
+                    metadata_json=EXCLUDED.metadata_json,
+                    updated_at=EXCLUDED.updated_at
+                """,
+                vector_rows,
+            )
+            cur.executemany(
+                """
+                INSERT INTO search_documents (
+                    snapshot_id, element_id, repo_name, relative_path, language, element_type,
+                    text_content, metadata_json, updated_at
                 )
-                relative_path = elem.get("relative_path")
-                language = elem.get("language")
-                element_type = elem.get("type")
-                text_content = " ".join(
-                    [
-                        str(elem.get("name") or ""),
-                        str(elem.get("summary") or ""),
-                        str(elem.get("signature") or ""),
-                        str(elem.get("docstring") or ""),
-                        str(elem.get("code") or "")[:2000],
-                    ]
-                )
-
-                serializable_elem = self._serialize_element_payload(elem)
-                metadata_json = json.dumps(serializable_elem, ensure_ascii=False)
-
-                embedding_array = self._vector_array(embedding)
-                embedding_param = self._vector_parameter(embedding_array)
-
-                cur.execute(
-                    """
-                    INSERT INTO embedding_vectors (
-                        snapshot_id, element_id, repo_name, relative_path, language, element_type,
-                        embedding, embedding_arr, metadata_json, updated_at
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s::vector, %s, %s::jsonb, NOW())
-                    ON CONFLICT (snapshot_id, element_id) DO UPDATE SET
-                        repo_name=EXCLUDED.repo_name,
-                        relative_path=EXCLUDED.relative_path,
-                        language=EXCLUDED.language,
-                        element_type=EXCLUDED.element_type,
-                        embedding=EXCLUDED.embedding,
-                        embedding_arr=EXCLUDED.embedding_arr,
-                        metadata_json=EXCLUDED.metadata_json,
-                        updated_at=EXCLUDED.updated_at
-                    """,
-                    (
-                        snapshot_id,
-                        element_id,
-                        repo_name,
-                        relative_path,
-                        language,
-                        element_type,
-                        embedding_param,
-                        None,
-                        metadata_json,
-                    ),
-                )
-                cur.execute(
-                    """
-                    INSERT INTO search_documents (
-                        snapshot_id, element_id, repo_name, relative_path, language, element_type,
-                        text_content, metadata_json, updated_at
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
-                    ON CONFLICT (snapshot_id, element_id) DO UPDATE SET
-                        repo_name=EXCLUDED.repo_name,
-                        relative_path=EXCLUDED.relative_path,
-                        language=EXCLUDED.language,
-                        element_type=EXCLUDED.element_type,
-                        text_content=EXCLUDED.text_content,
-                        metadata_json=EXCLUDED.metadata_json,
-                        updated_at=EXCLUDED.updated_at
-                    """,
-                    (
-                        snapshot_id,
-                        element_id,
-                        repo_name,
-                        relative_path,
-                        language,
-                        element_type,
-                        text_content,
-                        metadata_json,
-                    ),
-                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
+                ON CONFLICT (snapshot_id, element_id) DO UPDATE SET
+                    repo_name=EXCLUDED.repo_name,
+                    relative_path=EXCLUDED.relative_path,
+                    language=EXCLUDED.language,
+                    element_type=EXCLUDED.element_type,
+                    text_content=EXCLUDED.text_content,
+                    metadata_json=EXCLUDED.metadata_json,
+                    updated_at=EXCLUDED.updated_at
+                """,
+                search_rows,
+            )
             conn.commit()
+        adapter_paths: set[str] = set()
+        for row in vector_rows:
+            vector_param = row[6]
+            if isinstance(vector_param, np.ndarray):
+                adapter_paths.add("pgvector_adapter")
+            elif isinstance(vector_param, str):
+                adapter_paths.add("literal")
+            elif vector_param is None:
+                adapter_paths.add("none")
+        self.last_upsert_metrics = {
+            "row_count": len(vector_rows),
+            "batch_count": 2,
+            "vector_adapter_path": "+".join(sorted(adapter_paths)) or "none",
+        }
 
     def semantic_search(
         self,

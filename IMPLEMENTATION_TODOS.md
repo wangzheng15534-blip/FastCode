@@ -233,6 +233,8 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
   - embedding cache payloads now store `float32` byte buffers plus explicit shape/dtype metadata instead of Python `list[float]` vectors
   - `store/cache.py` now persists hot dialogue/session/query payloads as explicit JSON envelopes and embedding entries as buffer-aware cache envelopes instead of generic object storage on the active cache paths
   - PostgreSQL retrieval persistence now strips raw embedding arrays from JSON metadata and stores vectors only in vector-specific columns
+  - PostgreSQL retrieval upserts now batch vector/search-document writes and
+    expose row count, batch count, and vector adapter path metrics
   - `store/pg_retrieval.py` now builds JSON row payloads from an explicit stable element field set instead of recursively normalizing arbitrary whole-element dicts during hot inserts
 - Publishing boundary hardening:
   - Terminus lineage publishing now has a typed `IRSnapshot` boundary that builds payloads from snapshot fields and IR units/relations without full `IRSnapshot.to_dict()` expansion

@@ -190,7 +190,7 @@ class HybridRetriever:
         """
         self.logger.info("Building full BM25 index for keyword search")
 
-        self.full_bm25_elements = elements
+        self.full_bm25_elements = []
         self.full_bm25_corpus = []
 
         for elem in elements:
@@ -222,7 +222,17 @@ class HybridRetriever:
             text = " ".join(text_parts)
             # Tokenize (simple whitespace tokenization)
             tokens = text.lower().split()
+            if not tokens:
+                continue
+            self.full_bm25_elements.append(elem)
             self.full_bm25_corpus.append(tokens)
+
+        if not self.full_bm25_corpus:
+            self.full_bm25 = None
+            self.logger.info(
+                "Skipped BM25 build because no indexable documents were found"
+            )
+            return
 
         self.full_bm25 = BM25Okapi(self.full_bm25_corpus)
         self.logger.info(
@@ -329,6 +339,9 @@ class HybridRetriever:
         Uses the separate repo overview storage from vector_store
         """
         self.logger.info("Building BM25 index for repository overviews")
+        self.repo_overview_bm25 = None
+        self.repo_overview_bm25_corpus = []
+        self.repo_overview_names = []
 
         # Load repo overviews from separate storage
         repo_overviews = self.vector_store.load_repo_overviews(include_embeddings=False)
@@ -336,9 +349,6 @@ class HybridRetriever:
         if not repo_overviews:
             self.logger.warning("No repository overviews found for BM25 indexing")
             return
-
-        self.repo_overview_bm25_corpus = []
-        self.repo_overview_names = []
 
         for repo_name, overview_data in repo_overviews.items():
             # Get text content for BM25
@@ -357,9 +367,18 @@ class HybridRetriever:
 
             text = " ".join(text_parts)
             tokens = text.lower().split()
+            if not tokens:
+                continue
 
             self.repo_overview_bm25_corpus.append(tokens)
             self.repo_overview_names.append(repo_name)
+
+        if not self.repo_overview_bm25_corpus:
+            self.repo_overview_bm25 = None
+            self.logger.info(
+                "Skipped repo overview BM25 build because no repositories were available"
+            )
+            return
 
         self.repo_overview_bm25 = BM25Okapi(self.repo_overview_bm25_corpus)
         self.logger.info(

@@ -522,6 +522,72 @@ def test_load_bm25_uses_explicit_code_element_deserializer(tmp_path: Path) -> No
     assert retriever.full_bm25_corpus == [["module"]]
 
 
+def test_index_for_bm25_skips_empty_corpus() -> None:
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+
+    retriever.index_for_bm25([])
+
+    assert retriever.full_bm25 is None
+    assert retriever.full_bm25_elements == []
+    assert retriever.full_bm25_corpus == []
+    retriever.logger.info.assert_any_call(
+        "Skipped BM25 build because no indexable documents were found"
+    )
+
+
+def test_index_for_bm25_keeps_corpus_elements_aligned() -> None:
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    overview = _element(
+        "overview.md",
+        element_id="repo:overview",
+        element_type="repository_overview",
+    )
+    module = _element("pkg/a.py", element_id="file:a")
+
+    retriever.index_for_bm25([overview, module])
+
+    assert retriever.full_bm25 is not None
+    assert retriever.full_bm25_elements == [module]
+    assert len(retriever.full_bm25_corpus) == 1
+
+
+def test_repo_overview_bm25_resets_stale_state_when_empty() -> None:
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.vector_store = SimpleNamespace(load_repo_overviews=lambda **_: {})
+    retriever.repo_overview_bm25 = object()
+    retriever.repo_overview_bm25_corpus = [["stale"]]
+    retriever.repo_overview_names = ["stale"]
+
+    retriever.build_repo_overview_bm25()
+
+    assert retriever.repo_overview_bm25 is None
+    assert retriever.repo_overview_bm25_corpus == []
+    assert retriever.repo_overview_names == []
+    retriever.logger.warning.assert_called_once_with(
+        "No repository overviews found for BM25 indexing"
+    )
+
+
+def test_repo_overview_bm25_skips_empty_documents() -> None:
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.vector_store = SimpleNamespace(
+        load_repo_overviews=lambda **_: {"": {"content": "", "metadata": {}}}
+    )
+
+    retriever.build_repo_overview_bm25()
+
+    assert retriever.repo_overview_bm25 is None
+    assert retriever.repo_overview_bm25_corpus == []
+    assert retriever.repo_overview_names == []
+    retriever.logger.info.assert_any_call(
+        "Skipped repo overview BM25 build because no repositories were available"
+    )
+
+
 def test_reload_specific_repositories_uses_explicit_deserializer(
     tmp_path: Path,
 ) -> None:

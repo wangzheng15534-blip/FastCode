@@ -3,9 +3,10 @@
 
 The gate intentionally avoids editable installs:
 - build wheel and sdist artifacts for the workspace
-- install dependencies into a fresh virtualenv
-- install built artifacts with ``pip``
-- smoke the installed console scripts and a tiny index/query flow
+- install built artifacts into fresh virtualenvs with ``pip``
+- smoke minimal installed CLI paths without optional heavy extras
+- smoke service extras separately so dependency boundaries are explicit
+- smoke a tiny installed-wheel index/query flow
 """
 
 from __future__ import annotations
@@ -38,7 +39,10 @@ HELPER_ASSET_SUFFIXES = [
     "fastcode/semantic/resolvers/fortran_semantic_helper.py",
     "fastcode/semantic/resolvers/julia_semantic_helper.py",
 ]
-ENTRYPOINTS = ["fastcode", "fastcode-api", "fastcode-mcp", "fastcode-web"]
+CORE_ENTRYPOINTS = ["fastcode"]
+SERVICE_ENTRYPOINTS = ["fastcode-api", "fastcode-mcp", "fastcode-web"]
+SERVICE_EXTRAS = ("api", "mcp", "postgres", "redis")
+HEAVY_EXTRAS = ("docs", "local-embeddings", "nanobot", "scip")
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None) -> None:
@@ -269,11 +273,38 @@ def _fake_ai_server() -> Iterator[tuple[str, str]]:
         thread.join(timeout=5)
 
 
-def _install_artifacts(venv_python: Path, artifacts: list[Path]) -> None:
-    _run([str(venv_python), "-m", "pip", "install", *map(str, artifacts)])
+def _artifact_requirement(path: Path, fastcode_extras: tuple[str, ...]) -> str:
+    if path.name.startswith("fastcode-") and fastcode_extras:
+        return f"{path}[{','.join(fastcode_extras)}]"
+    return str(path)
 
 
-def _smoke_imports(venv_python: Path) -> None:
+def _install_artifacts(
+    venv_python: Path,
+    artifacts: list[Path],
+    *,
+    fastcode_extras: tuple[str, ...] = (),
+) -> None:
+    requirements = [_artifact_requirement(path, fastcode_extras) for path in artifacts]
+    _run([str(venv_python), "-m", "pip", "install", *requirements])
+
+
+def _smoke_core_imports(venv_python: Path) -> None:
+    _run(
+        [
+            str(venv_python),
+            "-c",
+            (
+                "import fastcode; "
+                "import fastcode.main.cli; "
+                "import fastcode.indexing.embedder; "
+                "print(fastcode.__name__)"
+            ),
+        ]
+    )
+
+
+def _smoke_service_imports(venv_python: Path) -> None:
     _run(
         [
             str(venv_python),
@@ -289,8 +320,8 @@ def _smoke_imports(venv_python: Path) -> None:
     )
 
 
-def _smoke_entrypoints(venv_dir: Path) -> None:
-    for entrypoint in ENTRYPOINTS:
+def _smoke_entrypoints(venv_dir: Path, entrypoints: list[str]) -> None:
+    for entrypoint in entrypoints:
         script = _venv_script(venv_dir, entrypoint)
         _run([str(script), "--help"])
 
@@ -330,7 +361,14 @@ def _smoke_index_and_query(
         raise RuntimeError("installed wheel query smoke used an unconfigured LLM")
 
 
-def _smoke_distribution(dist_dir: Path, *, smoke_query: bool) -> None:
+def _smoke_distribution(
+    dist_dir: Path,
+    *,
+    artifact_pattern: str,
+    fastcode_extras: tuple[str, ...] = (),
+    smoke_query: bool = False,
+    smoke_services: bool = False,
+) -> None:
     with (
         tempfile.TemporaryDirectory(prefix="fastcode-release-env-") as env_root_str,
         tempfile.TemporaryDirectory(prefix="fastcode-release-work-") as work_root_str,
@@ -341,12 +379,25 @@ def _smoke_distribution(dist_dir: Path, *, smoke_query: bool) -> None:
         _run([sys.executable, "-m", "venv", str(venv_dir)])
         venv_python = _venv_python(venv_dir)
 
-        artifacts = sorted(dist_dir.glob("*.whl" if smoke_query else "*.tar.gz"))
+        install_nanobot_artifact = "nanobot" in fastcode_extras
+        artifacts = sorted(
+            path
+            for path in dist_dir.glob(artifact_pattern)
+            if path.name.startswith("fastcode-")
+            or (install_nanobot_artifact and path.name.startswith("nanobot_ai-"))
+        )
         if not artifacts:
             raise RuntimeError(f"No matching artifacts found in {dist_dir}")
-        _install_artifacts(venv_python, artifacts)
-        _smoke_imports(venv_python)
-        _smoke_entrypoints(venv_dir)
+        _install_artifacts(
+            venv_python,
+            artifacts,
+            fastcode_extras=fastcode_extras,
+        )
+        _smoke_core_imports(venv_python)
+        _smoke_entrypoints(venv_dir, CORE_ENTRYPOINTS)
+        if smoke_services:
+            _smoke_service_imports(venv_python)
+            _smoke_entrypoints(venv_dir, SERVICE_ENTRYPOINTS)
 
         if smoke_query:
             repo_root = work_root / "repo_root"
@@ -373,12 +424,39 @@ def _smoke_distribution(dist_dir: Path, *, smoke_query: bool) -> None:
                 )
 
 
+def _run_release_smokes(build_dir: Path, *, include_heavy_extras: bool) -> None:
+    service_extras = SERVICE_EXTRAS + (HEAVY_EXTRAS if include_heavy_extras else ())
+    _smoke_distribution(
+        build_dir,
+        artifact_pattern="*.tar.gz",
+    )
+    _smoke_distribution(
+        build_dir,
+        artifact_pattern="*.whl",
+        smoke_query=True,
+    )
+    _smoke_distribution(
+        build_dir,
+        artifact_pattern="*.whl",
+        fastcode_extras=service_extras,
+        smoke_services=True,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--keep-artifacts",
         action="store_true",
         help="Leave the build directory on disk for inspection.",
+    )
+    parser.add_argument(
+        "--include-heavy-extras",
+        action="store_true",
+        help=(
+            "Also install docs, local embedding, nanobot, and SCIP extras. "
+            "This can pull large ML/CUDA dependencies."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -394,13 +472,14 @@ def main(argv: list[str] | None = None) -> int:
             build_dir = Path(build_root)
             artifacts = _build_artifacts(build_dir)
             _assert_helper_assets_present(artifacts)
-            _smoke_distribution(build_dir, smoke_query=False)
-            _smoke_distribution(build_dir, smoke_query=True)
+            _run_release_smokes(
+                build_dir,
+                include_heavy_extras=args.include_heavy_extras,
+            )
             return 0
 
     _assert_helper_assets_present(artifacts)
-    _smoke_distribution(build_dir, smoke_query=False)
-    _smoke_distribution(build_dir, smoke_query=True)
+    _run_release_smokes(build_dir, include_heavy_extras=args.include_heavy_extras)
     return 0
 
 

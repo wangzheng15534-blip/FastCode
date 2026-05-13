@@ -17,8 +17,6 @@ if TYPE_CHECKING:
     from ..ir.element import CodeElementMeta
 
 import numpy as np
-import torch
-from sentence_transformers import SentenceTransformer
 
 _EMBEDDING_CACHE_FORMAT = "ndarray.float32.v1"
 _EMBEDDING_TEXT_SCHEMA_VERSION = 1
@@ -78,16 +76,9 @@ class CodeEmbedder:
         self._embedding_cache_enabled = False
 
         # Auto-detect best available device: CUDA > MPS > CPU
-        if self.device != "cpu":
-            self.device = (
-                "cuda"
-                if torch.cuda.is_available()
-                else "mps"
-                if torch.backends.mps.is_available()
-                else "cpu"
-            )
+        self.device = self._resolve_device(self.device)
 
-        self.model: SentenceTransformer | None = None
+        self.model: Any | None = None
         self._configured_embedding_dim: int = int(
             self.embedding_config.get("dimension")
             or self.embedding_config.get("embedding_dim")
@@ -101,6 +92,25 @@ class CodeEmbedder:
             self.provider,
             self.model_name,
             self._embedding_dim or "lazy",
+        )
+
+    def _resolve_device(self, requested_device: str) -> str:
+        if requested_device == "cpu" or self.provider == "ollama":
+            return requested_device
+        try:
+            import torch
+        except ImportError:
+            self.logger.warning(
+                "Torch is not installed; falling back to CPU device selection. "
+                "Install the local embedding extra to use sentence-transformers."
+            )
+            return "cpu"
+        return (
+            "cuda"
+            if torch.cuda.is_available()
+            else "mps"
+            if torch.backends.mps.is_available()
+            else "cpu"
         )
 
     @property
@@ -135,17 +145,26 @@ class CodeEmbedder:
             self._embedding_cache = None
             self.logger.warning(f"Embedding cache disabled: {e}")
 
-    def _load_model(self) -> SentenceTransformer:
+    def _load_model(self) -> Any:
         """Load sentence transformer model"""
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as exc:
+            raise RuntimeError(
+                "embedding.provider='sentence_transformers' requires the "
+                "sentence-transformers and torch packages. Install the local "
+                "embedding extra or configure embedding.provider='ollama'."
+            ) from exc
         model = SentenceTransformer(self.model_name, device=self.device)
         model.max_seq_length = self.max_seq_length
         return model
 
-    def _ensure_model_loaded(self) -> SentenceTransformer:
+    def _ensure_model_loaded(self) -> Any:
         if self.model is None:
             self.logger.info(f"Loading embedding model: {self.model_name}")
-            self.model = self._load_model()
-            dim = self.model.get_embedding_dimension()
+            model = self._load_model()
+            self.model = model
+            dim = model.get_embedding_dimension()
             if dim is not None:
                 self._embedding_dim = int(dim)
             self.logger.info(f"Embedding dimension: {self._embedding_dim}")

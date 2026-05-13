@@ -12,6 +12,11 @@ The package/install gate currently proves the active release-host interpreter
 only. The latest checked run was on Python 3.13.13. Before a stable release, run
 the same gates across every Python version that will be listed as supported.
 
+The default package gate now keeps the local embedding stack and Nanobot stack
+out of the core install path. Service extras are installed separately, and the
+heavy docs/local-embedding/Nanobot extras are behind `--include-heavy-extras`
+when the gate needs them.
+
 Supported deployment modes for the current pre-release:
 
 - local single-user SQLite mode
@@ -62,6 +67,8 @@ following in temporary directories:
 - smoke installed imports and installed console entrypoints
 - install built wheels into a fresh virtualenv with `pip install`
 - run installed CLI index/query smoke against a tiny repository
+- install service extras separately so API/MCP/PostgreSQL/Redis imports and
+  entrypoints are exercised without forcing the heavy embedding/docs stack
 - serve fake Ollama embeddings and OpenAI chat-completions endpoints so the
   installed wheel exercises configured embedding and answer generation paths
 
@@ -69,6 +76,12 @@ Use this variant when the built artifacts need to be inspected:
 
 ```bash
 python scripts/release_gate.py --keep-artifacts
+```
+
+Use this variant when you want the heavy optional extras in the smoke path:
+
+```bash
+python scripts/release_gate.py --include-heavy-extras
 ```
 
 Current evidence: this gate passed on May 13, 2026 with Python 3.13.13.

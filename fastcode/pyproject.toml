@@ -27,8 +27,7 @@ dependencies = [
     "tree-sitter-rust",
     "tree-sitter-c-sharp",
     "libcst",
-    # Embeddings & vector store
-    "sentence-transformers",
+    # Vector store
     "faiss-cpu",
     # Search & retrieval
     "rank-bm25",
@@ -38,28 +37,13 @@ dependencies = [
     "openai",
     "anthropic",
     "tiktoken",
-    # API
-    "fastapi",
-    "uvicorn",
     "pydantic",
-    "flask",
-    # Database
-    "psycopg[binary]",
-    "psycopg_pool",
-    "pgvector",
     # Utilities
     "tqdm",
     "numpy",
-    "pandas",
     "pathspec",
     # Caching
     "diskcache",
-    "redis",
-    # MCP server
-    "mcp[cli]",
-    # Semantic chunking
-    "chonkie[semantic]>=1.6",
-    "nanobot-ai",
 ]
 
 [tool.uv.sources]
@@ -72,7 +56,57 @@ fastcode-mcp = "fastcode.mcp.server:main"
 fastcode-web = "fastcode.api.web:main"
 
 [project.optional-dependencies]
+api = [
+    "fastapi",
+    "uvicorn",
+    "flask",
+]
+postgres = [
+    "psycopg[binary]",
+    "psycopg_pool",
+    "pgvector",
+]
+redis = [
+    "redis",
+]
+mcp = [
+    "mcp[cli]",
+]
+docs = [
+    "chonkie[semantic]>=1.6",
+]
+local-embeddings = [
+    "sentence-transformers",
+]
+nanobot = [
+    "nanobot-ai",
+]
+all = [
+    "fastapi",
+    "uvicorn",
+    "flask",
+    "psycopg[binary]",
+    "psycopg_pool",
+    "pgvector",
+    "redis",
+    "mcp[cli]",
+    "chonkie[semantic]>=1.6",
+    "sentence-transformers",
+    "nanobot-ai",
+    "protobuf>=6.0",
+]
 dev = [
+    "fastapi",
+    "uvicorn",
+    "flask",
+    "psycopg[binary]",
+    "psycopg_pool",
+    "pgvector",
+    "redis",
+    "mcp[cli]",
+    "chonkie[semantic]>=1.6",
+    "sentence-transformers",
+    "nanobot-ai",
     "pytest>=9.0",
     "pytest-asyncio",
     "pytest-cov",

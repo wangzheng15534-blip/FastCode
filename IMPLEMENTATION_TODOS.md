@@ -28,8 +28,8 @@ The remaining gap to a stable release is no longer mainly "does the core pipelin
 - strict FP/FCIS dataflow enforcement across API -> schema -> core -> store boundaries
 - completion of typed store/query/projection records so persistence and API shells stop leaking raw dict payloads
 - package/install reproducibility for the active interpreter is now covered by
-  a built-artifact release gate; multi-Python matrix coverage, extras
-  boundaries, and dependency drift policy remain open
+  a built-artifact release gate; service extras are split from the core path,
+  but multi-Python matrix coverage and dependency drift policy remain open
 - real external-tool integration evidence across supported languages
 - real PostgreSQL/backend semantics beyond local fakes
 - production deployment/auth runbooks for API/file-upload use beyond the current trusted-local/proxy-auth contract
@@ -638,20 +638,22 @@ Every P0 item needs all three forms of closure:
 workspace wheel/sdist artifacts, verifies FastCode helper assets inside both
 artifact types, installs built sdists and wheels into fresh virtualenvs with
 `pip`, smokes installed imports and entrypoints, and runs an installed-wheel
-index/query flow against fake Ollama/OpenAI-compatible endpoints. The latest
-checked run passed on May 13, 2026 with Python 3.13.13.
+index/query flow against fake Ollama/OpenAI-compatible endpoints. The gate also
+tests service extras separately so API/MCP/PostgreSQL/Redis boundaries are
+explicit without forcing the local embedding or Nanobot stacks into the default
+install path. The latest checked run passed on May 13, 2026 with Python 3.13.13.
 
 **Remaining stable-release gap:** the gate still runs only on the active host
-interpreter, and runtime extras/dependency constraints are not yet split tightly
-enough for a stable support matrix.
+interpreter, and the supported-version matrix is not yet encoded in automation.
 
 **Required work:**
 - [x] Build and test both wheel and sdist from a clean checkout.
 - [x] Run import/CLI/API smoke tests from installed artifacts, not from editable source.
 - [x] Verify helper assets are included in built artifacts.
 - Define supported Python versions and run the release gate against each supported version.
-- Split optional extras clearly: API server, PostgreSQL, SCIP/tooling, docs ingestion, dev/test.
-- Pin or constrain high-risk runtime dependencies enough to avoid resolver drift.
+- [x] Split optional extras clearly: API server, PostgreSQL, SCIP/tooling, docs ingestion, dev/test.
+- [x] Pin or constrain the local embedding stack out of the core runtime path.
+- [ ] Pin or constrain remaining high-risk runtime dependencies enough to avoid resolver drift.
 
 **Exit criteria:**
 - [x] `pip install dist/*.whl` in a fresh virtualenv can run CLI, API import, helper path checks, and a tiny index/query smoke.
@@ -1236,8 +1238,10 @@ incident recovery, and optional language-tool installation.
 
 **Current status:** partially closed. The package/install release gate verifies
 wheel/sdist content for required helper assets and installs from built artifacts
-in fresh virtualenvs. This catches missing package data and editable-install
-drift, but it is not yet a dependency security or resolver-drift gate.
+in fresh virtualenvs. The core runtime no longer imports the local embedding
+stack eagerly, and service extras are split out of the default install path.
+This catches missing package data and editable-install drift, but it is not yet
+a dependency security or resolver-drift gate.
 
 **Required work:**
 - Add a dependency review pass for runtime packages with:

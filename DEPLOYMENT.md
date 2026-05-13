@@ -30,8 +30,16 @@ Built artifact install for release validation:
 ```bash
 uv build --all-packages --clear
 python -m venv /tmp/fastcode-install-smoke
-/tmp/fastcode-install-smoke/bin/python -m pip install dist/fastcode-*.whl dist/nanobot_ai-*.whl
+/tmp/fastcode-install-smoke/bin/python -m pip install dist/fastcode-*.whl
 /tmp/fastcode-install-smoke/bin/fastcode --help
+```
+
+Service extras are installable explicitly when API, web, MCP, Postgres, or Redis
+entrypoints are needed:
+
+```bash
+/tmp/fastcode-install-smoke/bin/python -m pip install \
+  'dist/fastcode-*.whl[api,mcp,postgres,redis]'
 ```
 
 PostgreSQL-backed production semantics are still release-gate open. Do not claim

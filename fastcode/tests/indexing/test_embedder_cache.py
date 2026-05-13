@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from typing import Any
 
 import numpy as np
@@ -220,6 +222,70 @@ def test_embedder_initialization_does_not_load_model(
 
     assert embedder.model is None
     assert embedder.embedding_dim == 3
+
+
+def test_ollama_embedder_import_does_not_require_local_embedding_stack() -> None:
+    code = """
+import builtins
+
+real_import = builtins.__import__
+
+def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+    if name.split('.')[0] in {'torch', 'sentence_transformers'}:
+        raise ImportError(name)
+    return real_import(name, globals, locals, fromlist, level)
+
+builtins.__import__ = guarded_import
+
+from fastcode.indexing.embedder import CodeEmbedder
+
+embedder = CodeEmbedder({
+    'embedding': {
+        'provider': 'ollama',
+        'model': 'release-gate',
+        'dimension': 8,
+        'device': 'cpu',
+    },
+    'cache': {'enabled': False},
+})
+assert embedder.model is None
+assert embedder.embedding_fingerprint()['provider'] == 'ollama'
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)  # noqa: S603
+
+
+def test_sentence_transformers_missing_dependency_fails_at_model_boundary() -> None:
+    code = """
+import builtins
+
+real_import = builtins.__import__
+
+def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+    if name.split('.')[0] == 'sentence_transformers':
+        raise ImportError(name)
+    return real_import(name, globals, locals, fromlist, level)
+
+builtins.__import__ = guarded_import
+
+from fastcode.indexing.embedder import CodeEmbedder
+
+embedder = CodeEmbedder({
+    'embedding': {
+        'provider': 'sentence_transformers',
+        'model': 'missing-local-stack',
+        'dimension': 2,
+        'device': 'cpu',
+    },
+    'cache': {'enabled': False},
+})
+try:
+    embedder.embed_batch(['hello'])
+except RuntimeError as exc:
+    assert "embedding.provider='sentence_transformers'" in str(exc)
+else:
+    raise AssertionError('expected missing optional dependency failure')
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)  # noqa: S603
 
 
 def test_embedding_fingerprint_without_configured_dimension_does_not_load_model(

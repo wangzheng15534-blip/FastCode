@@ -56,6 +56,9 @@ Implementation update through May 13, 2026:
 - Embedding cache hits and changed-unit incremental embedding reuse now require
   matching embedding fingerprints plus prepared-text hashes; stale cache
   payloads or previous-snapshot metadata are recomputed instead of reused.
+- Embedding provider metrics now report startup count/time, provider requests,
+  provider batches, cache hits, cache misses, and cache writes; Ollama
+  per-text requests can run with bounded concurrency when configured.
 - `VectorStore` in-memory row append and the generic vector sequence helper no
   longer grow homogeneous matrices through repeated `np.vstack()` calls.
 - Semantic resolver patching no longer clones IR objects through generic
@@ -396,16 +399,16 @@ TODO:
 - [x] Stop `_incremental_compatibility_payload()` and cache-hit validation from
   touching `embedding_dim` when no configured or persisted dimension is
   available.
-- [ ] Add provider-level batch APIs where supported, and bounded concurrency
-  where only per-text APIs exist.
-- [ ] Expose provider startup time, request count, batch count, and cache hit
-  count in pipeline metrics.
+- [ ] Add provider-level batch APIs where supported.
+- [x] Add bounded concurrency where only per-text APIs exist.
+- [x] Expose provider startup time, request count, batch count, cache hit/miss,
+  and cache write counts in pipeline metrics.
 
 Exit criteria:
 
 - metadata-only and cache-load flows do not load/probe embedding providers
-- Ollama indexing reports fewer provider calls than texts when batch/concurrent
-  mode is configured
+- Ollama indexing reports bounded concurrency for per-text requests, and can
+  report fewer provider calls than texts when a true batch API is implemented
 - benchmarks separate provider time from local pipeline materialization time
 
 ### P0.7 Remove Legacy List-Vector Paths

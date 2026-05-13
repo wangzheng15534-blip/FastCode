@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
+import time
 from typing import Any
 
 import numpy as np
@@ -174,6 +176,62 @@ def test_embed_batch_deduplicates_inputs_before_raw_embedding() -> None:
     assert embeddings.shape == (4, 3)
     assert np.array_equal(embeddings[0], embeddings[1])
     assert np.array_equal(embeddings[0], embeddings[3])
+
+
+def test_embedding_metrics_track_cache_batches_and_reset() -> None:
+    cache = _MemoryCache()
+    embedder = _CountingEmbedder(cache)
+
+    embedder.embed_batch(["a", "a", "b"])
+    embedder.embed_batch(["a", "b"])
+
+    assert embedder.embedding_metrics() == {
+        "cache_hit_count": 2,
+        "cache_miss_count": 3,
+        "cache_write_count": 2,
+        "provider_batch_count": 1,
+    }
+
+    embedder.reset_embedding_metrics()
+
+    assert embedder.embedding_metrics() == {}
+
+
+def test_ollama_embedding_uses_bounded_concurrency(monkeypatch: Any) -> None:
+    embedder = CodeEmbedder(
+        {
+            "embedding": {
+                "provider": "ollama",
+                "model": "test-ollama",
+                "dimension": 2,
+                "ollama_concurrency": 2,
+            },
+            "cache": {"enabled": False},
+        }
+    )
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def _fake_embed(text: str) -> np.ndarray:
+        nonlocal active, max_active
+        embedder._increment_embedding_metric("provider_request_count")
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return np.asarray([float(text[-1]), 1.0], dtype=np.float32)
+
+    monkeypatch.setattr(embedder, "_embed_text_ollama", _fake_embed)
+
+    embeddings = embedder.embed_batch(["t0", "t1", "t2", "t3"])
+
+    assert embeddings.shape == (4, 2)
+    assert max_active > 1
+    assert embedder.embedding_metrics()["provider_batch_count"] == 1
+    assert embedder.embedding_metrics()["provider_request_count"] == 4
 
 
 def test_embed_code_elements_deduplicates_batch_and_persists_cache() -> None:

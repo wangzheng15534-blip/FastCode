@@ -9,9 +9,12 @@ import hashlib
 import json
 import logging
 import platform
+import threading
 import urllib.request
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -75,6 +78,8 @@ class CodeEmbedder:
         )
         self._embedding_cache: Any | None = None
         self._embedding_cache_enabled = False
+        self._embedding_metrics: dict[str, float] = {}
+        self._embedding_metrics_lock = threading.Lock()
 
         # Auto-detect best available device: CUDA > MPS > CPU
         self.device = self._resolve_device(self.device)
@@ -94,6 +99,40 @@ class CodeEmbedder:
             self.model_name,
             self._embedding_dim or "lazy",
         )
+
+    def _ensure_embedding_metrics(self) -> dict[str, float]:
+        metrics = getattr(self, "_embedding_metrics", None)
+        if not isinstance(metrics, dict):
+            metrics = {}
+            self._embedding_metrics = metrics
+        if not hasattr(self, "_embedding_metrics_lock"):
+            self._embedding_metrics_lock = threading.Lock()
+        return metrics
+
+    def _increment_embedding_metric(self, name: str, amount: float = 1.0) -> None:
+        metrics = self._ensure_embedding_metrics()
+        lock = self._embedding_metrics_lock
+        with lock:
+            metrics[name] = float(metrics.get(name, 0.0)) + float(amount)
+
+    def reset_embedding_metrics(self) -> None:
+        metrics = self._ensure_embedding_metrics()
+        lock = self._embedding_metrics_lock
+        with lock:
+            metrics.clear()
+
+    def embedding_metrics(self) -> dict[str, int | float]:
+        metrics = self._ensure_embedding_metrics()
+        lock = self._embedding_metrics_lock
+        with lock:
+            snapshot = dict(metrics)
+        result: dict[str, int | float] = {}
+        for name, value in sorted(snapshot.items()):
+            if value.is_integer():
+                result[name] = int(value)
+            else:
+                result[name] = round(value, 3)
+        return result
 
     def _resolve_device(self, requested_device: str) -> str:
         if requested_device == "cpu" or self.provider == "ollama":
@@ -163,7 +202,13 @@ class CodeEmbedder:
     def _ensure_model_loaded(self) -> Any:
         if self.model is None:
             self.logger.info(f"Loading embedding model: {self.model_name}")
+            started = perf_counter()
             model = self._load_model()
+            self._increment_embedding_metric(
+                "provider_startup_ms",
+                (perf_counter() - started) * 1000,
+            )
+            self._increment_embedding_metric("provider_startup_count")
             self.model = model
             dim = model.get_embedding_dimension()
             if dim is not None:
@@ -252,7 +297,19 @@ class CodeEmbedder:
             return np.array([])
 
         if self.provider == "ollama":
-            vectors = [self._embed_text_ollama(t) for t in texts]
+            max_workers = int(
+                self.embedding_config.get("ollama_concurrency")
+                or self.embedding_config.get("max_concurrency")
+                or 1
+            )
+            if max_workers > 1 and len(texts) > 1:
+                with ThreadPoolExecutor(
+                    max_workers=min(max_workers, len(texts)),
+                    thread_name_prefix="fastcode-ollama-embed",
+                ) as executor:
+                    vectors = list(executor.map(self._embed_text_ollama, texts))
+            else:
+                vectors = [self._embed_text_ollama(t) for t in texts]
             matrix = np.asarray(vectors, dtype=np.float32)
             if matrix.ndim == 2 and matrix.shape[1]:
                 self._embedding_dim = int(matrix.shape[1])
@@ -271,6 +328,7 @@ class CodeEmbedder:
             encode_kwargs["pool"] = None
 
         model = self._ensure_model_loaded()
+        self._increment_embedding_metric("provider_request_count")
         raw: Any = model.encode(texts, **encode_kwargs)
         if isinstance(raw, np.ndarray) and raw.ndim == 2 and raw.shape[1]:
             self._embedding_dim = int(raw.shape[1])
@@ -403,11 +461,14 @@ class CodeEmbedder:
             self._embedding_cache.set_cached_embedding_payload(key, payload)
         else:
             self._embedding_cache.set(key, payload)
+        self._increment_embedding_metric("cache_write_count")
 
     def _embed_texts_with_cache(self, texts: list[str]) -> np.ndarray:
         if not texts:
             return np.array([])
         if not self._embedding_cache_enabled or self._embedding_cache is None:
+            self._increment_embedding_metric("cache_miss_count", len(texts))
+            self._increment_embedding_metric("provider_batch_count")
             return self._embed_batch_uncached(texts)
 
         embeddings: list[np.ndarray | None] = [None] * len(texts)
@@ -428,6 +489,11 @@ class CodeEmbedder:
         if misses:
             miss_items = list(misses.items())
             miss_texts = [text for _, (text, _) in miss_items]
+            self._increment_embedding_metric(
+                "cache_miss_count",
+                sum(len(indexes) for _, indexes in misses.values()),
+            )
+            self._increment_embedding_metric("provider_batch_count")
             miss_embeddings = np.asarray(
                 self._embed_batch_uncached(miss_texts), dtype=np.float32
             )
@@ -440,6 +506,7 @@ class CodeEmbedder:
                 self._set_cached_embedding(key, text, embedding_array)
 
         if hits:
+            self._increment_embedding_metric("cache_hit_count", hits)
             self.logger.debug("Embedding cache reused %d/%d vectors", hits, len(texts))
 
         missing_indexes = [
@@ -457,6 +524,7 @@ class CodeEmbedder:
         if len(text) > self.max_seq_length:
             text = text[: self.max_seq_length]
         payload = {"model": self.model_name, "prompt": text}
+        self._increment_embedding_metric("provider_request_count")
         req = urllib.request.Request(
             self.ollama_url,
             data=json.dumps(payload).encode("utf-8"),

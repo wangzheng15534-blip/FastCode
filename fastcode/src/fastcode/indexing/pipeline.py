@@ -1101,6 +1101,18 @@ class IndexPipeline:
         merged.update(counters.as_metrics())
         return merged
 
+    def _reset_embedding_metrics(self) -> None:
+        reset_metrics = getattr(self.embedder, "reset_embedding_metrics", None)
+        if callable(reset_metrics):
+            reset_metrics()
+
+    def _embedding_metrics_payload(self) -> dict[str, Any]:
+        embedding_metrics = getattr(self.embedder, "embedding_metrics", None)
+        if not callable(embedding_metrics):
+            return {}
+        payload = embedding_metrics()
+        return dict(payload) if isinstance(payload, Mapping) else {}
+
     def _apply_semantic_resolvers(
         self,
         *,
@@ -2888,6 +2900,7 @@ class IndexPipeline:
         materialization_token = set_materialization_counters(materialization_counters)
 
         try:
+            self._reset_embedding_metrics()
             self.index_run_store.mark_status(run_id, "extracting")
             artifact_key = self.snapshot_store.artifact_key_for_snapshot(snapshot_id)
             incremental_plan: dict[str, Any] | None = None
@@ -2968,6 +2981,7 @@ class IndexPipeline:
                     "dependency_graph_edges": temp_graph.dependency_graph.number_of_edges(),
                     "inheritance_graph_edges": temp_graph.inheritance_graph.number_of_edges(),
                     "call_graph_edges": temp_graph.call_graph.number_of_edges(),
+                    "embedding_provider": self._embedding_metrics_payload(),
                 },
             )
 
@@ -3730,6 +3744,9 @@ class IndexPipeline:
                 ),
                 materialization_counters,
             )
+            embedding_metrics = self._embedding_metrics_payload()
+            if embedding_metrics:
+                pipeline_metrics["embedding_provider"] = embedding_metrics
             merged_snapshot.metadata["pipeline_metrics"] = pipeline_metrics
             self.snapshot_store.update_snapshot_metadata(
                 snapshot_id,

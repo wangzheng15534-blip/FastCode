@@ -227,6 +227,9 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
   - cache keys are model-aware across provider/model/dimension/normalization/sequence-length settings
   - active cache hits and changed-unit incremental embedding reuse now validate
     both prepared-text hash and embedding fingerprint before reusing vectors
+  - embedding provider metrics now expose startup, request, batch, cache-hit,
+    cache-miss, and cache-write counters, and Ollama per-text requests support
+    bounded concurrency
   - embedding cache payloads now store `float32` byte buffers plus explicit shape/dtype metadata instead of Python `list[float]` vectors
   - `store/cache.py` now persists hot dialogue/session/query payloads as explicit JSON envelopes and embedding entries as buffer-aware cache envelopes instead of generic object storage on the active cache paths
   - PostgreSQL retrieval persistence now strips raw embedding arrays from JSON metadata and stores vectors only in vector-specific columns

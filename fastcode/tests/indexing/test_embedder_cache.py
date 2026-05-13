@@ -131,6 +131,39 @@ def test_embedding_cache_recomputes_old_list_payload() -> None:
     assert cache.values[key]["embedding_format"] == "ndarray.float32.v1"
 
 
+def test_embedding_cache_rejects_stale_identity_payloads() -> None:
+    cache = _MemoryCache()
+    embedder = _CountingEmbedder(cache)
+
+    expected = embedder.embed_text("guarded text")
+    key = embedder._embedding_cache_key("guarded text")
+    poisoned_vector = np.asarray([999.0, 999.0, 999.0], dtype=np.float32)
+
+    stale_fingerprint_payload = dict(cache.values[key])
+    stale_fingerprint = dict(stale_fingerprint_payload["embedding_fingerprint"])
+    stale_fingerprint["model"] = "stale-model"
+    stale_fingerprint_payload["embedding_fingerprint"] = stale_fingerprint
+    stale_fingerprint_payload["embedding_bytes"] = poisoned_vector.tobytes()
+    cache.values[key] = stale_fingerprint_payload
+
+    recomputed_after_fingerprint_change = embedder.embed_text("guarded text")
+
+    stale_text_payload = dict(cache.values[key])
+    stale_text_payload["text_sha256"] = "stale-text-hash"
+    stale_text_payload["embedding_bytes"] = poisoned_vector.tobytes()
+    cache.values[key] = stale_text_payload
+
+    recomputed_after_text_change = embedder.embed_text("guarded text")
+
+    assert embedder.raw_batches == [
+        ["guarded text"],
+        ["guarded text"],
+        ["guarded text"],
+    ]
+    assert np.array_equal(recomputed_after_fingerprint_change, expected)
+    assert np.array_equal(recomputed_after_text_change, expected)
+
+
 def test_embed_batch_deduplicates_inputs_before_raw_embedding() -> None:
     cache = _MemoryCache()
     embedder = _CountingEmbedder(cache)
@@ -345,6 +378,7 @@ def test_cache_hit_validation_without_configured_dimension_does_not_load_model(
 
     assert cached is not None
     assert cached.shape == (3,)
+    assert embedder.embedding_fingerprint()["dimension"] == 3
     assert embedder.model is None
 
 

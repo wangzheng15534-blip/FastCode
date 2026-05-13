@@ -10,6 +10,7 @@ import json
 import logging
 import platform
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -191,6 +192,9 @@ class CodeEmbedder:
         configured = int(getattr(self, "_configured_embedding_dim", 0) or 0)
         if configured:
             return configured
+        known = int(getattr(self, "_embedding_dim", 0) or 0)
+        if known:
+            return known
         return None
 
     def embedding_fingerprint_record(
@@ -283,7 +287,12 @@ class CodeEmbedder:
         """Return the stable cache/artifact locator for prepared embedding text."""
         return self._embedding_cache_key(text)
 
-    def _get_cached_embedding(self, key: str) -> np.ndarray | None:
+    def _get_cached_embedding(
+        self,
+        key: str,
+        *,
+        text: str | None = None,
+    ) -> np.ndarray | None:
         if not self._embedding_cache_enabled or self._embedding_cache is None:
             return None
         if hasattr(self._embedding_cache, "get_cached_embedding_payload"):
@@ -291,6 +300,11 @@ class CodeEmbedder:
         else:
             cached = self._embedding_cache.get(key)
         if cached is None:
+            return None
+        if text is not None and not self._cached_payload_matches_reuse_identity(
+            cached,
+            text=text,
+        ):
             return None
         embedding = self._cached_embedding_to_array(cached)
         if embedding is None:
@@ -304,7 +318,39 @@ class CodeEmbedder:
         )
         if known_dim and embedding.size != known_dim:
             return None
+        if not known_dim and embedding.size:
+            self._embedding_dim = int(embedding.size)
         return embedding
+
+    def _cached_payload_matches_reuse_identity(
+        self,
+        cached: Any,
+        *,
+        text: str,
+    ) -> bool:
+        if not isinstance(cached, Mapping):
+            return False
+        expected_text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if cached.get("text_sha256") != expected_text_hash:
+            return False
+        cached_fingerprint = cached.get("embedding_fingerprint")
+        if not isinstance(cached_fingerprint, Mapping):
+            return False
+        current_fingerprint = self.embedding_fingerprint(resolve_dimension=False)
+        known_dim = int(
+            getattr(self, "_configured_embedding_dim", 0)
+            or getattr(self, "_embedding_dim", 0)
+            or 0
+        )
+        for field_name, expected_value in current_fingerprint.items():
+            cached_value = cached_fingerprint.get(field_name)
+            if field_name == "dimension" and expected_value is None:
+                if known_dim and cached_value not in {None, known_dim}:
+                    return False
+                continue
+            if cached_value != expected_value:
+                return False
+        return True
 
     @staticmethod
     def _cached_embedding_to_array(cached: Any) -> np.ndarray | None:
@@ -370,7 +416,7 @@ class CodeEmbedder:
 
         for index, text in enumerate(texts):
             key = self._embedding_cache_key(text)
-            cached_embedding = self._get_cached_embedding(key)
+            cached_embedding = self._get_cached_embedding(key, text=text)
             if cached_embedding is not None:
                 embeddings[index] = cached_embedding
                 hits += 1

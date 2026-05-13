@@ -1731,6 +1731,9 @@ def test_plan_incremental_elements_reuses_changed_unit_embedding_when_text_hash_
             .sha256(previous_embedding_text.encode("utf-8"))
             .hexdigest()
         )
+        previous_embedding_fingerprint = pipeline._incremental_compatibility_payload()[
+            "embedding"
+        ]
         with open(
             os.path.join(tmp, f"{previous_record.artifact_key}_metadata.pkl"),
             "wb",
@@ -1756,6 +1759,7 @@ def test_plan_incremental_elements_reuses_changed_unit_embedding_when_text_hash_
                                 "embedding": np.array([0.9, 0.8, 0.7]),
                                 "embedding_text": previous_embedding_text,
                                 "embedding_text_hash": previous_embedding_hash,
+                                "embedding_fingerprint": previous_embedding_fingerprint,
                             },
                             "repo_name": "repo",
                             "repo_url": tmp,
@@ -1852,6 +1856,151 @@ def test_plan_incremental_elements_reuses_changed_unit_embedding_when_text_hash_
             scope_roots=[],
         )
         assert repair_task is None
+
+
+def test_plan_incremental_elements_refuses_changed_unit_embedding_with_stale_fingerprint() -> (
+    None
+):
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_incremental_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+
+        changed_path = os.path.join(tmp, "b.py")
+        with open(changed_path, "w", encoding="utf-8") as handle:
+            handle.write("print('new')\n")
+
+        changed_stat = os.stat(changed_path)
+        previous_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:prev",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+        )
+        previous_record = pipeline.snapshot_store.save_snapshot(
+            previous_snapshot, metadata={}
+        )
+        pipeline.manifest_store.publish(
+            repo_name="repo",
+            ref_name="main",
+            snapshot_id="snap:repo:prev",
+            index_run_id="run_prev",
+            status="published",
+        )
+
+        previous_embedding_text = (
+            "Type: function\nName: foo\nSignature: def foo()\nCode:\nreturn 1"
+        )
+        previous_embedding_hash = (
+            __import__("hashlib")
+            .sha256(previous_embedding_text.encode("utf-8"))
+            .hexdigest()
+        )
+        stale_embedding_fingerprint = dict(
+            pipeline._incremental_compatibility_payload()["embedding"]
+        )
+        stale_embedding_fingerprint["model"] = "stale-model"
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_metadata.pkl"),
+            "wb",
+        ) as handle:
+            pickle.dump(
+                {
+                    "metadata": [
+                        {
+                            "id": "changed:1",
+                            "type": "function",
+                            "name": "foo",
+                            "file_path": changed_path,
+                            "relative_path": "b.py",
+                            "language": "python",
+                            "start_line": 1,
+                            "end_line": 1,
+                            "code": "return 1",
+                            "signature": "def foo()",
+                            "docstring": None,
+                            "summary": None,
+                            "metadata": {
+                                "stable_unit_id": "unit:function:stable",
+                                "embedding": np.array([0.9, 0.8, 0.7]),
+                                "embedding_text": previous_embedding_text,
+                                "embedding_text_hash": previous_embedding_hash,
+                                "embedding_fingerprint": stale_embedding_fingerprint,
+                            },
+                            "repo_name": "repo",
+                            "repo_url": tmp,
+                        }
+                    ]
+                },
+                handle,
+            )
+
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_manifest.json"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            changed_fingerprint = pipeline._file_fingerprint(changed_path)
+            assert changed_fingerprint is not None
+            json.dump(
+                {
+                    "schema_version": 2,
+                    "compatibility": pipeline._incremental_compatibility_payload(),
+                    "compatibility_hash": pipeline._incremental_compatibility_hash(),
+                    "files": {
+                        "b.py": {
+                            "mtime": changed_stat.st_mtime - 10,
+                            "size": changed_stat.st_size + 1,
+                            "content_hash": "stale-content-hash",
+                            "element_ids": ["changed:1"],
+                        },
+                    },
+                },
+                handle,
+            )
+
+        changed_element = SimpleNamespace(
+            id="changed:2",
+            type="function",
+            name="foo",
+            file_path=changed_path,
+            relative_path="b.py",
+            language="python",
+            start_line=1,
+            end_line=1,
+            code="return 1",
+            signature="def foo()",
+            docstring=None,
+            summary=None,
+            metadata={
+                "stable_unit_id": "unit:function:stable",
+                "embedding_text_hash": previous_embedding_hash,
+            },
+            repo_name="repo",
+            repo_url=tmp,
+        )
+
+        pipeline.loader.scan_files = lambda: [
+            {
+                "path": changed_path,
+                "relative_path": "b.py",
+                "size": changed_stat.st_size,
+                "extension": ".py",
+            }
+        ]
+        pipeline.indexer.index_files = Mock(return_value=[changed_element])
+
+        planned_elements, plan = pipeline._plan_incremental_elements(
+            repo_name="repo",
+            repo_url=tmp,
+            snapshot_id="snap:repo:current",
+            snapshot_ref={"branch": "main", "snapshot_id": "snap:repo:current"},
+            ref=None,
+        )
+
+        assert planned_elements is not None
+        assert plan is not None
+        assert plan["reused_changed_embeddings"] == 0
+        assert "embedding" not in planned_elements[0].metadata
 
 
 def test_plan_incremental_elements_marks_package_scope_when_api_surface_changes() -> (

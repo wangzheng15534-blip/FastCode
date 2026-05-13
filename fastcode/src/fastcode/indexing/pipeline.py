@@ -1584,6 +1584,9 @@ class IndexPipeline:
         existing_by_stable_unit_id: dict[str, dict[str, Any]],
     ) -> int:
         reused = 0
+        current_embedding_identity = self._incremental_compatibility_payload().get(
+            "embedding"
+        )
         for elem in new_elements:
             stable_unit_id = (elem.metadata or {}).get("stable_unit_id")
             if not stable_unit_id:
@@ -1598,6 +1601,12 @@ class IndexPipeline:
             current_text_hash = (elem.metadata or {}).get("embedding_text_hash")
             if not existing_text_hash or existing_text_hash != current_text_hash:
                 continue
+            existing_embedding_identity = existing_meta.get("embedding_fingerprint")
+            if not self._embedding_identity_matches(
+                existing_embedding_identity,
+                current_embedding_identity,
+            ):
+                continue
             previous_embedding = existing_meta.get("embedding")
             previous_text = existing_meta.get("embedding_text")
             if previous_embedding is None or previous_text is None:
@@ -1607,6 +1616,18 @@ class IndexPipeline:
             elem.metadata["embedding_text_hash"] = existing_text_hash
             reused += 1
         return reused
+
+    @staticmethod
+    def _embedding_identity_matches(existing: Any, current: Any) -> bool:
+        if not isinstance(existing, Mapping) or not isinstance(current, Mapping):
+            return False
+        for field_name, expected_value in current.items():
+            existing_value = existing.get(field_name)
+            if field_name == "dimension" and expected_value is None:
+                continue
+            if existing_value != expected_value:
+                return False
+        return True
 
     def _semantic_frontier_widened(
         self,

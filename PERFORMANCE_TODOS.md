@@ -53,6 +53,9 @@ Implementation update through May 13, 2026:
 - Embedding fingerprint lookup and cache-hit validation no longer start
   providers merely to discover an unconfigured dimension, and the prepared-text
   schema version is part of the fingerprint payload.
+- Embedding cache hits and changed-unit incremental embedding reuse now require
+  matching embedding fingerprints plus prepared-text hashes; stale cache
+  payloads or previous-snapshot metadata are recomputed instead of reused.
 - `VectorStore` in-memory row append and the generic vector sequence helper no
   longer grow homogeneous matrices through repeated `np.vstack()` calls.
 - Semantic resolver patching no longer clones IR objects through generic
@@ -354,13 +357,13 @@ TODO:
 - [x] Make fingerprint lookup non-starting: compatibility planning and cache-hit
   validation must not load a sentence-transformer model or probe Ollama merely
   to learn an embedding dimension.
-- [ ] Make embedding reuse depend on fingerprint plus prepared-text hash, not
-  ad hoc local key construction.
+- [x] Make active cache and changed-unit embedding reuse depend on fingerprint
+  plus prepared-text hash, not ad hoc local key construction.
 - [x] Add an explicit prepared-text schema version to the fingerprint so
   `_prepare_code_text()` changes invalidate cache entries without relying on
   operator-managed `cache_version`.
-- [ ] Add tests that patch stale fingerprint surfaces and prove reuse is refused
-  consistently.
+- [x] Add tests that patch stale cache and changed-unit fingerprint surfaces and
+  prove reuse is refused consistently on those active paths.
 
 Exit criteria:
 

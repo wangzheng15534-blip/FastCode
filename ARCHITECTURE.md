@@ -890,14 +890,15 @@ Open concerns:
 
 The main remaining stable-release blockers are:
 
-- install and packaging reproducibility from built artifacts
+- multi-Python install and packaging reproducibility from built artifacts; the
+  active-interpreter package/install gate now exists in `scripts/release_gate.py`
 - workspace-root and layout stability in merged form
 - true end-to-end incremental source and index caching
 - broader FP/FCIS dataflow completion across store, query, and projection boundaries
 - real backend and toolchain evidence across supported languages
 - production deployment/auth documentation beyond the current
   trusted-local/proxy-auth API contract
-- deployment and operations documentation
+- backend/tool/performance release gates and deployment/operations runbooks
 
 See [IMPLEMENTATION_TODOS.md](./IMPLEMENTATION_TODOS.md) for the maintained
 release-gap list and acceptance criteria.

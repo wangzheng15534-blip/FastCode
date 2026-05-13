@@ -27,12 +27,15 @@ The remaining gap to a stable release is no longer mainly "does the core pipelin
 - first-class embedding/model fingerprint reuse across snapshots, vector artifacts, repository overviews, PG rows, and query embeddings
 - strict FP/FCIS dataflow enforcement across API -> schema -> core -> store boundaries
 - completion of typed store/query/projection records so persistence and API shells stop leaking raw dict payloads
-- install/package reproducibility from a clean environment
+- package/install reproducibility for the active interpreter is now covered by
+  a built-artifact release gate; multi-Python matrix coverage, extras
+  boundaries, and dependency drift policy remain open
 - real external-tool integration evidence across supported languages
 - real PostgreSQL/backend semantics beyond local fakes
 - production deployment/auth runbooks for API/file-upload use beyond the current trusted-local/proxy-auth contract
 - request-local artifact serving that scales concurrent reads without the current public `FastCode` service lock serializing query paths
-- release documentation, compatibility policy, and deployment runbooks
+- release gate documentation and a first compatibility policy now exist;
+  backend/tool/performance gates and operator runbooks remain open
 
 Stable release should mean all of the following are true at once:
 - core indexing/query paths are incrementally efficient, not only correct
@@ -90,10 +93,11 @@ This audit checked current source and regression tests directly, not git history
 - Agent-native context bundles are not implemented. The v0 turn compiler is real, but there are no durable `ContextBundle`, `DistillationRecord`, or `ActivationRecord` records, no bundle cache/invalidation path, and no source-ref-preserving distillation reuse.
 
 **Still open:**
-- clean wheel/sdist install smoke from built artifacts
+- multi-Python wheel/sdist install smoke from built artifacts
 - real external SCIP/tool command matrix for stable language claims
 - real PostgreSQL migration/locking/outbox/redo/fact semantics under integration load
-- release gate, compatibility policy, artifact migration policy, dependency/supply-chain review, and deployment/operator runbooks
+- backend/tool/performance release gates, full artifact migration policy,
+  dependency/supply-chain review, and deployment/operator runbooks
 
 ## Source-level audit - May 11, 2026
 
@@ -298,6 +302,12 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
   - `fastcode.main.__init__` now exposes `FastCode` lazily so `import fastcode.main` does not load the composition root
   - internal API/MCP modules import `FastCode` from `fastcode.main.fastcode` instead of the root compatibility surface
   - architecture tests now enforce thin package roots and ban internal `from fastcode import ...` re-export usage
+- Release package/install gate hardening:
+  - `scripts/release_gate.py` builds all workspace wheel/sdist artifacts with `uv build --all-packages --clear`
+  - the gate verifies required semantic helper assets are present in FastCode wheel and sdist artifacts
+  - the gate installs built sdists and wheels into fresh virtualenvs with `pip`, then smokes installed imports and console entrypoints
+  - the wheel smoke indexes and queries a tiny repository using fake Ollama embedding and OpenAI chat-completion endpoints, proving configured installed runtime paths instead of editable-source imports
+  - BM25 indexing now treats empty element and repository-overview corpora as a no-op instead of constructing invalid `rank_bm25` indexes, and it clears stale repository-overview state before rebuilding
 
 ## Critical verification currently green
 
@@ -305,6 +315,8 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
   - `1721 passed, 53 skipped`
 - Package-root smoke gate:
   - `1694 passed, 13 skipped`
+- Package/install release gate:
+  - `python scripts/release_gate.py` passed on May 13, 2026 with Python 3.13.13
 - Focused regression areas repeatedly verified:
   - `test_api`
   - `test_manifest_store`
@@ -622,17 +634,30 @@ Every P0 item needs all three forms of closure:
 
 **Gap:** Tests run in the repository checkout, but stable users install packages, optional extras, and helper assets from built artifacts.
 
+**Current status:** partially closed. `scripts/release_gate.py` now builds all
+workspace wheel/sdist artifacts, verifies FastCode helper assets inside both
+artifact types, installs built sdists and wheels into fresh virtualenvs with
+`pip`, smokes installed imports and entrypoints, and runs an installed-wheel
+index/query flow against fake Ollama/OpenAI-compatible endpoints. The latest
+checked run passed on May 13, 2026 with Python 3.13.13.
+
+**Remaining stable-release gap:** the gate still runs only on the active host
+interpreter, and runtime extras/dependency constraints are not yet split tightly
+enough for a stable support matrix.
+
 **Required work:**
-- Build and test both wheel and sdist from a clean checkout.
-- Run import/CLI/API smoke tests from the installed wheel, not from editable source.
-- Verify helper assets are included in built artifacts and executable from installed package paths.
+- [x] Build and test both wheel and sdist from a clean checkout.
+- [x] Run import/CLI/API smoke tests from installed artifacts, not from editable source.
+- [x] Verify helper assets are included in built artifacts.
 - Define supported Python versions and run the release gate against each supported version.
 - Split optional extras clearly: API server, PostgreSQL, SCIP/tooling, docs ingestion, dev/test.
 - Pin or constrain high-risk runtime dependencies enough to avoid resolver drift.
 
 **Exit criteria:**
-- `pip install dist/*.whl` in a fresh virtualenv can run CLI, API import, helper path checks, and a tiny index/query smoke.
-- Release docs list exact install commands for local-only and production/PostgreSQL modes.
+- [x] `pip install dist/*.whl` in a fresh virtualenv can run CLI, API import, helper path checks, and a tiny index/query smoke.
+- [x] Release docs list exact install commands for local-only mode and document that production/PostgreSQL gate evidence is still open.
+- [ ] Supported Python matrix gate passes for every supported version.
+- [ ] Optional extras and dependency constraints are release-reviewed.
 
 ### P0.1a Workspace and layout stability
 
@@ -1108,29 +1133,50 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 
 **Gap:** Smoke tests are green, but stable release gates need a documented contract beyond "current tests pass."
 
+**Current status:** partially closed. [docs/release.md](./docs/release.md)
+now defines blocking gate tiers, package/install gate commands, patch/minor/major
+blocking rules, acceptable degraded behavior, and a first pre-stable artifact
+compatibility policy. `scripts/release_gate.py` implements the package/install
+tier for built artifacts.
+
+**Remaining stable-release gap:** backend, external-tool, and performance gates
+are documented but not implemented as release automation, and the artifact
+migration policy still needs concrete artifact-family versions and
+compatibility tests.
+
 **Required work:**
-- Define supported OS/Python/backend matrix.
-- Define semantic versioning policy and compatibility promises for snapshots, manifests, and projection artifacts.
-- Add release checklist: tests, packaging, install smoke, migration smoke, docs update, changelog.
+- [ ] Define supported OS/Python/backend matrix.
+- [x] Define initial semantic versioning and compatibility promises for snapshots, manifests, and projection artifacts.
+- [x] Add release checklist: tests, packaging, install smoke, migration smoke, docs update, changelog.
 - Add a minimal benchmark/performance envelope for medium repositories to catch major regressions.
-- Separate release gates into explicit tiers:
+- [x] Separate release gates into explicit tiers:
   - architecture gate
   - package/install gate
   - backend integration gate
   - external-tool gate
   - performance gate
-- Define what can block a patch release vs minor release vs major release.
-- Define which warnings/errors are acceptable degraded behavior and which invalidate a stable release claim.
+- [x] Define what can block a patch release vs minor release vs major release.
+- [x] Define which warnings/errors are acceptable degraded behavior and which invalidate a stable release claim.
 
 **Exit criteria:**
-- A maintainer can tag a release by following one checklist with reproducible commands and expected outputs.
+- [ ] A maintainer can tag a release by following one checklist with reproducible commands and expected outputs across architecture, package/install, backend, external-tool, performance, and docs gates.
 
 ### P0.10 Documentation, deployment, and operator runbooks
 
 **Gap:** The codebase has more runtime modes than the docs currently prove safe to install and operate.
 
+**Current status:** partially closed. `DEPLOYMENT.md` now documents local
+checkout install, built-artifact install smoke, trusted-local API/web exposure,
+CORS/upload assumptions, and the release gate. [docs/release.md](./docs/release.md)
+documents the release gate matrix and explicitly marks PostgreSQL production
+semantics as gate-open.
+
+**Remaining stable-release gap:** full production runbooks are still missing
+for backup/restore, migration/rollback, cache invalidation, lock/fencing
+incident recovery, and optional language-tool installation.
+
 **Required work:**
-- Write a release-grade install guide for:
+- [ ] Write a release-grade install guide for:
   - local single-user mode
   - API/web service mode
   - PostgreSQL-backed mode
@@ -1188,6 +1234,11 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 
 **Gap:** Stable release needs tighter control over dependency drift and packaging trust than development smoke tests currently prove.
 
+**Current status:** partially closed. The package/install release gate verifies
+wheel/sdist content for required helper assets and installs from built artifacts
+in fresh virtualenvs. This catches missing package data and editable-install
+drift, but it is not yet a dependency security or resolver-drift gate.
+
 **Required work:**
 - Add a dependency review pass for runtime packages with:
   - pinned or constrained high-risk libraries
@@ -1195,8 +1246,8 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - known-native/tooling dependencies documented
 - Add security/reproducibility checks:
   - `pip-audit` or equivalent
-  - wheel/sdist content verification
-  - helper asset inclusion verification
+  - [x] wheel/sdist content verification for required helper assets
+  - [x] helper asset inclusion verification
   - lockfile or documented resolver strategy for repeatable installs
 - Review subprocess/tool invocation surfaces for:
   - path resolution

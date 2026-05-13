@@ -4,6 +4,40 @@ FastCode's API and web entrypoints are trusted-local by default. They can clone,
 read, upload, delete, and index repository contents, so do not expose them
 directly to an untrusted network.
 
+For release-tag validation, use the checked-in release gate:
+
+```bash
+python scripts/release_gate.py
+```
+
+The release gate builds wheel/sdist artifacts, verifies packaged helper assets,
+installs the artifacts into fresh virtualenvs with `pip`, smokes installed
+entrypoints, and runs a tiny installed-wheel index/query flow. See
+[docs/release.md](./docs/release.md) for the full gate matrix and the open
+stable-release blockers.
+
+## Install Modes
+
+Local checkout for contributors:
+
+```bash
+uv sync --extra dev
+uv run fastcode --help
+```
+
+Built artifact install for release validation:
+
+```bash
+uv build --all-packages --clear
+python -m venv /tmp/fastcode-install-smoke
+/tmp/fastcode-install-smoke/bin/python -m pip install dist/fastcode-*.whl dist/nanobot_ai-*.whl
+/tmp/fastcode-install-smoke/bin/fastcode --help
+```
+
+PostgreSQL-backed production semantics are still release-gate open. Do not claim
+production backend support until the real PostgreSQL integration gate in
+[docs/release.md](./docs/release.md) has passed for the release candidate.
+
 ## Local Mode
 
 Use localhost binding for single-user development:

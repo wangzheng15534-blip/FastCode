@@ -248,9 +248,10 @@ What is still missing before stable-release claims:
   sharing exists for the active AST path, but not yet as a canonical planner
   object across every stage
 - deterministic cache invalidation across schema, model, and tool changes
-- provider batching and provider timing visibility; compatibility and
-  all-cache-hit fingerprint checks no longer force provider startup merely to
-  discover an unconfigured dimension
+- provider timing and benchmark visibility; compatibility and all-cache-hit
+  fingerprint checks no longer force provider startup merely to discover an
+  unconfigured dimension, and Ollama now uses provider-native `/api/embed`
+  batching when available with bounded per-text fallback
 
 ## Retrieval and query flow
 

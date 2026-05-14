@@ -16,7 +16,7 @@ unless they directly affect these three goals.
 FastCode has real partial passes, but the implementation is not yet
 performance-native end to end.
 
-Implementation update through May 13, 2026:
+Implementation update through May 14, 2026:
 
 - The active snapshot pipeline now scans a fingerprinted file inventory once
   and reuses it for repository info, incremental diffing, AST file units, and
@@ -394,8 +394,10 @@ Exit criteria:
 ### P0.6 Lazy Embedder Startup And Provider Batching
 
 **Gap:** embedding setup is lazy at construction, and the compatibility/cache-hit
-startup gaps found in the follow-up audit have been fixed. Provider batching is
-still incomplete: the Ollama path embeds one text per HTTP request.
+startup gaps found in the follow-up audit have been fixed. Ollama provider
+batching now uses the true `/api/embed` endpoint when available, with bounded
+per-text fallback for older servers. The remaining release gap is benchmark
+evidence that separates provider time from local pipeline materialization time.
 
 Evidence:
 
@@ -403,8 +405,12 @@ Evidence:
   `CodeEmbedder.embedding_fingerprint_record()`, and
   `CodeEmbedder._get_cached_embedding()` previously touched `embedding_dim`
   early enough to start providers before embedding work.
-- `_embed_batch_uncached()` calls `_embed_text_ollama()` once per text for the
-  Ollama provider (`fastcode/src/fastcode/indexing/embedder.py:116`).
+- `_embed_batch_uncached()` attempts provider-native Ollama batching before
+  falling back to bounded per-text requests on servers that do not support the
+  batch endpoint.
+- Real Ollama validation on May 14, 2026 with `all-minilm:l6-v2` returned a
+  3x384 embedding matrix with one provider request and
+  `provider_true_batch_count=1`.
 
 TODO:
 
@@ -423,8 +429,9 @@ TODO:
 Exit criteria:
 
 - metadata-only and cache-load flows do not load/probe embedding providers
-- Ollama indexing reports bounded concurrency for per-text requests, and can
-  report fewer provider calls than texts when a true batch API is implemented
+- Ollama indexing reports bounded concurrency for per-text fallback requests
+  and reports fewer provider calls than texts when the `/api/embed` batch
+  endpoint is available
 - benchmarks separate provider time from local pipeline materialization time
 
 ### P0.7 Remove Legacy List-Vector Paths

@@ -120,7 +120,8 @@ release-level implications.
   failing an architecture-level guard.
 - Embedder laziness is no longer overclaimed for compatibility fingerprinting
   and all-cache-hit validation: those paths avoid provider startup when
-  dimension is not configured. Provider batching and provider timing metrics
+  dimension is not configured. Ollama provider-native batching is landed with
+  bounded per-text fallback; provider timing separation and benchmark evidence
   remain open performance work.
 - Semantic resolver patching remains copy-heavy: applying a resolver patch
   still copies whole snapshot collections, but the old generic

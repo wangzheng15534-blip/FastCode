@@ -128,6 +128,12 @@ documented as structural, degraded, or experimental.
 
 Status: open.
 
+Current narrow evidence from May 14, 2026: Ollama embedding uses the
+provider-native `/api/embed` batch endpoint when available. A real
+`all-minilm:l6-v2` smoke returned three 384-dimensional embeddings with one
+provider request and `provider_true_batch_count=1`. This proves the provider
+batch boundary, but it is not a replacement for the full performance gate.
+
 Before stable release, run a medium-repository benchmark suite that records:
 
 - full index time

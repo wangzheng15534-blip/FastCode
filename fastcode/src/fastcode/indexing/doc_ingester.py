@@ -52,11 +52,24 @@ class DocChunk:
     start_line: int
     end_line: int
     embedding: list[float] | None
+    embedding_text: str | None
+    embedding_text_hash: str | None
+    embedding_artifact_ref: str | None
+    embedding_fingerprint: dict[str, Any] | None
 
     def to_element(self) -> dict[str, Any]:
         name = self.title if not self.heading else f"{self.title} - {self.heading}"
         summary = (self.text[:240] + "...") if len(self.text) > 240 else self.text
-        return {
+        metadata: dict[str, Any] = {
+            "snapshot_id": self.snapshot_id,
+            "source": "key_docs",
+            "collection": "doc",
+            "doc_type": self.doc_type,
+            "heading": self.heading,
+            "is_design_doc": True,
+            "embedding": list(self.embedding) if self.embedding else None,
+        }
+        payload: dict[str, Any] = {
             "id": self.chunk_id,
             "type": "design_document",
             "name": name,
@@ -69,18 +82,22 @@ class DocChunk:
             "signature": None,
             "docstring": self.text[:1200],
             "summary": summary,
-            "metadata": {
-                "snapshot_id": self.snapshot_id,
-                "source": "key_docs",
-                "collection": "doc",
-                "doc_type": self.doc_type,
-                "heading": self.heading,
-                "is_design_doc": True,
-                "embedding": list(self.embedding) if self.embedding else None,
-            },
+            "metadata": metadata,
             "repo_name": self.repo_name,
             "repo_url": None,
         }
+        if self.embedding_text is not None:
+            payload["embedding_text"] = self.embedding_text
+        if self.embedding_text_hash is not None:
+            payload["embedding_text_hash"] = self.embedding_text_hash
+            metadata["embedding_text_hash"] = self.embedding_text_hash
+        if self.embedding_artifact_ref is not None:
+            payload["embedding_artifact_ref"] = self.embedding_artifact_ref
+            metadata["embedding_artifact_ref"] = self.embedding_artifact_ref
+        if self.embedding_fingerprint is not None:
+            payload["embedding_fingerprint"] = dict(self.embedding_fingerprint)
+            metadata["embedding_fingerprint"] = dict(self.embedding_fingerprint)
+        return payload
 
 
 class KeyDocIngester:
@@ -124,6 +141,7 @@ class KeyDocIngester:
 
         selected_files = self._discover_files(repo_path)
         chunks: list[DocChunk] = []
+        fingerprint_payload: dict[str, Any] | None = None
         for rel_path in selected_files:
             abs_path = os.path.join(repo_path, rel_path)
             text = self._read_text(abs_path)
@@ -133,7 +151,22 @@ class KeyDocIngester:
             doc_type = self._detect_doc_type(rel_path)
             for i, piece in enumerate(self._chunk_document(text)):
                 chunk_id = self._chunk_id(snapshot_id, rel_path, i)
-                emb = self._embed(piece["text"])
+                embedding_text = piece["text"]
+                emb = self._embed(embedding_text)
+                embedding_text_hash = None
+                embedding_artifact_ref = None
+                embedding_fingerprint = None
+                if emb is not None:
+                    embedding_text_hash = hashlib.sha256(
+                        embedding_text.encode("utf-8")
+                    ).hexdigest()
+                    embedding_artifact_ref = self._embedding_artifact_ref(
+                        embedding_text
+                    )
+                    if fingerprint_payload is None:
+                        fingerprint_payload = self._embedding_fingerprint()
+                    if fingerprint_payload is not None:
+                        embedding_fingerprint = dict(fingerprint_payload)
                 chunks.append(
                     DocChunk(
                         chunk_id=chunk_id,
@@ -147,6 +180,10 @@ class KeyDocIngester:
                         start_line=piece.get("start_line", 1),
                         end_line=piece.get("end_line", piece.get("start_line", 1)),
                         embedding=emb,
+                        embedding_text=embedding_text if emb is not None else None,
+                        embedding_text_hash=embedding_text_hash,
+                        embedding_artifact_ref=embedding_artifact_ref,
+                        embedding_fingerprint=embedding_fingerprint,
                     )
                 )
 
@@ -406,6 +443,30 @@ class KeyDocIngester:
             return [float(x) for x in v]
         except Exception:
             return None
+
+    def _embedding_artifact_ref(self, text: str) -> str | None:
+        artifact_ref = getattr(self.embedder, "embedding_artifact_ref", None)
+        if not callable(artifact_ref):
+            return None
+        try:
+            ref = artifact_ref(text)
+        except Exception:
+            return None
+        return str(ref) if ref is not None else None
+
+    def _embedding_fingerprint(self) -> dict[str, Any] | None:
+        fingerprint = getattr(self.embedder, "embedding_fingerprint", None)
+        if not callable(fingerprint):
+            return None
+        try:
+            payload = fingerprint(resolve_dimension=True)
+        except TypeError:
+            payload = fingerprint()
+        except Exception:
+            return None
+        return (
+            dict(cast(dict[str, Any], payload)) if isinstance(payload, dict) else None
+        )
 
     @staticmethod
     def _detect_doc_type(rel_path: str) -> str:

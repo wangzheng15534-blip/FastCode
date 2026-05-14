@@ -21,8 +21,9 @@ Supported deployment modes for the current pre-release:
 
 - local single-user SQLite mode
 - trusted-local API/web service mode behind localhost binding
-- PostgreSQL-backed mode as an implementation target, pending real backend gate
-  evidence
+- PostgreSQL-backed retrieval mode as an implementation target with initial
+  real pgvector evidence; production backend semantics remain pending the full
+  backend gate
 
 The API and web services do not provide built-in user authentication. Shared or
 remote deployments require a proxy/gateway with TLS and authz.
@@ -88,7 +89,25 @@ Current evidence: this gate passed on May 13, 2026 with Python 3.13.13.
 
 ### Backend Integration Gate
 
-Status: open.
+Status: partially evidenced, still open for production semantics.
+
+Current real-service evidence from May 14, 2026:
+
+```bash
+FASTCODE_E2E_OLLAMA_URL=http://10.0.0.203:11434/api/embeddings \
+PG_E2E_DSN=postgresql://postgres:postgres@127.0.0.1:5432 \
+uv run pytest -n 0 --timeout=300 \
+  fastcode/tests/e2e/test_e2e_indexing.py::test_e2e_indexing_pg_real_embeddings -q
+```
+
+That gate passed against PostgreSQL 17.9 with pgvector and Ollama
+`all-minilm:l6-v2` embeddings. A separate docs-enabled smoke using
+`gpt-oss:20b-cloud` through Ollama's OpenAI-compatible endpoint indexed and
+queried a temp repo, producing 10 PG vector rows, 384-dimensional pgvector
+values, zero legacy `embedding_arr` rows, no raw embedding leaks in
+`metadata_json`, and no missing embedding refs/fingerprints across code and doc
+chunk rows. The smoke degraded only because Terminus publishing was intentionally
+unconfigured.
 
 Before stable release, run a real PostgreSQL suite that covers snapshot
 save/load, manifests, locks, fencing, staging, outbox, redo tasks, SCIP refs,

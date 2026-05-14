@@ -18,6 +18,7 @@ services are unavailable rather than being silently skipped.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import pathlib
 import subprocess
@@ -559,6 +560,38 @@ def _verify_pg_elements(dsn: str, snapshot_id: str) -> None:
     count = rows[0][0]
     assert count >= 1, f"Expected >= 1 row in embedding_vectors, got {count}"
 
+    rows = _pg_execute(
+        dsn,
+        """
+        SELECT element_id, metadata_json, vector_dims(embedding), embedding_arr
+        FROM embedding_vectors
+        WHERE snapshot_id = %s
+        ORDER BY element_id
+        """,
+        (snapshot_id,),
+    )
+    assert rows is not None
+    dimensions: set[int] = set()
+    for element_id, metadata_json, vector_dim, embedding_arr in rows:
+        assert embedding_arr is None, f"legacy embedding_arr populated: {element_id}"
+        assert isinstance(vector_dim, int)
+        assert vector_dim > 0
+        dimensions.add(vector_dim)
+        metadata = _metadata_payload(metadata_json)
+        bad_paths = _bad_embedding_payload_paths(metadata)
+        assert bad_paths == [], f"raw embedding leaked in metadata: {bad_paths}"
+        nested_metadata = metadata.get("metadata")
+        if not isinstance(nested_metadata, dict):
+            nested_metadata = {}
+        assert metadata.get("embedding_artifact_ref") or nested_metadata.get(
+            "embedding_artifact_ref"
+        ), f"embedding artifact ref missing: {element_id}"
+        assert metadata.get("embedding_fingerprint") or nested_metadata.get(
+            "embedding_fingerprint"
+        ), f"embedding fingerprint missing: {element_id}"
+
+    assert len(dimensions) == 1, f"mixed embedding dimensions found: {dimensions}"
+
 
 def _verify_pg_search_documents(dsn: str, snapshot_id: str) -> None:
     """Assert search_documents table has real rows for the snapshot."""
@@ -570,3 +603,36 @@ def _verify_pg_search_documents(dsn: str, snapshot_id: str) -> None:
     assert rows is not None
     count = rows[0][0]
     assert count >= 1, f"Expected >= 1 row in search_documents, got {count}"
+
+
+def _metadata_payload(raw_metadata: Any) -> dict[str, Any]:
+    if isinstance(raw_metadata, dict):
+        return raw_metadata
+    if isinstance(raw_metadata, str):
+        parsed = json.loads(raw_metadata)
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _bad_embedding_payload_paths(value: Any, path: str = "$") -> list[str]:
+    bad_paths: list[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            child = f"{path}.{key}"
+            if key == "embedding":
+                bad_paths.append(child)
+            if (
+                isinstance(item, list)
+                and item
+                and all(
+                    isinstance(x, (int, float)) and not isinstance(x, bool)
+                    for x in item
+                )
+                and ("embedding" in key.lower() or key.lower() in {"vector", "vectors"})
+            ):
+                bad_paths.append(child)
+            bad_paths.extend(_bad_embedding_payload_paths(item, child))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            bad_paths.extend(_bad_embedding_payload_paths(item, f"{path}[{index}]"))
+    return bad_paths

@@ -24,12 +24,36 @@ class _DummyEmbedder:
             return None
         return [0.1, 0.2, 0.3]
 
+    def embedding_artifact_ref(self, text: str) -> str:
+        return f"embedding:{len(text)}"
+
+    def embedding_fingerprint(
+        self, *, resolve_dimension: bool = False
+    ) -> dict[str, Any]:
+        return {
+            "provider": "test",
+            "model": "dummy",
+            "dimension": 3 if resolve_dimension else 0,
+        }
+
 
 class _FakeEmbedder:
     """Minimal embedder that returns fixed vectors."""
 
     def embed_text(self, text: str) -> Any:
         return [0.1] * 8
+
+    def embedding_artifact_ref(self, text: str) -> str:
+        return f"embedding:{len(text)}"
+
+    def embedding_fingerprint(
+        self, *, resolve_dimension: bool = False
+    ) -> dict[str, Any]:
+        return {
+            "provider": "test",
+            "model": "fake",
+            "dimension": 8 if resolve_dimension else 0,
+        }
 
 
 def _make_ingester(**overrides) -> Any:
@@ -133,6 +157,13 @@ def test_doc_ingester_selects_curated_files_and_extracts_mentions():
         assert all(
             "docs/private/" not in e["relative_path"] for e in result["elements"]
         )
+        for element in result["elements"]:
+            metadata = element["metadata"]
+            assert (
+                element["embedding_artifact_ref"] == metadata["embedding_artifact_ref"]
+            )
+            assert element["embedding_fingerprint"] == metadata["embedding_fingerprint"]
+            assert element["embedding_text_hash"] == metadata["embedding_text_hash"]
         assert any(m["symbol_id"] == "sym:branchindexer" for m in result["mentions"])
 
 

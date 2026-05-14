@@ -703,6 +703,9 @@ class CodeIndexer:
             element.metadata["embedding_artifact_ref"] = embedded_payload.get(
                 "embedding_artifact_ref"
             )
+            element.metadata["embedding_fingerprint"] = (
+                embedded_payload.get("metadata", {}) or {}
+            ).get("embedding_fingerprint")
 
     @staticmethod
     def _serialize_element_for_embedding(element: CodeElement) -> CodeElementMeta:

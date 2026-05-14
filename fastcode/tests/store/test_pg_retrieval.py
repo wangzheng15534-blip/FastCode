@@ -214,6 +214,53 @@ def test_upsert_elements_accepts_root_embedding_when_metadata_lacks_one_double()
     assert vector_payload["metadata"]["embedding_text_hash"] == "hash-root-only"
 
 
+def test_upsert_elements_carries_embedding_reference_metadata_double():
+    cursor = _RecordingCursor()
+    store = PgRetrievalStore.__new__(PgRetrievalStore)
+    store.enabled = True
+    store.logger = logging.getLogger(__name__)
+    store.db_runtime = _FakeDBRuntime(_FakeConn(cursor))
+
+    fingerprint = {
+        "provider": "sentence-transformers",
+        "model": "model-a",
+        "dimension": 2,
+        "prepared_text_schema_version": 2,
+    }
+
+    store.upsert_elements(
+        "snap:1",
+        [
+            {
+                "id": "elem:fingerprint",
+                "type": "function",
+                "name": "fingerprint",
+                "relative_path": "pkg/fingerprint.py",
+                "language": "python",
+                "repo_name": "repo",
+                "embedding": np.asarray([0.5, 0.25], dtype=np.float32),
+                "embedding_artifact_ref": "embedding_v2_ref",
+                "embedding_fingerprint": fingerprint,
+                "embedding_text_hash": "hash-from-root",
+                "metadata": {
+                    "repo_name": "repo",
+                    "embedding_text_hash": "stale-hash",
+                },
+            }
+        ],
+    )
+
+    vector_payload = json.loads(cursor.calls[0][1][0][8])
+    search_payload = json.loads(cursor.calls[1][1][0][7])
+    for payload in (vector_payload, search_payload):
+        assert "embedding" not in payload
+        assert payload["embedding_artifact_ref"] == "embedding_v2_ref"
+        assert payload["embedding_fingerprint"] == fingerprint
+        assert payload["metadata"]["embedding_artifact_ref"] == "embedding_v2_ref"
+        assert payload["metadata"]["embedding_fingerprint"] == fingerprint
+        assert payload["metadata"]["embedding_text_hash"] == "hash-from-root"
+
+
 def test_upsert_elements_batches_vector_and_search_rows_double():
     cursor = _RecordingCursor()
     store = PgRetrievalStore.__new__(PgRetrievalStore)
@@ -328,6 +375,33 @@ def test_upsert_elements_rejects_array_metadata_json_double():
                     "metadata": {
                         "repo_name": "repo",
                         "unexpected_array": np.asarray([0.1, 0.2], dtype=np.float32),
+                    },
+                }
+            ],
+        )
+
+
+def test_upsert_elements_rejects_embedding_like_numeric_metadata_json_double():
+    store = PgRetrievalStore.__new__(PgRetrievalStore)
+    store.enabled = True
+    store.logger = logging.getLogger(__name__)
+    store.db_runtime = _FakeDBRuntime(_FakeConn(_RecordingCursor()))
+
+    with pytest.raises(ValueError, match="Embedding/vector arrays"):
+        store.upsert_elements(
+            "snap:1",
+            [
+                {
+                    "id": "elem:bad-vector",
+                    "type": "function",
+                    "name": "bad_vector",
+                    "relative_path": "pkg/bad_vector.py",
+                    "language": "python",
+                    "repo_name": "repo",
+                    "embedding": np.asarray([1.0, 0.0], dtype=np.float32),
+                    "metadata": {
+                        "repo_name": "repo",
+                        "embedding_vector": [0.1, 0.2],
                     },
                 }
             ],

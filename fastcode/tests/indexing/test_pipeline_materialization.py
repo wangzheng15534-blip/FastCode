@@ -21,6 +21,11 @@ def _element(
     if embedding is not None:
         metadata["embedding"] = embedding
         metadata["embedding_text"] = f"text:{element_id}"
+        metadata["embedding_fingerprint"] = {
+            "provider": "test",
+            "model": "stub",
+            "dimension": int(embedding.shape[0]),
+        }
     return CodeElement(
         id=element_id,
         type="function",
@@ -69,6 +74,11 @@ def test_materialize_indexed_elements_for_storage_avoids_code_element_to_dict() 
     assert all(payload.get("snapshot_id") == "snap:1" for payload in all_payloads)
     assert metadata[0] is all_payloads[0]
     assert metadata[0]["metadata"]["stable_unit_id"] == "unit:with_embedding"
+    assert metadata[0]["metadata"]["embedding_fingerprint"] == {
+        "provider": "test",
+        "model": "stub",
+        "dimension": 2,
+    }
     assert "snapshot_id" not in embedded.metadata
     assert "source_priority" not in embedded.metadata
 

@@ -33,6 +33,7 @@ class CodeElementMeta(TypedDict, total=True):
     embedding: NotRequired[Any]  # np.ndarray
     embedding_text: NotRequired[str]
     embedding_artifact_ref: NotRequired[str]
+    embedding_fingerprint: NotRequired[dict[str, Any]]
     ir_symbol_id: NotRequired[str]  # added by main.py IR resolution
     stable_unit_id: NotRequired[str]
     content_hash: NotRequired[str]

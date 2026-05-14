@@ -34,6 +34,14 @@ Implementation update through May 13, 2026:
   columns.
 - PG retrieval upserts now batch vector and search-document writes with
   `executemany()` and report row count, batch count, and vector adapter path.
+- PG retrieval metadata for code elements and documentation chunks now publishes
+  embedding artifact references and fingerprints while rejecting
+  embedding/vector-shaped numeric metadata payloads, keeping raw embeddings
+  confined to vector columns.
+- Real PostgreSQL/Ollama validation on May 14, 2026 confirmed the active
+  docs-enabled PG retrieval path writes only pgvector embeddings plus metadata
+  refs/fingerprints: 10 rows, 384-dimensional vectors, zero legacy
+  `embedding_arr` rows, no JSON embedding leaks, and no missing refs/fingerprints.
 - Scoped SCIP reruns now use repo-root filtered execution by default, cache
   filtered SCIP artifacts by tool/profile plus target-file and package-marker
   fingerprints, and report cache hits/misses and scope-copy counts.
@@ -357,8 +365,10 @@ TODO:
 
 - [x] Add a typed `EmbeddingFingerprint` value owned by the embedding boundary.
 - [ ] Persist the same fingerprint in file manifests, vector manifests, IR
-  embeddings, PG metadata, repository overview artifacts, query embedding cache
-  entries, and incremental compatibility checks.
+  embeddings, repository overview artifacts, query embedding cache entries, and
+  incremental compatibility checks.
+- [x] Persist embedding artifact refs and fingerprints in active PG retrieval
+  metadata for code elements and documentation chunks.
 - [x] Make fingerprint lookup non-starting: compatibility planning and cache-hit
   validation must not load a sentence-transformer model or probe Ollama merely
   to learn an embedding dimension.
@@ -484,15 +494,20 @@ Exit criteria:
 
 ### P0.9 Enforce Native pgvector Boundaries
 
-**Gap:** PG retrieval stores vectors through vector-specific columns, but JSON
-fallbacks can still list-materialize arrays if embeddings leak into metadata.
+**Status:** active PG retrieval rows now keep raw embeddings in pgvector
+columns and publish refs/fingerprints in JSON metadata for code and doc rows.
+The remaining work is broader backend load evidence, not this boundary itself.
 
 Evidence:
 
-- `_json_safe_payload()` recursively converts NumPy arrays with `.tolist()`
-  (`fastcode/src/fastcode/store/pg_retrieval.py:216`).
+- `_json_safe_payload()` hard-fails NumPy arrays and embedding/vector-shaped
+  numeric metadata payloads instead of silently list-materializing them
+  (`fastcode/src/fastcode/store/pg_retrieval.py:244`).
 - `upsert_elements()` serializes metadata JSON per element and binds vector
   parameters separately (`fastcode/src/fastcode/store/pg_retrieval.py:258`).
+- The real PG/Ollama e2e asserts pgvector dimensions, no legacy
+  `embedding_arr`, no leaked embedding metadata, and present refs/fingerprints
+  for all rows (`fastcode/tests/e2e/test_e2e_indexing.py:560`).
 
 TODO:
 
@@ -500,7 +515,7 @@ TODO:
   explicitly marked compatibility exports.
 - [x] Use batched insert/update APIs for PG vector and search-document rows
   instead of one `execute()` pair per element.
-- [ ] Preserve embeddings only in vector columns or vector artifacts; metadata
+- [x] Preserve embeddings only in vector columns or vector artifacts; metadata
   should carry embedding refs and fingerprints, not numeric arrays.
 
 Exit criteria:

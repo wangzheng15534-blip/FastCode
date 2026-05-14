@@ -24,7 +24,9 @@ The core algorithmic path is much stronger than the original prototype: snapshot
 
 The remaining gap to a stable release is no longer mainly "does the core pipeline work?" The gap is production evidence and operational hardening:
 - true incremental source/index/update caching at the pipeline core, beyond the currently partial manifest/scoped-frontier implementation
-- first-class embedding/model fingerprint reuse across snapshots, vector artifacts, repository overviews, PG rows, and query embeddings
+- first-class embedding/model fingerprint reuse across snapshots, vector
+  artifacts, repository overviews, and query embeddings; active PG retrieval
+  rows now carry embedding refs/fingerprints
 - strict FP/FCIS dataflow enforcement across API -> schema -> core -> store boundaries
 - completion of typed store/query/projection records so persistence and API shells stop leaking raw dict payloads
 - package/install reproducibility for the active interpreter is now covered by
@@ -84,7 +86,10 @@ This audit checked current source and regression tests directly, not git history
   shards, and safe PostgreSQL relational fact publication now reuse prior
   snapshot work for unchanged paths. Scoped SCIP still widens or falls back to
   repo/tool scope in important cases.
-- Embedding identity is still mostly local to `CodeEmbedder`; there is no shared `embedding_fingerprint` contract enforced uniformly across snapshots, vector stores, repository overviews, query embeddings, and PG/vector rows.
+- Embedding identity is still not enforced uniformly across snapshots, vector
+  stores, repository overviews, and query embeddings. Active PG retrieval rows
+  now carry embedding artifact refs/fingerprints for code and documentation
+  chunks, verified against real PostgreSQL.
 - Snapshot artifact handles are closer to serving isolation: public
   `FastCode.query()`, `FastCode.query_snapshot()`, and `FastCode.query_stream()`
   now share the read side of the service state lock while mutations keep the
@@ -235,6 +240,18 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
   - PostgreSQL retrieval persistence now strips raw embedding arrays from JSON metadata and stores vectors only in vector-specific columns
   - PostgreSQL retrieval upserts now batch vector/search-document writes and
     expose row count, batch count, and vector adapter path metrics
+  - PostgreSQL retrieval metadata now carries embedding artifact refs and
+    fingerprints for code elements and documentation chunks while rejecting
+    embedding/vector-shaped numeric metadata payloads, so raw embeddings stay
+    confined to vector columns/artifacts
+  - Real PostgreSQL/Ollama evidence on May 14, 2026:
+    `postgresql://postgres:postgres@127.0.0.1:5432` plus
+    `http://10.0.0.203:11434` indexed a docs-enabled temp repo with
+    `all-minilm:l6-v2`, queried through `gpt-oss:20b-cloud`, and produced 10
+    PG vector rows with 384-dimensional pgvector values, zero legacy
+    `embedding_arr` rows, no JSON embedding leaks, and no missing
+    refs/fingerprints. The run degraded only because Terminus was intentionally
+    unconfigured.
   - `store/pg_retrieval.py` now builds JSON row payloads from an explicit stable element field set instead of recursively normalizing arbitrary whole-element dicts during hot inserts
 - Publishing boundary hardening:
   - Terminus lineage publishing now has a typed `IRSnapshot` boundary that builds payloads from snapshot fields and IR units/relations without full `IRSnapshot.to_dict()` expansion
@@ -818,14 +835,13 @@ The template philosophy remains correct for Python: use one importable package w
 
 **Why this is core-level:** Stable release users will judge the system by repeated indexing/update cost. Without a correct embedding cache, model inference dominates runtime and cost even when source changes are small.
 
-**Current status:** partially implemented. The active embedder path deduplicates identical prepared texts, stores cached vectors as `float32` buffer payloads, treats stale list-format cache entries as misses, and has focused regression coverage for repeated-text reuse. The remaining gap is a first-class embedding fingerprint propagated across every artifact and persistence surface that can reuse vectors.
+**Current status:** partially implemented. The active embedder path deduplicates identical prepared texts, stores cached vectors as `float32` buffer payloads, treats stale list-format cache entries as misses, validates active cache and changed-unit reuse with a typed embedding fingerprint, and now carries embedding refs/fingerprints into active PG retrieval rows for both code and documentation chunks. The remaining gap is propagating the same fingerprint contract across every other artifact and reuse surface that can serve vectors.
 
 **Current failure modes:**
-- embedding cache identity is still mostly local to `CodeEmbedder`; snapshot metadata, vector artifacts, repo-overview artifacts, and PG/vector persistence do not yet share one first-class embedding fingerprint contract.
-- the preparation schema is implicit in `_prepare_code_text()` and only manually versioned through optional `cache_version`, so schema drift still depends on operator discipline.
+- embedding cache identity is still mostly local to `CodeEmbedder`; snapshot metadata, vector artifacts, repo-overview artifacts, and query embeddings do not yet share one first-class embedding fingerprint contract.
+- PG retrieval rows now carry embedding refs/fingerprints, but backend evidence still needs to expand beyond retrieval rows into locks, migrations, outbox/redo, and relational facts.
 - the incremental manifest compatibility hash checks major embedding settings, but the same fingerprint discipline is not yet propagated uniformly across all reuse surfaces.
-- Ollama embedding path is effectively serial, ignoring batch-level reuse opportunities.
-- model startup is eager, so read-only operations can pay unnecessary model initialization overhead.
+- Ollama embedding path has bounded per-text concurrency, but true provider-level batch APIs are still open where supported.
 
 **Required work:**
 - Formalize the current embedder path behind an `EmbeddingService` or equivalent core boundary with:
@@ -848,7 +864,7 @@ The template philosophy remains correct for Python: use one importable package w
   - vector-store artifacts
   - repo overviews
   - query/embedding cache keys
-  - any PG/vector persistence rows that serve embeddings
+  - PG/vector persistence rows that serve embeddings; active PG retrieval rows are done
 - Refuse artifact reuse or force rebuild when embedding fingerprint mismatches.
 - Batch cache hits/misses correctly: fetch cached vectors first, embed only misses, then write misses.
 - Make embedder/model initialization lazy for non-embedding code paths.

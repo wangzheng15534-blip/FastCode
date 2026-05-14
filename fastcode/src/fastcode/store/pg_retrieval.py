@@ -35,6 +35,7 @@ class PgRetrievalStore:
         "source_priority",
         "embedding_text",
         "embedding_artifact_ref",
+        "embedding_fingerprint",
         "ir_symbol_id",
         "stable_unit_id",
         "content_hash",
@@ -214,14 +215,50 @@ class PgRetrievalStore:
         return None
 
     @staticmethod
-    def _json_safe_payload(value: Any) -> Any:
+    def _looks_like_numeric_vector(value: Any) -> bool:
+        if isinstance(value, np.ndarray):
+            return True
+        if not isinstance(value, (list, tuple)):
+            return False
+        sequence = cast(Sequence[Any], value)
+        if not sequence:
+            return False
+        return all(
+            isinstance(item, (int, float, np.integer, np.floating))
+            and not isinstance(item, bool)
+            for item in sequence
+        )
+
+    @staticmethod
+    def _is_embedding_like_metadata_key(key: str) -> bool:
+        normalized = key.lower()
+        return "embedding" in normalized or normalized in {
+            "vector",
+            "vectors",
+            "vector_arr",
+            "vector_array",
+            "vector_values",
+        }
+
+    @staticmethod
+    def _json_safe_payload(value: Any, *, metadata_key: str | None = None) -> Any:
+        if (
+            metadata_key
+            and PgRetrievalStore._is_embedding_like_metadata_key(metadata_key)
+            and PgRetrievalStore._looks_like_numeric_vector(value)
+        ):
+            raise ValueError(
+                "Embedding/vector arrays must not be serialized into PG metadata JSON"
+            )
         if isinstance(value, Mapping):
             payload: dict[str, Any] = {}
             for k, v in cast(Mapping[Any, Any], value).items():
                 key_str = str(k)
                 if key_str == "embedding":
                     continue
-                payload[key_str] = PgRetrievalStore._json_safe_payload(v)
+                payload[key_str] = PgRetrievalStore._json_safe_payload(
+                    v, metadata_key=key_str
+                )
             return payload
         if isinstance(value, (list, tuple)):
             return [
@@ -247,11 +284,31 @@ class PgRetrievalStore:
             return value
         return repr(value)
 
+    @staticmethod
+    def _embedding_ref_metadata(elem: dict[str, Any]) -> dict[str, Any]:
+        raw_meta = elem.get("metadata")
+        meta = cast(dict[str, Any], raw_meta) if isinstance(raw_meta, dict) else {}
+        out: dict[str, Any] = {}
+        for key in (
+            "embedding_artifact_ref",
+            "embedding_fingerprint",
+            "embedding_text_hash",
+        ):
+            value = elem.get(key)
+            if value is None:
+                value = meta.get(key)
+            if value is not None:
+                out[key] = value
+        return out
+
     @classmethod
     def _serialize_element_payload(cls, elem: dict[str, Any]) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "metadata": cls._json_safe_payload(elem.get("metadata") or {})
-        }
+        raw_meta = elem.get("metadata")
+        metadata = (
+            dict(cast(dict[str, Any], raw_meta)) if isinstance(raw_meta, dict) else {}
+        )
+        metadata.update(cls._embedding_ref_metadata(elem))
+        payload: dict[str, Any] = {"metadata": cls._json_safe_payload(metadata)}
         for field_name in cls._ELEMENT_JSON_FIELDS:
             if field_name not in elem:
                 continue

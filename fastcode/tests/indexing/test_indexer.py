@@ -51,6 +51,11 @@ class _EmbedderStub:
             element["embedding_artifact_ref"] = f"artifact:{element['id']}"
             metadata = dict(element.get("metadata", {}) or {})
             metadata["embedding_text_hash"] = f"hash:{element['id']}"
+            metadata["embedding_fingerprint"] = {
+                "provider": "test",
+                "model": "stub",
+                "dimension": 2,
+            }
             element["metadata"] = metadata
 
         return elements
@@ -140,6 +145,11 @@ def test_index_files_avoids_generic_element_and_import_to_dict_calls() -> None:
     assert function_element.metadata["embedding_artifact_ref"] == (
         f"artifact:{function_element.id}"
     )
+    assert function_element.metadata["embedding_fingerprint"] == {
+        "provider": "test",
+        "model": "stub",
+        "dimension": 2,
+    }
     assert isinstance(file_element.metadata["embedding"], np.ndarray)
 
 

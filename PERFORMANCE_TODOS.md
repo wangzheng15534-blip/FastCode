@@ -69,6 +69,10 @@ Implementation update through May 13, 2026:
 - Embedding provider metrics now report startup count/time, provider requests,
   provider batches, cache hits, cache misses, and cache writes; Ollama
   per-text requests can run with bounded concurrency when configured.
+- Ollama embeddings now use the provider-level `/api/embed` batch endpoint when
+  available, falling back to bounded per-text requests on older servers; real
+  validation against `all-minilm:l6-v2` returned a 3x384 matrix with one
+  provider request.
 - `VectorStore` in-memory row append and the generic vector sequence helper no
   longer grow homogeneous matrices through repeated `np.vstack()` calls.
 - Semantic resolver patching no longer clones IR objects through generic
@@ -411,7 +415,7 @@ TODO:
 - [x] Stop `_incremental_compatibility_payload()` and cache-hit validation from
   touching `embedding_dim` when no configured or persisted dimension is
   available.
-- [ ] Add provider-level batch APIs where supported.
+- [x] Add provider-level batch APIs where supported.
 - [x] Add bounded concurrency where only per-text APIs exist.
 - [x] Expose provider startup time, request count, batch count, cache hit/miss,
   and cache write counts in pipeline metrics.

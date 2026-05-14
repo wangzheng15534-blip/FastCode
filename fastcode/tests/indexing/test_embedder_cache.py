@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import threading
@@ -205,6 +206,7 @@ def test_ollama_embedding_uses_bounded_concurrency(monkeypatch: Any) -> None:
                 "model": "test-ollama",
                 "dimension": 2,
                 "ollama_concurrency": 2,
+                "ollama_batch_enabled": False,
             },
             "cache": {"enabled": False},
         }
@@ -232,6 +234,91 @@ def test_ollama_embedding_uses_bounded_concurrency(monkeypatch: Any) -> None:
     assert max_active > 1
     assert embedder.embedding_metrics()["provider_batch_count"] == 1
     assert embedder.embedding_metrics()["provider_request_count"] == 4
+
+
+def test_ollama_embedding_uses_batch_api_when_available(monkeypatch: Any) -> None:
+    embedder = CodeEmbedder(
+        {
+            "embedding": {
+                "provider": "ollama",
+                "model": "test-ollama",
+                "dimension": 2,
+                "ollama_url": "http://ollama.local/api/embeddings",
+            },
+            "cache": {"enabled": False},
+        }
+    )
+    requests: list[tuple[str, dict[str, Any]]] = []
+
+    class _Response:
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *_args: Any) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps({"embeddings": [[1.0, 0.0], [0.0, 1.0]]}).encode()
+
+    def _fake_urlopen(request: Any, *, timeout: int) -> _Response:
+        del timeout
+        requests.append(
+            (
+                request.full_url,
+                json.loads(request.data.decode("utf-8")),
+            )
+        )
+        return _Response()
+
+    monkeypatch.setattr(
+        "fastcode.indexing.embedder.urllib.request.urlopen", _fake_urlopen
+    )
+
+    embeddings = embedder.embed_batch(["alpha", "beta"])
+
+    assert embeddings.shape == (2, 2)
+    assert requests == [
+        (
+            "http://ollama.local/api/embed",
+            {"model": "test-ollama", "input": ["alpha", "beta"]},
+        )
+    ]
+    assert embedder.embedding_metrics()["provider_batch_count"] == 1
+    assert embedder.embedding_metrics()["provider_request_count"] == 1
+    assert embedder.embedding_metrics()["provider_true_batch_count"] == 1
+
+
+def test_ollama_embedding_falls_back_when_batch_api_unavailable(
+    monkeypatch: Any,
+) -> None:
+    embedder = CodeEmbedder(
+        {
+            "embedding": {
+                "provider": "ollama",
+                "model": "test-ollama",
+                "dimension": 2,
+            },
+            "cache": {"enabled": False},
+        }
+    )
+    monkeypatch.setattr(
+        embedder,
+        "_embed_batch_ollama",
+        lambda _texts: (_ for _ in ()).throw(RuntimeError("old server")),
+    )
+
+    def _fake_embed(text: str) -> np.ndarray:
+        embedder._increment_embedding_metric("provider_request_count")
+        return np.asarray([float(len(text)), 1.0], dtype=np.float32)
+
+    monkeypatch.setattr(embedder, "_embed_text_ollama", _fake_embed)
+
+    embeddings = embedder.embed_batch(["a", "bb"])
+
+    assert embeddings.tolist() == [[1.0, 1.0], [2.0, 1.0]]
+    assert embedder.embedding_metrics()["provider_batch_count"] == 1
+    assert embedder.embedding_metrics()["provider_batch_fallback_count"] == 1
+    assert embedder.embedding_metrics()["provider_request_count"] == 2
 
 
 def test_embed_code_elements_deduplicates_batch_and_persists_cache() -> None:

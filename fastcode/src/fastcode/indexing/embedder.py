@@ -76,6 +76,13 @@ class CodeEmbedder:
         self.ollama_url = self.embedding_config.get(
             "ollama_url", "http://127.0.0.1:11434/api/embeddings"
         )
+        self.ollama_batch_url = self.embedding_config.get(
+            "ollama_batch_url",
+            self._default_ollama_batch_url(self.ollama_url),
+        )
+        self.ollama_batch_enabled = bool(
+            self.embedding_config.get("ollama_batch_enabled", True)
+        )
         self._embedding_cache: Any | None = None
         self._embedding_cache_enabled = False
         self._embedding_metrics: dict[str, float] = {}
@@ -152,6 +159,15 @@ class CodeEmbedder:
             if torch.backends.mps.is_available()
             else "cpu"
         )
+
+    @staticmethod
+    def _default_ollama_batch_url(ollama_url: str) -> str:
+        base_url = str(ollama_url or "").rstrip("/")
+        if base_url.endswith("/api/embeddings"):
+            return f"{base_url[: -len('/api/embeddings')]}/api/embed"
+        if base_url.endswith("/api/embed"):
+            return base_url
+        return f"{base_url}/api/embed"
 
     @property
     def embedding_dim(self) -> int:
@@ -297,6 +313,16 @@ class CodeEmbedder:
             return np.array([])
 
         if self.provider == "ollama":
+            if self.ollama_batch_enabled and len(texts) > 1:
+                try:
+                    return self._embed_batch_ollama(texts)
+                except Exception as exc:
+                    self._increment_embedding_metric("provider_batch_fallback_count")
+                    self.logger.debug(
+                        "Ollama batch embedding failed, falling back to per-text "
+                        "requests: %s",
+                        exc,
+                    )
             max_workers = int(
                 self.embedding_config.get("ollama_concurrency")
                 or self.embedding_config.get("max_concurrency")
@@ -519,10 +545,37 @@ class CodeEmbedder:
 
         return np.vstack(cast(list[np.ndarray], embeddings))
 
-    def _embed_text_ollama(self, text: str) -> np.ndarray:
-        # Truncate text to avoid Ollama context window overflow
+    def _truncate_ollama_text(self, text: str) -> str:
         if len(text) > self.max_seq_length:
-            text = text[: self.max_seq_length]
+            return text[: self.max_seq_length]
+        return text
+
+    def _embed_batch_ollama(self, texts: list[str]) -> np.ndarray:
+        payload = {
+            "model": self.model_name,
+            "input": [self._truncate_ollama_text(text) for text in texts],
+        }
+        self._increment_embedding_metric("provider_request_count")
+        req = urllib.request.Request(
+            self.ollama_batch_url,
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        vectors = body.get("embeddings")
+        if not isinstance(vectors, list) or len(vectors) != len(texts):
+            raise RuntimeError("Ollama batch embedding response missing embeddings")
+        matrix = np.asarray(vectors, dtype=np.float32)
+        if matrix.ndim != 2 or matrix.shape[0] != len(texts) or not matrix.shape[1]:
+            raise RuntimeError("Ollama batch embedding response has invalid shape")
+        self._embedding_dim = int(matrix.shape[1])
+        self._increment_embedding_metric("provider_true_batch_count")
+        return matrix
+
+    def _embed_text_ollama(self, text: str) -> np.ndarray:
+        text = self._truncate_ollama_text(text)
         payload = {"model": self.model_name, "prompt": text}
         self._increment_embedding_metric("provider_request_count")
         req = urllib.request.Request(

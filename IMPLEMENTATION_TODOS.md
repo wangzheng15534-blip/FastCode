@@ -236,6 +236,10 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
     cache-miss, and cache-write counters, and Ollama per-text requests support
     bounded concurrency
   - embedding cache payloads now store `float32` byte buffers plus explicit shape/dtype metadata instead of Python `list[float]` vectors
+  - Ollama embedding now uses the provider-level `/api/embed` batch endpoint
+    when available, with bounded per-text fallback for older servers; a real
+    `all-minilm:l6-v2` smoke returned three 384-dimensional embeddings with one
+    provider request
   - `store/cache.py` now persists hot dialogue/session/query payloads as explicit JSON envelopes and embedding entries as buffer-aware cache envelopes instead of generic object storage on the active cache paths
   - PostgreSQL retrieval persistence now strips raw embedding arrays from JSON metadata and stores vectors only in vector-specific columns
   - PostgreSQL retrieval upserts now batch vector/search-document writes and
@@ -841,7 +845,8 @@ The template philosophy remains correct for Python: use one importable package w
 - embedding cache identity is still mostly local to `CodeEmbedder`; snapshot metadata, vector artifacts, repo-overview artifacts, and query embeddings do not yet share one first-class embedding fingerprint contract.
 - PG retrieval rows now carry embedding refs/fingerprints, but backend evidence still needs to expand beyond retrieval rows into locks, migrations, outbox/redo, and relational facts.
 - the incremental manifest compatibility hash checks major embedding settings, but the same fingerprint discipline is not yet propagated uniformly across all reuse surfaces.
-- Ollama embedding path has bounded per-text concurrency, but true provider-level batch APIs are still open where supported.
+- Ollama embedding uses the true `/api/embed` batch endpoint where supported and
+  falls back to bounded per-text concurrency on older servers.
 
 **Required work:**
 - Formalize the current embedder path behind an `EmbeddingService` or equivalent core boundary with:

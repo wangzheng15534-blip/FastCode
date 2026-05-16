@@ -40,6 +40,9 @@ class _CountingEmbedder(CodeEmbedder):
         self.embedding_dim = 3
         self._embedding_cache = cache
         self._embedding_cache_enabled = True
+        self._embedding_metrics: dict[str, float] = {}
+        self._embedding_metrics_lock = threading.Lock()
+        self._model_lock = threading.Lock()
         self.raw_batches: list[list[str]] = []
 
     def _embed_batch_uncached(self, texts: list[str]) -> np.ndarray:

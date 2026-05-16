@@ -87,16 +87,23 @@ class CodeEmbedder:
         self._embedding_cache_enabled = False
         self._embedding_metrics: dict[str, float] = {}
         self._embedding_metrics_lock = threading.Lock()
+        self._model_lock = threading.Lock()
 
         # Auto-detect best available device: CUDA > MPS > CPU
         self.device = self._resolve_device(self.device)
 
         self.model: Any | None = None
-        self._configured_embedding_dim: int = int(
+        raw_dim = (
             self.embedding_config.get("dimension")
             or self.embedding_config.get("embedding_dim")
             or 0
         )
+        if not isinstance(raw_dim, (int, float, type(None))):
+            raise ValueError(
+                f"embedding.dimension must be numeric, got {type(raw_dim).__name__}: "
+                f"{raw_dim!r}"
+            )
+        self._configured_embedding_dim: int = int(raw_dim or 0)
         self._embedding_dim: int = self._configured_embedding_dim
 
         self._initialize_embedding_cache()
@@ -112,8 +119,6 @@ class CodeEmbedder:
         if not isinstance(metrics, dict):
             metrics = {}
             self._embedding_metrics = metrics
-        if not hasattr(self, "_embedding_metrics_lock"):
-            self._embedding_metrics_lock = threading.Lock()
         return metrics
 
     def _increment_embedding_metric(self, name: str, amount: float = 1.0) -> None:
@@ -163,6 +168,8 @@ class CodeEmbedder:
     @staticmethod
     def _default_ollama_batch_url(ollama_url: str) -> str:
         base_url = str(ollama_url or "").rstrip("/")
+        if not base_url:
+            return "http://127.0.0.1:11434/api/embed"
         if base_url.endswith("/api/embeddings"):
             return f"{base_url[: -len('/api/embeddings')]}/api/embed"
         if base_url.endswith("/api/embed"):
@@ -216,7 +223,11 @@ class CodeEmbedder:
         return model
 
     def _ensure_model_loaded(self) -> Any:
-        if self.model is None:
+        if self.model is not None:
+            return self.model
+        with self._model_lock:
+            if self.model is not None:
+                return self.model
             self.logger.info(f"Loading embedding model: {self.model_name}")
             started = perf_counter()
             model = self._load_model()
@@ -318,16 +329,22 @@ class CodeEmbedder:
                     return self._embed_batch_ollama(texts)
                 except Exception as exc:
                     self._increment_embedding_metric("provider_batch_fallback_count")
-                    self.logger.debug(
+                    self.logger.warning(
                         "Ollama batch embedding failed, falling back to per-text "
                         "requests: %s",
                         exc,
                     )
-            max_workers = int(
+            raw_concurrency = (
                 self.embedding_config.get("ollama_concurrency")
                 or self.embedding_config.get("max_concurrency")
                 or 1
             )
+            if not isinstance(raw_concurrency, (int, float)):
+                raise ValueError(
+                    f"embedding.ollama_concurrency must be numeric, got "
+                    f"{type(raw_concurrency).__name__}: {raw_concurrency!r}"
+                )
+            max_workers = int(raw_concurrency)
             if max_workers > 1 and len(texts) > 1:
                 with ThreadPoolExecutor(
                     max_workers=min(max_workers, len(texts)),
@@ -466,7 +483,7 @@ class CodeEmbedder:
             np.asarray(embedding, dtype=np.float32).reshape(-1)
         )
         previous_dim = int(getattr(self, "_embedding_dim", 0) or 0)
-        if not previous_dim:
+        if not previous_dim and embedding_array.size:
             self._embedding_dim = int(embedding_array.size)
         fingerprint_payload = self.embedding_fingerprint(resolve_dimension=True)
         payload = {
@@ -567,6 +584,10 @@ class CodeEmbedder:
         vectors = body.get("embeddings")
         if not isinstance(vectors, list) or len(vectors) != len(texts):
             raise RuntimeError("Ollama batch embedding response missing embeddings")
+        if any(not isinstance(v, list) for v in vectors):
+            raise RuntimeError(
+                "Ollama batch embedding response contains non-list entries"
+            )
         matrix = np.asarray(vectors, dtype=np.float32)
         if matrix.ndim != 2 or matrix.shape[0] != len(texts) or not matrix.shape[1]:
             raise RuntimeError("Ollama batch embedding response has invalid shape")

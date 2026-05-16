@@ -488,6 +488,7 @@ markers = [
     "e2e: end-to-end user flow",
     # --- Quality markers ---
     "regression: guards against previously-identified bugs",
+    "audit_finding(id): regression test linked to a documented incident register entry",
     # --- Framework markers (auto-registered by plugins) ---
     "hypothesis: hypothesis property-based tests (auto-applied by @given)",
     "snapshot: syrupy snapshot tests",

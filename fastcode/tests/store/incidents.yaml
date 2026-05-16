@@ -1,0 +1,24 @@
+# PG retrieval incident metadata — mirrored from test_pg_audit_regression.py
+
+incidents:
+  - id: PGRE-001
+    date: "2026-05-17"
+    module: fastcode.store.pg_retrieval
+    trigger: "executemany for embedding_vectors succeeds but executemany for search_documents fails — no rollback"
+    consequence: "embedding_vectors table has rows absent from search_documents; search quality silently degrades"
+    risk: HIGH
+    status: FIXED
+    guard_type: integration_test
+    test_method: integration
+    notes: "Mock second executemany to raise, verify error propagates and connection.commit is never called."
+
+  - id: PGRE-002
+    date: "2026-05-17"
+    module: fastcode.store.pg_retrieval
+    trigger: "executemany raises after successful upsert in a prior call — last_upsert_metrics retains stale values"
+    consequence: "Operational metrics show misleading counts from a previous successful call"
+    risk: LOW
+    status: FIXED
+    guard_type: unit
+    test_method: unit
+    notes: "Verify last_upsert_metrics is set to error state when executemany raises."

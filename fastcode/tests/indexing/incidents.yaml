@@ -1,0 +1,46 @@
+# Embedder + pipeline incident metadata — mirrored from test_embedder_audit_regression.py, test_pipeline_audit_regression.py
+
+incidents:
+  - id: EMBD-001
+    date: "2026-05-17"
+    module: fastcode.indexing.embedder
+    trigger: "Empty or None ollama_url produces relative batch URL '/api/embed'"
+    consequence: "urlopen fails at request time with confusing error instead of at config time"
+    risk: MEDIUM
+    status: FIXED
+    guard_type: unit
+    test_method: unit
+    notes: "_default_ollama_batch_url falls back to http://127.0.0.1:11434/api/embed for empty/None input."
+
+  - id: EMBD-002
+    date: "2026-05-17"
+    module: fastcode.indexing.embedder
+    trigger: "Ollama batch response with None entries, ragged inner dimensions, or wrong count"
+    consequence: "np.asarray raises ValueError instead of descriptive RuntimeError"
+    risk: MEDIUM
+    status: FIXED
+    guard_type: unit
+    test_method: unit
+    notes: "Negative test matrix: None entries, ragged dims, wrong count, flat list, missing key, non-list value."
+
+  - id: EMBD-003
+    date: "2026-05-17"
+    module: fastcode.indexing.embedder
+    trigger: "_ensure_embedding_metrics check-then-act race: two threads both replace metrics dict and lock"
+    consequence: "Metric increments silently lost when threads use different lock objects"
+    risk: MEDIUM
+    status: FIXED
+    guard_type: unit
+    test_method: unit
+    notes: "Thread stress test: N threads increment metric M times each, verify total == N*M."
+
+  - id: PIPE-002
+    date: "2026-05-17"
+    module: fastcode.indexing.pipeline
+    trigger: "_embedding_identity_matches dimension skip only when current is None, not when existing is None"
+    consequence: "Version upgrade from non-resolving to resolving fingerprint incorrectly rejects valid reuse"
+    risk: MEDIUM
+    status: FIXED
+    guard_type: decision_table
+    test_method: unit
+    notes: "Decision table covers: both None, existing None + current non-None, current None + existing non-None, both same, both different, model mismatch, None inputs, non-Mapping, extra field."

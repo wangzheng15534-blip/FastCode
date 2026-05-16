@@ -1,0 +1,13 @@
+# Integration-level incident metadata — mirrored from test_snapshot_pipeline.py
+
+incidents:
+  - id: PIPE-001
+    date: "2026-05-17"
+    module: fastcode.indexing.pipeline
+    trigger: "_reuse_changed_unit_embeddings copies embedding/text/hash but not embedding_fingerprint or embedding_artifact_ref"
+    consequence: "Reused elements lack fingerprint provenance in downstream PG metadata"
+    risk: HIGH
+    status: FIXED
+    guard_type: integration_test
+    test_method: integration
+    notes: "Set up valid incremental reuse, verify output element metadata contains all 5 embedding fields."

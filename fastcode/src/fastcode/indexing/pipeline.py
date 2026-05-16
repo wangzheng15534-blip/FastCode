@@ -1626,6 +1626,14 @@ class IndexPipeline:
             elem.metadata["embedding"] = previous_embedding
             elem.metadata["embedding_text"] = previous_text
             elem.metadata["embedding_text_hash"] = existing_text_hash
+            if "embedding_artifact_ref" in existing_meta:
+                elem.metadata["embedding_artifact_ref"] = existing_meta[
+                    "embedding_artifact_ref"
+                ]
+            if "embedding_fingerprint" in existing_meta:
+                elem.metadata["embedding_fingerprint"] = existing_meta[
+                    "embedding_fingerprint"
+                ]
             reused += 1
         return reused
 
@@ -1635,7 +1643,9 @@ class IndexPipeline:
             return False
         for field_name, expected_value in current.items():
             existing_value = existing.get(field_name)
-            if field_name == "dimension" and expected_value is None:
+            if field_name == "dimension" and (
+                expected_value is None or existing_value is None
+            ):
                 continue
             if existing_value != expected_value:
                 return False

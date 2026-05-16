@@ -262,16 +262,12 @@ class PgRetrievalStore:
             return payload
         if isinstance(value, (list, tuple)):
             return [
-                PgRetrievalStore._json_safe_payload(
-                    item, metadata_key=metadata_key
-                )
+                PgRetrievalStore._json_safe_payload(item, metadata_key=metadata_key)
                 for item in cast(Sequence[Any], value)
             ]
         if isinstance(value, set):
             return [
-                PgRetrievalStore._json_safe_payload(
-                    item, metadata_key=metadata_key
-                )
+                PgRetrievalStore._json_safe_payload(item, metadata_key=metadata_key)
                 for item in cast(set[Any], value)
             ]
         if isinstance(value, np.ndarray):

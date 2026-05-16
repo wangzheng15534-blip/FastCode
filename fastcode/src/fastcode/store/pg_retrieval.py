@@ -262,12 +262,16 @@ class PgRetrievalStore:
             return payload
         if isinstance(value, (list, tuple)):
             return [
-                PgRetrievalStore._json_safe_payload(item)
+                PgRetrievalStore._json_safe_payload(
+                    item, metadata_key=metadata_key
+                )
                 for item in cast(Sequence[Any], value)
             ]
         if isinstance(value, set):
             return [
-                PgRetrievalStore._json_safe_payload(item)
+                PgRetrievalStore._json_safe_payload(
+                    item, metadata_key=metadata_key
+                )
                 for item in cast(set[Any], value)
             ]
         if isinstance(value, np.ndarray):
@@ -381,46 +385,54 @@ class PgRetrievalStore:
                 "vector_adapter_path": "none",
             }
             return
-        with self.db_runtime.connect() as conn:
-            cur = conn.cursor()
-            cur.executemany(
-                """
-                INSERT INTO embedding_vectors (
-                    snapshot_id, element_id, repo_name, relative_path, language, element_type,
-                    embedding, embedding_arr, metadata_json, updated_at
+        try:
+            with self.db_runtime.connect() as conn:
+                cur = conn.cursor()
+                cur.executemany(
+                    """
+                    INSERT INTO embedding_vectors (
+                        snapshot_id, element_id, repo_name, relative_path, language, element_type,
+                        embedding, embedding_arr, metadata_json, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s::vector, %s, %s::jsonb, NOW())
+                    ON CONFLICT (snapshot_id, element_id) DO UPDATE SET
+                        repo_name=EXCLUDED.repo_name,
+                        relative_path=EXCLUDED.relative_path,
+                        language=EXCLUDED.language,
+                        element_type=EXCLUDED.element_type,
+                        embedding=EXCLUDED.embedding,
+                        embedding_arr=EXCLUDED.embedding_arr,
+                        metadata_json=EXCLUDED.metadata_json,
+                        updated_at=EXCLUDED.updated_at
+                    """,
+                    vector_rows,
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s::vector, %s, %s::jsonb, NOW())
-                ON CONFLICT (snapshot_id, element_id) DO UPDATE SET
-                    repo_name=EXCLUDED.repo_name,
-                    relative_path=EXCLUDED.relative_path,
-                    language=EXCLUDED.language,
-                    element_type=EXCLUDED.element_type,
-                    embedding=EXCLUDED.embedding,
-                    embedding_arr=EXCLUDED.embedding_arr,
-                    metadata_json=EXCLUDED.metadata_json,
-                    updated_at=EXCLUDED.updated_at
-                """,
-                vector_rows,
-            )
-            cur.executemany(
-                """
-                INSERT INTO search_documents (
-                    snapshot_id, element_id, repo_name, relative_path, language, element_type,
-                    text_content, metadata_json, updated_at
+                cur.executemany(
+                    """
+                    INSERT INTO search_documents (
+                        snapshot_id, element_id, repo_name, relative_path, language, element_type,
+                        text_content, metadata_json, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
+                    ON CONFLICT (snapshot_id, element_id) DO UPDATE SET
+                        repo_name=EXCLUDED.repo_name,
+                        relative_path=EXCLUDED.relative_path,
+                        language=EXCLUDED.language,
+                        element_type=EXCLUDED.element_type,
+                        text_content=EXCLUDED.text_content,
+                        metadata_json=EXCLUDED.metadata_json,
+                        updated_at=EXCLUDED.updated_at
+                    """,
+                    search_rows,
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
-                ON CONFLICT (snapshot_id, element_id) DO UPDATE SET
-                    repo_name=EXCLUDED.repo_name,
-                    relative_path=EXCLUDED.relative_path,
-                    language=EXCLUDED.language,
-                    element_type=EXCLUDED.element_type,
-                    text_content=EXCLUDED.text_content,
-                    metadata_json=EXCLUDED.metadata_json,
-                    updated_at=EXCLUDED.updated_at
-                """,
-                search_rows,
-            )
-            conn.commit()
+                conn.commit()
+        except Exception:
+            self.last_upsert_metrics = {
+                "row_count": len(vector_rows),
+                "batch_count": 2,
+                "error": True,
+            }
+            raise
         adapter_paths: set[str] = set()
         for row in vector_rows:
             vector_param = row[6]

@@ -6,7 +6,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.ir.merge import merge_ir
+from fastcode.ir.merge import MERGE_CANDIDATE_FANOUT_LIMIT, merge_ir
 from fastcode.ir.types import (
     IRAttachment,
     IRCodeUnit,
@@ -153,6 +153,103 @@ def test_merge_clone_avoids_dict_roundtrip(monkeypatch: pytest.MonkeyPatch) -> N
     assert result.supports[0] is not snapshot.supports[0]
     assert result.relations[0] is not snapshot.relations[0]
     assert result.embeddings[0] is not snapshot.embeddings[0]
+
+
+def test_merge_ir_reuses_unchanged_ast_objects_for_delta_merge() -> None:
+    ast_file = IRCodeUnit(
+        unit_id="ast:file:a.py",
+        kind="file",
+        path="a.py",
+        language="python",
+        display_name="a.py",
+        source_set={"fc_structure"},
+    )
+    ast_changed = IRCodeUnit(
+        unit_id="ast:function:service",
+        kind="function",
+        path="a.py",
+        language="python",
+        display_name="service",
+        start_line=3,
+        end_line=6,
+        source_set={"fc_structure"},
+    )
+    ast_stable = IRCodeUnit(
+        unit_id="ast:function:stable",
+        kind="function",
+        path="b.py",
+        language="python",
+        display_name="stable",
+        start_line=1,
+        end_line=3,
+        source_set={"fc_structure"},
+    )
+    ast_support = IRUnitSupport(
+        support_id="sup:stable",
+        unit_id=ast_stable.unit_id,
+        source="fc_structure",
+        support_kind="definition",
+    )
+    ast_relation = IRRelation(
+        relation_id="rel:stable",
+        src_unit_id="ast:file:b.py",
+        dst_unit_id=ast_stable.unit_id,
+        relation_type="contain",
+        resolution_state="structural",
+        support_sources={"fc_structure"},
+    )
+    ast_embedding = IRUnitEmbedding(
+        embedding_id="emb:stable",
+        unit_id=ast_stable.unit_id,
+        source="fc_embedding",
+        vector=[1.0],
+    )
+    ast = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:delta",
+        units=[ast_file, ast_changed, ast_stable],
+        supports=[ast_support],
+        relations=[ast_relation],
+        embeddings=[ast_embedding],
+    )
+    scip = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:delta",
+        units=[
+            IRCodeUnit(
+                unit_id="scip:file:a.py",
+                kind="file",
+                path="a.py",
+                language="python",
+                display_name="a.py",
+                source_set={"scip"},
+            ),
+            IRCodeUnit(
+                unit_id="scip:function:service",
+                kind="function",
+                path="a.py",
+                language="python",
+                display_name="service",
+                start_line=3,
+                end_line=6,
+                primary_anchor_symbol_id="scip:service",
+                anchor_symbol_ids=["scip:service"],
+                source_set={"scip"},
+            ),
+        ],
+    )
+
+    merged = merge_ir(ast, scip)
+    units = {unit.unit_id: unit for unit in merged.units}
+
+    assert units[ast_file.unit_id] is ast_file
+    assert units[ast_stable.unit_id] is ast_stable
+    assert units[ast_changed.unit_id] is not ast_changed
+    assert units[ast_changed.unit_id].primary_anchor_symbol_id == "scip:service"
+    assert ast_changed.primary_anchor_symbol_id is None
+    assert merged.supports[0] is ast_support
+    assert merged.relations[0] is ast_relation
+    assert merged.embeddings[0] is ast_embedding
 
 
 def _att(
@@ -358,6 +455,83 @@ def test_medium_score_alignment_keeps_candidate_anchor_and_synthetic_symbol():
     assert ast_unit.primary_anchor_symbol_id is None
     assert "pkg/run" in ast_unit.candidate_anchor_symbol_ids
     assert any(unit.unit_id == "scip:run" for unit in merged.units)
+
+
+def test_bucketed_native_matching_prunes_obvious_non_candidates():
+    target_index = 75
+    ast_units = [_file()]
+    for index in range(160):
+        start = index * 4 + 1
+        ast_units.append(
+            _method(
+                f"ast:method:func_{index}",
+                f"func_{index}",
+                "doc:snap:1:a.py",
+                start,
+                start + 2,
+            )
+        )
+    scip_unit, scip_support = _scip_method(
+        "scip:func_75",
+        "pkg/func_75",
+        "func_75",
+        target_index * 4 + 1,
+        target_index * 4 + 2,
+        "",
+    )
+    scip = IRSnapshot(
+        repo_name="r",
+        snapshot_id="snap:1",
+        units=[_file(source="scip"), scip_unit],
+        supports=[scip_support],
+    )
+
+    merged = merge_ir(
+        IRSnapshot(repo_name="r", snapshot_id="snap:1", units=ast_units), scip
+    )
+    metrics = merged.metadata["merge_metrics"]
+    matched = next(
+        unit for unit in merged.units if unit.unit_id == "ast:method:func_75"
+    )
+
+    assert matched.primary_anchor_symbol_id == "pkg/func_75"
+    assert metrics["candidate_pairs_scored"] < len(ast_units) - 1
+    assert metrics["native_exact_components"] >= 1
+    assert merged.metadata["merge_algorithm"] == "bucketed_native_alignment_v2"
+
+
+def test_candidate_fanout_cap_is_recorded():
+    ast = IRSnapshot(
+        repo_name="r",
+        snapshot_id="snap:1",
+        units=[
+            _file(),
+            *[
+                _method(
+                    f"ast:method:run:{index}",
+                    "run",
+                    "doc:snap:1:a.py",
+                    index * 3 + 1,
+                    index * 3 + 2,
+                )
+                for index in range(MERGE_CANDIDATE_FANOUT_LIMIT + 7)
+            ],
+        ],
+    )
+    scip_unit, scip_support = _scip_method("scip:run", "pkg/run", "run", 5000, 5001, "")
+    scip = IRSnapshot(
+        repo_name="r",
+        snapshot_id="snap:1",
+        units=[_file(source="scip"), scip_unit],
+        supports=[scip_support],
+    )
+
+    merged = merge_ir(ast, scip)
+    metrics = merged.metadata["merge_metrics"]
+
+    assert metrics["fanout_capped_units"] == 1
+    assert metrics["candidate_pairs_dropped_by_fanout"] == 7
+    assert metrics["candidate_pairs_scored"] == MERGE_CANDIDATE_FANOUT_LIMIT
 
 
 def test_scip_occurrence_retargets_ref_to_enclosing_unit():

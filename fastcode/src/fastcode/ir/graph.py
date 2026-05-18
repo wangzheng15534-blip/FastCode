@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import igraph as ig
 import networkx as nx
@@ -20,6 +20,10 @@ from fastcode.utils.materialization import (
 )
 
 from .types import IRSnapshot
+
+
+def _normalize_path_key(path: str | None) -> str:
+    return str(path or "").replace("\\", "/").strip("./")
 
 
 class IRGraphView:
@@ -134,6 +138,10 @@ class IRGraphView:
     def is_multigraph(self) -> bool:
         return False
 
+    @staticmethod
+    def _normalized_mode(mode: str) -> str:
+        return mode if mode in {"in", "out", "all"} else "out"
+
     def nodes(self, data: bool = False) -> list[Any]:
         names = self._names()
         if data:
@@ -183,14 +191,96 @@ class IRGraphView:
             str(names[index]) for index in self._graph.neighbors(vertex, mode="out")
         )
 
+    def neighbors(self, node: str, *, mode: str = "out") -> Any:
+        """Iterate node neighbors without materializing a NetworkX graph."""
+        vertex = self._name_to_index.get(str(node))
+        if vertex is None:
+            return iter(())
+        names = self._names()
+        normalized_mode = self._normalized_mode(mode)
+        return iter(
+            str(names[index])
+            for index in self._graph.neighbors(vertex, mode=normalized_mode)
+        )
+
+    def undirected_neighbors(self, node: str) -> Any:
+        return self.neighbors(node, mode="all")
+
+    def degree(self, node: str | None = None, *, mode: str = "all") -> Any:
+        normalized_mode = self._normalized_mode(mode)
+        if node is not None:
+            vertex = self._name_to_index.get(str(node))
+            if vertex is None:
+                return 0
+            return int(self._graph.degree(vertex, mode=normalized_mode))
+        return [
+            (name, int(self._graph.degree(index, mode=normalized_mode)))
+            for index, name in enumerate(self._node_names)
+        ]
+
+    def in_degree(self, node: str | None = None) -> Any:
+        return self.degree(node, mode="in")
+
+    def out_degree(self, node: str | None = None) -> Any:
+        return self.degree(node, mode="out")
+
+    def shortest_path(
+        self,
+        source: str,
+        target: str,
+        *,
+        mode: str = "out",
+        max_hops: int | None = None,
+    ) -> list[str]:
+        source_index = self._name_to_index.get(str(source))
+        target_index = self._name_to_index.get(str(target))
+        if source_index is None or target_index is None:
+            return []
+        if source_index == target_index:
+            return [self._node_names[source_index]]
+        normalized_mode = self._normalized_mode(mode)
+        try:
+            paths = self._graph.get_shortest_paths(
+                source_index,
+                to=target_index,
+                mode=normalized_mode,
+                output="vpath",
+            )
+        except IGraphInternalError:
+            return []
+        if not paths or not paths[0]:
+            return []
+        path = [self._node_names[int(index)] for index in paths[0]]
+        if max_hops is not None and len(path) - 1 > max_hops:
+            return []
+        return path
+
+    def component_stats(self, *, mode: str = "weak") -> dict[str, Any]:
+        component_mode = "strong" if mode == "strong" else "weak"
+        components = self._graph.connected_components(mode=component_mode)
+        sizes = [int(size) for size in components.sizes()]
+        return {
+            "mode": component_mode,
+            "component_count": len(sizes),
+            "largest_component_size": max(sizes, default=0),
+            "isolated_node_count": sum(1 for size in sizes if size == 1),
+        }
+
+    def to_undirected_view(self) -> IRGraphView:
+        edges: list[tuple[str, str, dict[str, Any]]] = []
+        for src, dst, attrs in self.edges(data=True):
+            attrs_payload = dict(attrs)
+            edges.append((src, dst, attrs_payload))
+            edges.append((dst, src, attrs_payload))
+        return IRGraphView(nodes=self.nodes(), edges=edges)
+
     def distances_within(
         self, seed: str, max_hops: int, *, mode: str = "out"
     ) -> dict[str, int]:
         seed_index = self._name_to_index.get(str(seed))
         if seed_index is None or max_hops <= 0:
             return {}
-        if mode not in {"in", "out", "all"}:
-            mode = "out"
+        mode = self._normalized_mode(mode)
         distances: dict[int, int] = {seed_index: 0}
         queue: list[int] = [seed_index]
         cursor = 0
@@ -296,6 +386,14 @@ class IRGraphs:
 
 
 class IRGraphBuilder:
+    _RELATION_GRAPH_KEYS: ClassVar[dict[str, str]] = {
+        "import": "dependency_graph",
+        "call": "call_graph",
+        "inherit": "inheritance_graph",
+        "ref": "reference_graph",
+        "contain": "containment_graph",
+    }
+
     def build_graphs(self, snapshot: IRSnapshot) -> IRGraphs:
         edge_rows: dict[str, list[tuple[str, str, dict[str, Any]]]] = {
             "import": [],
@@ -329,3 +427,124 @@ class IRGraphBuilder:
             reference_graph=IRGraphView(edges=edge_rows["ref"]),
             containment_graph=IRGraphView(edges=edge_rows["contain"]),
         )
+
+    @staticmethod
+    def _graph_touches_units(graph: Any, unit_ids: set[str]) -> bool:
+        if not unit_ids:
+            return False
+        for unit_id in unit_ids:
+            try:
+                if unit_id in graph and int(graph.degree(unit_id)) > 0:
+                    return True
+            except (TypeError, ValueError, AttributeError):
+                continue
+        return False
+
+    def build_graph_delta(
+        self,
+        snapshot: IRSnapshot,
+        *,
+        previous_graphs: IRGraphs | None,
+        changed_paths: Iterable[str],
+        removed_paths: Iterable[str] = (),
+        edge_change_threshold: int = 10000,
+    ) -> tuple[IRGraphs, dict[str, Any]]:
+        changed_path_keys = {_normalize_path_key(path) for path in changed_paths}
+        removed_path_keys = {_normalize_path_key(path) for path in removed_paths}
+        affected_paths = changed_path_keys | removed_path_keys
+        all_graphs = sorted(self._RELATION_GRAPH_KEYS.values())
+        if previous_graphs is None:
+            return self.build_graphs(snapshot), {
+                "mode": "full",
+                "fallback_reason": "missing_previous_graphs",
+                "reusable_graphs": [],
+                "rebuilt_graphs": all_graphs,
+            }
+        if not affected_paths:
+            return previous_graphs, {
+                "mode": "delta",
+                "changed_relation_count": 0,
+                "affected_path_count": 0,
+                "reusable_graphs": all_graphs,
+                "rebuilt_graphs": [],
+                "fallback_reason": None,
+            }
+        if removed_path_keys:
+            return self.build_graphs(snapshot), {
+                "mode": "full",
+                "fallback_reason": "removed_paths_require_graph_rebuild",
+                "changed_relation_count": 0,
+                "affected_path_count": len(affected_paths),
+                "removed_path_count": len(removed_path_keys),
+                "reusable_graphs": [],
+                "rebuilt_graphs": all_graphs,
+            }
+
+        unit_paths = {
+            unit.unit_id: _normalize_path_key(unit.path) for unit in snapshot.units
+        }
+        affected_units = {
+            unit_id for unit_id, path in unit_paths.items() if path in affected_paths
+        }
+        changed_relations = [
+            relation
+            for relation in snapshot.relations
+            if relation.src_unit_id in affected_units
+            or relation.dst_unit_id in affected_units
+        ]
+        if len(changed_relations) > edge_change_threshold:
+            return self.build_graphs(snapshot), {
+                "mode": "full",
+                "fallback_reason": "edge_change_threshold_exceeded",
+                "changed_relation_count": len(changed_relations),
+                "reusable_graphs": [],
+                "rebuilt_graphs": all_graphs,
+            }
+
+        changed_relation_types = {
+            relation.relation_type for relation in changed_relations
+        }
+        for relation_type, graph_attr in self._RELATION_GRAPH_KEYS.items():
+            if self._graph_touches_units(
+                getattr(previous_graphs, graph_attr), affected_units
+            ):
+                changed_relation_types.add(relation_type)
+        graph_payload: dict[str, Any] = {}
+        reusable_graphs: list[str] = []
+        rebuilt_graphs: list[str] = []
+        for relation_type, graph_attr in self._RELATION_GRAPH_KEYS.items():
+            if relation_type not in changed_relation_types:
+                graph_payload[graph_attr] = getattr(previous_graphs, graph_attr)
+                reusable_graphs.append(graph_attr)
+                continue
+            edges = [
+                (
+                    relation.src_unit_id,
+                    relation.dst_unit_id,
+                    {
+                        "relation_id": relation.relation_id,
+                        "source": relation.source,
+                        "resolution_state": relation.resolution_state,
+                        "metadata": relation.metadata,
+                    },
+                )
+                for relation in snapshot.relations
+                if relation.relation_type == relation_type
+            ]
+            graph_payload[graph_attr] = IRGraphView(edges=edges)
+            rebuilt_graphs.append(graph_attr)
+
+        return IRGraphs(
+            dependency_graph=graph_payload["dependency_graph"],
+            call_graph=graph_payload["call_graph"],
+            inheritance_graph=graph_payload["inheritance_graph"],
+            reference_graph=graph_payload["reference_graph"],
+            containment_graph=graph_payload["containment_graph"],
+        ), {
+            "mode": "delta",
+            "changed_relation_count": len(changed_relations),
+            "affected_path_count": len(affected_paths),
+            "reusable_graphs": sorted(reusable_graphs),
+            "rebuilt_graphs": sorted(rebuilt_graphs),
+            "fallback_reason": None,
+        }

@@ -7,7 +7,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fastcode.ir.graph import IRGraphBuilder, IRGraphs, IRGraphView
-from fastcode.ir.types import IREdge, IRSnapshot
+from fastcode.ir.types import IRCodeUnit, IREdge, IRRelation, IRSnapshot
 
 # --- Helpers ---
 
@@ -25,6 +25,27 @@ def _edge(edge_id: str, src: str, dst: str, edge_type: str = "call") -> IREdge:
 
 def _snapshot(edges: list[IREdge]) -> IRSnapshot:
     return IRSnapshot(repo_name="repo", snapshot_id="snap:1", edges=edges)
+
+
+def _unit(unit_id: str, path: str) -> IRCodeUnit:
+    return IRCodeUnit(
+        unit_id=unit_id,
+        kind="function",
+        path=path,
+        language="python",
+        display_name=unit_id,
+        source_set={"fc_structure"},
+    )
+
+
+def _relation(relation_id: str, src: str, dst: str, relation_type: str) -> IRRelation:
+    return IRRelation(
+        relation_id=relation_id,
+        src_unit_id=src,
+        dst_unit_id=dst,
+        relation_type=relation_type,
+        resolution_state="structural",
+    )
 
 
 edge_type_st = st.sampled_from(
@@ -77,6 +98,50 @@ class TestIRGraphBuilder:
         assert graph.distances_within("a", 2, mode="out") == {"b": 1, "c": 2}
         assert graph.distances_within("a", 2, mode="in") == {"x": 1}
         assert graph.distances_within("a", 1, mode="all") == {"b": 1, "x": 1}
+
+    def test_ir_graph_view_shortest_path_is_native_and_bounded(self):
+        graph = IRGraphView(
+            edges=[
+                ("a", "b", {}),
+                ("b", "c", {}),
+                ("x", "a", {}),
+            ]
+        )
+
+        assert graph.shortest_path("a", "c") == ["a", "b", "c"]
+        assert graph.shortest_path("c", "x", mode="all") == ["c", "b", "a", "x"]
+        assert graph.shortest_path("a", "c", max_hops=1) == []
+        assert graph.shortest_path("missing", "c") == []
+
+    def test_ir_graph_view_degree_neighbors_component_stats_and_undirected_view(self):
+        graph = IRGraphView(
+            nodes=["isolated"],
+            edges=[
+                ("a", "b", {}),
+                ("b", "c", {}),
+                ("x", "a", {}),
+            ],
+        )
+
+        assert list(graph.neighbors("a", mode="out")) == ["b"]
+        assert list(graph.neighbors("a", mode="in")) == ["x"]
+        assert set(graph.undirected_neighbors("a")) == {"b", "x"}
+        assert graph.degree("a") == 2
+        assert graph.in_degree("a") == 1
+        assert graph.out_degree("a") == 1
+        assert dict(graph.degree())["isolated"] == 0
+        assert graph.component_stats() == {
+            "mode": "weak",
+            "component_count": 2,
+            "largest_component_size": 4,
+            "isolated_node_count": 1,
+        }
+
+        undirected = graph.to_undirected_view()
+
+        assert isinstance(undirected, IRGraphView)
+        assert undirected.has_edge("a", "b")
+        assert undirected.has_edge("b", "a")
 
     def test_import_edge_goes_to_dependency_property(self):
         """HAPPY: import edges populate dependency graph."""
@@ -201,6 +266,67 @@ class TestIRGraphBuilder:
         g2 = builder.build_graphs(snap2)
         assert g1.call_graph.number_of_edges() == 1
         assert g2.reference_graph.number_of_edges() == 1
+
+    def test_build_graph_delta_reuses_unaffected_graph_families(self):
+        builder = IRGraphBuilder()
+        previous = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:prev",
+            units=[_unit("unit:a", "pkg/a.py"), _unit("unit:b", "pkg/b.py")],
+            relations=[
+                _relation("rel:import", "unit:a", "unit:b", "import"),
+                _relation("rel:call", "unit:a", "unit:b", "call"),
+            ],
+        )
+        current = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:current",
+            units=[_unit("unit:a", "pkg/a.py"), _unit("unit:b", "pkg/b.py")],
+            relations=[_relation("rel:import", "unit:a", "unit:b", "import")],
+        )
+        previous_graphs = builder.build_graphs(previous)
+
+        graphs, stats = builder.build_graph_delta(
+            current,
+            previous_graphs=previous_graphs,
+            changed_paths=["pkg/a.py"],
+        )
+
+        assert stats["mode"] == "delta"
+        assert "dependency_graph" in stats["rebuilt_graphs"]
+        assert "call_graph" in stats["rebuilt_graphs"]
+        assert "reference_graph" in stats["reusable_graphs"]
+        assert graphs.reference_graph is previous_graphs.reference_graph
+        assert graphs.call_graph is not previous_graphs.call_graph
+        assert graphs.call_graph.number_of_edges() == 0
+
+    def test_build_graph_delta_rebuilds_all_graphs_for_deleted_paths(self):
+        builder = IRGraphBuilder()
+        previous = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:prev",
+            units=[_unit("unit:old", "pkg/old.py"), _unit("unit:b", "pkg/b.py")],
+            relations=[_relation("rel:call", "unit:old", "unit:b", "call")],
+        )
+        current = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:current",
+            units=[_unit("unit:b", "pkg/b.py")],
+            relations=[],
+        )
+        previous_graphs = builder.build_graphs(previous)
+
+        graphs, stats = builder.build_graph_delta(
+            current,
+            previous_graphs=previous_graphs,
+            changed_paths=[],
+            removed_paths=["pkg/old.py"],
+        )
+
+        assert stats["mode"] == "full"
+        assert stats["fallback_reason"] == "removed_paths_require_graph_rebuild"
+        assert graphs.call_graph is not previous_graphs.call_graph
+        assert graphs.call_graph.number_of_edges() == 0
 
     @given(
         edge_type=edge_type_st,

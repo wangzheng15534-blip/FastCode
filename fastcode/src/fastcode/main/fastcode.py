@@ -469,9 +469,38 @@ class FastCode:
         with self._state_lock():
             return self._index_repository_unlocked(force=force)
 
+    def _legacy_direct_index_enabled(self) -> bool:
+        indexing_config = self.config.get("indexing", {})
+        if not isinstance(indexing_config, dict):
+            return False
+        return bool(indexing_config.get("allow_legacy_direct_index", False))
+
     def _index_repository_unlocked(self, force: bool = False):
+        if self._legacy_direct_index_enabled():
+            return self._index_repository_legacy_unlocked(force=force)
+        force = force or self.eval_config.get("force_reindex", False)
+        if not self.repo_loaded:
+            raise RuntimeError("No repository loaded. Call load_repository() first.")
+        if not self.loader.repo_path:
+            raise RuntimeError("No repository path available for indexing.")
+        return self.pipeline.run_index_pipeline(
+            source=self.loader.repo_path,
+            is_url=False,
+            force=force,
+            publish=True,
+            enable_scip=True,
+            load_repository_cb=None,
+            get_loaded_repositories=lambda: self.loaded_repositories,
+            graph_runtime=self.graph_runtime,
+        )
+
+    def _index_repository_legacy_unlocked(self, force: bool = False):
         """
-        Index the loaded repository
+        Legacy direct repository indexing path.
+
+        The default public path uses the snapshot pipeline. This method remains
+        as an explicit compatibility escape hatch for callers that set
+        indexing.allow_legacy_direct_index=true.
 
         Args:
             force: Force re-indexing even if cache exists
@@ -1586,11 +1615,13 @@ class FastCode:
             # ── indexing ─────────────────────────────────────────────
             "indexing": {
                 "levels": ["file", "class", "function", "documentation"],  # [INTERNAL]
+                "allow_legacy_direct_index": False,  # [INTERNAL]
             },
             # ── vector_store ─────────────────────────────────────────
             "vector_store": {
                 "persist_directory": "./data/vector_store",  # [TUNABLE]
                 "distance_metric": "cosine",  # [INTERNAL] similarity metric
+                "shard_storage": "compressed",  # [TUNABLE] "compressed" or "npy"
             },
             # ── retrieval ────────────────────────────────────────────
             "retrieval": {
@@ -1656,8 +1687,90 @@ class FastCode:
             return self._load_multiple_repositories_unlocked(sources)
 
     def _load_multiple_repositories_unlocked(self, sources: list[dict[str, Any]]):
+        if not self._legacy_direct_index_enabled():
+            return self._load_multiple_repositories_pipeline_unlocked(sources)
+        return self._load_multiple_repositories_legacy_unlocked(sources)
+
+    def _load_multiple_repositories_pipeline_unlocked(
+        self, sources: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        self.logger.info(f"Loading {len(sources)} repositories")
+        self.multi_repo_mode = True
+        successfully_indexed: list[str] = []
+        results: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
+
+        for i, source_info in enumerate(sources):
+            source = str(source_info.get("source") or "")
+            is_url: bool | None = source_info.get("is_url")
+            is_zip = bool(source_info.get("is_zip", False))
+            try:
+                self.logger.info(
+                    f"[{i + 1}/{len(sources)}] Loading repository: {source}"
+                )
+                resolved_is_url = (
+                    self._infer_is_url(source)
+                    if not is_zip and is_url is None
+                    else is_url
+                )
+                pipeline_source = source
+                pipeline_is_url = resolved_is_url
+                load_repository_cb: Callable[..., None] | None
+                if is_zip:
+                    self._load_repository_unlocked(source, is_url=False, is_zip=True)
+                    if not self.loader.repo_path:
+                        raise RuntimeError("zip load did not produce a repository path")
+                    pipeline_source = self.loader.repo_path
+                    pipeline_is_url = False
+                    load_repository_cb = None
+                else:
+
+                    def _load_repository_cb(
+                        loaded_source: str, is_url: bool | None = None
+                    ) -> None:
+                        self._load_repository_unlocked(
+                            loaded_source, is_url=is_url, is_zip=False
+                        )
+
+                    load_repository_cb = _load_repository_cb
+
+                result = self.pipeline.run_index_pipeline(
+                    source=pipeline_source,
+                    is_url=pipeline_is_url,
+                    force=bool(source_info.get("force", False)),
+                    publish=True,
+                    enable_scip=True,
+                    load_repository_cb=load_repository_cb,
+                    get_loaded_repositories=lambda: self.loaded_repositories,
+                    graph_runtime=self.graph_runtime,
+                )
+                results.append(result)
+                repo_name = str(result.get("repo_name") or "")
+                if repo_name:
+                    successfully_indexed.append(repo_name)
+            except Exception as e:
+                self.logger.error(f"Failed to index repository {source}: {e}")
+                errors.append({"source": source, "error": str(e)})
+                continue
+
+        self.repo_indexed = len(successfully_indexed) > 0
+        self.repo_loaded = len(successfully_indexed) > 0
+        return {
+            "status": "succeeded" if successfully_indexed else "failed",
+            "repositories": successfully_indexed,
+            "results": results,
+            "errors": errors,
+        }
+
+    def _load_multiple_repositories_legacy_unlocked(
+        self, sources: list[dict[str, Any]]
+    ):
         """
-        Load and index multiple repositories (saves each repository separately)
+        Legacy direct multi-repository indexing path.
+
+        The default multi-repository path uses the snapshot pipeline. This
+        direct vector/BM25/graph staging path is retained only for callers that
+        set indexing.allow_legacy_direct_index=true.
 
         Args:
             sources: List of dictionaries with 'source', 'is_url', and optionally 'is_zip' keys

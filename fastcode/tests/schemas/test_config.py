@@ -17,6 +17,7 @@ def test_config_from_mapping_applies_defaults_and_normalizes_nested_sections() -
                 "exclude_site_packages": True,
             },
             "embedding": {"batch_size": 64},
+            "vector_store": {"shard_storage": "mmap"},
             "generation": {"base_url": "https://llm.example/api", "model": "cfg-model"},
             "cache": {
                 "enabled": False,
@@ -37,6 +38,7 @@ def test_config_from_mapping_applies_defaults_and_normalizes_nested_sections() -
     assert config.repository.exclude_site_packages is True
     assert config.repository.ignore_patterns == ("a", "b")
     assert config.embedding.batch_size == 64
+    assert config.vector_store.shard_storage == "npy"
     assert config.generation.model == "cfg-model"
     assert config.generation.base_url == "https://llm.example/api"
     assert config.cache.redis_host == "redis.internal"

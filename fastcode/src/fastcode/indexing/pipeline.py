@@ -15,8 +15,10 @@ import re
 import shutil
 import tempfile
 import threading
+import tracemalloc
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from dataclasses import replace as dc_replace
 from datetime import datetime
@@ -29,7 +31,7 @@ from git import GitCommandError, Repo
 
 from ..graph.build import CodeGraphBuilder
 from ..ir.element import CodeElement, CodeElementMeta, serialize_code_element
-from ..ir.graph import IRGraphBuilder
+from ..ir.graph import IRGraphBuilder, IRGraphs
 from ..ir.merge import merge_ir
 from ..ir.types import IRRelation, IRSnapshot, IRUnitSupport
 from ..ir.validate import validate_snapshot
@@ -66,6 +68,7 @@ from ..utils.materialization import (
 )
 from .doc_ingester import KeyDocIngester
 from .embedder import CodeEmbedder
+from .file_inventory import FileInventory
 from .global_builder import GlobalIndexBuilder
 from .incremental import FileChangeSet, apply_incremental_update, diff_changed_files
 from .indexer import CodeIndexer
@@ -158,6 +161,8 @@ class IndexPipeline:
         self._artifact_handle_cache: OrderedDict[str, LoadedSnapshotArtifacts] = (
             OrderedDict()
         )
+        self._last_file_inventory_metrics: dict[str, Any] = {}
+        self._active_pipeline_profile: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------
     # URL inference (pure static utility)
@@ -204,6 +209,11 @@ class IndexPipeline:
         try:
             repo = Repo(self.loader.repo_path)
             repo.git.checkout(target)
+            invalidate_inventory = getattr(
+                self.loader, "invalidate_preloaded_file_inventory", None
+            )
+            if callable(invalidate_inventory):
+                invalidate_inventory()
             self.logger.info(f"Checked out target: {target}")
         except (GitCommandError, Exception) as e:
             raise RuntimeError(f"Failed to checkout target '{target}': {e}")
@@ -1186,15 +1196,38 @@ class IndexPipeline:
         )
 
     def _scan_files_for_pipeline(self) -> list[dict[str, Any]]:
+        scan_inventory = getattr(self.loader, "scan_file_inventory", None)
+        if callable(scan_inventory):
+            try:
+                inventory = scan_inventory(include_fingerprints=True)
+            except TypeError as exc:
+                if "unexpected keyword" not in str(exc):
+                    raise
+            else:
+                if isinstance(inventory, FileInventory):
+                    self._last_file_inventory_metrics = inventory.metrics()
+                    return inventory.to_file_info_list()
+                metrics = getattr(inventory, "metrics", None)
+                to_file_info_list = getattr(inventory, "to_file_info_list", None)
+                if callable(metrics) and callable(to_file_info_list):
+                    metrics_payload = metrics()
+                    self._last_file_inventory_metrics = (
+                        dict(metrics_payload)
+                        if isinstance(metrics_payload, Mapping)
+                        else {}
+                    )
+                    return cast(list[dict[str, Any]], to_file_info_list())
         try:
-            return self.loader.scan_files(include_fingerprints=True)
+            files = self.loader.scan_files(include_fingerprints=True)
         except TypeError as exc:
             if "unexpected keyword" not in str(exc):
                 raise
             # Some tests and legacy integrations replace scan_files with a
             # zero-argument callable. The planner still computes missing
             # fingerprints at use sites in that compatibility path.
-            return self.loader.scan_files()
+            files = self.loader.scan_files()
+        self._last_file_inventory_metrics = self._derive_file_inventory_metrics(files)
+        return files
 
     def _repository_info_for_pipeline(
         self, current_files: list[dict[str, Any]]
@@ -1206,17 +1239,193 @@ class IndexPipeline:
                 raise
             return self.loader.get_repository_info()
 
+    @staticmethod
+    def _derive_file_inventory_metrics(
+        current_files: Sequence[Mapping[str, Any]] | None,
+    ) -> dict[str, Any]:
+        files = list(current_files or [])
+        git_blob_count = sum(1 for file in files if file.get("git_blob_oid"))
+        content_hash_count = sum(
+            1
+            for file in files
+            if file.get("content_hash") and not file.get("git_blob_oid")
+        )
+        return {
+            "file_count": len(files),
+            "total_size_bytes": sum(int(file.get("size") or 0) for file in files),
+            "git_blob_oid_count": git_blob_count,
+            "content_hash_count": content_hash_count,
+            "fingerprinted_file_count": git_blob_count + content_hash_count,
+            "supported_tool_eligible_count": sum(
+                1 for file in files if file.get("supported_tool_eligible")
+            ),
+        }
+
+    def _file_inventory_metrics_payload(
+        self,
+        current_files: Sequence[Mapping[str, Any]] | None,
+    ) -> dict[str, Any]:
+        metrics = dict(self._last_file_inventory_metrics or {})
+        if metrics:
+            return metrics
+        return self._derive_file_inventory_metrics(current_files)
+
+    def _pipeline_profiling_enabled(self) -> bool:
+        indexing_config = self.config.get("indexing", {})
+        performance_config = self.config.get("performance", {})
+        return bool(
+            self.config.get("profile_pipeline")
+            or (
+                isinstance(indexing_config, dict)
+                and indexing_config.get("profile_pipeline")
+            )
+            or (
+                isinstance(performance_config, dict)
+                and performance_config.get("profile_pipeline")
+            )
+        )
+
+    def _new_pipeline_profile(self) -> dict[str, Any] | None:
+        if not self._pipeline_profiling_enabled():
+            return None
+        if not tracemalloc.is_tracing():
+            tracemalloc.start()
+        return {
+            "enabled": True,
+            "stages": {},
+            "io": {
+                "temporary_directories": 0,
+                "scoped_tool_copied_bytes": 0,
+                "scoped_tool_copied_files": 0,
+                "deleted_bytes": 0,
+            },
+            "snapshot_store_bytes_written": {},
+        }
+
+    @contextmanager
+    def _profile_stage(self, profile: dict[str, Any] | None, name: str) -> Any:
+        if profile is None:
+            yield
+            return
+        if tracemalloc.is_tracing():
+            tracemalloc.reset_peak()
+        started = perf_counter()
+        try:
+            yield
+        finally:
+            duration_ms = round((perf_counter() - started) * 1000, 3)
+            peak_bytes = 0
+            if tracemalloc.is_tracing():
+                _current, peak_bytes = tracemalloc.get_traced_memory()
+            stages = cast(dict[str, dict[str, Any]], profile.setdefault("stages", {}))
+            stage = stages.setdefault(
+                name,
+                {
+                    "calls": 0,
+                    "duration_ms": 0.0,
+                    "allocation_peak_bytes": 0,
+                },
+            )
+            stage["calls"] = int(stage.get("calls", 0)) + 1
+            stage["duration_ms"] = round(
+                float(stage.get("duration_ms", 0.0)) + duration_ms, 3
+            )
+            stage["allocation_peak_bytes"] = max(
+                int(stage.get("allocation_peak_bytes", 0)),
+                int(peak_bytes),
+            )
+
+    @staticmethod
+    def _path_size_bytes(path: str | None) -> int:
+        if not path or not os.path.exists(path):
+            return 0
+        if os.path.isfile(path):
+            try:
+                return os.path.getsize(path)
+            except OSError:
+                return 0
+        total = 0
+        for root, _dirs, filenames in os.walk(path):
+            for filename in filenames:
+                file_path = os.path.join(root, filename)
+                try:
+                    total += os.path.getsize(file_path)
+                except OSError:
+                    continue
+        return total
+
+    @contextmanager
+    def _profile_store_surface(
+        self,
+        profile: dict[str, Any] | None,
+        surface: str,
+        *paths: str | None,
+    ) -> Any:
+        if profile is None:
+            yield
+            return
+        before = sum(self._path_size_bytes(path) for path in paths)
+        with self._profile_stage(profile, f"store:{surface}"):
+            yield
+        after = sum(self._path_size_bytes(path) for path in paths)
+        bytes_written = max(0, after - before)
+        store_bytes = cast(
+            dict[str, int], profile.setdefault("snapshot_store_bytes_written", {})
+        )
+        store_bytes[surface] = store_bytes.get(surface, 0) + bytes_written
+
+    def _profile_record_loader_io(self, profile: dict[str, Any] | None) -> None:
+        if profile is None:
+            return
+        stats = getattr(self.loader, "last_load_stats", {}) or {}
+        io = cast(dict[str, Any], profile.setdefault("io", {}))
+        io["repository_copied_bytes"] = int(stats.get("copied_bytes", 0) or 0)
+        io["repository_copied_files"] = int(stats.get("copied_files", 0) or 0)
+        io["repository_hard_linked_bytes"] = int(stats.get("linked_bytes", 0) or 0)
+        io["repository_hard_linked_files"] = int(stats.get("linked_files", 0) or 0)
+        io["repository_copy_cache_hit"] = bool(stats.get("copy_cache_hit", False))
+        io["repository_copy_cache_key"] = stats.get("copy_cache_key")
+
+    def _profile_add_io(
+        self, key: str, amount: int, *, profile: dict[str, Any] | None = None
+    ) -> None:
+        active = profile if profile is not None else self._active_pipeline_profile
+        if active is None:
+            return
+        io = cast(dict[str, Any], active.setdefault("io", {}))
+        io[key] = int(io.get(key, 0) or 0) + int(amount)
+
+    def _profile_record_temp_dir(self, path: str) -> None:
+        if self._active_pipeline_profile is None:
+            return
+        self._profile_add_io("temporary_directories", 1)
+        temp_dirs = cast(
+            list[str], self._active_pipeline_profile.setdefault("temporary_paths", [])
+        )
+        temp_dirs.append(path)
+
+    @staticmethod
+    def _attach_pipeline_profile(
+        metrics: dict[str, Any], profile: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        if profile is not None:
+            metrics["profiling"] = profile
+        return metrics
+
     def _file_fingerprint(
         self, abs_path: str, file_info: Mapping[str, Any] | None = None
     ) -> dict[str, Any] | None:
         if file_info is not None:
-            content_hash = file_info.get("content_hash") or file_info.get("blob_oid")
-            if content_hash:
+            content_hash_value = file_info.get("content_hash")
+            blob_oid_value = file_info.get("git_blob_oid") or file_info.get("blob_oid")
+            if content_hash_value or blob_oid_value:
                 return {
                     "mtime": float(file_info.get("mtime") or 0.0),
                     "size": int(file_info.get("size") or 0),
-                    "content_hash": str(content_hash),
-                    "blob_oid": str(file_info.get("blob_oid") or content_hash),
+                    "content_hash": str(content_hash_value)
+                    if content_hash_value
+                    else None,
+                    "blob_oid": str(blob_oid_value) if blob_oid_value else None,
                 }
         try:
             stat = os.stat(abs_path)
@@ -1236,7 +1445,7 @@ class IndexPipeline:
             "blob_oid": content_hash,
         }
 
-    def _incremental_compatibility_payload(self) -> dict[str, Any]:
+    def _embedding_fingerprint_payload(self) -> dict[str, Any]:
         embedding_fingerprint_record = getattr(
             self.embedder, "embedding_fingerprint_record", None
         )
@@ -1255,6 +1464,14 @@ class IndexPipeline:
             embedding_identity = embedding_fingerprint()
         else:
             embedding_identity = self._fallback_embedding_identity()
+        return (
+            dict(cast(Mapping[str, Any], embedding_identity))
+            if isinstance(embedding_identity, Mapping)
+            else self._fallback_embedding_identity()
+        )
+
+    def _incremental_compatibility_payload(self) -> dict[str, Any]:
+        embedding_identity = self._embedding_fingerprint_payload()
         return {
             "schema_version": 2,
             "embedding": embedding_identity,
@@ -1351,10 +1568,12 @@ class IndexPipeline:
         manifest: dict[str, Any] = {
             "schema_version": 2,
             "created_at": datetime.now().isoformat(),
+            "embedding_fingerprint": self._embedding_fingerprint_payload(),
             "compatibility": self._incremental_compatibility_payload(),
             "compatibility_hash": self._incremental_compatibility_hash(),
             "files": {},
         }
+        embedding_fingerprint = cast(dict[str, Any], manifest["embedding_fingerprint"])
         file_info_by_path = self._file_info_by_relative_path(current_files)
 
         for elem in elements:
@@ -1372,16 +1591,150 @@ class IndexPipeline:
                         "size": 0,
                         "content_hash": None,
                         "blob_oid": None,
+                        "embedding_fingerprint": dict(embedding_fingerprint),
                         "element_ids": [],
                     }
                 else:
                     manifest["files"][rel_path] = {
                         **fingerprint,
+                        "embedding_fingerprint": dict(embedding_fingerprint),
                         "element_ids": [],
                     }
             manifest["files"][rel_path]["element_ids"].append(elem.id)
 
         return manifest
+
+    def _build_file_manifest_delta(
+        self,
+        *,
+        artifact_key: str,
+        elements: Sequence[CodeElement],
+        repo_root: str,
+        current_files: Sequence[Mapping[str, Any]],
+        incremental_plan: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        manifest = self._build_file_manifest(
+            list(elements),
+            repo_root,
+            current_files=current_files,
+        )
+        previous_key = str(incremental_plan.get("previous_artifact_key") or "")
+        previous_manifest = self._load_file_manifest(previous_key)
+        if previous_manifest is None:
+            manifest["fallback_reason"] = "previous_file_manifest_missing"
+            return manifest
+
+        previous_files = cast(
+            dict[str, dict[str, Any]], previous_manifest.get("files", {})
+        )
+        current_by_path = self._file_info_by_relative_path(current_files)
+        unchanged_paths = [
+            normalize_path(str(path))
+            for path in incremental_plan.get("unchanged_paths", [])
+            if path
+        ]
+        changed_paths = {
+            normalize_path(str(path))
+            for path in (
+                list(incremental_plan.get("added_paths", []) or [])
+                + list(incremental_plan.get("modified_paths", []) or [])
+            )
+            if path
+        }
+        removed_paths = {
+            normalize_path(str(path))
+            for path in incremental_plan.get("removed_paths", [])
+            if path
+        }
+        files = cast(dict[str, Any], manifest["files"])
+        for rel_path in unchanged_paths:
+            previous_entry = previous_files.get(rel_path)
+            if previous_entry is None or rel_path in removed_paths:
+                continue
+            entry = dict(previous_entry)
+            current_info = current_by_path.get(rel_path)
+            if current_info is not None:
+                fingerprint = self._file_fingerprint(
+                    str(current_info.get("path") or ""),
+                    file_info=current_info,
+                )
+                if fingerprint is not None:
+                    entry.update(fingerprint)
+            files[rel_path] = entry
+
+        for rel_path, file_info in current_by_path.items():
+            if rel_path in files or rel_path in removed_paths:
+                continue
+            fingerprint = self._file_fingerprint(
+                str(file_info.get("path") or ""),
+                file_info=file_info,
+            )
+            files[rel_path] = {
+                **(fingerprint or {}),
+                "embedding_fingerprint": dict(
+                    cast(dict[str, Any], manifest["embedding_fingerprint"])
+                ),
+                "element_ids": [],
+            }
+        for rel_path in changed_paths:
+            files.setdefault(
+                rel_path,
+                {
+                    "embedding_fingerprint": dict(
+                        cast(dict[str, Any], manifest["embedding_fingerprint"])
+                    ),
+                    "element_ids": [],
+                },
+            )
+        manifest["delta"] = {
+            "artifact_key": artifact_key,
+            "previous_artifact_key": previous_key,
+            "reused_files": len(unchanged_paths),
+            "changed_files": len(changed_paths),
+            "removed_files": len(removed_paths),
+        }
+        return manifest
+
+    def _full_elements_for_incremental_fallback(
+        self,
+        *,
+        changed_elements: Sequence[CodeElement],
+        incremental_plan: Mapping[str, Any],
+        current_files: Sequence[Mapping[str, Any]],
+        repo_name: str,
+        repo_url: str,
+    ) -> list[CodeElement]:
+        previous_key = str(incremental_plan.get("previous_artifact_key") or "")
+        previous_manifest = self._load_file_manifest(previous_key)
+        if previous_manifest is None:
+            return list(changed_elements)
+        existing_metadata = self._load_existing_metadata(previous_key)
+        unchanged_paths = [
+            normalize_path(str(path))
+            for path in incremental_plan.get("unchanged_paths", [])
+            if path
+        ]
+        unchanged_metadata, _expected_ids = self._collect_unchanged_metadata(
+            previous_manifest,
+            unchanged_paths,
+            existing_metadata,
+        )
+        current_lookup = self._file_info_by_relative_path(current_files)
+        unchanged_elements: list[CodeElement] = []
+        for meta in unchanged_metadata:
+            rel_path = normalize_path(
+                str(meta.get("relative_path") or meta.get("file_path") or "")
+            )
+            file_info = current_lookup.get(rel_path)
+            elem = self._reconstruct_code_element(
+                meta,
+                file_info=dict(file_info) if isinstance(file_info, Mapping) else None,
+                repo_name=repo_name,
+                repo_url=repo_url,
+            )
+            if elem is not None:
+                unchanged_elements.append(elem)
+        return unchanged_elements + list(changed_elements)
 
     def _save_file_manifest(self, artifact_key: str, manifest: dict[str, Any]) -> None:
         with open(
@@ -1438,9 +1791,123 @@ class IndexPipeline:
                     "changed_path_count": len(set(changed_paths)),
                     "removed_path_count": len(set(removed_paths)),
                 }
+            if semantic_widened:
+                self.snapshot_store.save_relational_facts(snapshot)
+                return {
+                    "mode": "full",
+                    "fallback_reason": "semantic_frontier_widened",
+                    "previous_snapshot_id": previous_snapshot_id,
+                    "changed_path_count": len(set(changed_paths)),
+                    "removed_path_count": len(set(removed_paths)),
+                }
+            if not previous_snapshot_id:
+                self.snapshot_store.save_relational_facts(snapshot)
+                return {"mode": "full", "fallback_reason": "missing_previous_snapshot"}
+            if not callable(save_delta):
+                self.snapshot_store.save_relational_facts(snapshot)
+                return {"mode": "full", "fallback_reason": "delta_api_unavailable"}
 
         self.snapshot_store.save_relational_facts(snapshot)
         return {"mode": "full"}
+
+    @staticmethod
+    def _incremental_delta_paths(
+        incremental_plan: dict[str, Any] | None,
+    ) -> tuple[list[str], list[str]]:
+        if incremental_plan is None:
+            return [], []
+        changed_paths = [
+            normalize_path(str(path))
+            for path in (
+                list(incremental_plan.get("added_paths", []) or [])
+                + list(incremental_plan.get("modified_paths", []) or [])
+            )
+            if path
+        ]
+        removed_paths = [
+            normalize_path(str(path))
+            for path in incremental_plan.get("removed_paths", []) or []
+            if path
+        ]
+        return changed_paths, removed_paths
+
+    def _save_ir_graphs_for_index(
+        self,
+        snapshot: IRSnapshot,
+        incremental_plan: dict[str, Any] | None,
+    ) -> tuple[Any, dict[str, Any]]:
+        previous_snapshot_id = (
+            str(incremental_plan.get("previous_snapshot_id") or "")
+            if incremental_plan is not None
+            else ""
+        )
+        changed_paths, removed_paths = self._incremental_delta_paths(incremental_plan)
+        previous_graphs: IRGraphs | None = None
+        fallback_reason = "missing_previous_snapshot"
+        if previous_snapshot_id:
+            loaded_graphs = self.snapshot_store.load_ir_graphs(previous_snapshot_id)
+            if isinstance(loaded_graphs, IRGraphs):
+                previous_graphs = loaded_graphs
+            else:
+                fallback_reason = "previous_ir_graphs_unavailable_or_legacy"
+
+        if previous_snapshot_id and previous_graphs is not None:
+            ir_graphs, graph_delta = self.ir_graph_builder.build_graph_delta(
+                snapshot,
+                previous_graphs=previous_graphs,
+                changed_paths=changed_paths,
+                removed_paths=removed_paths,
+            )
+        else:
+            ir_graphs = self.ir_graph_builder.build_graphs(snapshot)
+            graph_delta = {
+                "mode": "full",
+                "fallback_reason": fallback_reason,
+                "changed_path_count": len(set(changed_paths)),
+                "removed_path_count": len(set(removed_paths)),
+                "reusable_graphs": [],
+                "rebuilt_graphs": [],
+            }
+
+        save_stats: dict[str, Any] = {}
+        save_delta = getattr(self.snapshot_store, "save_ir_graphs_delta", None)
+        if previous_snapshot_id and callable(save_delta):
+            delta_result = save_delta(
+                snapshot.snapshot_id,
+                ir_graphs,
+                previous_snapshot_id=previous_snapshot_id,
+                reusable_graphs=cast(
+                    Sequence[str], graph_delta.get("reusable_graphs", [])
+                ),
+            )
+            if (
+                isinstance(delta_result, tuple)
+                and len(delta_result) == 2
+                and isinstance(delta_result[1], Mapping)
+            ):
+                save_stats.update(dict(delta_result[1]))
+        else:
+            self.snapshot_store.save_ir_graphs(snapshot.snapshot_id, ir_graphs)
+            save_stats.update(
+                {
+                    "ir_graph_shards_reused": 0,
+                    "ir_graph_shards_written": 0,
+                    "fallback_full_rewrite": int(bool(previous_snapshot_id)),
+                }
+            )
+
+        metrics = {
+            **graph_delta,
+            **save_stats,
+            "previous_snapshot_id": previous_snapshot_id or None,
+            "changed_path_count": len(set(changed_paths)),
+            "removed_path_count": len(set(removed_paths)),
+        }
+        pipeline_metrics = cast(
+            dict[str, Any], snapshot.metadata.setdefault("pipeline_metrics", {})
+        )
+        pipeline_metrics["ir_graph_delta"] = metrics
+        return ir_graphs, metrics
 
     def _load_file_manifest(self, artifact_key: str) -> dict[str, Any] | None:
         manifest_path = self._manifest_path_for_artifact(artifact_key)
@@ -1914,21 +2381,8 @@ class IndexPipeline:
                 len(expected_unchanged_ids - found_unchanged_ids),
             )
             return None, None
-        current_lookup = cast(dict[str, dict[str, Any]], changes["current_lookup"])
         existing_by_stable_unit_id = self._metadata_by_stable_unit_id(existing_metadata)
-        unchanged_elements: list[CodeElement] = []
-        for meta in unchanged_metadata:
-            rel_path = str(meta.get("relative_path") or meta.get("file_path") or "")
-            lookup = current_lookup.get(rel_path, {})
-            file_info = lookup.get("file_info")
-            elem = self._reconstruct_code_element(
-                meta,
-                file_info=file_info if isinstance(file_info, dict) else None,
-                repo_name=repo_name,
-                repo_url=repo_url,
-            )
-            if elem is not None:
-                unchanged_elements.append(elem)
+        current_lookup = cast(dict[str, dict[str, Any]], changes["current_lookup"])
 
         changed_file_infos: list[dict[str, Any]] = []
         for rel_path in added + modified:
@@ -1962,11 +2416,11 @@ class IndexPipeline:
             self.loader.repo_path or "",
             api_frontier_changed_paths,
         )
-        all_elements = unchanged_elements + new_elements
         changed_paths = sorted(set(added + modified))
         summary = {
             "previous_snapshot_id": previous_snapshot_id,
             "previous_artifact_key": previous_artifact_key,
+            "artifact_delta_mode": True,
             "added": len(added),
             "modified": len(modified),
             "removed": len(deleted),
@@ -1976,7 +2430,7 @@ class IndexPipeline:
             "removed_paths": sorted(deleted),
             "unchanged_paths": sorted(unchanged),
             "changed_paths": changed_paths,
-            "reused_elements": len(unchanged_elements),
+            "reused_elements": len(expected_unchanged_ids),
             "reindexed_elements": len(new_elements),
             "reused_changed_embeddings": reused_changed_embeddings,
             "semantic_frontier_widened": int(semantic_frontier_widened),
@@ -1985,7 +2439,7 @@ class IndexPipeline:
             "package_scope_roots": package_scope_roots,
             "change_kinds": sorted(change_kinds),
         }
-        return all_elements, summary
+        return new_elements, summary
 
     @staticmethod
     def _preservable_incremental_sources(
@@ -2044,6 +2498,32 @@ class IndexPipeline:
             "target_paths": changed_paths,
             "scope_roots": scope_roots,
         }
+
+    @staticmethod
+    def _scip_degraded_reasons(
+        incremental_plan: dict[str, Any] | None,
+        scip_scope: Mapping[str, Any] | None,
+    ) -> list[str]:
+        if incremental_plan is None:
+            return []
+
+        reasons: set[str] = set()
+        change_kinds = {
+            str(kind) for kind in incremental_plan.get("change_kinds", []) if kind
+        }
+        if int(incremental_plan.get("removed", 0) or 0) > 0:
+            reasons.add("scip_full_rerun:file_delete")
+        if int(incremental_plan.get("semantic_frontier_widened", 0) or 0) > 0:
+            reasons.add("scip_frontier_widened")
+        if change_kinds & {
+            "api_surface_hash",
+            "signature_hash",
+            "edge_surface_hash",
+        }:
+            reasons.add("scip_dependency_frontier_changed")
+        if scip_scope is None and not reasons:
+            reasons.add("scip_full_rerun:unsupported_incremental_scope")
+        return sorted(reasons)
 
     @staticmethod
     def _build_repair_frontier_task(
@@ -2470,10 +2950,28 @@ class IndexPipeline:
         source_root = os.path.join(repo_root, normalized_root)
         dest_root = os.path.join(temp_root, normalized_root)
         ensure_dir(os.path.dirname(dest_root))
-        shutil.copytree(source_root, dest_root, symlinks=True)
+
+        def _copy2_counting(src: str, dst: str) -> str:
+            try:
+                self._profile_add_io("scoped_tool_copied_bytes", os.path.getsize(src))
+                self._profile_add_io("scoped_tool_copied_files", 1)
+            except OSError:
+                pass
+            return shutil.copy2(src, dst)
+
+        shutil.copytree(
+            source_root, dest_root, symlinks=True, copy_function=_copy2_counting
+        )
         for marker in self._PACKAGE_SCOPE_MARKERS:
             source_marker = os.path.join(repo_root, marker)
             if os.path.exists(source_marker):
+                try:
+                    self._profile_add_io(
+                        "scoped_tool_copied_bytes", os.path.getsize(source_marker)
+                    )
+                    self._profile_add_io("scoped_tool_copied_files", 1)
+                except OSError:
+                    pass
                 shutil.copy2(source_marker, os.path.join(temp_root, marker))
         return temp_root
 
@@ -2506,6 +3004,7 @@ class IndexPipeline:
                 use_repo_root = self._scoped_scip_runs_from_repo_root()
                 if normalize_path(scope_root) != "." and not use_repo_root:
                     temp_root = tempfile.mkdtemp(prefix="fastcode_scope_repo_")
+                    self._profile_record_temp_dir(temp_root)
                     materialized_root = self._copy_scope_root(
                         repo_root, scope_root, temp_root
                     )
@@ -2523,10 +3022,12 @@ class IndexPipeline:
                         filtered_indexes.append(cached_index)
                         continue
                     cache_misses += 1
+                    scip_temp_root = tempfile.mkdtemp(prefix="fastcode_scope_scip_")
+                    self._profile_record_temp_dir(scip_temp_root)
                     scoped_index = run_scip_for_language(
                         language,
                         materialized_root,
-                        tempfile.mkdtemp(prefix="fastcode_scope_scip_"),
+                        scip_temp_root,
                     )
                     filtered = self._filter_scip_index_to_paths(
                         scoped_index, target_paths
@@ -2541,6 +3042,9 @@ class IndexPipeline:
                     degraded_reasons.append(f"scoped_scip_failed:{scope_root}")
             finally:
                 if temp_root:
+                    self._profile_add_io(
+                        "deleted_bytes", self._path_size_bytes(temp_root)
+                    )
                     shutil.rmtree(temp_root, ignore_errors=True)
         if not filtered_indexes:
             return None, languages
@@ -2723,7 +3227,17 @@ class IndexPipeline:
             json.loads(record.metadata_json) if record.metadata_json is not None else {}
         )
         self._invalidate_loaded_artifact_handle(record.artifact_key)
-        self.snapshot_store.save_snapshot(repaired_snapshot, metadata=metadata)
+        save_snapshot_delta = getattr(self.snapshot_store, "save_snapshot_delta", None)
+        if callable(save_snapshot_delta):
+            save_snapshot_delta(
+                repaired_snapshot,
+                previous_snapshot_id=snapshot_id,
+                changed_paths=sorted(target_paths),
+                removed_paths=[],
+                metadata=metadata,
+            )
+        else:
+            self.snapshot_store.save_snapshot(repaired_snapshot, metadata=metadata)
         refreshed_rows = self._current_unit_artifact_rows(
             rows=affected_rows,
             snapshot=repaired_snapshot,
@@ -2737,8 +3251,20 @@ class IndexPipeline:
             )
         self.snapshot_symbol_index.register_snapshot(repaired_snapshot)
         self.snapshot_store.save_relational_facts(repaired_snapshot)
-        repaired_ir_graphs = self.ir_graph_builder.build_graphs(repaired_snapshot)
-        self.snapshot_store.save_ir_graphs(snapshot_id, repaired_ir_graphs)
+        _repaired_ir_graphs, ir_graph_persistence = self._save_ir_graphs_for_index(
+            repaired_snapshot,
+            {
+                "previous_snapshot_id": snapshot_id,
+                "added_paths": [],
+                "modified_paths": sorted(target_paths),
+                "removed_paths": [],
+            },
+        )
+        metadata["pipeline_metrics"] = repaired_snapshot.metadata.get(
+            "pipeline_metrics",
+            metadata.get("pipeline_metrics", {}),
+        )
+        self.snapshot_store.update_snapshot_metadata(snapshot_id, metadata)
         self._load_artifacts_by_key(record.artifact_key)
         return {
             "status": "repaired",
@@ -2753,6 +3279,7 @@ class IndexPipeline:
                 "target_paths": sorted(target_paths),
                 "tool_rerun_languages": scoped_tool_languages,
             },
+            "ir_graph_persistence": ir_graph_persistence,
         }
 
     # ------------------------------------------------------------------
@@ -2782,13 +3309,20 @@ class IndexPipeline:
         Run snapshot-oriented indexing pipeline with AST + optional SCIP merge.
         """
         resolved_is_url = self._infer_is_url(source) if is_url is None else is_url
+        pipeline_profile = self._new_pipeline_profile()
+        previous_profile = self._active_pipeline_profile
+        self._active_pipeline_profile = pipeline_profile
 
         # Load repository via callback (FastCode owns the loader lifecycle)
         if load_repository_cb is not None:
-            load_repository_cb(source, is_url=resolved_is_url)
+            with self._profile_stage(pipeline_profile, "load_repository"):
+                load_repository_cb(source, is_url=resolved_is_url)
+            self._profile_record_loader_io(pipeline_profile)
 
-        self._checkout_target_ref(ref=ref, commit=commit)
-        current_files = self._scan_files_for_pipeline()
+        with self._profile_stage(pipeline_profile, "checkout"):
+            self._checkout_target_ref(ref=ref, commit=commit)
+        with self._profile_stage(pipeline_profile, "file_inventory"):
+            current_files = self._scan_files_for_pipeline()
         repo_info = self._repository_info_for_pipeline(current_files)
         self._set_repo_info(repo_info)
 
@@ -2830,8 +3364,13 @@ class IndexPipeline:
                     cast(dict[str, Any], result.get("pipeline_metrics", {})),
                     materialization_counters,
                 )
+                self._attach_pipeline_profile(
+                    result["pipeline_metrics"],
+                    pipeline_profile,
+                )
                 return result
             finally:
+                self._active_pipeline_profile = previous_profile
                 reset_materialization_counters(materialization_token)
 
         idempotency_key = hashlib.sha1(
@@ -2943,6 +3482,9 @@ class IndexPipeline:
                 )
 
             self.index_run_store.mark_status(run_id, "materializing")
+            artifact_delta_mode = incremental_plan is not None and bool(
+                incremental_plan.get("artifact_delta_mode")
+            )
             temp_store = VectorStore(self.config)
             temp_store.initialize(self.embedder.embedding_dim)
             vectors, metadata, all_elem_payloads = (
@@ -2950,16 +3492,35 @@ class IndexPipeline:
                     elements, snapshot_id=snapshot_id
                 )
             )
-            if vectors.size == 0:
+            if vectors.size == 0 and not artifact_delta_mode:
                 raise RuntimeError("No embeddings produced during indexing")
-            temp_store.add_vectors(vectors, metadata)
+            if vectors.size > 0:
+                temp_store.add_vectors(vectors, metadata)
 
             temp_graph = CodeGraphBuilder(self.config)
             module_resolver = None
             symbol_resolver = None
             try:
                 gib = GlobalIndexBuilder(self.config)
-                gib.build_maps(elements, self.loader.repo_path or "")
+                resolver_elements = elements
+                if artifact_delta_mode and incremental_plan is not None:
+                    change_kinds_for_resolver = set(
+                        incremental_plan.get("change_kinds", []) or []
+                    )
+                    if change_kinds_for_resolver - {"embedding_text_hash"}:
+                        resolver_elements = (
+                            self._full_elements_for_incremental_fallback(
+                                changed_elements=elements,
+                                incremental_plan=incremental_plan,
+                                current_files=current_files,
+                                repo_name=repo_name,
+                                repo_url=repo_url,
+                            )
+                        )
+                        incremental_plan["artifact_delta_graph_fallback_reason"] = (
+                            "edge_surface_changed"
+                        )
+                gib.build_maps(resolver_elements, self.loader.repo_path or "")
                 module_resolver = ModuleResolver(gib)
                 symbol_resolver = SymbolResolver(gib, module_resolver)
             except Exception as e:
@@ -3029,6 +3590,7 @@ class IndexPipeline:
             scip_snapshot = None
             scip_artifact_ref = None
             scip_artifact_refs: list[dict[str, Any]] = []
+            scip_degraded_reasons: list[str] = []
             layer2 = pipeline_layers[1]
             if enable_scip:
                 layer2_start = perf_counter()
@@ -3049,6 +3611,10 @@ class IndexPipeline:
                         )
                     else:
                         scip_scope = self._incremental_scip_scope(incremental_plan)
+                        scip_degraded_reasons = self._scip_degraded_reasons(
+                            incremental_plan,
+                            scip_scope,
+                        )
                         if scip_scope and scip_scope["mode"] == "skip":
                             warning = f"incremental_scip_skipped:{scip_scope['reason']}"
                             warnings.append(warning)
@@ -3063,6 +3629,9 @@ class IndexPipeline:
                                     "scip_languages": [],
                                     "experimental_scip_languages": [],
                                     "incremental_scip_scope": scip_scope,
+                                    "scip_degraded_reasons": list(
+                                        scip_degraded_reasons
+                                    ),
                                 },
                             )
                         elif scip_scope and scip_scope["mode"] == "package":
@@ -3112,6 +3681,9 @@ class IndexPipeline:
                                             experimental_scip_languages
                                         ),
                                         "incremental_scip_scope": scip_scope,
+                                        "scip_degraded_reasons": list(
+                                            scip_degraded_reasons
+                                        ),
                                     },
                                 )
                             else:
@@ -3124,9 +3696,13 @@ class IndexPipeline:
                                 scoped_snapshot.metadata["incremental_scip_scope"] = (
                                     scip_scope
                                 )
+                                scoped_snapshot.metadata["scip_degraded_reasons"] = (
+                                    list(scip_degraded_reasons)
+                                )
                                 scip_snapshot = scoped_snapshot
                         else:
                             out_dir = tempfile.mkdtemp(prefix="fastcode_scip_")
+                            self._profile_record_temp_dir(out_dir)
                             scip_indexes = []
                             detected_languages = detect_scip_languages(
                                 self.loader.repo_path or ""
@@ -3213,9 +3789,15 @@ class IndexPipeline:
                                         "mode": "full",
                                         "reason": "no_incremental_plan",
                                     },
+                                    "scip_degraded_reasons": list(
+                                        scip_degraded_reasons
+                                    ),
                                 },
                             )
                             scip_data = scip_indexes[0][1]
+                    scip_snapshot.metadata["scip_degraded_reasons"] = list(
+                        scip_degraded_reasons
+                    )
                     # Preserve ALL generated SCIP artifacts (not just the first)
                     if scip_artifact_paths:
                         import shutil
@@ -3293,6 +3875,7 @@ class IndexPipeline:
                                     "experimental_scip_languages", []
                                 )
                             ),
+                            "scip_degraded_reasons": list(scip_degraded_reasons),
                         },
                     )
                 except Exception as e:
@@ -3311,6 +3894,7 @@ class IndexPipeline:
                             "error": str(e),
                             "experimental_scip_languages": [],
                             "experimental_language_count": 0,
+                            "scip_degraded_reasons": ["scip_failed"],
                         },
                     )
             else:
@@ -3323,6 +3907,7 @@ class IndexPipeline:
                         "artifact_count": 0,
                         "experimental_scip_languages": [],
                         "experimental_language_count": 0,
+                        "scip_degraded_reasons": ["scip_disabled"],
                     },
                 )
 
@@ -3464,6 +4049,7 @@ class IndexPipeline:
                 "layer_statuses": {
                     layer["name"]: layer["status"] for layer in pipeline_layers
                 },
+                "file_inventory": self._file_inventory_metrics_payload(current_files),
             }
             errors = validate_snapshot(merged_snapshot)
             if errors:
@@ -3537,7 +4123,7 @@ class IndexPipeline:
 
             # Artifact persistence — only after fencing confirmed valid.
             self._invalidate_loaded_artifact_handle(artifact_key)
-            artifact_reuse_stats: dict[str, int] = {}
+            artifact_reuse_stats: dict[str, Any] = {}
             incremental_previous_artifact_key = (
                 str(incremental_plan.get("previous_artifact_key") or "")
                 if incremental_plan is not None
@@ -3553,41 +4139,81 @@ class IndexPipeline:
                 else set()
             )
             active_incremental_plan = incremental_plan
+            vector_persist_dir = cast(
+                str | None, getattr(temp_store, "persist_dir", None)
+            )
+            lexical_persist_dir = cast(
+                str | None, getattr(temp_retriever, "persist_dir", None)
+            )
+            graph_persist_dir = cast(
+                str | None, getattr(temp_graph, "persist_dir", None)
+            )
             if (
                 reusable_path_keys
                 and incremental_previous_artifact_key
                 and active_incremental_plan is not None
             ):
+                publish_vector_delta = getattr(temp_store, "publish_delta", None)
                 save_vector_incremental = getattr(temp_store, "save_incremental", None)
-                if callable(save_vector_incremental):
-                    artifact_reuse_stats.update(
-                        cast(
-                            dict[str, int],
-                            save_vector_incremental(
-                                artifact_key,
-                                previous_name=incremental_previous_artifact_key,
-                                reusable_path_keys=reusable_path_keys,
-                            ),
+                with self._profile_store_surface(
+                    pipeline_profile, "vector", vector_persist_dir
+                ):
+                    if callable(publish_vector_delta):
+                        artifact_reuse_stats.update(
+                            cast(
+                                dict[str, Any],
+                                publish_vector_delta(
+                                    artifact_key,
+                                    previous_name=incremental_previous_artifact_key,
+                                    reusable_path_keys=reusable_path_keys,
+                                    snapshot_id=snapshot_id,
+                                ),
+                            )
                         )
-                    )
-                else:
-                    temp_store.save(artifact_key)
+                    elif callable(save_vector_incremental):
+                        artifact_reuse_stats.update(
+                            cast(
+                                dict[str, Any],
+                                save_vector_incremental(
+                                    artifact_key,
+                                    previous_name=incremental_previous_artifact_key,
+                                    reusable_path_keys=reusable_path_keys,
+                                ),
+                            )
+                        )
+                    else:
+                        temp_store.save(artifact_key)
                 save_bm25_incremental = getattr(
                     temp_retriever, "save_bm25_incremental", None
                 )
-                if callable(save_bm25_incremental):
-                    artifact_reuse_stats.update(
-                        cast(
-                            dict[str, int],
-                            save_bm25_incremental(
-                                artifact_key,
-                                previous_name=incremental_previous_artifact_key,
-                                reusable_path_keys=reusable_path_keys,
-                            ),
+                publish_bm25_delta = getattr(temp_retriever, "publish_bm25_delta", None)
+                with self._profile_store_surface(
+                    pipeline_profile, "lexical", lexical_persist_dir
+                ):
+                    if callable(publish_bm25_delta):
+                        artifact_reuse_stats.update(
+                            cast(
+                                dict[str, Any],
+                                publish_bm25_delta(
+                                    artifact_key,
+                                    previous_name=incremental_previous_artifact_key,
+                                    reusable_path_keys=reusable_path_keys,
+                                ),
+                            )
                         )
-                    )
-                else:
-                    temp_retriever.save_bm25(artifact_key)
+                    elif callable(save_bm25_incremental):
+                        artifact_reuse_stats.update(
+                            cast(
+                                dict[str, Any],
+                                save_bm25_incremental(
+                                    artifact_key,
+                                    previous_name=incremental_previous_artifact_key,
+                                    reusable_path_keys=reusable_path_keys,
+                                ),
+                            )
+                        )
+                    else:
+                        temp_retriever.save_bm25(artifact_key)
                 graph_reuse_path_keys = (
                     reusable_path_keys
                     if int(active_incremental_plan.get("removed", 0) or 0) == 0
@@ -3596,40 +4222,105 @@ class IndexPipeline:
                     else set()
                 )
                 if graph_reuse_path_keys:
+                    publish_graph_delta = getattr(temp_graph, "publish_delta", None)
                     save_graph_incremental = getattr(
                         temp_graph, "save_incremental", None
                     )
-                    if callable(save_graph_incremental):
-                        artifact_reuse_stats.update(
-                            cast(
-                                dict[str, int],
-                                save_graph_incremental(
-                                    artifact_key,
-                                    previous_name=incremental_previous_artifact_key,
-                                    reusable_path_keys=graph_reuse_path_keys,
-                                ),
+                    with self._profile_store_surface(
+                        pipeline_profile, "graph", graph_persist_dir
+                    ):
+                        if callable(publish_graph_delta):
+                            artifact_reuse_stats.update(
+                                cast(
+                                    dict[str, Any],
+                                    publish_graph_delta(
+                                        artifact_key,
+                                        previous_name=incremental_previous_artifact_key,
+                                        reusable_path_keys=graph_reuse_path_keys,
+                                    ),
+                                )
+                            )
+                        elif callable(save_graph_incremental):
+                            artifact_reuse_stats.update(
+                                cast(
+                                    dict[str, Any],
+                                    save_graph_incremental(
+                                        artifact_key,
+                                        previous_name=incremental_previous_artifact_key,
+                                        reusable_path_keys=graph_reuse_path_keys,
+                                    ),
+                                )
+                            )
+                        else:
+                            temp_graph.save(artifact_key)
+                else:
+                    with self._profile_store_surface(
+                        pipeline_profile, "graph", graph_persist_dir
+                    ):
+                        fallback_elements = (
+                            self._full_elements_for_incremental_fallback(
+                                changed_elements=elements,
+                                incremental_plan=active_incremental_plan,
+                                current_files=current_files,
+                                repo_name=repo_name,
+                                repo_url=repo_url,
                             )
                         )
-                    else:
-                        temp_graph.save(artifact_key)
-                else:
-                    temp_graph.save(artifact_key)
+                        fallback_graph = CodeGraphBuilder(self.config)
+                        fallback_graph.build_graphs(
+                            fallback_elements,
+                            module_resolver,
+                            symbol_resolver,
+                        )
+                        fallback_graph.save(artifact_key)
+                        artifact_reuse_stats["graph_fallback_reason"] = (
+                            "edge_or_delete_frontier_requires_full_graph"
+                        )
             else:
-                temp_store.save(artifact_key)
-                temp_retriever.save_bm25(artifact_key)
-                temp_graph.save(artifact_key)
-            self._save_file_manifest(
-                artifact_key,
-                self._build_file_manifest(
-                    elements,
-                    self.loader.repo_path or "",
-                    current_files=current_files,
-                ),
-            )
+                with self._profile_store_surface(
+                    pipeline_profile, "vector", vector_persist_dir
+                ):
+                    temp_store.save(artifact_key)
+                with self._profile_store_surface(
+                    pipeline_profile, "lexical", lexical_persist_dir
+                ):
+                    temp_retriever.save_bm25(artifact_key)
+                with self._profile_store_surface(
+                    pipeline_profile, "graph", graph_persist_dir
+                ):
+                    temp_graph.save(artifact_key)
+            with self._profile_store_surface(
+                pipeline_profile,
+                "unit_artifact",
+                getattr(self.vector_store, "persist_dir", None),
+            ):
+                file_manifest = (
+                    self._build_file_manifest_delta(
+                        artifact_key=artifact_key,
+                        elements=elements,
+                        repo_root=self.loader.repo_path or "",
+                        current_files=current_files,
+                        incremental_plan=active_incremental_plan,
+                    )
+                    if active_incremental_plan is not None
+                    and incremental_previous_artifact_key
+                    else self._build_file_manifest(
+                        elements,
+                        self.loader.repo_path or "",
+                        current_files=current_files,
+                    )
+                )
+                self._save_file_manifest(
+                    artifact_key,
+                    file_manifest,
+                )
 
-            self.snapshot_store.save_snapshot(
-                merged_snapshot,
-                metadata={
+            snapshot_store_dir = getattr(self.snapshot_store, "persist_dir", None)
+            snapshot_db_path = getattr(self.snapshot_store, "db_path", None)
+            with self._profile_store_surface(
+                pipeline_profile, "ir", snapshot_store_dir, snapshot_db_path
+            ):
+                snapshot_metadata = {
                     "run_id": run_id,
                     "artifact_key": artifact_key,
                     "warnings": warnings,
@@ -3640,17 +4331,101 @@ class IndexPipeline:
                         "pipeline_metrics", {}
                     ),
                     "fencing_token": lock_token,
-                },
-            )
-            self.unit_artifact_store.replace_snapshot_units(
-                snapshot_id=snapshot_id,
-                elements=self._unit_artifact_rows(elements),
-            )
-            self.snapshot_store.import_git_backbone(merged_snapshot, git_meta=git_meta)
-            relational_fact_persistence = self._save_relational_facts_for_index(
-                merged_snapshot,
-                active_incremental_plan,
-            )
+                }
+                save_snapshot_delta = getattr(
+                    self.snapshot_store,
+                    "save_snapshot_delta",
+                    None,
+                )
+                if (
+                    callable(save_snapshot_delta)
+                    and active_incremental_plan is not None
+                    and active_incremental_plan.get("previous_snapshot_id")
+                ):
+                    save_snapshot_delta(
+                        merged_snapshot,
+                        previous_snapshot_id=str(
+                            active_incremental_plan.get("previous_snapshot_id")
+                        ),
+                        changed_paths=[
+                            normalize_path(str(path))
+                            for path in (
+                                list(
+                                    active_incremental_plan.get("added_paths", []) or []
+                                )
+                                + list(
+                                    active_incremental_plan.get("modified_paths", [])
+                                    or []
+                                )
+                            )
+                        ],
+                        removed_paths=[
+                            normalize_path(str(path))
+                            for path in (
+                                active_incremental_plan.get("removed_paths", []) or []
+                            )
+                        ],
+                        metadata=snapshot_metadata,
+                    )
+                else:
+                    self.snapshot_store.save_snapshot(
+                        merged_snapshot,
+                        metadata=snapshot_metadata,
+                    )
+            with self._profile_store_surface(
+                pipeline_profile, "unit_artifact", snapshot_db_path
+            ):
+                unit_artifact_rows = self._unit_artifact_rows(elements)
+                publish_units_delta = getattr(
+                    self.unit_artifact_store, "publish_snapshot_units_delta", None
+                )
+                if (
+                    callable(publish_units_delta)
+                    and active_incremental_plan is not None
+                    and active_incremental_plan.get("previous_snapshot_id")
+                ):
+                    unit_artifact_persistence = publish_units_delta(
+                        snapshot_id=snapshot_id,
+                        previous_snapshot_id=str(
+                            active_incremental_plan.get("previous_snapshot_id")
+                        ),
+                        changed_paths=[
+                            normalize_path(str(path))
+                            for path in (
+                                list(
+                                    active_incremental_plan.get("added_paths", []) or []
+                                )
+                                + list(
+                                    active_incremental_plan.get("modified_paths", [])
+                                    or []
+                                )
+                            )
+                            if path
+                        ],
+                        removed_paths=[
+                            normalize_path(str(path))
+                            for path in active_incremental_plan.get("removed_paths", [])
+                            or []
+                            if path
+                        ],
+                        elements=unit_artifact_rows,
+                    )
+                else:
+                    unit_artifact_persistence = {"mode": "full"}
+                    self.unit_artifact_store.replace_snapshot_units(
+                        snapshot_id=snapshot_id,
+                        elements=unit_artifact_rows,
+                    )
+            with self._profile_store_surface(
+                pipeline_profile, "relational_fact", snapshot_db_path
+            ):
+                self.snapshot_store.import_git_backbone(
+                    merged_snapshot, git_meta=git_meta
+                )
+                relational_fact_persistence = self._save_relational_facts_for_index(
+                    merged_snapshot,
+                    active_incremental_plan,
+                )
             if doc_chunks_payload:
                 mentions_by_chunk: dict[str, list[dict[str, Any]]] = {}
                 for mention in doc_mentions_payload:
@@ -3671,12 +4446,20 @@ class IndexPipeline:
                     chunks=doc_chunks_payload,
                     mentions=doc_mentions_payload,
                 )
-            ir_graphs = self.ir_graph_builder.build_graphs(merged_snapshot)
-            self.snapshot_store.save_ir_graphs(snapshot_id, ir_graphs)
-            stage_id = self.snapshot_store.stage_snapshot(
-                merged_snapshot,
-                metadata={"run_id": run_id, "artifact_key": artifact_key},
-            )
+            with self._profile_store_surface(
+                pipeline_profile, "ir_graph", snapshot_store_dir, snapshot_db_path
+            ):
+                _ir_graphs, ir_graph_persistence = self._save_ir_graphs_for_index(
+                    merged_snapshot,
+                    active_incremental_plan,
+                )
+            with self._profile_store_surface(
+                pipeline_profile, "ir", snapshot_store_dir, snapshot_db_path
+            ):
+                stage_id = self.snapshot_store.stage_snapshot(
+                    merged_snapshot,
+                    metadata={"run_id": run_id, "artifact_key": artifact_key},
+                )
             all_pg_elements: list[dict[str, Any]] = cast(
                 list[dict[str, Any]], list(all_elem_payloads)
             )
@@ -3684,10 +4467,47 @@ class IndexPipeline:
                 all_pg_elements.extend(doc_elements_payload)
             if not self.pg_retrieval_store:
                 raise RuntimeError("pg_retrieval_store not initialized")
-            self.pg_retrieval_store.upsert_elements(
-                snapshot_id=snapshot_id,
-                elements=all_pg_elements,
-            )
+            with self._profile_store_surface(pipeline_profile, "pg", snapshot_db_path):
+                publish_pg_delta = getattr(
+                    self.pg_retrieval_store, "publish_elements_delta", None
+                )
+                if (
+                    callable(publish_pg_delta)
+                    and active_incremental_plan is not None
+                    and active_incremental_plan.get("previous_snapshot_id")
+                ):
+                    pg_retrieval_persistence = publish_pg_delta(
+                        snapshot_id=snapshot_id,
+                        previous_snapshot_id=str(
+                            active_incremental_plan.get("previous_snapshot_id")
+                        ),
+                        changed_paths=[
+                            normalize_path(str(path))
+                            for path in (
+                                list(
+                                    active_incremental_plan.get("added_paths", []) or []
+                                )
+                                + list(
+                                    active_incremental_plan.get("modified_paths", [])
+                                    or []
+                                )
+                            )
+                            if path
+                        ],
+                        removed_paths=[
+                            normalize_path(str(path))
+                            for path in active_incremental_plan.get("removed_paths", [])
+                            or []
+                            if path
+                        ],
+                        elements=all_pg_elements,
+                    )
+                else:
+                    pg_retrieval_persistence = {"mode": "full"}
+                    self.pg_retrieval_store.upsert_elements(
+                        snapshot_id=snapshot_id,
+                        elements=all_pg_elements,
+                    )
             self._sync_doc_overlay(
                 graph_runtime,
                 chunks=doc_chunks_payload,
@@ -3757,6 +4577,7 @@ class IndexPipeline:
             embedding_metrics = self._embedding_metrics_payload()
             if embedding_metrics:
                 pipeline_metrics["embedding_provider"] = embedding_metrics
+            self._attach_pipeline_profile(pipeline_metrics, pipeline_profile)
             merged_snapshot.metadata["pipeline_metrics"] = pipeline_metrics
             self.snapshot_store.update_snapshot_metadata(
                 snapshot_id,
@@ -3791,6 +4612,9 @@ class IndexPipeline:
                     "pipeline_metrics", {}
                 ),
                 "relational_fact_persistence": relational_fact_persistence,
+                "ir_graph_persistence": ir_graph_persistence,
+                "unit_artifact_persistence": unit_artifact_persistence,
+                "pg_retrieval_persistence": pg_retrieval_persistence,
             }
             if incremental_change_set is not None:
                 result["incremental"] = {
@@ -3876,5 +4700,6 @@ class IndexPipeline:
             )
             raise
         finally:
+            self._active_pipeline_profile = previous_profile
             reset_materialization_counters(materialization_token)
             self.snapshot_store.release_lock(lock_name, owner_id=run_id)

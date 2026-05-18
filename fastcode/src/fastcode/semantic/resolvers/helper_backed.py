@@ -50,6 +50,7 @@ def _unit_simple_name(unit: IRCodeUnit) -> str:
 class HelperBackedSemanticResolver(SemanticResolver):
     """Shared base class for helper-backed semantic resolvers."""
 
+    helper_cache_version = "helper_semantic_cache.v1"
     helper_filename: str = ""
     helper_runtime: str = "python"
     helper_timeout_seconds: int = 90
@@ -164,7 +165,24 @@ class HelperBackedSemanticResolver(SemanticResolver):
         if not helper_files:
             return patch
 
-        payload = self._run_semantic_helper(helper_files, patch, repo_root=repo_root)
+        cache_entry = self._helper_cache_entry(helper_files, repo_root=repo_root)
+        patch.stats.update(
+            {
+                "helper_cache_key": cache_entry["key"],
+                "helper_cache_path": cache_entry["path"],
+                "helper_cache_target_files": len(helper_files),
+            }
+        )
+        payload = self._load_helper_cache(cache_entry)
+        if payload is not None:
+            patch.stats["helper_cache_hit"] = True
+            patch.stats["helper_cache_miss"] = False
+        else:
+            patch.stats["helper_cache_hit"] = False
+            patch.stats["helper_cache_miss"] = True
+            payload = self._run_semantic_helper(
+                helper_files, patch, repo_root=repo_root
+            )
         if self._helper_failed(patch):
             return self._merge_with_fallback(
                 primary_patch=patch,
@@ -173,6 +191,8 @@ class HelperBackedSemanticResolver(SemanticResolver):
                 target_paths=target_paths,
                 legacy_graph_builder=legacy_graph_builder,
             )
+        if patch.stats.get("helper_cache_hit") is not True:
+            self._save_helper_cache(cache_entry, payload)
         self._apply_semantic_facts(snapshot=snapshot, patch=patch, payload=payload)
         patch.metadata_updates["semantic_resolver_runs"][0]["stats"] = patch.stats
         return patch
@@ -295,6 +315,150 @@ class HelperBackedSemanticResolver(SemanticResolver):
             / "fastcode-helper-cache"
             / f"{helper_path.stem}-{digest}{suffix}"
         )
+
+    def _helper_cache_entry(
+        self,
+        helper_files: list[str],
+        *,
+        repo_root: str,
+    ) -> dict[str, Any]:
+        identity = {
+            "cache_version": self.helper_cache_version,
+            "language": self.language,
+            "source": self.source_name,
+            "frontend_kind": self.frontend_kind,
+            "extractor": self.extractor_name,
+            "repo_root": os.path.realpath(repo_root),
+            "helper": self._helper_identity(),
+            "tools": self._required_tool_identities(),
+            "targets": [
+                fingerprint
+                for helper_file in sorted(helper_files)
+                if (
+                    fingerprint := self._target_file_fingerprint(
+                        helper_file,
+                        repo_root=repo_root,
+                    )
+                )
+                is not None
+            ],
+        }
+        key = sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        cache_dir = self._helper_cache_dir(repo_root)
+        return {
+            "key": key,
+            "path": str(cache_dir / f"{key}.json"),
+            "identity": identity,
+        }
+
+    def _helper_cache_dir(self, repo_root: str) -> Path:
+        cache_dir = Path(repo_root) / ".fastcode" / "semantic_helper_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir
+
+    def _helper_identity(self) -> dict[str, Any]:
+        helper_path = self._helper_path()
+        payload: dict[str, Any] = {
+            "filename": self.helper_filename,
+            "runtime": self.helper_runtime,
+            "path": str(helper_path),
+            "exists": helper_path.exists(),
+        }
+        if helper_path.exists():
+            try:
+                stat = helper_path.stat()
+                payload.update(
+                    {
+                        "size": int(stat.st_size),
+                        "content_hash": sha256(helper_path.read_bytes()).hexdigest(),
+                    }
+                )
+            except OSError:
+                payload["unreadable"] = True
+        return payload
+
+    def _required_tool_identities(self) -> list[dict[str, Any]]:
+        identities: list[dict[str, Any]] = []
+        for tool in sorted(self.required_tools):
+            tool_path = shutil.which(tool)
+            payload: dict[str, Any] = {
+                "tool": tool,
+                "available": tool_path is not None,
+                "path": tool_path,
+            }
+            if tool_path:
+                try:
+                    stat = os.stat(tool_path)
+                    payload["size"] = int(stat.st_size)
+                    payload["mtime_ns"] = int(stat.st_mtime_ns)
+                except OSError:
+                    payload["unreadable"] = True
+            identities.append(payload)
+        return identities
+
+    @staticmethod
+    def _target_file_fingerprint(
+        helper_file: str,
+        *,
+        repo_root: str,
+    ) -> dict[str, Any] | None:
+        try:
+            stat = os.stat(helper_file)
+            with open(helper_file, "rb") as handle:
+                digest = sha256(handle.read()).hexdigest()
+            rel_path = _normalize_path(os.path.relpath(helper_file, repo_root))
+            return {
+                "path": rel_path,
+                "size": int(stat.st_size),
+                "content_hash": digest,
+            }
+        except OSError:
+            return None
+
+    def _load_helper_cache(self, entry: dict[str, Any]) -> dict[str, Any] | None:
+        path = str(entry["path"])
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if (
+            payload.get("key") != entry["key"]
+            or payload.get("identity") != entry["identity"]
+        ):
+            return None
+        helper_payload = payload.get("helper_payload")
+        return (
+            cast(dict[str, Any], helper_payload)
+            if isinstance(helper_payload, dict)
+            else None
+        )
+
+    def _save_helper_cache(
+        self,
+        entry: dict[str, Any],
+        helper_payload: dict[str, Any],
+    ) -> None:
+        payload = {
+            "key": entry["key"],
+            "identity": entry["identity"],
+            "helper_payload": helper_payload,
+        }
+        path = str(entry["path"])
+        tmp_path = f"{path}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
+            os.replace(tmp_path, path)
+        except OSError:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
     def _run_semantic_helper(
         self,

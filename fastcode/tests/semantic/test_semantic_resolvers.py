@@ -48,6 +48,11 @@ from fastcode.semantic.resolvers._utils import (
 )
 from fastcode.semantic.resolvers.helper_backed import HelperBackedSemanticResolver
 from fastcode.semantic.resolvers.patching import _source_preference
+from fastcode.utils.materialization import (
+    BOUNDARY_SEMANTIC_PATCH_CHANGED_OBJECTS,
+    BOUNDARY_SEMANTIC_PATCH_PRESERVED_OBJECTS,
+    collect_materialization_counters,
+)
 
 
 def _file_unit(path: str, *, language: str = "python") -> IRCodeUnit:
@@ -299,6 +304,186 @@ def test_apply_resolution_patch_avoids_generic_ir_dict_round_trips(
     assert updated.embeddings[0].vector == [1.0, 2.0]
 
 
+def test_apply_resolution_patch_reports_materialized_preserved_and_changed_objects():
+    src = _symbol_unit("unit:src", "a.py", "caller", element_id="elem:src")
+    dst = _symbol_unit("unit:dst", "b.py", "callee", element_id="elem:dst")
+    old_support = IRUnitSupport(
+        support_id="sup:old",
+        unit_id="unit:src",
+        source="fc_structure",
+        support_kind="call_resolution",
+    )
+    old_relation = IRRelation(
+        relation_id="rel:old",
+        src_unit_id="unit:src",
+        dst_unit_id="unit:dst",
+        relation_type="call",
+        resolution_state="candidate",
+        support_sources={"fc_structure"},
+        support_ids=["sup:old"],
+    )
+    new_support = IRUnitSupport(
+        support_id="sup:new",
+        unit_id="unit:src",
+        source=PYTHON_RESOLVER_SOURCE,
+        support_kind="call_resolution",
+    )
+    new_relation = IRRelation(
+        relation_id="rel:new",
+        src_unit_id="unit:src",
+        dst_unit_id="unit:dst",
+        relation_type="call",
+        resolution_state="anchored",
+        support_sources={PYTHON_RESOLVER_SOURCE},
+        support_ids=["sup:new"],
+    )
+    snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:1",
+        units=[_file_unit("a.py"), src, dst],
+        supports=[old_support],
+        relations=[old_relation],
+        embeddings=[
+            IRUnitEmbedding(
+                embedding_id="emb:src",
+                unit_id="unit:src",
+                source="fc_embedding",
+                vector=[1.0],
+            )
+        ],
+    )
+
+    with collect_materialization_counters() as counters:
+        apply_resolution_patch(
+            snapshot,
+            ResolutionPatch(
+                relations=[new_relation],
+                supports=[new_support],
+                unit_metadata_updates={"unit:src": {"resolver": "python"}},
+            ),
+        )
+
+    metrics = counters.as_metrics()
+    assert (
+        metrics["materialization_boundary_counts"][
+            BOUNDARY_SEMANTIC_PATCH_PRESERVED_OBJECTS
+        ]
+        == 1
+    )
+    assert (
+        metrics["materialization_boundary_counts"][
+            BOUNDARY_SEMANTIC_PATCH_CHANGED_OBJECTS
+        ]
+        == 1
+    )
+    assert (
+        metrics["materialization_boundary_items"][
+            BOUNDARY_SEMANTIC_PATCH_PRESERVED_OBJECTS
+        ]
+        == 6
+    )
+    assert (
+        metrics["materialization_boundary_items"][
+            BOUNDARY_SEMANTIC_PATCH_CHANGED_OBJECTS
+        ]
+        == 3
+    )
+
+
+def test_apply_resolution_patch_reuses_unchanged_snapshot_objects():
+    src = _symbol_unit("unit:src", "a.py", "src", element_id="elem:src")
+    dst = _symbol_unit("unit:dst", "a.py", "dst", element_id="elem:dst")
+    other = _symbol_unit("unit:other", "a.py", "other", element_id="elem:other")
+    changed_support = IRUnitSupport(
+        support_id="sup:changed",
+        unit_id=src.unit_id,
+        source="fc_structure",
+        support_kind="call_resolution",
+        metadata={"source": "fc_structure"},
+    )
+    stable_support = IRUnitSupport(
+        support_id="sup:stable",
+        unit_id=other.unit_id,
+        source="fc_structure",
+        support_kind="call_resolution",
+    )
+    changed_relation = IRRelation(
+        relation_id="rel:changed",
+        src_unit_id=src.unit_id,
+        dst_unit_id=dst.unit_id,
+        relation_type="call",
+        resolution_state="structural",
+        support_sources={"fc_structure"},
+        support_ids=[changed_support.support_id],
+        metadata={"source": "fc_structure"},
+    )
+    stable_relation = IRRelation(
+        relation_id="rel:stable",
+        src_unit_id=dst.unit_id,
+        dst_unit_id=other.unit_id,
+        relation_type="call",
+        resolution_state="structural",
+        support_sources={"fc_structure"},
+        support_ids=[stable_support.support_id],
+    )
+    embedding = IRUnitEmbedding(
+        embedding_id="emb:stable",
+        unit_id=other.unit_id,
+        source="fc_embedding",
+        vector=[1.0],
+    )
+    patch_support = IRUnitSupport(
+        support_id=changed_support.support_id,
+        unit_id=src.unit_id,
+        source=PYTHON_RESOLVER_SOURCE,
+        support_kind="call_resolution",
+        metadata={"resolver_language": "python"},
+    )
+    patch_relation = IRRelation(
+        relation_id="rel:patch",
+        src_unit_id=src.unit_id,
+        dst_unit_id=dst.unit_id,
+        relation_type="call",
+        resolution_state="semantically_resolved",
+        support_sources={PYTHON_RESOLVER_SOURCE},
+        support_ids=[patch_support.support_id],
+        metadata={"resolution_tier": "compiler_confirmed"},
+    )
+    snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:1",
+        units=[src, dst, other],
+        supports=[changed_support, stable_support],
+        relations=[changed_relation, stable_relation],
+        embeddings=[embedding],
+    )
+
+    updated = apply_resolution_patch(
+        snapshot,
+        ResolutionPatch(
+            unit_metadata_updates={src.unit_id: {"resolver": "python"}},
+            supports=[patch_support],
+            relations=[patch_relation],
+        ),
+    )
+
+    assert updated.units[0] is not src
+    assert updated.units[1] is dst
+    assert updated.units[2] is other
+    assert updated.supports[0] is not changed_support
+    assert updated.supports[1] is stable_support
+    assert updated.relations[0] is not changed_relation
+    assert updated.relations[1] is stable_relation
+    assert updated.embeddings[0] is embedding
+    assert snapshot.units[0].metadata == {
+        "ast_element_id": "elem:src",
+        "source": "fc_structure",
+    }
+    assert snapshot.supports[0].metadata == {"source": "fc_structure"}
+    assert snapshot.relations[0].metadata == {"source": "fc_structure"}
+    assert updated.relations[0].metadata["resolution_tier"] == "compiler_confirmed"
+
+
 def test_apply_resolution_patch_records_resolver_run_metadata():
     snapshot = _snapshot(units=[_file_unit("a.py")])
 
@@ -315,6 +500,69 @@ def test_apply_resolution_patch_records_resolver_run_metadata():
 
     assert updated.metadata["semantic_resolver_runs"] == [
         {"language": "python", "source": PYTHON_RESOLVER_SOURCE}
+    ]
+
+
+def test_apply_resolution_patch_uses_explicit_patch_metadata_serializers():
+    class NestedMapping(dict[str, object]):
+        def items(self) -> NoReturn:
+            raise AssertionError("recursive metadata normalization was used")
+
+        def __repr__(self) -> str:
+            return "<nested-payload>"
+
+    file_unit = _file_unit("a.py")
+    snapshot = _snapshot(units=[file_unit])
+
+    updated = apply_resolution_patch(
+        snapshot,
+        ResolutionPatch(
+            metadata_updates={
+                "semantic_resolver_runs": [
+                    {
+                        "language": "python",
+                        "source": PYTHON_RESOLVER_SOURCE,
+                        "capabilities": {"resolve_imports", "resolve_calls"},
+                        "stats": {
+                            "relations_emitted": {"call": "2"},
+                            "diagnostics": [
+                                {
+                                    "language": "python",
+                                    "tool": "pyright",
+                                    "code": "example",
+                                    "message": "diagnostic",
+                                }
+                            ],
+                            "opaque": NestedMapping({"nested": object()}),
+                        },
+                    }
+                ]
+            },
+            unit_metadata_updates={
+                file_unit.unit_id: {
+                    "resolver_payload": NestedMapping({"nested": object()}),
+                    "capabilities": {"resolve_imports", "resolve_calls"},
+                }
+            },
+        ),
+    )
+
+    resolver_run = updated.metadata["semantic_resolver_runs"][0]
+    assert resolver_run["capabilities"] == ["resolve_calls", "resolve_imports"]
+    assert resolver_run["stats"]["relations_emitted"] == {"call": 2}
+    assert resolver_run["stats"]["diagnostics"] == [
+        {
+            "language": "python",
+            "tool": "pyright",
+            "code": "example",
+            "message": "diagnostic",
+        }
+    ]
+    assert resolver_run["stats"]["opaque"] == "<nested-payload>"
+    assert updated.units[0].metadata["resolver_payload"] == "<nested-payload>"
+    assert updated.units[0].metadata["capabilities"] == [
+        "resolve_calls",
+        "resolve_imports",
     ]
 
 
@@ -2271,6 +2519,56 @@ def test_helper_backed_resolver_uses_snapshot_repo_root_for_helper_execution(
     assert str(source_path) in command
     assert run_mock.call_args.kwargs["cwd"] == str(repo_root)
     assert patch_result.stats["helper_target_files"] == 1
+
+
+def test_helper_backed_resolver_reuses_artifact_cache_on_unchanged_inputs(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "a.py").write_text("def run():\n    helper()\n", encoding="utf-8")
+    resolver = _DummyHelperResolver()
+    snapshot = _snapshot(units=[_file_unit("a.py")])
+    snapshot.metadata["repo_root"] = str(repo_root)
+    element = _element(
+        element_id="file:a",
+        element_type="file",
+        name="a.py",
+        path="a.py",
+    )
+    payload = {"imports": [], "calls": [], "inherits": [], "stats": {"facts": 0}}
+
+    with (
+        patch.object(resolver, "_has_tools", return_value=True),
+        patch.object(
+            resolver, "_run_semantic_helper", return_value=payload
+        ) as run_mock,
+    ):
+        first = resolver.resolve(
+            snapshot=snapshot,
+            elements=[element],
+            target_paths={"a.py"},
+            legacy_graph_builder=None,
+        )
+        second = resolver.resolve(
+            snapshot=snapshot,
+            elements=[element],
+            target_paths={"a.py"},
+            legacy_graph_builder=None,
+        )
+
+    assert run_mock.call_count == 1
+    assert first.stats["helper_cache_hit"] is False
+    assert first.stats["helper_cache_miss"] is True
+    assert second.stats["helper_cache_hit"] is True
+    assert second.stats["helper_cache_miss"] is False
+    assert (
+        second.metadata_updates["semantic_resolver_runs"][0]["stats"][
+            "helper_cache_hit"
+        ]
+        is True
+    )
+    assert (repo_root / ".fastcode" / "semantic_helper_cache").is_dir()
 
 
 # ---------------------------------------------------------------------------

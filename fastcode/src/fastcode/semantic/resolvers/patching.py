@@ -2,40 +2,274 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 from ...ir.types import (
     IRCodeUnit,
     IRRelation,
     IRSnapshot,
-    IRUnitEmbedding,
     IRUnitSupport,
     resolution_rank,
 )
+from ...utils.materialization import (
+    BOUNDARY_SEMANTIC_PATCH_CHANGED_OBJECTS,
+    BOUNDARY_SEMANTIC_PATCH_PRESERVED_OBJECTS,
+    increment_materialization_boundary,
+)
 from .base import ResolutionPatch, ResolutionTier
 
+JSONScalar = bool | int | float | str | None
 
-def _patch_jsonable(value: Any) -> Any:
-    """Normalize resolver-owned metadata without dataclass/object expansion."""
+_RUN_STRING_FIELDS = {
+    "language",
+    "source",
+    "frontend_kind",
+}
+_RUN_BOOL_FIELDS = {
+    "compiler_backed",
+    "fallback",
+    "helper_backed",
+    "helper_failed",
+}
+_RUN_STRING_LIST_FIELDS = {
+    "capabilities",
+    "required_tools",
+}
+_STATS_STRING_FIELDS = {
+    "language",
+    "cost_class",
+    "resolver_source",
+    "frontend_kind",
+}
+_STATS_INT_FIELDS = {
+    "helper_target_files",
+    "supports_emitted",
+    "skipped_edges",
+}
+_STATS_OPTIONAL_INT_FIELDS = {
+    "helper_exit_code",
+}
+_STATS_BOOL_FIELDS = {
+    "helper_failed",
+    "skipped",
+}
+_STATS_STRING_LIST_FIELDS = {
+    "capabilities",
+    "helper_command",
+    "helper_failure_codes",
+    "required_tools",
+}
+_RESOLVER_METADATA_STRING_FIELDS = {
+    "base",
+    "base_name",
+    "call_name",
+    "doc_id",
+    "extractor",
+    "import_name",
+    "import_path",
+    "module",
+    "relation_kind",
+    "resolution_method",
+    "resolution_tier",
+    "resolver_language",
+    "semantic_capability",
+    "source",
+    "source_name",
+    "source_path",
+    "target_element_id",
+    "target_name",
+    "target_path",
+    "target_symbol",
+    "target_unit_id",
+}
+_RESOLVER_METADATA_INT_FIELDS = {
+    "level",
+    "source_col",
+    "source_line",
+    "target_col",
+    "target_line",
+}
+_RESOLVER_METADATA_STRING_LIST_FIELDS = {
+    "resolver_capabilities",
+}
+
+
+def _json_scalar(value: Any) -> JSONScalar:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
-    if isinstance(value, Mapping):
-        return {
-            str(key): _patch_jsonable(item)
-            for key, item in cast(Mapping[Any, Any], value).items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_patch_jsonable(item) for item in cast(Sequence[Any], value)]
-    if isinstance(value, set):
-        return [
-            _patch_jsonable(item) for item in sorted(cast(set[Any], value), key=str)
-        ]
     return repr(value)
 
 
-def _metadata(value: Mapping[str, Any] | None) -> dict[str, Any]:
-    return cast(dict[str, Any], _patch_jsonable(dict(value or {})))
+def _iterable_items(value: Any) -> Iterable[Any]:
+    if isinstance(value, set):
+        return sorted(value, key=str)
+    if isinstance(value, (str, bytes, bytearray)):
+        return (value,)
+    if isinstance(value, Sequence):
+        return value
+    return (value,)
+
+
+def _optional_string(value: Any) -> str | None:
+    return None if value is None else str(value)
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    return [str(item) for item in _iterable_items(value) if item is not None]
+
+
+def _scalar_list(value: Any) -> list[JSONScalar]:
+    if value is None:
+        return []
+    return [_json_scalar(item) for item in _iterable_items(value)]
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int_mapping(value: Any) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, int] = {}
+    for key, item in value.items():
+        coerced = _int_or_none(item)
+        if coerced is not None:
+            result[str(key)] = coerced
+    return result
+
+
+def _scalar_mapping(value: Any) -> dict[str, JSONScalar]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): _json_scalar(item) for key, item in value.items()}
+
+
+def _flat_patch_value(
+    value: Any,
+) -> JSONScalar | list[JSONScalar] | dict[str, JSONScalar]:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if type(value) is dict:
+        return _scalar_mapping(value)
+    if isinstance(value, Mapping):
+        return repr(value)
+    if isinstance(value, (set, Sequence)) and not isinstance(
+        value, (str, bytes, bytearray)
+    ):
+        return _scalar_list(value)
+    return repr(value)
+
+
+def _copy_metadata(value: Mapping[str, Any] | None) -> dict[str, Any]:
+    return dict(value or {})
+
+
+def _serialize_diagnostic(value: Any) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {
+            "language": "",
+            "tool": "",
+            "code": "",
+            "message": str(value),
+        }
+    return {
+        "language": str(value.get("language") or ""),
+        "tool": str(value.get("tool") or ""),
+        "code": str(value.get("code") or ""),
+        "message": str(value.get("message") or ""),
+    }
+
+
+def _serialize_diagnostics(value: Any) -> list[dict[str, str]]:
+    if value is None:
+        return []
+    return [_serialize_diagnostic(item) for item in _iterable_items(value)]
+
+
+def _serialize_resolver_stats(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        name = str(key)
+        if name in _STATS_STRING_FIELDS:
+            result[name] = _optional_string(item)
+        elif name in _STATS_INT_FIELDS:
+            result[name] = _int_or_none(item) or 0
+        elif name in _STATS_OPTIONAL_INT_FIELDS:
+            result[name] = _int_or_none(item)
+        elif name in _STATS_BOOL_FIELDS:
+            result[name] = bool(item)
+        elif name in _STATS_STRING_LIST_FIELDS:
+            result[name] = _string_list(item)
+        elif name == "diagnostics":
+            result[name] = _serialize_diagnostics(item)
+        elif name == "relations_emitted":
+            result[name] = _int_mapping(item)
+        elif name == "helper_stats":
+            result[name] = _scalar_mapping(item)
+        else:
+            result[name] = _json_scalar(item)
+    return result
+
+
+def _serialize_resolver_run(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {"message": str(_json_scalar(value))}
+
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        name = str(key)
+        if name in _RUN_STRING_FIELDS:
+            result[name] = _optional_string(item)
+        elif name in _RUN_BOOL_FIELDS:
+            result[name] = bool(item)
+        elif name in _RUN_STRING_LIST_FIELDS:
+            result[name] = _string_list(item)
+        elif name == "stats":
+            result[name] = _serialize_resolver_stats(item)
+        else:
+            result[name] = _flat_patch_value(item)
+    return result
+
+
+def _serialize_resolver_runs(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    return [_serialize_resolver_run(item) for item in _iterable_items(value)]
+
+
+def _serialize_unit_metadata_updates(
+    value: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    return {str(key): _flat_patch_value(item) for key, item in (value or {}).items()}
+
+
+def _serialize_resolver_object_metadata(
+    value: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, item in (value or {}).items():
+        name = str(key)
+        if name in _RESOLVER_METADATA_STRING_FIELDS:
+            result[name] = _optional_string(item)
+        elif name in _RESOLVER_METADATA_INT_FIELDS:
+            result[name] = _int_or_none(item)
+        elif name in _RESOLVER_METADATA_STRING_LIST_FIELDS:
+            result[name] = _string_list(item)
+        else:
+            result[name] = _flat_patch_value(item)
+    return result
 
 
 def _clone_unit(unit: IRCodeUnit) -> IRCodeUnit:
@@ -59,11 +293,13 @@ def _clone_unit(unit: IRCodeUnit) -> IRCodeUnit:
         candidate_anchor_symbol_ids=list(unit.candidate_anchor_symbol_ids),
         anchor_coverage=unit.anchor_coverage,
         source_set=set(unit.source_set),
-        metadata=_metadata(unit.metadata),
+        metadata=_copy_metadata(unit.metadata),
     )
 
 
-def _clone_support(support: IRUnitSupport) -> IRUnitSupport:
+def _clone_support(
+    support: IRUnitSupport, *, resolver_payload: bool = False
+) -> IRUnitSupport:
     return IRUnitSupport(
         support_id=support.support_id,
         unit_id=support.unit_id,
@@ -80,11 +316,17 @@ def _clone_support(support: IRUnitSupport) -> IRUnitSupport:
         start_col=support.start_col,
         end_line=support.end_line,
         end_col=support.end_col,
-        metadata=_metadata(support.metadata),
+        metadata=(
+            _serialize_resolver_object_metadata(support.metadata)
+            if resolver_payload
+            else _copy_metadata(support.metadata)
+        ),
     )
 
 
-def _clone_relation(relation: IRRelation) -> IRRelation:
+def _clone_relation(
+    relation: IRRelation, *, resolver_payload: bool = False
+) -> IRRelation:
     return IRRelation(
         relation_id=relation.relation_id,
         src_unit_id=relation.src_unit_id,
@@ -94,19 +336,11 @@ def _clone_relation(relation: IRRelation) -> IRRelation:
         support_sources=set(relation.support_sources),
         support_ids=list(relation.support_ids),
         pending_capabilities=set(relation.pending_capabilities),
-        metadata=_metadata(relation.metadata),
-    )
-
-
-def _clone_embedding(embedding: IRUnitEmbedding) -> IRUnitEmbedding:
-    return IRUnitEmbedding(
-        embedding_id=embedding.embedding_id,
-        unit_id=embedding.unit_id,
-        source=embedding.source,
-        vector=list(embedding.vector) if embedding.vector is not None else None,
-        embedding_text=embedding.embedding_text,
-        model_id=embedding.model_id,
-        metadata=_metadata(embedding.metadata),
+        metadata=(
+            _serialize_resolver_object_metadata(relation.metadata)
+            if resolver_payload
+            else _copy_metadata(relation.metadata)
+        ),
     )
 
 
@@ -161,21 +395,23 @@ def _merge_relation(existing: IRRelation, candidate: IRRelation) -> IRRelation:
         and existing.dst_unit_id == candidate.dst_unit_id
         and existing.relation_type == candidate.relation_type
     ):
-        existing.support_sources.update(candidate.support_sources)
-        existing.support_ids = sorted(
-            set(existing.support_ids) | set(candidate.support_ids)
+        merged = _clone_relation(existing)
+        merged.support_sources.update(candidate.support_sources)
+        merged.support_ids = sorted(
+            set(merged.support_ids) | set(candidate.support_ids)
         )
-        existing.pending_capabilities = (
-            existing.pending_capabilities & candidate.pending_capabilities
+        merged.pending_capabilities = (
+            merged.pending_capabilities & candidate.pending_capabilities
         )
         if resolution_rank(candidate.resolution_state) > resolution_rank(
-            existing.resolution_state
+            merged.resolution_state
         ):
-            existing.resolution_state = candidate.resolution_state
-        existing.metadata = _metadata(
-            {**(existing.metadata or {}), **(candidate.metadata or {})}
-        )
-        return existing
+            merged.resolution_state = candidate.resolution_state
+        merged.metadata = {
+            **(merged.metadata or {}),
+            **(candidate.metadata or {}),
+        }
+        return merged
 
     existing_order = (
         resolution_rank(existing.resolution_state),
@@ -193,33 +429,61 @@ def _merge_relation(existing: IRRelation, candidate: IRRelation) -> IRRelation:
 def apply_resolution_patch(snapshot: IRSnapshot, patch: ResolutionPatch) -> IRSnapshot:
     """Materialize a new snapshot with a resolver patch applied."""
 
-    units = [_clone_unit(unit) for unit in snapshot.units]
-    supports = [_clone_support(support) for support in snapshot.supports]
-    embeddings = [_clone_embedding(embedding) for embedding in snapshot.embeddings]
-    metadata: dict[str, Any] = _metadata(snapshot.metadata)
+    preserved_object_count = (
+        len(snapshot.units)
+        + len(snapshot.supports)
+        + len(snapshot.relations)
+        + len(snapshot.embeddings)
+    )
+    if preserved_object_count:
+        increment_materialization_boundary(
+            BOUNDARY_SEMANTIC_PATCH_PRESERVED_OBJECTS,
+            items=preserved_object_count,
+        )
+
+    units = list(snapshot.units)
+    supports = list(snapshot.supports)
+    embeddings = list(snapshot.embeddings)
+    metadata: dict[str, Any] = _copy_metadata(snapshot.metadata)
     for key, value in (patch.metadata_updates or {}).items():
         if key == "semantic_resolver_runs":
-            existing = cast(list[Any], metadata.get(key) or [])
-            incoming = cast(list[Any], value if isinstance(value, list) else [value])
-            metadata[key] = _patch_jsonable([*existing, *incoming])
+            existing = _serialize_resolver_runs(metadata.get(key))
+            incoming = _serialize_resolver_runs(value)
+            metadata[key] = [*existing, *incoming]
             continue
-        metadata[key] = _patch_jsonable(value)
+        metadata[str(key)] = _flat_patch_value(value)
 
-    unit_by_id = {unit.unit_id: unit for unit in units}
+    unit_by_id = {unit.unit_id: (index, unit) for index, unit in enumerate(units)}
+    changed_object_count = 0
     for unit_id, updates in patch.unit_metadata_updates.items():
-        unit = unit_by_id.get(unit_id)
-        if unit is None:
+        found = unit_by_id.get(unit_id)
+        if found is None:
             continue
-        unit.metadata = _metadata({**(unit.metadata or {}), **(updates or {})})
+        index, original_unit = found
+        unit = _clone_unit(original_unit)
+        changed_object_count += 1
+        unit.metadata = {
+            **(unit.metadata or {}),
+            **_serialize_unit_metadata_updates(updates),
+        }
+        units[index] = unit
+        unit_by_id[unit_id] = (index, unit)
 
-    support_by_id = {support.support_id: support for support in supports}
+    support_by_id = {
+        support.support_id: (index, support) for index, support in enumerate(supports)
+    }
     for support in patch.supports:
-        materialized = _clone_support(support)
+        changed_object_count += 1
+        materialized = _clone_support(support, resolver_payload=True)
         if materialized.support_id in support_by_id:
-            existing = support_by_id[materialized.support_id]
-            existing.metadata = _metadata(
-                {**(existing.metadata or {}), **(materialized.metadata or {})}
-            )
+            index, original_support = support_by_id[materialized.support_id]
+            existing = _clone_support(original_support)
+            supports[index] = existing
+            support_by_id[materialized.support_id] = (index, existing)
+            existing.metadata = {
+                **(existing.metadata or {}),
+                **(materialized.metadata or {}),
+            }
             if not existing.source and materialized.source:
                 existing.source = materialized.source
             if not existing.support_kind and materialized.support_kind:
@@ -251,20 +515,26 @@ def apply_resolution_patch(snapshot: IRSnapshot, patch: ResolutionPatch) -> IRSn
                 existing.end_col = materialized.end_col
             continue
         supports.append(materialized)
-        support_by_id[materialized.support_id] = materialized
+        support_by_id[materialized.support_id] = (len(supports) - 1, materialized)
 
     relation_map: dict[tuple[str, ...], IRRelation] = {}
     for relation in snapshot.relations:
-        materialized = _clone_relation(relation)
-        relation_map[_relation_key(materialized)] = materialized
+        relation_map[_relation_key(relation)] = relation
     for relation in patch.relations:
-        materialized = _clone_relation(relation)
+        changed_object_count += 1
+        materialized = _clone_relation(relation, resolver_payload=True)
         key = _relation_key(materialized)
         existing = relation_map.get(key)
         if existing is None:
             relation_map[key] = materialized
         else:
             relation_map[key] = _merge_relation(existing, materialized)
+
+    if changed_object_count:
+        increment_materialization_boundary(
+            BOUNDARY_SEMANTIC_PATCH_CHANGED_OBJECTS,
+            items=changed_object_count,
+        )
 
     return IRSnapshot(
         repo_name=snapshot.repo_name,

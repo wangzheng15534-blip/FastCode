@@ -3,6 +3,7 @@ import os
 import pickle
 import tempfile
 from contextlib import ExitStack
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
@@ -1141,7 +1142,9 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             *,
             previous_name: str,
             reusable_path_keys: set[str],
+            snapshot_id: str | None = None,
         ) -> dict[str, int]:
+            del snapshot_id
             vector_incremental_calls.append(
                 {
                     "artifact_key": artifact_key,
@@ -1171,7 +1174,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             initialize=lambda dim: None,
             add_vectors=lambda vectors, metadata: temp_store_metadata.extend(metadata),
             save=lambda artifact_key: None,
-            save_incremental=_save_vector_incremental,
+            publish_delta=_save_vector_incremental,
         )
         temp_graph = SimpleNamespace(
             dependency_graph=SimpleNamespace(
@@ -1190,7 +1193,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             index_for_bm25=lambda elements: None,
             build_repo_overview_bm25=lambda: None,
             save_bm25=lambda artifact_key: None,
-            save_bm25_incremental=_save_bm25_incremental,
+            publish_bm25_delta=_save_bm25_incremental,
         )
 
         pipeline.loader.scan_files = lambda: [
@@ -1327,10 +1330,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "b.py"
         ]
         assert set(seen_ast_element_ids) == {"changed:2"}
-        assert {row["id"] for row in temp_store_metadata} == {
-            "unchanged:1",
-            "changed:2",
-        }
+        assert {row["id"] for row in temp_store_metadata} == {"changed:2"}
         assert vector_incremental_calls == [
             {
                 "artifact_key": pipeline.snapshot_store.artifact_key_for_snapshot(
@@ -1344,6 +1344,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
         assert result["incremental_prefilter"] == {
             "previous_snapshot_id": "snap:repo:prev",
             "previous_artifact_key": previous_record.artifact_key,
+            "artifact_delta_mode": True,
             "added": 0,
             "modified": 1,
             "removed": 0,
@@ -1353,6 +1354,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "removed_paths": [],
             "unchanged_paths": ["a.py"],
             "changed_paths": ["b.py"],
+            "artifact_delta_graph_fallback_reason": "edge_surface_changed",
             "ast_ir_rebuilt_elements": 1,
             "ast_ir_reused_files": 1,
             "reused_elements": 1,
@@ -1371,6 +1373,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "artifact_shard_reuse": {
                 "vector_shards_reused": 1,
                 "bm25_shards_reused": 1,
+                "graph_fallback_reason": "edge_or_delete_frontier_requires_full_graph",
             },
         }
         assert result["repair_queue"]["pending"] == 1
@@ -1579,6 +1582,49 @@ def test_incremental_compatibility_uses_typed_embedding_fingerprint_payload() ->
         )
 
         assert pipeline._incremental_compatibility_payload()["embedding"] == payload
+
+
+def test_file_manifest_persists_embedding_fingerprint_surface() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_file_manifest_fp_") as tmp:
+        root = Path(tmp)
+        source_path = root / "a.py"
+        source_path.write_text("def a():\n    return 1\n", encoding="utf-8")
+        pipeline = _make_minimal_pipeline(tmp)
+        fingerprint = {
+            "version": 2,
+            "provider": "test",
+            "model": "stub",
+            "dimension": 3,
+            "text_schema_version": 1,
+        }
+        pipeline.embedder = SimpleNamespace(
+            embedding_fingerprint_record=lambda: SimpleNamespace(
+                to_payload=lambda: dict(fingerprint)
+            )
+        )
+        element = CodeElement(
+            id="elem:a",
+            type="function",
+            name="a",
+            file_path=str(source_path),
+            relative_path="a.py",
+            language="python",
+            start_line=1,
+            end_line=2,
+            code="def a():\n    return 1\n",
+            signature="def a()",
+            docstring=None,
+            summary=None,
+            metadata={},
+            repo_name="repo",
+            repo_url=None,
+        )
+
+        manifest = pipeline._build_file_manifest([element], tmp)
+
+        assert manifest["embedding_fingerprint"] == fingerprint
+        assert manifest["compatibility"]["embedding"] == fingerprint
+        assert manifest["files"]["a.py"]["embedding_fingerprint"] == fingerprint
 
 
 def test_incremental_compatibility_does_not_touch_embedding_dim_property() -> None:
@@ -2328,6 +2374,24 @@ def test_incremental_scip_scope_skips_when_source_owned_evidence_preserved() -> 
             "target_paths": ["pkg/b.py"],
             "scope_roots": [],
         }
+
+
+def test_scip_degraded_reasons_capture_widened_and_full_tool_rerun_causes() -> None:
+    plan = {
+        "modified": 1,
+        "removed": 1,
+        "changed_paths": ["pkg/b.py"],
+        "change_kinds": ["api_surface_hash", "edge_surface_hash"],
+        "semantic_frontier_widened": 1,
+    }
+
+    reasons = IndexPipeline._scip_degraded_reasons(plan, scip_scope=None)
+
+    assert reasons == [
+        "scip_dependency_frontier_changed",
+        "scip_frontier_widened",
+        "scip_full_rerun:file_delete",
+    ]
 
 
 def test_scoped_scip_frontier_uses_repo_root_mode_and_cache() -> None:

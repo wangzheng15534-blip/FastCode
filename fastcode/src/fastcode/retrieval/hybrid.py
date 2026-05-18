@@ -10,9 +10,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import pickle
 import shutil
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
@@ -137,6 +139,8 @@ class HybridRetriever:
         self.filtered_bm25: BM25Okapi | None = None
         self.filtered_bm25_corpus: list[list[str]] = []
         self.filtered_bm25_elements: list[CodeElement] = []
+        self._bm25_shard_name: str | None = None
+        self._bm25_shard_manifest: dict[str, Any] | None = None
 
         # Filtered vector store for selected repositories
         self.filtered_vector_store: VectorStore | None = None
@@ -1412,6 +1416,13 @@ class HybridRetriever:
             bm25_elements = self.full_bm25_elements
             use_filter = bool(repo_filter)
             self.logger.debug("Using full BM25 index")
+        elif self._bm25_shard_manifest is not None and self._bm25_shard_name:
+            return self._keyword_search_sharded(
+                query,
+                top_k=top_k,
+                repo_filter=repo_filter,
+                element_types=element_types,
+            )
         else:
             return []
 
@@ -1460,6 +1471,92 @@ class HybridRetriever:
 
         self.logger.debug(f"Keyword search found {len(results)} results")
         return results
+
+    def _keyword_search_sharded(
+        self,
+        query: str,
+        *,
+        top_k: int,
+        repo_filter: list[str] | None,
+        element_types: list[str] | None,
+    ) -> list[tuple[CodeElementMeta, float]]:
+        manifest = self._bm25_shard_manifest or {}
+        statistics = manifest.get("statistics", {})
+        if not isinstance(statistics, dict):
+            return []
+        query_tokens = query.lower().split()
+        if not query_tokens:
+            return []
+        term_shards = manifest.get("term_shards", {})
+        if not isinstance(term_shards, dict):
+            return []
+        shard_files: set[str] = set()
+        for token in query_tokens:
+            raw_files = term_shards.get(token, [])
+            if isinstance(raw_files, list):
+                shard_files.update(str(file_name) for file_name in raw_files)
+        if not shard_files:
+            return []
+
+        idf = statistics.get("idf", {})
+        if not isinstance(idf, dict):
+            return []
+        avgdl = float(statistics.get("avgdl") or 0.0)
+        if avgdl <= 0:
+            return []
+        k1 = float(statistics.get("k1") or 1.5)
+        b = float(statistics.get("b") or 0.75)
+        allowed_types = set(element_types) if element_types else None
+        repo_names = set(repo_filter or [])
+        use_filter = bool(repo_names)
+        shard_dir = self._bm25_shards_dir(self._bm25_shard_name or "")
+        scored: list[tuple[float, int, dict[str, Any]]] = []
+        seen_sequences: set[int] = set()
+        for shard_file in sorted(shard_files):
+            shard_path = os.path.join(shard_dir, shard_file)
+            if not os.path.exists(shard_path):
+                continue
+            with open(shard_path, "rb") as handle:
+                payload = pickle.load(handle)
+            entries = payload.get("entries", []) if isinstance(payload, dict) else []
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                sequence_no = entry.get("sequence_no")
+                tokens = entry.get("tokens")
+                element = entry.get("element")
+                if (
+                    not isinstance(sequence_no, int)
+                    or sequence_no in seen_sequences
+                    or not isinstance(tokens, list)
+                    or not isinstance(element, dict)
+                ):
+                    continue
+                seen_sequences.add(sequence_no)
+                if allowed_types and element.get("type") not in allowed_types:
+                    continue
+                if use_filter and element.get("repo_name") not in repo_names:
+                    continue
+                frequencies = Counter(str(token) for token in tokens)
+                doc_len = max(1, len(tokens))
+                score = 0.0
+                for token in query_tokens:
+                    q_freq = frequencies.get(token, 0)
+                    if q_freq <= 0:
+                        continue
+                    denominator = q_freq + k1 * (1 - b + b * doc_len / avgdl)
+                    score += float(idf.get(token) or 0.0) * (
+                        q_freq * (k1 + 1) / denominator
+                    )
+                if score > 0:
+                    scored.append((score, sequence_no, element))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [
+            (cast(CodeElementMeta, element), float(score))
+            for score, _sequence_no, element in scored[:top_k]
+        ]
 
     def _combine_results(
         self,
@@ -1869,6 +1966,36 @@ class HybridRetriever:
             self.logger.error(f"Failed to save BM25 data incrementally: {e}")
             return {"bm25_shards_reused": 0, "bm25_shards_written": 0}
 
+    def publish_bm25_delta(
+        self,
+        name: str,
+        *,
+        previous_name: str,
+        reusable_path_keys: set[str],
+    ) -> dict[str, int | str | None]:
+        """Publish changed BM25 rows plus reusable previous path shards."""
+        try:
+            stats = self._write_bm25_bundle_delta(
+                name,
+                previous_name=previous_name,
+                reusable_path_keys=reusable_path_keys,
+            )
+            self.logger.info(
+                "Published BM25 delta for %s with %d reused shards",
+                name,
+                stats["bm25_shards_reused"],
+            )
+            return {**stats, "fallback_reason": None}
+        except Exception as e:
+            self.logger.error(f"Failed to publish BM25 delta: {e}")
+            return {
+                "bm25_shards_reused": 0,
+                "bm25_shards_written": 0,
+                "bm25_rows_reused": 0,
+                "bm25_rows_written": 0,
+                "fallback_reason": str(e),
+            }
+
     def load_bm25(self, name: str = "index") -> bool:
         """
         Load FULL BM25 index and elements from disk
@@ -1880,6 +2007,20 @@ class HybridRetriever:
             True if successful, False otherwise
         """
         try:
+            manifest = self._load_bm25_manifest(name)
+            if isinstance(manifest, dict) and isinstance(
+                manifest.get("statistics"), dict
+            ):
+                self.full_bm25 = None
+                self.full_bm25_corpus = []
+                self.full_bm25_elements = []
+                self._bm25_shard_name = name
+                self._bm25_shard_manifest = manifest
+                self.logger.info(
+                    "Loaded shard-native BM25 metadata with %d documents",
+                    int(manifest.get("element_count") or 0),
+                )
+                return True
             data = self.load_bm25_payload(name)
             if data is None:
                 bm25_path = self._legacy_bm25_path(name)
@@ -1894,6 +2035,8 @@ class HybridRetriever:
             # Rebuild FULL BM25 index from corpus
             if self.full_bm25_corpus:
                 self.full_bm25 = BM25Okapi(self.full_bm25_corpus)
+                self._bm25_shard_name = None
+                self._bm25_shard_manifest = None
                 self.logger.info(
                     f"Loaded full BM25 data with {len(self.full_bm25_elements)} elements"
                 )
@@ -1947,6 +2090,81 @@ class HybridRetriever:
     @staticmethod
     def _bm25_shard_bytes(entries: list[dict[str, Any]]) -> bytes:
         return pickle.dumps({"entries": entries}, protocol=pickle.HIGHEST_PROTOCOL)
+
+    @staticmethod
+    def _bm25_shard_statistics(entries: list[dict[str, Any]]) -> dict[str, Any]:
+        term_document_frequencies: Counter[str] = Counter()
+        doc_lengths: list[int] = []
+        for entry in entries:
+            tokens = entry.get("tokens")
+            if not isinstance(tokens, list):
+                continue
+            normalized = [str(token) for token in tokens]
+            doc_lengths.append(len(normalized))
+            term_document_frequencies.update(set(normalized))
+        return {
+            "terms": sorted(term_document_frequencies),
+            "term_document_frequencies": dict(
+                sorted(term_document_frequencies.items())
+            ),
+            "doc_lengths": doc_lengths,
+            "doc_count": len(doc_lengths),
+        }
+
+    @staticmethod
+    def _bm25_populate_manifest_statistics(manifest: dict[str, Any]) -> None:
+        term_document_frequencies: Counter[str] = Counter()
+        term_shards: dict[str, list[str]] = {}
+        doc_lengths: list[int] = []
+        for shard in manifest.get("shards", []):
+            if not isinstance(shard, dict):
+                continue
+            shard_file = str(shard.get("shard_file") or "")
+            stats = shard.get("statistics", {})
+            if not isinstance(stats, dict):
+                continue
+            doc_lengths.extend(
+                int(length)
+                for length in stats.get("doc_lengths", [])
+                if isinstance(length, int)
+            )
+            raw_df = stats.get("term_document_frequencies", {})
+            if isinstance(raw_df, dict):
+                for term, count in raw_df.items():
+                    term_document_frequencies[str(term)] += int(count)
+            for term in stats.get("terms", []):
+                if shard_file:
+                    term_shards.setdefault(str(term), []).append(shard_file)
+
+        doc_count = len(doc_lengths)
+        avgdl = float(sum(doc_lengths) / doc_count) if doc_count else 0.0
+        idf: dict[str, float] = {}
+        idf_sum = 0.0
+        negative_terms: list[str] = []
+        for term, frequency in sorted(term_document_frequencies.items()):
+            value = math.log(doc_count - frequency + 0.5) - math.log(frequency + 0.5)
+            idf[term] = value
+            idf_sum += value
+            if value < 0:
+                negative_terms.append(term)
+        average_idf = idf_sum / len(idf) if idf else 0.0
+        epsilon = 0.25
+        epsilon_value = epsilon * average_idf
+        for term in negative_terms:
+            idf[term] = epsilon_value
+        manifest["statistics"] = {
+            "schema_version": "bm25_statistics.v1",
+            "doc_count": doc_count,
+            "avgdl": avgdl,
+            "idf": idf,
+            "average_idf": average_idf,
+            "epsilon": epsilon,
+            "k1": 1.5,
+            "b": 0.75,
+        }
+        manifest["term_shards"] = {
+            term: sorted(set(files)) for term, files in sorted(term_shards.items())
+        }
 
     @staticmethod
     def _copy_or_link_file(source_path: str, target_path: str) -> None:
@@ -2004,6 +2222,7 @@ class HybridRetriever:
         for path_key, entries in grouped_entries.items():
             shard_bytes = self._bm25_shard_bytes(entries)
             digest = hashlib.sha256(shard_bytes).hexdigest()
+            shard_stats = self._bm25_shard_statistics(entries)
             existing = existing_by_path.get(path_key)
             shard_file = (
                 str(existing.get("shard_file"))
@@ -2027,6 +2246,8 @@ class HybridRetriever:
                     "shard_file": shard_file,
                     "digest": digest,
                     "count": len(entries),
+                    "terms": shard_stats["terms"],
+                    "statistics": shard_stats,
                 }
             )
 
@@ -2042,6 +2263,7 @@ class HybridRetriever:
                     os.remove(stale_path)
 
         manifest_path = self._bm25_manifest_path(name)
+        self._bm25_populate_manifest_statistics(manifest)
         tmp_manifest = f"{manifest_path}.tmp"
         with open(tmp_manifest, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
@@ -2230,12 +2452,15 @@ class HybridRetriever:
                             "shard_file": shard_file,
                             "digest": str(reusable.get("digest") or ""),
                             "count": int(reusable.get("count") or len(entries)),
+                            "terms": list(reusable.get("terms") or []),
+                            "statistics": dict(reusable.get("statistics") or {}),
                         }
                     )
                     reused += 1
                     continue
             shard_bytes = self._bm25_shard_bytes(entries)
             digest = hashlib.sha256(shard_bytes).hexdigest()
+            shard_stats = self._bm25_shard_statistics(entries)
             shard_file = self._bm25_shard_filename(path_key)
             shard_path = os.path.join(shard_dir, shard_file)
             active_files.add(shard_file)
@@ -2249,6 +2474,8 @@ class HybridRetriever:
                     "shard_file": shard_file,
                     "digest": digest,
                     "count": len(entries),
+                    "terms": shard_stats["terms"],
+                    "statistics": shard_stats,
                 }
             )
             written += 1
@@ -2259,6 +2486,7 @@ class HybridRetriever:
             os.remove(os.path.join(shard_dir, entry_name))
 
         manifest_path = self._bm25_manifest_path(name)
+        self._bm25_populate_manifest_statistics(manifest)
         tmp_manifest = f"{manifest_path}.tmp"
         with open(tmp_manifest, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
@@ -2268,6 +2496,164 @@ class HybridRetriever:
         if os.path.exists(legacy_bm25_path):
             os.remove(legacy_bm25_path)
         return {"bm25_shards_reused": reused, "bm25_shards_written": written}
+
+    def _write_bm25_bundle_delta(
+        self,
+        name: str,
+        *,
+        previous_name: str,
+        reusable_path_keys: set[str],
+    ) -> dict[str, int]:
+        previous_manifest = self._load_bm25_manifest(previous_name)
+        if not self._bm25_manifest_supports_reuse(previous_manifest):
+            if self.full_bm25_elements:
+                self._write_bm25_bundle(name)
+                return {
+                    "bm25_shards_reused": 0,
+                    "bm25_shards_written": len(self.full_bm25_elements),
+                    "bm25_rows_reused": 0,
+                    "bm25_rows_written": len(self.full_bm25_elements),
+                }
+            return {
+                "bm25_shards_reused": 0,
+                "bm25_shards_written": 0,
+                "bm25_rows_reused": 0,
+                "bm25_rows_written": 0,
+            }
+
+        shard_dir = self._bm25_shards_dir(name)
+        ensure_dir(shard_dir)
+        previous_shard_dir = self._bm25_shards_dir(previous_name)
+        previous_entries = {
+            str(entry.get("path_key")): cast(dict[str, Any], entry)
+            for entry in (
+                previous_manifest.get("shards", []) if previous_manifest else []
+            )
+            if isinstance(entry, dict) and entry.get("path_key")
+        }
+        previous_sequences, max_previous_sequence_no = (
+            self._load_bm25_sequences_by_path(previous_name)
+        )
+        sequences_by_path: dict[str, list[int]] = {}
+        used_sequences: set[int] = set()
+        reusable_entries: dict[str, dict[str, Any]] = {}
+        for path_key in sorted(reusable_path_keys):
+            if path_key.startswith("__pathless__"):
+                continue
+            entry = previous_entries.get(path_key)
+            sequence_nos = previous_sequences.get(path_key)
+            if entry is None or sequence_nos is None:
+                continue
+            sequences_by_path[path_key] = list(sequence_nos)
+            reusable_entries[path_key] = entry
+            used_sequences.update(sequence_nos)
+
+        next_sequence_no = max(max_previous_sequence_no + 1, 0)
+        grouped_counts: dict[str, int] = {}
+        for sequence_no, element in enumerate(self.full_bm25_elements):
+            path_key = self._bm25_path_key(element, sequence_no)
+            grouped_counts[path_key] = grouped_counts.get(path_key, 0) + 1
+        for path_key, count in grouped_counts.items():
+            while next_sequence_no in used_sequences:
+                next_sequence_no += 1
+            assigned = list(range(next_sequence_no, next_sequence_no + count))
+            sequences_by_path[path_key] = assigned
+            used_sequences.update(assigned)
+            next_sequence_no += count
+
+        grouped_entries: dict[str, list[dict[str, Any]]] = {}
+        for row_index, (tokens, element) in enumerate(
+            zip(self.full_bm25_corpus, self.full_bm25_elements, strict=False)
+        ):
+            path_key = self._bm25_path_key(element, row_index)
+            current_entries = grouped_entries.setdefault(path_key, [])
+            sequence_nos = sequences_by_path.get(path_key)
+            if sequence_nos is None or len(sequence_nos) <= len(current_entries):
+                raise RuntimeError(f"Missing delta BM25 sequence for path: {path_key}")
+            current_entries.append(
+                {
+                    "sequence_no": sequence_nos[len(current_entries)],
+                    "tokens": list(tokens),
+                    "element": serialize_code_element(element),
+                }
+            )
+
+        manifest: dict[str, Any] = {
+            "version": _BM25_SHARD_STORAGE_VERSION,
+            "element_count": sum(len(values) for values in sequences_by_path.values()),
+            "shards": [],
+        }
+        active_files: set[str] = set()
+        reused = 0
+        written = 0
+        rows_reused = 0
+        for path_key, reusable in reusable_entries.items():
+            shard_file = str(reusable.get("shard_file") or "")
+            source_path = os.path.join(previous_shard_dir, shard_file)
+            target_path = os.path.join(shard_dir, shard_file)
+            if not shard_file or not os.path.exists(source_path):
+                continue
+            self._copy_or_link_file(source_path, target_path)
+            active_files.add(shard_file)
+            count = int(reusable.get("count") or len(sequences_by_path[path_key]))
+            manifest["shards"].append(
+                {
+                    "path_key": path_key,
+                    "shard_file": shard_file,
+                    "digest": str(reusable.get("digest") or ""),
+                    "count": count,
+                    "terms": list(reusable.get("terms") or []),
+                    "statistics": dict(reusable.get("statistics") or {}),
+                }
+            )
+            reused += 1
+            rows_reused += count
+
+        for path_key, entries in grouped_entries.items():
+            shard_bytes = self._bm25_shard_bytes(entries)
+            digest = hashlib.sha256(shard_bytes).hexdigest()
+            shard_stats = self._bm25_shard_statistics(entries)
+            shard_file = self._bm25_shard_filename(path_key)
+            shard_path = os.path.join(shard_dir, shard_file)
+            active_files.add(shard_file)
+            tmp_path = f"{shard_path}.tmp"
+            with open(tmp_path, "wb") as handle:
+                handle.write(shard_bytes)
+            os.replace(tmp_path, shard_path)
+            manifest["shards"].append(
+                {
+                    "path_key": path_key,
+                    "shard_file": shard_file,
+                    "digest": digest,
+                    "count": len(entries),
+                    "terms": shard_stats["terms"],
+                    "statistics": shard_stats,
+                }
+            )
+            written += 1
+
+        for entry_name in os.listdir(shard_dir):
+            if not entry_name.endswith(".pkl") or entry_name in active_files:
+                continue
+            os.remove(os.path.join(shard_dir, entry_name))
+
+        manifest["shards"].sort(key=lambda entry: str(entry.get("path_key") or ""))
+        manifest_path = self._bm25_manifest_path(name)
+        self._bm25_populate_manifest_statistics(manifest)
+        tmp_manifest = f"{manifest_path}.tmp"
+        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp_manifest, manifest_path)
+
+        legacy_bm25_path = self._legacy_bm25_path(name)
+        if os.path.exists(legacy_bm25_path):
+            os.remove(legacy_bm25_path)
+        return {
+            "bm25_shards_reused": reused,
+            "bm25_shards_written": written,
+            "bm25_rows_reused": rows_reused,
+            "bm25_rows_written": len(self.full_bm25_elements),
+        }
 
     def _load_bm25_payload(self, name: str) -> dict[str, Any] | None:
         manifest = self._load_bm25_manifest(name)

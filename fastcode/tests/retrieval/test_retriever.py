@@ -11,6 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import networkx as nx
 import numpy as np
+import pytest
+from rank_bm25 import BM25Okapi
 
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs, IRGraphView
@@ -60,6 +62,13 @@ def _mk_retriever() -> HybridRetriever:
     retriever._last_fusion_debug = None
     retriever.filtered_bm25_elements = []
     retriever.full_bm25_elements = []
+    retriever.full_bm25_corpus = []
+    retriever.full_bm25 = None
+    retriever.filtered_bm25 = None
+    retriever._bm25_shard_name = None
+    retriever._bm25_shard_manifest = None
+    retriever.retrieval_backend = "local"
+    retriever.pg_retrieval_store = None
     return retriever
 
 
@@ -650,10 +659,11 @@ def test_save_bm25_persists_sharded_bundle_and_loads_without_legacy_pickle(
     retriever = _mk_retriever()
     retriever.logger = MagicMock()
     retriever.persist_dir = str(tmp_path)
-    retriever.full_bm25_corpus = [["alpha"], ["beta"]]
+    retriever.full_bm25_corpus = [["alpha"], ["beta"], ["gamma"]]
     retriever.full_bm25_elements = [
         _element("pkg/a.py", element_id="elem:a"),
         _element("pkg/b.py", element_id="elem:b"),
+        _element("pkg/c.py", element_id="elem:c"),
     ]
     (tmp_path / "index_bm25.pkl").write_bytes(b"legacy")
 
@@ -666,8 +676,10 @@ def test_save_bm25_persists_sharded_bundle_and_loads_without_legacy_pickle(
     loaded.logger = MagicMock()
     loaded.persist_dir = str(tmp_path)
     assert loaded.load_bm25("index") is True
-    assert [elem.id for elem in loaded.full_bm25_elements] == ["elem:a", "elem:b"]
-    assert loaded.full_bm25_corpus == [["alpha"], ["beta"]]
+    assert loaded.full_bm25_elements == []
+    assert loaded.full_bm25_corpus == []
+    assert loaded._bm25_shard_manifest is not None
+    assert loaded._keyword_search("alpha", top_k=1)[0][0]["id"] == "elem:a"
 
 
 def test_save_bm25_reuses_unchanged_shards(tmp_path: Path) -> None:
@@ -704,16 +716,105 @@ def test_save_bm25_reuses_unchanged_shards(tmp_path: Path) -> None:
     assert b_after >= b_before
 
 
+def test_shard_native_bm25_search_reads_only_query_term_shards(
+    tmp_path: Path,
+) -> None:
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+    retriever.full_bm25_corpus = [["alpha"], ["beta"], ["gamma"]]
+    retriever.full_bm25_elements = [
+        _element("pkg/a.py", element_id="elem:a"),
+        _element("pkg/b.py", element_id="elem:b"),
+        _element("pkg/c.py", element_id="elem:c"),
+    ]
+    assert retriever.save_bm25("index") is True
+
+    loaded = _mk_retriever()
+    loaded.logger = MagicMock()
+    loaded.persist_dir = str(tmp_path)
+    assert loaded.load_bm25("index") is True
+
+    real_pickle_load = pickle.load
+    loaded_shards = 0
+
+    def _counting_pickle_load(handle: Any) -> Any:
+        nonlocal loaded_shards
+        loaded_shards += 1
+        return real_pickle_load(handle)
+
+    with patch(
+        "fastcode.retrieval.hybrid.pickle.load", side_effect=_counting_pickle_load
+    ):
+        results = loaded._keyword_search("alpha", top_k=3)
+
+    assert [row["id"] for row, _score in results] == ["elem:a"]
+    assert loaded_shards == 1
+
+
+def test_shard_native_bm25_preserves_legacy_bm25_ranking(
+    tmp_path: Path,
+) -> None:
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+    corpus = [
+        ["alpha", "rare", "rare"],
+        ["alpha", "ordinary"],
+        ["beta", "ordinary"],
+        ["gamma", "ordinary"],
+        ["delta", "ordinary"],
+    ]
+    retriever.full_bm25_corpus = corpus
+    retriever.full_bm25_elements = [
+        _element("pkg/a.py", element_id="elem:a"),
+        _element("pkg/b.py", element_id="elem:b"),
+        _element("pkg/c.py", element_id="elem:c"),
+        _element("pkg/d.py", element_id="elem:d"),
+        _element("pkg/e.py", element_id="elem:e"),
+    ]
+    assert retriever.save_bm25("index") is True
+
+    loaded = _mk_retriever()
+    loaded.logger = MagicMock()
+    loaded.persist_dir = str(tmp_path)
+    assert loaded.load_bm25("index") is True
+
+    query_tokens = ["alpha", "rare"]
+    expected_scores = BM25Okapi(corpus).get_scores(query_tokens)
+    expected = [
+        (retriever.full_bm25_elements[index].id, float(score))
+        for index, score in sorted(
+            enumerate(expected_scores),
+            key=lambda item: (-float(item[1]), item[0]),
+        )
+        if float(score) > 0
+    ]
+    actual = [
+        (row["id"], score)
+        for row, score in loaded._keyword_search("alpha rare", top_k=5)
+    ]
+
+    assert [item[0] for item in actual] == [item[0] for item in expected]
+    for (_actual_id, actual_score), (_expected_id, expected_score) in zip(
+        actual,
+        expected,
+        strict=True,
+    ):
+        assert actual_score == pytest.approx(expected_score)
+
+
 def test_save_bm25_incremental_reuses_previous_artifact_shards(
     tmp_path: Path,
 ) -> None:
     previous = _mk_retriever()
     previous.logger = MagicMock()
     previous.persist_dir = str(tmp_path)
-    previous.full_bm25_corpus = [["alpha"], ["beta"]]
+    previous.full_bm25_corpus = [["alpha"], ["beta"], ["gamma"]]
     previous.full_bm25_elements = [
         _element("pkg/a.py", element_id="elem:a"),
         _element("pkg/b.py", element_id="elem:b"),
+        _element("pkg/c.py", element_id="elem:c"),
     ]
 
     assert previous.save_bm25("prev") is True
@@ -728,10 +829,11 @@ def test_save_bm25_incremental_reuses_previous_artifact_shards(
     current = _mk_retriever()
     current.logger = MagicMock()
     current.persist_dir = str(tmp_path)
-    current.full_bm25_corpus = [["alpha"], ["beta", "changed"]]
+    current.full_bm25_corpus = [["alpha"], ["beta", "changed"], ["gamma"]]
     current.full_bm25_elements = [
         _element("pkg/a.py", element_id="elem:a"),
         _element("pkg/b.py", element_id="elem:b", metadata={"v": 2}),
+        _element("pkg/c.py", element_id="elem:c"),
     ]
 
     stats = current.save_bm25_incremental(
@@ -755,7 +857,9 @@ def test_save_bm25_incremental_reuses_previous_artifact_shards(
     loaded.logger = MagicMock()
     loaded.persist_dir = str(tmp_path)
     assert loaded.load_bm25("next") is True
-    assert [elem.id for elem in loaded.full_bm25_elements] == ["elem:a", "elem:b"]
+    assert loaded.full_bm25_elements == []
+    assert loaded._bm25_shard_manifest is not None
+    assert loaded._keyword_search("changed", top_k=1)[0][0]["id"] == "elem:b"
 
 
 def test_save_bm25_incremental_refuses_incompatible_manifest(

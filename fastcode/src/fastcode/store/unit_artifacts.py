@@ -276,6 +276,38 @@ class UnitArtifactStore:
                 self._insert_unit(conn, snapshot_id, elem)
             conn.commit()
 
+    def publish_snapshot_units_delta(
+        self,
+        snapshot_id: str,
+        *,
+        previous_snapshot_id: str,
+        changed_paths: list[str],
+        removed_paths: list[str],
+        elements: list[dict[str, Any]],
+    ) -> dict[str, int | str]:
+        excluded_paths = sorted({str(path) for path in changed_paths + removed_paths})
+        excluded_path_set = set(excluded_paths)
+        previous_rows = [
+            row
+            for row in self.list_snapshot_units(previous_snapshot_id)
+            if str(row.get("relative_path") or "") not in excluded_path_set
+        ]
+        copied = 0
+        with self.db_runtime.connect() as conn:
+            for row in previous_rows:
+                self._insert_unit(conn, snapshot_id, row)
+                copied += 1
+            for elem in elements:
+                self._insert_unit(conn, snapshot_id, elem)
+            conn.commit()
+        return {
+            "mode": "delta",
+            "previous_snapshot_id": previous_snapshot_id,
+            "copied_rows": copied,
+            "changed_rows": len(elements),
+            "excluded_path_count": len(excluded_paths),
+        }
+
     def refresh_units(
         self,
         snapshot_id: str,

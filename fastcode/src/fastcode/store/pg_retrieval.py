@@ -444,6 +444,96 @@ class PgRetrievalStore:
             "vector_adapter_path": "+".join(sorted(adapter_paths)) or "none",
         }
 
+    def publish_elements_delta(
+        self,
+        snapshot_id: str,
+        *,
+        previous_snapshot_id: str,
+        changed_paths: list[str],
+        removed_paths: list[str],
+        elements: list[dict[str, Any]],
+    ) -> dict[str, int | str]:
+        if not self.enabled:
+            self.last_upsert_metrics = {
+                "row_count": 0,
+                "batch_count": 0,
+                "vector_adapter_path": "none",
+            }
+            return {"mode": "disabled", "copied_rows": 0, "changed_rows": 0}
+        excluded_paths = sorted({str(path) for path in changed_paths + removed_paths})
+        copied_vectors = 0
+        copied_search = 0
+        with self.db_runtime.connect() as conn:
+            cur = conn.cursor()
+            if excluded_paths:
+                vector_sql = """
+                    INSERT INTO embedding_vectors (
+                        snapshot_id, element_id, repo_name, relative_path, language,
+                        element_type, embedding, embedding_arr, metadata_json, updated_at
+                    )
+                    SELECT %s, element_id, repo_name, relative_path, language,
+                        element_type, embedding, embedding_arr, metadata_json, NOW()
+                    FROM embedding_vectors
+                    WHERE snapshot_id=%s
+                      AND NOT (relative_path = ANY(%s))
+                    ON CONFLICT (snapshot_id, element_id) DO NOTHING
+                """
+                search_sql = """
+                    INSERT INTO search_documents (
+                        snapshot_id, element_id, repo_name, relative_path, language,
+                        element_type, text_content, metadata_json, updated_at
+                    )
+                    SELECT %s, element_id, repo_name, relative_path, language,
+                        element_type, text_content, metadata_json, NOW()
+                    FROM search_documents
+                    WHERE snapshot_id=%s
+                      AND NOT (relative_path = ANY(%s))
+                    ON CONFLICT (snapshot_id, element_id) DO NOTHING
+                """
+                params: tuple[Any, ...] = (
+                    snapshot_id,
+                    previous_snapshot_id,
+                    excluded_paths,
+                )
+            else:
+                vector_sql = """
+                    INSERT INTO embedding_vectors (
+                        snapshot_id, element_id, repo_name, relative_path, language,
+                        element_type, embedding, embedding_arr, metadata_json, updated_at
+                    )
+                    SELECT %s, element_id, repo_name, relative_path, language,
+                        element_type, embedding, embedding_arr, metadata_json, NOW()
+                    FROM embedding_vectors
+                    WHERE snapshot_id=%s
+                    ON CONFLICT (snapshot_id, element_id) DO NOTHING
+                """
+                search_sql = """
+                    INSERT INTO search_documents (
+                        snapshot_id, element_id, repo_name, relative_path, language,
+                        element_type, text_content, metadata_json, updated_at
+                    )
+                    SELECT %s, element_id, repo_name, relative_path, language,
+                        element_type, text_content, metadata_json, NOW()
+                    FROM search_documents
+                    WHERE snapshot_id=%s
+                    ON CONFLICT (snapshot_id, element_id) DO NOTHING
+                """
+                params = (snapshot_id, previous_snapshot_id)
+            cur.execute(vector_sql, params)
+            copied_vectors = max(0, int(cur.rowcount or 0))
+            cur.execute(search_sql, params)
+            copied_search = max(0, int(cur.rowcount or 0))
+            conn.commit()
+        self.upsert_elements(snapshot_id=snapshot_id, elements=elements)
+        return {
+            "mode": "delta",
+            "previous_snapshot_id": previous_snapshot_id,
+            "copied_vector_rows": copied_vectors,
+            "copied_search_rows": copied_search,
+            "changed_rows": len(elements),
+            "excluded_path_count": len(excluded_paths),
+        }
+
     def semantic_search(
         self,
         snapshot_id: str,

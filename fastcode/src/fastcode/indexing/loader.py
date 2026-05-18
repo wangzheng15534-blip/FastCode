@@ -8,20 +8,18 @@ import os
 import shutil
 import zipfile
 from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
 from git import GitCommandError, Repo
 
 from ..utils import (
-    compute_file_hash,
     ensure_dir,
     get_repo_name_from_url,
-    is_supported_file,
-    normalize_path,
-    should_ignore_path,
 )
 from ..utils.archive import safe_extract_zip
+from .file_inventory import FileFingerprint, FileInventory, build_file_inventory
 
 
 class RepositoryLoader:
@@ -54,6 +52,20 @@ class RepositoryLoader:
                 os.path.dirname(self.safe_repo_root), "repo_backup"
             )
         ensure_dir(self.repo_backup_root)
+        self.workspace_copy_cache_enabled = bool(
+            self.repo_config.get("workspace_copy_cache_enabled", True)
+        )
+        configured_copy_cache_root = self.repo_config.get(
+            "workspace_copy_cache_directory"
+        )
+        if configured_copy_cache_root:
+            self.workspace_copy_cache_root = os.path.abspath(configured_copy_cache_root)
+        else:
+            self.workspace_copy_cache_root = os.path.join(
+                self.repo_backup_root, "workspace_copy_cache"
+            )
+        if self.workspace_copy_cache_enabled:
+            ensure_dir(self.workspace_copy_cache_root)
 
         self.temp_dir = None
         self.repo_path = None
@@ -61,6 +73,8 @@ class RepositoryLoader:
         self.repo_source_path = None
         self.repo_load_mode = None
         self.repo_is_workspace_copy = False
+        self._preloaded_file_inventory: FileInventory | None = None
+        self._preloaded_file_inventory_repo_path: str | None = None
         self.last_load_stats: dict[str, Any] = {}
 
     def _backup_existing_repo(self, repo_path: str) -> str | None:
@@ -98,6 +112,98 @@ class RepositoryLoader:
             self._backup_existing_repo(repo_path)
 
         return repo_path
+
+    def invalidate_preloaded_file_inventory(self) -> None:
+        """Drop source-side inventory after a checkout or other workspace mutation."""
+        self._preloaded_file_inventory = None
+        self._preloaded_file_inventory_repo_path = None
+
+    def _source_file_inventory(self, source_path: str) -> FileInventory:
+        """Scan a local source checkout before any workspace copy is made."""
+        original_repo_path = self.repo_path
+        try:
+            self.repo_path = source_path
+            ignore_patterns = self._effective_ignore_patterns()
+        finally:
+            self.repo_path = original_repo_path
+        return build_file_inventory(
+            repo_root=source_path,
+            supported_extensions=self.supported_extensions,
+            ignore_patterns=ignore_patterns,
+            max_file_size_mb=self.max_file_size_mb,
+            include_fingerprints=True,
+            logger=self.logger,
+        )
+
+    @staticmethod
+    def _copy_cache_key(inventory: FileInventory) -> str:
+        digest = sha256()
+        for file in sorted(inventory.files, key=lambda item: item.relative_path):
+            digest.update(file.relative_path.encode("utf-8", errors="surrogatepass"))
+            digest.update(b"\0")
+            digest.update(str(file.identity or "").encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(str(file.size).encode("ascii"))
+            digest.update(b"\0")
+        return digest.hexdigest()
+
+    def _workspace_copy_cache_path(self, repo_name: str, cache_key: str) -> str:
+        safe_repo_name = "".join(
+            char if char.isalnum() or char in {"-", "_", "."} else "_"
+            for char in repo_name
+        )
+        return os.path.join(self.workspace_copy_cache_root, safe_repo_name, cache_key)
+
+    @staticmethod
+    def _inventory_for_repo_path(
+        inventory: FileInventory, repo_path: str
+    ) -> FileInventory:
+        repo_path = os.path.abspath(repo_path)
+        files = tuple(
+            FileFingerprint(
+                path=os.path.normpath(os.path.join(repo_path, file.relative_path)),
+                relative_path=file.relative_path,
+                size=file.size,
+                mtime=file.mtime,
+                extension=file.extension,
+                language=file.language,
+                package_root=file.package_root,
+                supported_tool_eligible=file.supported_tool_eligible,
+                content_hash=file.content_hash,
+                git_blob_oid=file.git_blob_oid,
+                fingerprint_source=file.fingerprint_source,
+            )
+            for file in inventory.files
+        )
+        return FileInventory(repo_root=os.path.normpath(repo_path), files=files)
+
+    def _populate_workspace_copy_cache(
+        self,
+        *,
+        source_path: str,
+        cache_path: str,
+        copy_function: Any,
+    ) -> None:
+        parent = os.path.dirname(cache_path)
+        ensure_dir(parent)
+        temp_path = f"{cache_path}.tmp.{os.getpid()}"
+        if os.path.exists(temp_path):
+            shutil.rmtree(temp_path)
+        try:
+            shutil.copytree(
+                source_path,
+                temp_path,
+                symlinks=True,
+                copy_function=copy_function,
+            )
+            try:
+                os.rename(temp_path, cache_path)
+            except FileExistsError:
+                shutil.rmtree(temp_path)
+        except Exception:
+            if os.path.exists(temp_path):
+                shutil.rmtree(temp_path)
+            raise
 
     def load_from_url(self, url: str, target_dir: str | None = None) -> str:
         """
@@ -206,6 +312,17 @@ class RepositoryLoader:
             return self.repo_path
 
         self.repo_path = self._prepare_repo_path(self.repo_name, target_dir)
+        source_inventory = self._source_file_inventory(source_path)
+        source_inventory_metrics = source_inventory.metrics()
+        copy_cache_key: str | None = None
+        copy_cache_path: str | None = None
+        copy_cache_hit = False
+        if self.local_source_mode == "copy" and self.workspace_copy_cache_enabled:
+            copy_cache_key = self._copy_cache_key(source_inventory)
+            copy_cache_path = self._workspace_copy_cache_path(
+                self.repo_name, copy_cache_key
+            )
+            copy_cache_hit = os.path.isdir(copy_cache_path)
 
         # Copy entire working tree, including untracked files.
         copied_bytes = 0
@@ -238,20 +355,36 @@ class RepositoryLoader:
                     pass
                 return shutil.copy2(src, dst)
 
-        shutil.copytree(
-            source_path,
-            self.repo_path,
-            symlinks=True,
-            copy_function=(
-                _hardlink_counting
-                if self.local_source_mode == "hardlink"
-                else _copy2_counting
-            ),
-        )
+        if self.local_source_mode == "copy" and copy_cache_path:
+            if not copy_cache_hit:
+                self._populate_workspace_copy_cache(
+                    source_path=source_path,
+                    cache_path=copy_cache_path,
+                    copy_function=_copy2_counting,
+                )
+            shutil.copytree(
+                copy_cache_path,
+                self.repo_path,
+                symlinks=True,
+                copy_function=_hardlink_counting,
+            )
+        else:
+            shutil.copytree(
+                source_path,
+                self.repo_path,
+                symlinks=True,
+                copy_function=(
+                    _hardlink_counting
+                    if self.local_source_mode == "hardlink"
+                    else _copy2_counting
+                ),
+            )
         self.repo_load_mode = (
             "hardlink" if self.local_source_mode == "hardlink" else "copy"
         )
         self.repo_is_workspace_copy = True
+        self._preloaded_file_inventory = source_inventory
+        self._preloaded_file_inventory_repo_path = self.repo_path
         self.last_load_stats = {
             "mode": self.repo_load_mode,
             "source_path": source_path,
@@ -260,6 +393,14 @@ class RepositoryLoader:
             "copied_files": copied_files,
             "linked_bytes": linked_bytes,
             "linked_files": linked_files,
+            "copy_cache_enabled": bool(copy_cache_path),
+            "copy_cache_hit": copy_cache_hit,
+            "copy_cache_key": copy_cache_key,
+            "copy_cache_path": copy_cache_path,
+            "source_inventory_file_count": source_inventory_metrics["file_count"],
+            "source_inventory_total_size_bytes": source_inventory_metrics[
+                "total_size_bytes"
+            ],
         }
 
         self.logger.info(
@@ -377,89 +518,61 @@ class RepositoryLoader:
 
         return patterns
 
-    def scan_files(self, *, include_fingerprints: bool = False) -> list[dict[str, Any]]:
-        """
-        Scan repository and collect file metadata
+    def _effective_ignore_patterns(self) -> list[str]:
+        gitignore_patterns = self._load_gitignore_patterns()
+        if gitignore_patterns:
+            return list(self.ignore_patterns) + gitignore_patterns
+        return list(self.ignore_patterns)
 
-        Returns:
-            List of file metadata dictionaries
-        """
+    def scan_file_inventory(
+        self, *, include_fingerprints: bool = False
+    ) -> FileInventory:
+        """Scan repository files into a typed planner inventory."""
         if not self.repo_path:
             raise RuntimeError("No repository loaded")
 
-        self.logger.info(f"Scanning files in {self.repo_path}")
+        if (
+            include_fingerprints
+            and self._preloaded_file_inventory is not None
+            and os.path.abspath(self.repo_path)
+            == os.path.abspath(self._preloaded_file_inventory_repo_path or "")
+        ):
+            inventory = self._inventory_for_repo_path(
+                self._preloaded_file_inventory, self.repo_path
+            )
+            self.logger.info(
+                "Using source-side file inventory for %s (%d supported files)",
+                self.repo_path,
+                inventory.file_count,
+            )
+            return inventory
 
-        # Merge .gitignore patterns into ignore_patterns
-        gitignore_patterns = self._load_gitignore_patterns()
-        if gitignore_patterns:
-            effective_ignore = list(self.ignore_patterns) + gitignore_patterns
-        else:
-            effective_ignore = self.ignore_patterns
-
-        files = []
-        total_size = 0
-        max_file_size_bytes = self.max_file_size_mb * 1024 * 1024
-
-        for root, dirs, filenames in os.walk(self.repo_path):
-            # Filter out ignored directories
-            dirs[:] = [
-                d
-                for d in dirs
-                if not should_ignore_path(os.path.join(root, d), effective_ignore)
-            ]
-
-            for filename in filenames:
-                file_path = os.path.join(root, filename)
-                relative_path = os.path.relpath(file_path, self.repo_path)
-
-                # Check if should ignore
-                if should_ignore_path(relative_path, effective_ignore):
-                    continue
-
-                # Check if supported extension
-                if not is_supported_file(file_path, self.supported_extensions):
-                    continue
-
-                # Check file size
-                try:
-                    stat = os.stat(file_path)
-                    file_size = stat.st_size
-                    if file_size > max_file_size_bytes:
-                        self.logger.warning(
-                            f"Skipping large file: {relative_path} "
-                            f"({file_size / 1024 / 1024:.2f} MB)"
-                        )
-                        continue
-
-                    file_entry: dict[str, Any] = {
-                        "path": normalize_path(file_path),
-                        "relative_path": normalize_path(relative_path),
-                        "size": file_size,
-                        "mtime": stat.st_mtime,
-                        "extension": Path(file_path).suffix,
-                    }
-                    if include_fingerprints:
-                        content_hash = compute_file_hash(file_path) or None
-                        file_entry["content_hash"] = content_hash
-                        # The current planner uses content hashes as the working-tree
-                        # identity. Git blob OIDs can be added later without changing
-                        # downstream consumers that already read this key.
-                        file_entry["blob_oid"] = content_hash
-
-                    files.append(file_entry)
-
-                    total_size += file_size
-
-                except OSError as e:
-                    self.logger.warning(f"Error accessing file {relative_path}: {e}")
-                    continue
-
+        self.logger.info("Scanning files in %s", self.repo_path)
+        inventory = build_file_inventory(
+            repo_root=self.repo_path,
+            supported_extensions=self.supported_extensions,
+            ignore_patterns=self._effective_ignore_patterns(),
+            max_file_size_mb=self.max_file_size_mb,
+            include_fingerprints=include_fingerprints,
+            logger=self.logger,
+        )
         self.logger.info(
-            f"Found {len(files)} supported files "
-            f"({total_size / 1024 / 1024:.2f} MB total)"
+            "Found %d supported files (%.2f MB total)",
+            inventory.file_count,
+            inventory.total_size_bytes / 1024 / 1024,
         )
 
-        return files
+        return inventory
+
+    def scan_files(self, *, include_fingerprints: bool = False) -> list[dict[str, Any]]:
+        """
+        Scan repository and collect file metadata
+        Returns:
+            List of file metadata dictionaries
+        """
+        return self.scan_file_inventory(
+            include_fingerprints=include_fingerprints
+        ).to_file_info_list()
 
     def read_file_content(self, file_path: str) -> str | None:
         """
@@ -512,6 +625,18 @@ class RepositoryLoader:
                     "copied_files": self.last_load_stats.get("copied_files", 0),
                     "linked_bytes": self.last_load_stats.get("linked_bytes", 0),
                     "linked_files": self.last_load_stats.get("linked_files", 0),
+                    "copy_cache_enabled": self.last_load_stats.get(
+                        "copy_cache_enabled", False
+                    ),
+                    "copy_cache_hit": self.last_load_stats.get("copy_cache_hit", False),
+                    "copy_cache_key": self.last_load_stats.get("copy_cache_key"),
+                    "copy_cache_path": self.last_load_stats.get("copy_cache_path"),
+                    "source_inventory_file_count": self.last_load_stats.get(
+                        "source_inventory_file_count", 0
+                    ),
+                    "source_inventory_total_size_bytes": self.last_load_stats.get(
+                        "source_inventory_total_size_bytes", 0
+                    ),
                 }
             )
 

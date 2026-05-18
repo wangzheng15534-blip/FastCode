@@ -82,6 +82,23 @@ def _qualified_name(elem: CodeElement) -> str:
     )
 
 
+def _embedding_metadata(elem: CodeElement, element_type: str) -> dict[str, object]:
+    meta = elem.metadata or {}
+    payload: dict[str, object] = {
+        "ast_element_id": elem.id,
+        "element_type": element_type,
+    }
+    for field_name in (
+        "embedding_artifact_ref",
+        "embedding_fingerprint",
+        "embedding_text_hash",
+    ):
+        value = meta.get(field_name)
+        if value is not None:
+            payload[field_name] = safe_jsonable(value)
+    return payload
+
+
 def build_ir_from_ast(
     repo_name: str,
     snapshot_id: str,
@@ -276,10 +293,7 @@ def build_ir_from_ast(
                     if isinstance(embedding, list)
                     else safe_jsonable(embedding),
                     embedding_text=str(embedding_text) if embedding_text else None,
-                    metadata={
-                        "ast_element_id": elem.id,
-                        "element_type": elem.type,
-                    },
+                    metadata=_embedding_metadata(elem, elem.type),
                 )
             )
 

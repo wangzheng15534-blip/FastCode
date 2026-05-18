@@ -610,6 +610,14 @@ class CodeIndexer:
             "has_readme": repo_overview.get("has_readme", False),
             "repo_url": self.current_repo_url,
         }
+        embedding_fingerprint = getattr(self.embedder, "embedding_fingerprint", None)
+        if callable(embedding_fingerprint):
+            try:
+                metadata["embedding_fingerprint"] = embedding_fingerprint(
+                    resolve_dimension=True
+                )
+            except TypeError:
+                metadata["embedding_fingerprint"] = embedding_fingerprint()
 
         # Save to separate storage via vector_store
         if self.vector_store:

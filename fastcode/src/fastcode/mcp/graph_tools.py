@@ -20,7 +20,12 @@ from typing import Any, cast
 import networkx as nx
 
 from ..ir.graph import IRGraphBuilder
-from ..ir.types import IRSnapshot
+from ..ir.types import IRDocument, IRSnapshot, IRSymbol
+from ..utils.materialization import (
+    BOUNDARY_GRAPH_FULL_LOAD,
+    BOUNDARY_SNAPSHOT_FULL_LOAD,
+    increment_materialization_boundary,
+)
 
 # ---------------------------------------------------------------------------
 # Type aliases for networkx functions with unknown **kwargs in stubs.
@@ -448,6 +453,8 @@ def build_combined_graph(
     if graph_types is None:
         graph_types = sorted(VALID_GRAPH_TYPES)
 
+    increment_materialization_boundary(BOUNDARY_GRAPH_FULL_LOAD)
+    increment_materialization_boundary(BOUNDARY_GRAPH_FULL_LOAD)
     graphs = IRGraphBuilder().build_graphs(snapshot)
     combined: nx.Graph[str] | nx.DiGraph[str] | None = None
 
@@ -463,6 +470,24 @@ def build_combined_graph(
         if combined is not None
         else (nx.Graph() if undirected else nx.DiGraph())
     )
+
+
+def _compatibility_fallback(reason: str) -> dict[str, Any]:
+    return {
+        "compatibility_fallback": True,
+        "degraded_reason": reason,
+        "materialization": {
+            "snapshot_full_load": True,
+            "graph_full_rebuild": True,
+        },
+    }
+
+
+def _with_compatibility_fallback(
+    result: dict[str, Any],
+    reason: str,
+) -> dict[str, Any]:
+    return {**result, **_compatibility_fallback(reason)}
 
 
 # ---------------------------------------------------------------------------
@@ -703,6 +728,7 @@ def compute_impact_analysis(
 
         return {"affected": affected, "total_count": len(affected), "error": None}
 
+    increment_materialization_boundary(BOUNDARY_GRAPH_FULL_LOAD)
     graphs = IRGraphBuilder().build_graphs(snapshot)
     combined: nx.DiGraph[str] | None = None
     for gt in graph_types:
@@ -930,6 +956,7 @@ def compute_steiner_path(
             )
         return {"found": True, "nodes": nodes, "edges": edges, "error": None}
 
+    increment_materialization_boundary(BOUNDARY_GRAPH_FULL_LOAD)
     graphs = IRGraphBuilder().build_graphs(snapshot)
     undirected: nx.Graph[str] | None = None
     for attr_name in _ALL_GRAPH_ATTRS:
@@ -1120,6 +1147,7 @@ def _load_snapshot(fc: object, snapshot_id: str) -> IRSnapshot | None:
     load_snapshot = getattr(snapshot_store, "load_snapshot", None)
     if not callable(load_snapshot):
         return None
+    increment_materialization_boundary(BOUNDARY_SNAPSHOT_FULL_LOAD)
     snapshot = load_snapshot(snapshot_id)
     return cast("IRSnapshot | None", snapshot)
 
@@ -1151,12 +1179,15 @@ def compute_directed_path_for_snapshot(
         }
     if graph_types is None:
         graph_types = ["call", "dependency"]
-    return compute_directed_path(
-        from_symbol,
-        to_symbol,
-        snapshot,
-        max_hops,
-        graph_types,
+    return _with_compatibility_fallback(
+        compute_directed_path(
+            from_symbol,
+            to_symbol,
+            snapshot,
+            max_hops,
+            graph_types,
+        ),
+        "compact_graph_context_unavailable",
     )
 
 
@@ -1179,7 +1210,10 @@ def compute_impact_analysis_for_snapshot(
         }
     if graph_types is None:
         graph_types = ["call", "dependency"]
-    return compute_impact_analysis(symbol, snapshot, max_hops, graph_types)
+    return _with_compatibility_fallback(
+        compute_impact_analysis(symbol, snapshot, max_hops, graph_types),
+        "compact_graph_context_unavailable",
+    )
 
 
 def _compute_cached_leiden_clusters(
@@ -1205,6 +1239,78 @@ def _compute_cached_leiden_clusters(
     return extract_cluster_data(l1_data, context)
 
 
+def _snapshot_from_graph_tool_context(context: GraphToolContext) -> IRSnapshot:
+    docs_by_path: dict[str, IRDocument] = {}
+    symbols: list[IRSymbol] = []
+    for unit_id, record in sorted(context.records_by_id.items()):
+        path = _text_or_none(record.get("path")) or ""
+        if path and path not in docs_by_path:
+            docs_by_path[path] = IRDocument(
+                doc_id=f"doc:{path}",
+                path=path,
+                language="",
+                source_set={"symbol_index"},
+            )
+        symbols.append(
+            IRSymbol(
+                symbol_id=unit_id,
+                external_symbol_id=None,
+                path=path,
+                display_name=_text_or_none(record.get("display_name")) or unit_id,
+                kind=_text_or_none(record.get("kind")) or "symbol",
+                language="",
+                start_line=_int_or_none(record.get("start_line")),
+                source_set={"symbol_index"},
+            )
+        )
+    return IRSnapshot(
+        repo_name="",
+        snapshot_id=context.snapshot_id,
+        documents=list(docs_by_path.values()),
+        symbols=symbols,
+        metadata={
+            "mcp_projection_source": "compact_graph_context",
+            "compact_graph_context": True,
+        },
+    )
+
+
+def _build_leiden_clusters_from_context(
+    fc: object,
+    context: GraphToolContext,
+) -> dict[str, Any] | None:
+    projection_transformer = getattr(fc, "projection_transformer", None)
+    if projection_transformer is None:
+        return None
+    try:
+        from ..ir.projection import ProjectionScope
+
+        scope = ProjectionScope(
+            scope_kind="full",
+            snapshot_id=context.snapshot_id,
+            scope_key="full",
+        )
+        snapshot = _snapshot_from_graph_tool_context(context)
+        result = projection_transformer.build(
+            scope=scope,
+            snapshot=snapshot,
+            ir_graphs=context.graphs,
+        )
+        if result and result.l1:
+            payload = extract_cluster_data(result.l1, context)
+            payload["compact_graph_context"] = True
+            return payload
+    except Exception as exc:
+        return {
+            "clusters": [],
+            "xrefs": [],
+            "total_clusters": 0,
+            "error": f"Failed to build compact projection: {exc}",
+            "compact_graph_context": True,
+        }
+    return None
+
+
 def compute_leiden_clusters_for_snapshot(
     fc: object,
     snapshot_id: str,
@@ -1214,6 +1320,9 @@ def compute_leiden_clusters_for_snapshot(
         cached = _compute_cached_leiden_clusters(fc, context)
         if cached is not None:
             return cached
+        compact = _build_leiden_clusters_from_context(fc, context)
+        if compact is not None:
+            return compact
     snapshot = _load_snapshot(fc, snapshot_id)
     if not snapshot:
         return {
@@ -1222,7 +1331,10 @@ def compute_leiden_clusters_for_snapshot(
             "total_clusters": 0,
             "error": f"Snapshot not found: {snapshot_id}",
         }
-    return compute_leiden_clusters(snapshot, fc)
+    return _with_compatibility_fallback(
+        compute_leiden_clusters(snapshot, fc),
+        "compact_graph_context_unavailable",
+    )
 
 
 def compute_steiner_path_for_snapshot(
@@ -1241,7 +1353,10 @@ def compute_steiner_path_for_snapshot(
             "edges": [],
             "error": f"Snapshot not found: {snapshot_id}",
         }
-    return compute_steiner_path(terminals, snapshot)
+    return _with_compatibility_fallback(
+        compute_steiner_path(terminals, snapshot),
+        "compact_graph_context_unavailable",
+    )
 
 
 def compute_find_callers_for_snapshot(
@@ -1260,7 +1375,10 @@ def compute_find_callers_for_snapshot(
             "total_count": 0,
             "error": f"Snapshot not found: {snapshot_id}",
         }
-    return compute_find_callers(symbol, snapshot, max_hops)
+    return _with_compatibility_fallback(
+        compute_find_callers(symbol, snapshot, max_hops),
+        "compact_graph_context_unavailable",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1276,7 +1394,10 @@ def extract_cluster_data(
     clusters: list[dict[str, Any]] = []
     xrefs: list[dict[str, Any]] = []
 
-    content_extra = cast("dict[str, Any]", l1_data.get("content_extra") or {})
+    content_extra = cast(
+        "dict[str, Any]",
+        l1_data.get("content_extra") or l1_data.get("content") or {},
+    )
     sections = cast("list[dict[str, Any]]", content_extra.get("sections") or [])
     navigation = cast("list[dict[str, Any]]", content_extra.get("navigation") or [])
 
@@ -1309,7 +1430,11 @@ def extract_cluster_data(
             nav = navigation[i]
             rep_ref = nav.get("ref", {})
             if rep_ref:
-                rep_display = rep_ref.get("display_name")
+                rep_display = (
+                    rep_ref.get("display_name")
+                    or rep_ref.get("label")
+                    or rep_ref.get("id")
+                )
                 if rep_display:
                     cluster_info["representative"] = rep_display
         clusters.append(cluster_info)

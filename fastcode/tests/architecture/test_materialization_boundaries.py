@@ -9,8 +9,12 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
 
 HOT_PATHS = [
     PACKAGE_ROOT / "indexing" / "pipeline.py",
+    PACKAGE_ROOT / "indexing" / "projection_transform.py",
+    PACKAGE_ROOT / "mcp" / "graph_tools.py",
+    PACKAGE_ROOT / "semantic" / "symbol_index.py",
     PACKAGE_ROOT / "semantic" / "resolvers" / "patching.py",
     PACKAGE_ROOT / "store" / "pg_retrieval.py",
+    PACKAGE_ROOT / "store" / "snapshot.py",
     PACKAGE_ROOT / "store" / "vector.py",
     PACKAGE_ROOT / "retrieval" / "hybrid.py",
 ]
@@ -21,6 +25,12 @@ VECTOR_INSERTION_PATHS = [
 ]
 
 ALLOWED_SAFE_JSONABLE: set[tuple[str, int]] = set()
+ALLOWED_SAFE_JSONABLE_FUNCTIONS = {
+    # Snapshot JSON files are an explicit persistence boundary. These helpers
+    # normalize arbitrary metadata/support payloads before json.dump().
+    ("store/snapshot.py", "_json_mapping_payload"),
+    ("store/snapshot.py", "_json_list_payload"),
+}
 ALLOWED_TOLIST_FUNCTIONS = {
     # Repository overview manifests are a storage/export boundary for string labels,
     # not embedding vectors or ranked candidate rows.
@@ -44,7 +54,6 @@ ALLOWED_NETWORKX_IMPORTS = {
     "graph/build.py",
     "indexing/projection_transform.py",
     "ir/graph.py",
-    "ir/merge.py",
     "mcp/graph_tools.py",
     "retrieval/hybrid.py",
     "store/snapshot.py",
@@ -95,14 +104,20 @@ def test_hot_paths_do_not_use_generic_safe_jsonable() -> None:
     violations: list[str] = []
     for path in HOT_PATHS:
         tree = ast.parse(path.read_text())
+        parents = _parents(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             if _call_name(node) != "safe_jsonable":
                 continue
             key = (_rel(path), node.lineno)
-            if key not in ALLOWED_SAFE_JSONABLE:
-                violations.append(f"{key[0]}:{key[1]}")
+            function_name = _enclosing_function(node, parents) or "<module>"
+            if (
+                key in ALLOWED_SAFE_JSONABLE
+                or (key[0], function_name) in ALLOWED_SAFE_JSONABLE_FUNCTIONS
+            ):
+                continue
+            violations.append(f"{key[0]}:{key[1]}:{function_name}")
     assert not violations, "generic safe_jsonable in hot paths:\n" + "\n".join(
         violations
     )

@@ -749,6 +749,92 @@ def _run_refresh_index_cache(fc: Any) -> None:
     _refresh_index_cache_sync(fc)
 
 
+def test_index_repository_uses_snapshot_pipeline_by_default() -> None:
+    fc = FastCode.__new__(FastCode)
+    calls: list[dict[str, Any]] = []
+
+    def _run_index_pipeline(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"status": "succeeded", "snapshot_id": "snap:repo:1"}
+
+    fc.config = {"indexing": {}}
+    fc.eval_config = {}
+    fc.repo_loaded = True
+    fc.loader = SimpleNamespace(repo_path="/repo")
+    fc.loaded_repositories = {}
+    fc.graph_runtime = None
+    fc.pipeline = SimpleNamespace(run_index_pipeline=_run_index_pipeline)
+
+    result = fc._index_repository_unlocked(force=True)
+
+    assert result == {"status": "succeeded", "snapshot_id": "snap:repo:1"}
+    assert calls == [
+        {
+            "source": "/repo",
+            "is_url": False,
+            "force": True,
+            "publish": True,
+            "enable_scip": True,
+            "load_repository_cb": None,
+            "get_loaded_repositories": calls[0]["get_loaded_repositories"],
+            "graph_runtime": None,
+        }
+    ]
+    assert calls[0]["get_loaded_repositories"]() is fc.loaded_repositories
+
+
+def test_index_repository_legacy_direct_path_requires_explicit_flag() -> None:
+    fc = FastCode.__new__(FastCode)
+    fc.config = {"indexing": {"allow_legacy_direct_index": True}}
+    fc._index_repository_legacy_unlocked = lambda force=False: {
+        "legacy": True,
+        "force": force,
+    }
+
+    assert fc._index_repository_unlocked(force=True) == {
+        "legacy": True,
+        "force": True,
+    }
+
+
+def test_load_multiple_repositories_uses_snapshot_pipeline_by_default() -> None:
+    fc = FastCode.__new__(FastCode)
+    loads: list[tuple[str, bool | None, bool]] = []
+    pipeline_calls: list[dict[str, Any]] = []
+
+    def _run_index_pipeline(**kwargs: Any) -> dict[str, Any]:
+        pipeline_calls.append(kwargs)
+        load_cb = kwargs["load_repository_cb"]
+        assert load_cb is not None
+        load_cb(kwargs["source"], is_url=kwargs["is_url"])
+        return {"status": "succeeded", "repo_name": "repo"}
+
+    fc.config = {"indexing": {}}
+    fc.logger = SimpleNamespace(
+        info=lambda *_args, **_kwargs: None,
+        error=lambda *_args, **_kwargs: None,
+    )
+    fc.multi_repo_mode = False
+    fc.loaded_repositories = {}
+    fc.graph_runtime = None
+    fc.pipeline = SimpleNamespace(run_index_pipeline=_run_index_pipeline)
+    fc._load_repository_unlocked = lambda source, is_url=None, is_zip=False: (
+        loads.append((source, is_url, is_zip))
+    )
+
+    result = fc._load_multiple_repositories_unlocked(
+        [{"source": "/repo", "is_url": False}]
+    )
+
+    assert result["status"] == "succeeded"
+    assert result["repositories"] == ["repo"]
+    assert loads == [("/repo", False, False)]
+    assert pipeline_calls[0]["source"] == "/repo"
+    assert pipeline_calls[0]["is_url"] is False
+    assert pipeline_calls[0]["publish"] is True
+    assert pipeline_calls[0]["enable_scip"] is True
+
+
 @pytest.mark.parametrize(
     ("mutation_name", "run_mutation"),
     [

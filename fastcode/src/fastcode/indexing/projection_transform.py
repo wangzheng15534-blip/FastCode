@@ -9,11 +9,9 @@ import hashlib
 import math
 import os
 import re
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from collections.abc import Sequence
 from typing import Any, cast
-
-import networkx as nx
 
 from ..ir.graph import IRGraphs
 from ..ir.projection import ProjectionBuildResult, ProjectionScope
@@ -37,6 +35,252 @@ def _stable_hash(payload: str) -> str:
 
 def _clean_words(text: str) -> list[str]:
     return [w for w in re.findall(r"[a-zA-Z0-9_]+", (text or "").lower()) if len(w) > 1]
+
+
+class _ProjectionGraph:
+    """Projection-native graph with compact side tables for attrs and weights."""
+
+    def __init__(self, *, directed: bool = False) -> None:
+        self.directed = directed
+        self._node_attrs: dict[str, dict[str, Any]] = {}
+        self._edges: dict[tuple[str, str], dict[str, Any]] = {}
+        self._out: dict[str, set[str]] = defaultdict(set)
+        self._in: dict[str, set[str]] = defaultdict(set)
+
+    def add_node(self, node: str, **attrs: Any) -> None:
+        node_id = str(node)
+        existing = self._node_attrs.setdefault(node_id, {})
+        existing.update(
+            {key: value for key, value in attrs.items() if value is not None}
+        )
+        self._out.setdefault(node_id, set())
+        self._in.setdefault(node_id, set())
+
+    def _edge_key(self, src: str, dst: str) -> tuple[str, str]:
+        if self.directed or src <= dst:
+            return src, dst
+        return dst, src
+
+    def add_edge(self, src: str, dst: str, **attrs: Any) -> None:
+        src_id = str(src)
+        dst_id = str(dst)
+        self.add_node(src_id)
+        self.add_node(dst_id)
+        key = self._edge_key(src_id, dst_id)
+        if key not in self._edges:
+            self._edges[key] = dict(attrs)
+        else:
+            self._edges[key].update(attrs)
+        self._out[src_id].add(dst_id)
+        self._in[dst_id].add(src_id)
+        if not self.directed:
+            self._out[dst_id].add(src_id)
+            self._in[src_id].add(dst_id)
+
+    def add_weighted_edge(
+        self, src: str, dst: str, *, weight: float, edge_type: str, source: str
+    ) -> None:
+        if src not in self._node_attrs:
+            self.add_node(src)
+        if dst not in self._node_attrs:
+            self.add_node(dst)
+        attrs = self.edge_attrs(src, dst)
+        if attrs is None:
+            self.add_edge(
+                src,
+                dst,
+                weight=float(weight),
+                edge_types={edge_type},
+                source=source,
+            )
+            return
+        attrs["weight"] = float(attrs.get("weight", 0.0)) + float(weight)
+        raw_types = attrs.setdefault("edge_types", set())
+        if isinstance(raw_types, set):
+            raw_types.add(edge_type)
+        else:
+            attrs["edge_types"] = {str(raw_types), edge_type}
+
+    def __contains__(self, node: object) -> bool:
+        return isinstance(node, str) and node in self._node_attrs
+
+    def nodes(self, data: bool = False) -> list[Any]:
+        if data:
+            return [
+                (node, dict(self._node_attrs[node]))
+                for node in sorted(self._node_attrs)
+            ]
+        return sorted(self._node_attrs)
+
+    def edges(self, data: bool = False) -> list[Any]:
+        rows: list[Any] = []
+        for src, dst in sorted(self._edges):
+            if data:
+                rows.append((src, dst, dict(self._edges[(src, dst)])))
+            else:
+                rows.append((src, dst))
+        return rows
+
+    def number_of_nodes(self) -> int:
+        return len(self._node_attrs)
+
+    def number_of_edges(self) -> int:
+        return len(self._edges)
+
+    def has_edge(self, src: str, dst: str) -> bool:
+        return self._edge_key(str(src), str(dst)) in self._edges
+
+    def edge_attrs(self, src: str, dst: str) -> dict[str, Any] | None:
+        return self._edges.get(self._edge_key(str(src), str(dst)))
+
+    def successors(self, node: str) -> list[str]:
+        return sorted(self._out.get(str(node), set()))
+
+    def predecessors(self, node: str) -> list[str]:
+        return sorted(self._in.get(str(node), set()))
+
+    def neighbors(self, node: str, *, mode: str = "all") -> list[str]:
+        node_id = str(node)
+        if mode == "out":
+            return self.successors(node_id)
+        if mode == "in":
+            return self.predecessors(node_id)
+        return sorted(self._out.get(node_id, set()) | self._in.get(node_id, set()))
+
+    def degree(self, node: str | None = None) -> Any:
+        if node is not None:
+            return len(self.neighbors(str(node), mode="all"))
+        return [
+            (node_id, len(self.neighbors(node_id, mode="all")))
+            for node_id in self.nodes()
+        ]
+
+    def out_degree(self, node: str) -> int:
+        return len(self._out.get(str(node), set()))
+
+    def in_degree(self, node: str) -> int:
+        return len(self._in.get(str(node), set()))
+
+    def subgraph(self, scoped_nodes: set[str]) -> _ProjectionGraph:
+        scoped = {str(node) for node in scoped_nodes}
+        graph = _ProjectionGraph(directed=self.directed)
+        for node in sorted(scoped):
+            if node in self._node_attrs:
+                graph.add_node(node, **self._node_attrs[node])
+        for src, dst, attrs in self.edges(data=True):
+            if src in scoped and dst in scoped:
+                graph.add_edge(src, dst, **attrs)
+        return graph
+
+    def copy(self) -> _ProjectionGraph:
+        return self.subgraph(set(self._node_attrs))
+
+    def connected_components(self) -> list[set[str]]:
+        remaining = set(self._node_attrs)
+        components: list[set[str]] = []
+        while remaining:
+            seed = min(remaining)
+            component = {seed}
+            queue: deque[str] = deque([seed])
+            remaining.remove(seed)
+            while queue:
+                node = queue.popleft()
+                for neighbor in self.neighbors(node, mode="all"):
+                    if neighbor not in remaining:
+                        continue
+                    remaining.remove(neighbor)
+                    component.add(neighbor)
+                    queue.append(neighbor)
+            components.append(component)
+        components.sort(
+            key=lambda items: (-len(items), sorted(items)[0] if items else "")
+        )
+        return components
+
+    def shortest_path(
+        self,
+        source: str,
+        target: str,
+        *,
+        max_hops: int | None = None,
+        undirected: bool = False,
+    ) -> list[str]:
+        source_id = str(source)
+        target_id = str(target)
+        if source_id not in self._node_attrs or target_id not in self._node_attrs:
+            return []
+        if source_id == target_id:
+            return [source_id]
+        queue: deque[list[str]] = deque([[source_id]])
+        visited = {source_id}
+        while queue:
+            path = queue.popleft()
+            if max_hops is not None and len(path) - 1 >= max_hops:
+                continue
+            node = path[-1]
+            neighbors = self.neighbors(node, mode="all" if undirected else "out")
+            for neighbor in neighbors:
+                if neighbor in visited:
+                    continue
+                next_path = [*path, neighbor]
+                if neighbor == target_id:
+                    return next_path
+                visited.add(neighbor)
+                queue.append(next_path)
+        return []
+
+    def distances_within(self, seed: str, max_hops: int) -> dict[str, int]:
+        seed_id = str(seed)
+        if seed_id not in self._node_attrs:
+            return {}
+        distances: dict[str, int] = {seed_id: 0}
+        queue: deque[str] = deque([seed_id])
+        while queue:
+            node = queue.popleft()
+            distance = distances[node]
+            if distance >= max_hops:
+                continue
+            for neighbor in self.neighbors(node, mode="all"):
+                if neighbor in distances:
+                    continue
+                distances[neighbor] = distance + 1
+                queue.append(neighbor)
+        distances.pop(seed_id, None)
+        return distances
+
+    def pagerank(self) -> dict[str, float]:
+        nodes = self.nodes()
+        if not nodes:
+            return {}
+        if self.number_of_edges() == 0:
+            value = 1.0 / len(nodes)
+            return dict.fromkeys(nodes, value)
+        if ig is not None:
+            graph, names = self.to_igraph(directed=self.directed)
+            values = graph.pagerank(directed=self.directed)
+            return {names[index]: float(value) for index, value in enumerate(values)}
+        value = 1.0 / len(nodes)
+        return dict.fromkeys(nodes, value)
+
+    def to_igraph(self, *, directed: bool | None = None) -> tuple[Any, list[str]]:
+        graph_directed = self.directed if directed is None else directed
+        names = self.nodes()
+        index = {node: pos for pos, node in enumerate(names)}
+        graph: Any = ig.Graph(directed=graph_directed) if ig is not None else None
+        if graph is None:
+            raise RuntimeError(
+                "python-igraph is required for projection graph conversion"
+            )
+        graph.add_vertices(len(names))
+        graph.vs["name"] = names
+        edges = [(index[src], index[dst]) for src, dst in self.edges()]
+        if edges:
+            graph.add_edges(edges)
+            graph.es["weight"] = [
+                float(attrs.get("weight", 1.0))
+                for _src, _dst, attrs in self.edges(data=True)
+            ]
+        return graph, names
 
 
 class ProjectionTransformer:
@@ -109,8 +353,8 @@ class ProjectionTransformer:
             scoped_nodes = set(g.nodes())
             warnings.append("scope_empty_fallback_to_full_graph")
 
-        sg: nx.Graph[str] = g.subgraph(scoped_nodes).copy()
-        sdg: Any = dg.subgraph(scoped_nodes).copy()
+        sg = g.subgraph(scoped_nodes)
+        sdg = dg.subgraph(scoped_nodes)
         hidden_edge_count = self._compress_hubs(sg)
         hierarchy_levels, cluster_method = self._cluster_hierarchy(sg)
         clusters, selected_level = self._select_cluster_level(hierarchy_levels)
@@ -256,7 +500,7 @@ class ProjectionTransformer:
         )
 
         if ig is None and self.enable_leiden:
-            warnings.append("python_igraph_not_available_using_networkx_fallback")
+            warnings.append("python_igraph_not_available_using_native_fallback")
         return ProjectionBuildResult(
             projection_id=projection_id,
             snapshot_id=scope.snapshot_id,
@@ -278,8 +522,8 @@ class ProjectionTransformer:
 
     def _build_weighted_graph(
         self, snapshot: IRSnapshot, ir_graphs: IRGraphs | None
-    ) -> nx.Graph[str]:
-        g: nx.Graph[str] = nx.Graph()
+    ) -> _ProjectionGraph:
+        g = _ProjectionGraph(directed=False)
         docs_by_id = {d.doc_id: d for d in snapshot.documents}
         symbols_by_id = {s.symbol_id: s for s in snapshot.symbols}
 
@@ -302,20 +546,16 @@ class ProjectionTransformer:
             )
 
         for e in snapshot.edges:
-            if e.src_id not in g.nodes or e.dst_id not in g.nodes:
+            if e.src_id not in g or e.dst_id not in g:
                 continue
             wt = float(self.edge_weights.get(e.edge_type, 1.0))
-            if g.has_edge(e.src_id, e.dst_id):
-                g[e.src_id][e.dst_id]["weight"] += wt
-                g[e.src_id][e.dst_id]["edge_types"].add(e.edge_type)
-            else:
-                g.add_edge(
-                    e.src_id,
-                    e.dst_id,
-                    weight=wt,
-                    edge_types={e.edge_type},
-                    source=e.source,
-                )
+            g.add_weighted_edge(
+                e.src_id,
+                e.dst_id,
+                weight=wt,
+                edge_type=e.edge_type,
+                source=e.source,
+            )
 
         if ir_graphs:
             for edge_type, graph in [
@@ -326,26 +566,20 @@ class ProjectionTransformer:
                 ("contain", ir_graphs.containment_graph),
             ]:
                 for src, dst in graph.edges():
-                    if src not in g.nodes or dst not in g.nodes:
-                        continue
                     wt = float(self.edge_weights.get(edge_type, 1.0))
-                    if g.has_edge(src, dst):
-                        g[src][dst]["weight"] += wt
-                        g[src][dst]["edge_types"].add(edge_type)
-                    else:
-                        g.add_edge(
-                            src,
-                            dst,
-                            weight=wt,
-                            edge_types={edge_type},
-                            source="ir_graph",
-                        )
+                    g.add_weighted_edge(
+                        str(src),
+                        str(dst),
+                        weight=wt,
+                        edge_type=edge_type,
+                        source="ir_graph",
+                    )
 
         if g.number_of_edges() == 0:
             docs_by_path = {d.path: d.doc_id for d in docs_by_id.values()}
             for sym in symbols_by_id.values():
                 doc_id = docs_by_path.get(sym.path)
-                if doc_id and doc_id in g.nodes:
+                if doc_id and doc_id in g:
                     g.add_edge(
                         sym.symbol_id,
                         doc_id,
@@ -357,22 +591,22 @@ class ProjectionTransformer:
 
     def _build_directed_weighted_graph(
         self, snapshot: IRSnapshot, ir_graphs: IRGraphs | None
-    ) -> nx.DiGraph[str]:
-        g: nx.DiGraph[str] = nx.DiGraph()
+    ) -> _ProjectionGraph:
+        g = _ProjectionGraph(directed=True)
         for d in snapshot.documents:
             g.add_node(d.doc_id)
         for s in snapshot.symbols:
             g.add_node(s.symbol_id)
 
         def add_edge(src: str, dst: str, edge_type: str, source: str) -> None:
-            if src not in g.nodes or dst not in g.nodes:
-                return
             wt = float(self.edge_weights.get(edge_type, 1.0))
-            if g.has_edge(src, dst):
-                g[src][dst]["weight"] += wt
-                g[src][dst]["edge_types"].add(edge_type)
-            else:
-                g.add_edge(src, dst, weight=wt, edge_types={edge_type}, source=source)
+            g.add_weighted_edge(
+                src,
+                dst,
+                weight=wt,
+                edge_type=edge_type,
+                source=source,
+            )
 
         for e in snapshot.edges:
             add_edge(e.src_id, e.dst_id, e.edge_type, e.source)
@@ -391,7 +625,7 @@ class ProjectionTransformer:
             docs_by_path = {d.path: d.doc_id for d in snapshot.documents}
             for s in snapshot.symbols:
                 doc_id = docs_by_path.get(s.path)
-                if doc_id and doc_id in g.nodes:
+                if doc_id and doc_id in g:
                     g.add_edge(
                         s.symbol_id,
                         doc_id,
@@ -402,7 +636,7 @@ class ProjectionTransformer:
         return g
 
     def _scope_nodes(
-        self, scope: ProjectionScope, snapshot: IRSnapshot, g: nx.Graph[str]
+        self, scope: ProjectionScope, snapshot: IRSnapshot, g: _ProjectionGraph
     ) -> tuple[set[str], set[str]]:
         all_nodes = set(g.nodes())
         if scope.scope_kind == "snapshot":
@@ -411,11 +645,7 @@ class ProjectionTransformer:
             focus = self._resolve_entity_node(scope.target_id, snapshot, g)
             if not focus:
                 return set(), set()
-            nodes = set(
-                nx.single_source_shortest_path_length(
-                    g, focus, cutoff=self.max_entity_hops
-                ).keys()
-            )
+            nodes = {focus, *g.distances_within(focus, self.max_entity_hops)}
             return nodes, {focus}
         if scope.scope_kind == "query":
             terminals = self._query_terminals(scope.query or "", snapshot, g)
@@ -423,42 +653,23 @@ class ProjectionTransformer:
                 return set(), set()
             if len(terminals) == 1:
                 focus = next(iter(terminals))
-                nodes = set(
-                    nx.single_source_shortest_path_length(
-                        g, focus, cutoff=self.max_query_hops
-                    ).keys()
-                )
+                nodes = {focus, *g.distances_within(focus, self.max_query_hops)}
                 return nodes, terminals
-            try:
-                weighted = g.copy()
-                for _src, _dst, data in weighted.edges(data=True):
-                    data["distance"] = 1.0 / max(0.1, float(data.get("weight", 1.0)))
-                _steiner = nx.approximation.steiner_tree
-                _steiner_result: Any = _steiner(weighted, terminals, weight="distance")
-                tree: nx.Graph[str] = cast(nx.Graph[str], _steiner_result)
-                if self.steiner_prune:
-                    tree = self._prune_steiner_leaves(tree, terminals)
-                nodes = set(tree.nodes())
-                for t in list(terminals):
-                    nodes.update(
-                        nx.single_source_shortest_path_length(g, t, cutoff=1).keys()
-                    )
+            nodes = self._bounded_terminal_connector(g, terminals)
+            for terminal in list(terminals):
+                nodes.add(terminal)
+                nodes.update(g.distances_within(terminal, 1))
+            if nodes:
                 return nodes, terminals
-            except Exception:
-                nodes: set[str] = set()
-                for t in terminals:
-                    nodes.update(
-                        nx.single_source_shortest_path_length(
-                            g, t, cutoff=self.max_query_hops
-                        ).keys()
-                    )
-                return nodes, terminals
+            fallback_nodes: set[str] = set()
+            for terminal in terminals:
+                fallback_nodes.add(terminal)
+                fallback_nodes.update(g.distances_within(terminal, self.max_query_hops))
+            return fallback_nodes, terminals
         return all_nodes, set()
 
     @staticmethod
-    def _prune_steiner_leaves(
-        tree: nx.Graph[str], terminals: set[str]
-    ) -> nx.Graph[str]:
+    def _prune_steiner_leaves(tree: Any, terminals: set[str]) -> Any:
         pruned = tree.copy()
         changed = True
         while changed:
@@ -471,25 +682,47 @@ class ProjectionTransformer:
                     changed = True
         return pruned
 
+    def _bounded_terminal_connector(
+        self, g: _ProjectionGraph, terminals: set[str]
+    ) -> set[str]:
+        ordered = sorted(terminals)
+        if not ordered:
+            return set()
+        tree_nodes: set[str] = {ordered[0]}
+        for terminal in ordered[1:]:
+            best_path: list[str] = []
+            for existing in sorted(tree_nodes):
+                path = g.shortest_path(
+                    existing,
+                    terminal,
+                    max_hops=self.max_query_hops * max(1, len(ordered)),
+                    undirected=True,
+                )
+                if path and (not best_path or len(path) < len(best_path)):
+                    best_path = path
+            if best_path:
+                tree_nodes.update(best_path)
+        return tree_nodes
+
     def _resolve_entity_node(
-        self, target_id: str | None, snapshot: IRSnapshot, g: nx.Graph[str]
+        self, target_id: str | None, snapshot: IRSnapshot, g: _ProjectionGraph
     ) -> str | None:
         if not target_id:
             return None
-        if target_id in g.nodes:
+        if target_id in g:
             return target_id
         for sym in snapshot.symbols:
             if (
                 target_id in {sym.symbol_id, sym.display_name, sym.path}
-            ) and sym.symbol_id in g.nodes:
+            ) and sym.symbol_id in g:
                 return sym.symbol_id
         for doc in snapshot.documents:
-            if target_id in (doc.doc_id, doc.path) and doc.doc_id in g.nodes:
+            if target_id in (doc.doc_id, doc.path) and doc.doc_id in g:
                 return doc.doc_id
         return None
 
     def _query_terminals(
-        self, query: str, snapshot: IRSnapshot, g: nx.Graph[str]
+        self, query: str, snapshot: IRSnapshot, g: _ProjectionGraph
     ) -> set[str]:
         del snapshot
         tokens = set(_clean_words(query))
@@ -511,7 +744,7 @@ class ProjectionTransformer:
         scored.sort(reverse=True)
         return {n for _, n in scored[:12]}
 
-    def _compress_hubs(self, g: nx.Graph[str]) -> int:
+    def _compress_hubs(self, g: _ProjectionGraph) -> int:
         if g.number_of_nodes() < 20:
             return 0
         degrees = sorted([d for _, d in g.degree()])
@@ -525,26 +758,24 @@ class ProjectionTransformer:
             nbrs = list(g.neighbors(n))
             hidden += len(nbrs)
             for nb in nbrs:
-                g[n][nb]["compressed_by_hub"] = True
-                g[n][nb]["weight"] = min(float(g[n][nb].get("weight", 1.0)), 0.5)
+                attrs = g.edge_attrs(n, nb)
+                if attrs is None:
+                    continue
+                attrs["compressed_by_hub"] = True
+                attrs["weight"] = min(float(attrs.get("weight", 1.0)), 0.5)
         return hidden
 
     def _cluster_hierarchy(
-        self, g: nx.Graph[str]
+        self, g: _ProjectionGraph
     ) -> tuple[dict[int, dict[str, set[str]]], str]:
         if g.number_of_nodes() == 1:
             node = next(iter(g.nodes()))
             return {0: {"c0": {node}}}, "single"
         if g.number_of_nodes() > self.hierarchy_max_nodes:
-            return {0: self._cluster_nodes_fallback(g)}, "greedy_modularity_large_graph"
+            return {0: self._cluster_nodes_fallback(g)}, "native_components_large_graph"
         if self.enable_leiden and ig is not None and g.number_of_edges() > 0:
             try:
-                nodes = list(g.nodes())
-                idx = {n: i for i, n in enumerate(nodes)}
-                ig_g: Any = ig.Graph()
-                ig_g.add_vertices(len(nodes))
-                ig_edges = [(idx[u], idx[v]) for u, v in g.edges()]
-                ig_g.add_edges(ig_edges)
+                ig_g, nodes = g.to_igraph(directed=False)
                 if (
                     not self.hierarchical_leiden_enabled
                     and len(self.leiden_resolutions) == 1
@@ -573,16 +804,14 @@ class ProjectionTransformer:
                         return levels, "hierarchical_leiden"
             except Exception:
                 pass
-        return {0: self._cluster_nodes_fallback(g)}, "greedy_modularity"
+        return {0: self._cluster_nodes_fallback(g)}, "native_components"
 
     @staticmethod
-    def _cluster_nodes_fallback(g: nx.Graph[str]) -> dict[str, set[str]]:
-        communities = list(nx.algorithms.community.greedy_modularity_communities(g))
-        return (
-            {f"c{i}": set(c) for i, c in enumerate(communities)}
-            if communities
-            else {"c0": set(g.nodes())}
-        )
+    def _cluster_nodes_fallback(g: _ProjectionGraph) -> dict[str, set[str]]:
+        communities = g.connected_components()
+        return {f"c{i}": set(c) for i, c in enumerate(communities)} or {
+            "c0": set(g.nodes())
+        }
 
     @staticmethod
     def _select_cluster_level(
@@ -624,22 +853,15 @@ class ProjectionTransformer:
         return parent_links
 
     def _pick_representatives(
-        self, g: nx.Graph[str], clusters: dict[str, set[str]]
+        self, g: _ProjectionGraph, clusters: dict[str, set[str]]
     ) -> tuple[dict[str, str], dict[str, dict[str, float]]]:
         reps: dict[str, str] = {}
         centrality: dict[str, dict[str, float]] = {}
         if g.number_of_nodes() == 0:
             return reps, centrality
-        pr = (
-            nx.pagerank(g, alpha=0.85)
-            if g.number_of_edges()
-            else dict.fromkeys(g.nodes(), 1.0)
-        )
-        degree_cent = (
-            nx.degree_centrality(g)
-            if g.number_of_nodes() > 1
-            else dict.fromkeys(g.nodes(), 0.0)
-        )
+        pr = g.pagerank()
+        degree_scale = max(1, g.number_of_nodes() - 1)
+        degree_cent = {node: float(g.degree(node)) / degree_scale for node in g.nodes()}
         for cid, nodes in clusters.items():
             rep = max(
                 nodes,
@@ -659,7 +881,7 @@ class ProjectionTransformer:
 
     def _build_backbone_arborescence(
         self,
-        g: nx.DiGraph[str],
+        g: _ProjectionGraph,
         clusters: dict[str, set[str]],
         focus_nodes: set[str],
     ) -> tuple[list[tuple[str, str]], str]:
@@ -670,46 +892,46 @@ class ProjectionTransformer:
         for cid, members in clusters.items():
             for m in members:
                 by_node[m] = cid
-        cg: nx.DiGraph[str] = nx.DiGraph()
-        for cid, members in clusters.items():
-            cg.add_node(cid, size=len(members))
+        cluster_nodes = set(clusters)
+        edge_weights: dict[tuple[str, str], float] = defaultdict(float)
         for u, v, data in g.edges(data=True):
             cu = by_node.get(u)
             cv = by_node.get(v)
             if not cu or not cv or cu == cv:
                 continue
-            w = float(data.get("weight", 1.0))
-            if cg.has_edge(cu, cv):
-                cg[cu][cv]["weight"] += w
-            else:
-                cg.add_edge(cu, cv, weight=w)
+            edge_weights[(cu, cv)] += float(data.get("weight", 1.0))
         root = self._find_root_cluster(clusters, focus_nodes)
-        if cg.number_of_edges() == 0:
+        if not edge_weights:
             return [], root
         tree_edges: list[tuple[str, str]] = []
         visited: set[str] = {root}
-        remaining: set[str] = set(cg.nodes()) - visited
+        remaining: set[str] = cluster_nodes - visited
         while remaining:
             best: tuple[str, str] | None = None
             best_weight = -1.0
-            for u in list(visited):
-                for _, v, data in cg.out_edges(u, data=True):
-                    if v in visited:
-                        continue
-                    w = float(data.get("weight", 1.0))
-                    if w > best_weight:
-                        best = (u, v)
-                        best_weight = w
-                for v, _, data in cg.in_edges(u, data=True):
-                    if v in visited:
-                        continue
-                    w = float(data.get("weight", 1.0))
-                    if w > best_weight:
-                        best = (u, v)
-                        best_weight = w
+            for source, target in sorted(edge_weights):
+                weight = edge_weights[(source, target)]
+                if source in visited and target not in visited:
+                    if weight > best_weight:
+                        best = (source, target)
+                        best_weight = weight
+                elif (
+                    target in visited and source not in visited and weight > best_weight
+                ):
+                    best = (target, source)
+                    best_weight = weight
             if not best:
-                next_cluster: str = max(
-                    remaining, key=lambda c: cg.out_degree(c) + cg.in_degree(c)
+                weighted_degree: dict[str, float] = defaultdict(float)
+                for (source, target), weight in edge_weights.items():
+                    weighted_degree[source] += weight
+                    weighted_degree[target] += weight
+                next_cluster = max(
+                    remaining,
+                    key=lambda cluster_id: (
+                        weighted_degree.get(cluster_id, 0.0),
+                        len(clusters[cluster_id]),
+                        cluster_id,
+                    ),
                 )
                 tree_edges.append((root, next_cluster))
                 visited.add(next_cluster)
@@ -717,7 +939,7 @@ class ProjectionTransformer:
                 continue
             tree_edges.append(best)
             visited.add(best[1])
-            remaining = set(cg.nodes()) - visited
+            remaining = cluster_nodes - visited
         return tree_edges, root
 
     @staticmethod
@@ -731,7 +953,7 @@ class ProjectionTransformer:
 
     def _cross_cluster_xrefs(
         self,
-        g: nx.DiGraph[str],
+        g: _ProjectionGraph,
         clusters: dict[str, set[str]],
         limit: int = 32,
     ) -> list[tuple[str, str, float]]:
@@ -885,7 +1107,7 @@ class ProjectionTransformer:
 
     def _projection_meta(
         self,
-        sg: nx.Graph[str],
+        sg: _ProjectionGraph,
         xrefs: Sequence[tuple[str, str, float]],
         hidden_edge_count: int,
         projection_method: str,
@@ -936,7 +1158,7 @@ class ProjectionTransformer:
         self,
         snapshot: IRSnapshot,
         members: set[str],
-        sg: nx.Graph[str],
+        sg: _ProjectionGraph,
         representative: str,
     ) -> dict[str, Any]:
         sym_map = {s.symbol_id: s for s in snapshot.symbols}
@@ -982,7 +1204,7 @@ class ProjectionTransformer:
     def _build_l2_chunks(
         self,
         snapshot: IRSnapshot,
-        sg: nx.Graph[str],
+        sg: _ProjectionGraph,
         clusters: dict[str, set[str]],
         representatives: dict[str, str],
         labels: dict[str, str],
@@ -1111,7 +1333,7 @@ class ProjectionTransformer:
         snapshot: IRSnapshot,
         scope: ProjectionScope,
         chunks: list[dict[str, Any]],
-        sg: nx.Graph[str],
+        sg: _ProjectionGraph,
         xrefs: Sequence[tuple[str, str, float]],
         hidden_edge_count: int,
         projection_method: str,

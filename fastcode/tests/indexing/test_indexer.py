@@ -60,6 +60,40 @@ class _EmbedderStub:
 
         return elements
 
+    def embed_text(self, _text: str) -> np.ndarray:
+        return np.asarray([1.0, 0.0], dtype=np.float32)
+
+    def embedding_fingerprint(
+        self, *, resolve_dimension: bool = False
+    ) -> dict[str, Any]:
+        return {
+            "provider": "test",
+            "model": "stub",
+            "dimension": 2 if resolve_dimension else None,
+        }
+
+
+class _VectorStoreStub:
+    def __init__(self) -> None:
+        self.saved_overviews: list[dict[str, Any]] = []
+
+    def save_repo_overview(
+        self,
+        *,
+        repo_name: str,
+        overview_content: str,
+        embedding: np.ndarray,
+        metadata: dict[str, Any],
+    ) -> None:
+        self.saved_overviews.append(
+            {
+                "repo_name": repo_name,
+                "overview_content": overview_content,
+                "embedding": embedding,
+                "metadata": metadata,
+            }
+        )
+
 
 def test_index_files_avoids_generic_element_and_import_to_dict_calls() -> None:
     parse_result = FileParseResult(
@@ -151,6 +185,38 @@ def test_index_files_avoids_generic_element_and_import_to_dict_calls() -> None:
         "dimension": 2,
     }
     assert isinstance(file_element.metadata["embedding"], np.ndarray)
+
+
+def test_repository_overview_metadata_includes_embedding_fingerprint() -> None:
+    embedder = _EmbedderStub()
+    vector_store = _VectorStoreStub()
+    indexer = CodeIndexer(
+        {"indexing": {"levels": ["file"], "generate_repo_overview": False}},
+        cast(Any, _LoaderStub("")),
+        cast(Any, _ParserStub(cast(Any, None))),
+        cast(Any, embedder),
+        cast(Any, vector_store),
+    )
+    indexer.current_repo_name = "repo"
+    indexer.current_repo_url = "https://example.invalid/repo"
+
+    indexer._save_repository_overview(
+        {
+            "repo_name": "repo",
+            "summary": "summary",
+            "structure_text": "structure",
+            "readme_content": "",
+            "file_structure": {},
+            "has_readme": False,
+        }
+    )
+
+    assert len(vector_store.saved_overviews) == 1
+    assert vector_store.saved_overviews[0]["metadata"]["embedding_fingerprint"] == {
+        "provider": "test",
+        "model": "stub",
+        "dimension": 2,
+    }
 
 
 def test_extract_elements_uses_precomputed_file_inventory() -> None:

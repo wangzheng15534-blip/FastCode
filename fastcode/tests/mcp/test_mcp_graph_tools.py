@@ -19,6 +19,7 @@ from fastcode.mcp.graph_tools import (
     compute_find_callers_for_snapshot,
     compute_impact_analysis,
     compute_impact_analysis_for_snapshot,
+    compute_leiden_clusters_for_snapshot,
     compute_steiner_path,
     compute_steiner_path_for_snapshot,
     extract_cluster_data,
@@ -212,6 +213,35 @@ class TestCompactGraphToolContext:
             "u:B",
             "u:C",
         }
+
+    def test_cluster_rebuild_uses_compact_artifacts_without_snapshot_load(self):
+        from fastcode.indexing.projection_transform import ProjectionTransformer
+
+        units = [
+            _unit("u:A", name="entry", qualified_name="pkg.entry", path="a.py"),
+            _unit("u:B", name="middle", path="b.py"),
+            _unit("u:C", name="target", path="c.py"),
+        ]
+        rels = [
+            _rel("u:A", "u:B", "call"),
+            _rel("u:B", "u:C", "call"),
+        ]
+        fc = _compact_fc(units, rels)
+        fc.projection_store = SimpleNamespace(enabled=False)
+        fc.projection_transformer = ProjectionTransformer(
+            {"projection": {"enable_leiden": False, "llm_enabled": False}}
+        )
+
+        with patch.object(
+            IRGraphBuilder,
+            "build_graphs",
+            side_effect=AssertionError("compact cluster path must not rebuild graphs"),
+        ):
+            result = compute_leiden_clusters_for_snapshot(fc, fc.snapshot_id)
+
+        assert result["error"] is None
+        assert result["compact_graph_context"] is True
+        assert result["total_clusters"] >= 1
 
 
 # ===========================================================================

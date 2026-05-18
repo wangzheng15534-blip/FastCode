@@ -16,6 +16,8 @@ BOUNDARY_NETWORKX_CONVERSION = "networkx_conversion"
 BOUNDARY_VECTOR_LIST_CONVERSION = "vector_list_conversion"
 BOUNDARY_SNAPSHOT_FULL_LOAD = "snapshot_full_load"
 BOUNDARY_GRAPH_FULL_LOAD = "graph_full_load"
+BOUNDARY_SEMANTIC_PATCH_PRESERVED_OBJECTS = "semantic_patch_preserved_objects"
+BOUNDARY_SEMANTIC_PATCH_CHANGED_OBJECTS = "semantic_patch_changed_objects"
 
 
 def _counter() -> Counter[str]:

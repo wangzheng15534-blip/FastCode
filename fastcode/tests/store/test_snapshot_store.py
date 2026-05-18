@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from typing import Any
 
@@ -660,6 +661,163 @@ class TestSnapshotSaveLoadProperties:
         assert loaded.relations[0].support_sources == {"fc_structure"}
         assert loaded.embeddings[0].vector == [0.25, 0.5]
 
+    def test_save_snapshot_writes_sharded_manifest_and_lazy_path_readers(self):
+        """REGRESSION: snapshot persistence uses manifest + path shards."""
+        store = _make_store()
+        snap = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:sharded",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:a",
+                    kind="function",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a",
+                    source_set={"fc_structure"},
+                ),
+                IRCodeUnit(
+                    unit_id="unit:b",
+                    kind="function",
+                    path="pkg/b.py",
+                    language="python",
+                    display_name="b",
+                    source_set={"fc_structure"},
+                ),
+            ],
+            relations=[
+                IRRelation(
+                    relation_id="rel:a:b",
+                    src_unit_id="unit:a",
+                    dst_unit_id="unit:b",
+                    relation_type="call",
+                    resolution_state="structural",
+                )
+            ],
+            supports=[
+                IRUnitSupport(
+                    support_id="sup:a",
+                    unit_id="unit:a",
+                    source="fc_structure",
+                    support_kind="occurrence",
+                    path="pkg/a.py",
+                )
+            ],
+            embeddings=[
+                IRUnitEmbedding(
+                    embedding_id="emb:a",
+                    unit_id="unit:a",
+                    source="fc_embedding",
+                    vector=[0.25, 0.5],
+                )
+            ],
+        )
+
+        record = store.save_snapshot(snap)
+
+        assert record.ir_path.endswith("ir_snapshot_manifest.json")
+        snap_dir = os.path.dirname(record.ir_path)
+        assert os.path.isdir(os.path.join(snap_dir, "units"))
+        assert os.path.isdir(os.path.join(snap_dir, "embedding_vectors"))
+        metadata = store.load_snapshot_metadata(snap.snapshot_id)
+        assert metadata is not None
+        assert metadata["counts"]["units"] == 2
+        units = store.load_snapshot_units_for_paths(snap.snapshot_id, {"pkg/a.py"})
+        assert [unit.unit_id for unit in units] == ["unit:a"]
+        relations = store.load_snapshot_relations_for_paths(
+            snap.snapshot_id,
+            {"pkg/a.py"},
+        )
+        assert [relation.relation_id for relation in relations] == ["rel:a:b"]
+        supports = store.load_snapshot_supports_for_paths(
+            snap.snapshot_id,
+            {"pkg/a.py"},
+        )
+        assert [support.support_id for support in supports] == ["sup:a"]
+        embeddings = store.load_snapshot_embeddings_for_paths(
+            snap.snapshot_id,
+            {"pkg/a.py"},
+        )
+        assert [embedding.embedding_id for embedding in embeddings] == ["emb:a"]
+        assert embeddings[0].vector == pytest.approx([0.25, 0.5])
+
+        loaded = store.load_snapshot(snap.snapshot_id)
+        assert loaded is not None
+        assert loaded.embeddings[0].vector == pytest.approx([0.25, 0.5])
+
+    def test_save_snapshot_delta_reuses_unchanged_path_shards(self) -> None:
+        store = _make_store()
+        previous = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:delta-prev",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:a",
+                    kind="function",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a",
+                ),
+                IRCodeUnit(
+                    unit_id="unit:b",
+                    kind="function",
+                    path="pkg/b.py",
+                    language="python",
+                    display_name="b",
+                ),
+            ],
+        )
+        current = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:delta-current",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:a",
+                    kind="function",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a",
+                ),
+                IRCodeUnit(
+                    unit_id="unit:b",
+                    kind="function",
+                    path="pkg/b.py",
+                    language="python",
+                    display_name="b2",
+                ),
+            ],
+        )
+
+        previous_record = store.save_snapshot(previous)
+        current_record = store.save_snapshot_delta(
+            current,
+            previous_snapshot_id=previous.snapshot_id,
+            changed_paths=["pkg/b.py"],
+            removed_paths=[],
+            metadata={"run": "delta"},
+        )
+
+        with open(previous_record.ir_path, encoding="utf-8") as handle:
+            previous_manifest = json.load(handle)
+        with open(current_record.ir_path, encoding="utf-8") as handle:
+            current_manifest = json.load(handle)
+        previous_units = {
+            entry["path_key"]: entry for entry in previous_manifest["units"]
+        }
+        current_units = {
+            entry["path_key"]: entry for entry in current_manifest["units"]
+        }
+        assert current_manifest["delta"]["reused_shards"] >= 1
+        assert (
+            current_units["pkg/a.py"]["digest"] == previous_units["pkg/a.py"]["digest"]
+        )
+        assert (
+            current_units["pkg/b.py"]["digest"] != previous_units["pkg/b.py"]["digest"]
+        )
+        loaded = store.load_snapshot(current.snapshot_id)
+        assert loaded is not None
+        assert [unit.display_name for unit in loaded.units] == ["a", "b2"]
+
     def test_save_snapshot_writes_compact_symbol_index_payload(self) -> None:
         store = _make_store()
         snap = IRSnapshot(
@@ -719,6 +877,124 @@ class TestSnapshotSaveLoadProperties:
             "source_set": ["scip"],
             "metadata": {"aliases": ["ast:auth"]},
         }
+
+    def test_load_snapshot_symbol_index_backfills_legacy_missing_sidecar(
+        self,
+    ) -> None:
+        store = _make_store()
+        snap = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:legacy-symbol-index",
+            symbols=[
+                IRSymbol(
+                    symbol_id="sym:legacy",
+                    external_symbol_id="scip:legacy",
+                    path="src/legacy.py",
+                    display_name="LegacyService",
+                    kind="class",
+                    language="python",
+                    qualified_name="pkg.legacy.LegacyService",
+                    source_set={"scip"},
+                    metadata={"aliases": ["ast:legacy"]},
+                )
+            ],
+        )
+        store.save_snapshot(snap)
+        symbol_index_path = store.snapshot_symbol_index_path(snap.snapshot_id)
+        os.remove(symbol_index_path)
+
+        payload = store.load_snapshot_symbol_index_payload(snap.snapshot_id)
+
+        assert payload is not None
+        assert os.path.exists(symbol_index_path)
+        assert payload["symbols"][0]["canonical"] == "sym:legacy"
+        assert payload["symbols"][0]["aliases"] == [
+            "ast:legacy",
+            "scip:legacy",
+            "sym:legacy",
+        ]
+        symbol_record = store.load_snapshot_symbol_record(
+            snap.snapshot_id, "sym:legacy"
+        )
+        assert symbol_record is not None
+        assert symbol_record["display_name"] == "LegacyService"
+
+    def test_load_snapshot_symbol_index_prefers_relational_fact_backfill(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _make_store()
+        snap = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:rel-symbol-index")
+        store.save_snapshot(snap)
+        symbol_index_path = store.snapshot_symbol_index_path(snap.snapshot_id)
+        os.remove(symbol_index_path)
+        record = {
+            "symbol_id": "sym:rel",
+            "external_symbol_id": "scip:rel",
+            "path": "src/rel.py",
+            "display_name": "RelService",
+            "kind": "class",
+            "language": "python",
+            "qualified_name": "pkg.rel.RelService",
+            "metadata": {"aliases": ["ast:rel"]},
+        }
+        with store.db_runtime.connect() as conn:
+            store.db_runtime.execute(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS symbols (
+                    snapshot_id TEXT NOT NULL,
+                    symbol_id TEXT NOT NULL,
+                    path TEXT,
+                    display_name TEXT,
+                    qualified_name TEXT,
+                    kind TEXT,
+                    language TEXT,
+                    source_priority INTEGER,
+                    metadata_json TEXT,
+                    PRIMARY KEY (snapshot_id, symbol_id)
+                )
+                """,
+            )
+            store.db_runtime.execute(
+                conn,
+                """
+                INSERT INTO symbols (
+                    snapshot_id, symbol_id, path, display_name, qualified_name,
+                    kind, language, source_priority, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snap.snapshot_id,
+                    "sym:rel",
+                    "src/rel.py",
+                    "RelService",
+                    "pkg.rel.RelService",
+                    "class",
+                    "python",
+                    100,
+                    json.dumps(record),
+                ),
+            )
+            conn.commit()
+
+        monkeypatch.setattr(
+            store,
+            "load_snapshot",
+            lambda _snapshot_id: (_ for _ in ()).throw(
+                AssertionError("relational facts should avoid full snapshot load")
+            ),
+        )
+
+        payload = store.load_snapshot_symbol_index_payload(snap.snapshot_id)
+
+        assert payload is not None
+        assert payload["symbols"][0]["canonical"] == "sym:rel"
+        assert payload["symbols"][0]["aliases"] == [
+            "ast:rel",
+            "scip:rel",
+            "sym:rel",
+        ]
+        assert os.path.exists(symbol_index_path)
 
     def test_load_snapshot_legacy_payload_uses_explicit_deserializers(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1997,6 +2273,136 @@ class TestIRGraphsRoundtrip:
             "opaque": "<opaque-graph-value>",
             "edges": [[1, 2], [2, 3]],
         }
+
+    def test_save_ir_graphs_dataclass_writes_typed_array_manifest(self) -> None:
+        store = _make_store()
+        snap = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:graph-shards",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:a",
+                    kind="function",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a",
+                    source_set={"fc_structure"},
+                ),
+                IRCodeUnit(
+                    unit_id="unit:b",
+                    kind="function",
+                    path="pkg/b.py",
+                    language="python",
+                    display_name="b",
+                    source_set={"fc_structure"},
+                ),
+            ],
+            relations=[
+                IRRelation(
+                    relation_id="rel:a:b",
+                    src_unit_id="unit:a",
+                    dst_unit_id="unit:b",
+                    relation_type="call",
+                    resolution_state="structural",
+                )
+            ],
+        )
+        store.save_snapshot(snap)
+        graphs = IRGraphBuilder().build_graphs(snap)
+
+        path = store.save_ir_graphs(snap.snapshot_id, graphs)
+        loaded = store.load_ir_graphs(snap.snapshot_id)
+
+        assert path.endswith("ir_graphs_manifest.json")
+        assert os.path.isdir(os.path.join(os.path.dirname(path), "ir_graph_edges"))
+        assert isinstance(loaded, IRGraphs)
+        assert loaded.call_graph.number_of_edges() == 1
+
+    def test_save_ir_graphs_delta_reuses_unchanged_graph_shards(self) -> None:
+        store = _make_store()
+        previous = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:graph-delta-prev",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:a",
+                    kind="function",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a",
+                    source_set={"fc_structure"},
+                ),
+                IRCodeUnit(
+                    unit_id="unit:b",
+                    kind="function",
+                    path="pkg/b.py",
+                    language="python",
+                    display_name="b",
+                    source_set={"fc_structure"},
+                ),
+            ],
+            relations=[
+                IRRelation(
+                    relation_id="rel:import",
+                    src_unit_id="unit:a",
+                    dst_unit_id="unit:b",
+                    relation_type="import",
+                    resolution_state="structural",
+                ),
+                IRRelation(
+                    relation_id="rel:call",
+                    src_unit_id="unit:a",
+                    dst_unit_id="unit:b",
+                    relation_type="call",
+                    resolution_state="structural",
+                ),
+            ],
+        )
+        current = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:graph-delta-current",
+            units=previous.units,
+            relations=[
+                IRRelation(
+                    relation_id="rel:import",
+                    src_unit_id="unit:a",
+                    dst_unit_id="unit:b",
+                    relation_type="import",
+                    resolution_state="structural",
+                )
+            ],
+        )
+        builder = IRGraphBuilder()
+        store.save_snapshot(previous)
+        previous_graphs = builder.build_graphs(previous)
+        previous_path = store.save_ir_graphs(previous.snapshot_id, previous_graphs)
+        store.save_snapshot(current)
+        current_graphs, delta_stats = builder.build_graph_delta(
+            current,
+            previous_graphs=previous_graphs,
+            changed_paths=["pkg/a.py"],
+        )
+
+        current_path, save_stats = store.save_ir_graphs_delta(
+            current.snapshot_id,
+            current_graphs,
+            previous_snapshot_id=previous.snapshot_id,
+            reusable_graphs=delta_stats["reusable_graphs"],
+        )
+        loaded = store.load_ir_graphs(current.snapshot_id)
+
+        with open(previous_path, encoding="utf-8") as handle:
+            previous_manifest = json.load(handle)
+        with open(current_path, encoding="utf-8") as handle:
+            current_manifest = json.load(handle)
+        assert save_stats["ir_graph_shards_reused"] >= 1
+        assert save_stats["ir_graph_shards_written"] >= 1
+        assert (
+            current_manifest["graphs"]["reference_graph"]
+            == previous_manifest["graphs"]["reference_graph"]
+        )
+        assert isinstance(loaded, IRGraphs)
+        assert loaded.call_graph.number_of_edges() == 0
 
     @given(snap=snapshot_st())
     @settings(max_examples=10)

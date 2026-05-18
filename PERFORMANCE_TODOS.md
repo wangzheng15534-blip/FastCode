@@ -192,13 +192,13 @@ Evidence:
 
 TODO:
 
-- [ ] Introduce a typed `FileInventory` / `FileFingerprint` planner record that
+- [x] Introduce a typed `FileInventory` / `FileFingerprint` planner record that
   carries normalized path, size, mtime, content hash, git blob oid when
   available, language, package root, and supported-tool eligibility.
 - [x] Build it once per index run and pass it through snapshot identity,
   incremental planning, AST extraction, SCIP scope, artifact reuse, IR file
   units, and publication.
-- [ ] Prefer git tree/blob identities when available, with content hashing as a
+- [x] Prefer git tree/blob identities when available, with content hashing as a
   fallback for untracked or non-git inputs.
 - [x] Remove duplicate scan/hash calls from repository info, manifest diffing,
   AST IR construction, and artifact manifest publication.
@@ -231,17 +231,17 @@ Evidence:
 
 TODO:
 
-- [ ] Split indexing into unchanged artifact handles plus changed-file deltas,
+- [x] Split indexing into unchanged artifact handles plus changed-file deltas,
   so unchanged paths are not reconstructed into full `CodeElement` objects for
   vector/BM25/legacy graph staging.
-- [ ] Add vector-store APIs that publish a new snapshot from previous shard
+- [x] Add vector-store APIs that publish a new snapshot from previous shard
   handles plus changed matrix rows, without first building a full temporary
   matrix.
-- [ ] Add lexical index APIs that publish from previous shard handles plus
+- [x] Add lexical index APIs that publish from previous shard handles plus
   changed token rows, without constructing a full `BM25Okapi` corpus in memory.
-- [ ] Add graph publication APIs that update adjacency shards for affected
+- [x] Add graph publication APIs that update adjacency shards for affected
   paths and affected cross-file edges only.
-- [ ] Keep a compatibility path for full rebuilds, but record degraded/full
+- [x] Keep a compatibility path for full rebuilds, but record degraded/full
   fallback reasons in metrics.
 
 Exit criteria:
@@ -281,22 +281,22 @@ Evidence:
 
 TODO:
 
-- [ ] Introduce per-file or per-unit IR artifact shards with a snapshot manifest
+- [x] Introduce per-file or per-unit IR artifact shards with a snapshot manifest
   that maps paths and stable unit ids to shard references.
-- [ ] Save changed IR shards and metadata deltas instead of rewriting a whole
+- [x] Save changed IR shards and metadata deltas instead of rewriting a whole
   `ir_snapshot.json` on every incremental update.
 - [x] Add PostgreSQL relational fact delta operations for safe incremental
   plans: preserve unchanged rows by copying from the previous snapshot, exclude
   changed/removed paths, and upsert changed-path facts.
-- [ ] Extend relational fact delta semantics to widened/repair flows and real
+- [x] Extend relational fact delta semantics to widened/repair flows and real
   backend integration evidence, or explicitly keep those paths full-rebuild
   with measured cost and release-gate limits.
 - [x] Batch PostgreSQL fact writes with `executemany`, `COPY`, or a backend
   equivalent on full rebuild paths; row-at-a-time fact insertion should not be
   the release-grade baseline.
-- [ ] Build IR graph deltas from changed relations and only rebuild global
+- [x] Build IR graph deltas from changed relations and only rebuild global
   derived views when edge changes cross declared invalidation thresholds.
-- [ ] Preserve source-owned evidence with explicit per-source invalidation
+- [x] Preserve source-owned evidence with explicit per-source invalidation
   contracts, not only path-level tombstone/relink heuristics.
 
 Exit criteria:
@@ -329,15 +329,15 @@ TODO:
 
 - [x] Cache scoped SCIP output by language, package root, tool profile,
   dependency/package-marker fingerprint, and target file fingerprints.
-- [ ] Extend the same artifact-native cache contract to helper-backed semantic
+- [x] Extend the same artifact-native cache contract to helper-backed semantic
   tools and unsupported/widened SCIP tool surfaces.
 - [x] Reuse previous scoped SCIP facts for unchanged file/package scopes instead
   of rerunning the scoped indexer.
 - [x] Replace temporary copied package roots with repo-root filtered execution
   by default; keep copied roots only as an explicit compatibility mode.
-- [ ] Persist explicit degraded metadata when unsupported, widened, or
+- [x] Persist explicit degraded metadata when unsupported, widened, or
   dependency-frontier changes require a full tool rerun.
-- [ ] Add edit-class benchmarks: body-only, signature/API, import/dependency,
+- [x] Add edit-class benchmarks: body-only, signature/API, import/dependency,
   package manifest, file delete, and rename.
 
 Exit criteria:
@@ -368,7 +368,7 @@ Evidence:
 TODO:
 
 - [x] Add a typed `EmbeddingFingerprint` value owned by the embedding boundary.
-- [ ] Persist the same fingerprint in file manifests, vector manifests, IR
+- [x] Persist the same fingerprint in file manifests, vector manifests, IR
   embeddings, repository overview artifacts, query embedding cache entries, and
   incremental compatibility checks.
 - [x] Persist embedding artifact refs and fingerprints in active PG retrieval
@@ -452,9 +452,9 @@ TODO:
 
 - [x] Route every vector-store insertion through `as_float32_matrix()` with an
   explicit copy policy.
-- [ ] Remove or quarantine old direct index paths that bypass the snapshot
+- [x] Remove or quarantine old direct index paths that bypass the snapshot
   pipeline and duplicate vector/BM25/graph staging.
-- [ ] Add tests that fail when hot vector insertion paths use raw
+- [x] Add tests that fail when hot vector insertion paths use raw
   `np.array(vectors)` or list materialization.
 
 Exit criteria:
@@ -487,12 +487,12 @@ TODO:
 - [x] Give `as_float32_matrix()` a shape-aware preallocation path for
   homogeneous vector sequences so approved helper usage does not hide a row-list
   materialization cost.
-- [ ] Store shard vectors in a format that supports memory mapping for large
+- [x] Store shard vectors in a format that supports memory mapping for large
   shards, or make compression an explicit tradeoff controlled by config.
 - [x] Keep sequence numbers as arrays and avoid `.tolist()` during hot loads.
-- [ ] Support lazy shard handles for search and publication so unchanged shards
+- [x] Support lazy shard handles for search and publication so unchanged shards
   are not loaded merely to publish a new snapshot.
-- [ ] Add allocation benchmarks around vector append, incremental save,
+- [x] Add allocation benchmarks around vector append, incremental save,
   incremental load, and search on small and medium repositories.
 
 Exit criteria:
@@ -565,17 +565,17 @@ TODO:
 
 - [x] Add bounded `IRGraphView` reachability/distance traversal for frontier
   graph questions.
-- [ ] Add `IRGraphView` methods for shortest path, component stats, degree,
+- [x] Add `IRGraphView` methods for shortest path, component stats, degree,
   neighbor iteration, and undirected views without NetworkX conversion.
 - [x] Change active retrieval graph expansion to use compact reachability when
   compact graph handles exist.
 - [x] Change MCP directed path, impact, caller, and Steiner helpers to use
   compact graph handles and sidecar symbol maps when available.
-- [ ] Change MCP projection rebuild and retrieval compatibility fallback paths
+- [x] Change MCP projection rebuild and retrieval compatibility fallback paths
   to avoid direct `nx.*` calls where compact graph handles exist.
 - [x] Change main composition-root callees/callers/dependencies helpers to use
   bounded compact graph traversal instead of direct NetworkX traversal.
-- [ ] Keep NetworkX only for explicit compatibility/export/debug surfaces.
+- [x] Keep NetworkX only for explicit compatibility/export/debug surfaces.
 - [x] Add an architecture/perf guard that fails when new hot-path graph code
   imports NetworkX outside approved modules.
 
@@ -605,13 +605,13 @@ Evidence:
 
 TODO:
 
-- [ ] Define a projection-native graph representation backed by `igraph` or
+- [x] Define a projection-native graph representation backed by `igraph` or
   `IRGraphView` plus compact side tables for node attributes and edge weights.
-- [ ] Implement scope BFS, hub compression, PageRank/centrality, and Leiden
+- [x] Implement scope BFS, hub compression, PageRank/centrality, and Leiden
   directly on the native representation.
-- [ ] Replace NetworkX Steiner usage with a bounded native approximation or
+- [x] Replace NetworkX Steiner usage with a bounded native approximation or
   explicitly mark query-scope Steiner as a compatibility fallback.
-- [ ] Benchmark NetworkX vs `igraph` on representative projection scopes before
+- [x] Benchmark NetworkX vs `igraph` on representative projection scopes before
   locking the implementation.
 
 Exit criteria:
@@ -636,14 +636,14 @@ Evidence:
 
 TODO:
 
-- [ ] Bucket candidates by path, kind, normalized name, stable unit id, and span
+- [x] Bucket candidates by path, kind, normalized name, stable unit id, and span
   before scoring.
-- [ ] Cap candidate fanout per unit and record when candidates are dropped or
+- [x] Cap candidate fanout per unit and record when candidates are dropped or
   widened.
-- [ ] Replace NetworkX matching with a smaller native or specialized matching
+- [x] Replace NetworkX matching with a smaller native or specialized matching
   implementation, or prove NetworkX is not the bottleneck after candidate
   pruning.
-- [ ] Avoid whole-snapshot clone work when merging changed-path deltas.
+- [x] Avoid whole-snapshot clone work when merging changed-path deltas.
 
 Exit criteria:
 
@@ -670,13 +670,13 @@ Evidence:
 
 TODO:
 
-- [ ] Split snapshot persistence into manifests plus unit/relation/support and
+- [x] Split snapshot persistence into manifests plus unit/relation/support and
   embedding shards.
-- [ ] Store embedding vectors in NumPy or vector-store artifacts referenced from
+- [x] Store embedding vectors in NumPy or vector-store artifacts referenced from
   IR embedding records instead of JSON lists.
-- [ ] Store IR graph edges as compact typed arrays or adjacency shards, with
+- [x] Store IR graph edges as compact typed arrays or adjacency shards, with
   JSON only for small metadata manifests.
-- [ ] Add lazy snapshot readers for metadata, path/unit subsets, relations, and
+- [x] Add lazy snapshot readers for metadata, path/unit subsets, relations, and
   embeddings.
 
 Exit criteria:
@@ -701,11 +701,11 @@ Evidence:
 
 TODO:
 
-- [ ] Choose and implement a shard-native lexical index strategy: incremental
+- [x] Choose and implement a shard-native lexical index strategy: incremental
   BM25 statistics, a compact inverted index, or an embedded search engine.
-- [ ] Make query-time lexical retrieval read only needed postings/statistics,
+- [x] Make query-time lexical retrieval read only needed postings/statistics,
   not every element payload.
-- [ ] Preserve current BM25 output semantics with golden ranking tests during
+- [x] Preserve current BM25 output semantics with golden ranking tests during
   migration.
 
 Exit criteria:
@@ -740,9 +740,9 @@ TODO:
   artifacts are available.
 - [x] Serve `FastCode.find_symbol()` from compact sidecar symbol records when
   available instead of full-loading the snapshot and scanning all symbols.
-- [ ] Backfill or derive compact symbol indexes for legacy snapshots that lack
+- [x] Backfill or derive compact symbol indexes for legacy snapshots that lack
   the sidecar, preferably from relational facts when available.
-- [ ] Add concurrent query benchmarks with and without background mutations.
+- [x] Add concurrent query benchmarks with and without background mutations.
 
 Exit criteria:
 
@@ -780,13 +780,13 @@ TODO:
 
 - [x] Route MCP directed path, impact, caller, and Steiner tools through compact
   saved graph handles and sidecar-backed symbol maps when those artifacts exist.
-- [ ] Route MCP cluster projection rebuild and any future graph tools through
+- [x] Route MCP cluster projection rebuild and any future graph tools through
   compact artifact handles where possible.
 - [x] Add per-snapshot symbol lookup maps for MCP graph tools instead of
   repeated linear scans over full snapshot units on the compact path.
 - [x] Route main composition-root callees/callers/dependencies helpers through
   compact graph handles.
-- [ ] Keep full `IRSnapshot` + NetworkX rebuild only as an explicit
+- [x] Keep full `IRSnapshot` + NetworkX rebuild only as an explicit
   compatibility fallback with materialization metrics and degraded reason.
 - [x] Add MCP graph-tool regression tests that patch `load_snapshot()` or
   `IRGraphBuilder.build_graphs()` to fail when compact handles are available.
@@ -821,9 +821,9 @@ TODO:
 - [x] Report local load mode, workspace-copy status, copied bytes, and copied
   file counts from repository loading.
 - [x] Add a hardlink workspace-copy mode and report linked bytes/files.
-- [ ] Add a content-addressed workspace-copy cache for cases that still require
+- [x] Add a content-addressed workspace-copy cache for cases that still require
   byte copies or cannot use hardlinks.
-- [ ] Feed the canonical file inventory directly from the source checkout into
+- [x] Feed the canonical file inventory directly from the source checkout into
   incremental planning before any full-tree copy when explicit copy mode is
   requested. The default in-place mode already scans the source tree directly.
 
@@ -853,14 +853,14 @@ Evidence:
 
 TODO:
 
-- [ ] Replace full snapshot cloning with structural sharing or path/unit-scoped
+- [x] Replace full snapshot cloning with structural sharing or path/unit-scoped
   copy-on-write updates for units, supports, relations, and embeddings.
 - [x] Avoid generic IR object clones and generic JSON conversion in resolver
   patch application.
-- [ ] Replace patch-local recursive metadata normalization with explicit
+- [x] Replace patch-local recursive metadata normalization with explicit
   metadata serializers for resolver patch payloads.
-- [ ] Add runtime materialization counters around semantic patch application.
-- [ ] Benchmark helper-backed semantic upgrade on unchanged, body-only,
+- [x] Add runtime materialization counters around semantic patch application.
+- [x] Benchmark helper-backed semantic upgrade on unchanged, body-only,
   signature/API, and inheritance-change edit classes.
 
 Exit criteria:
@@ -876,13 +876,13 @@ Exit criteria:
 
 TODO:
 
-- [ ] Add benchmark fixtures for body-only edit, signature/API edit,
+- [x] Add benchmark fixtures for body-only edit, signature/API edit,
   import/dependency edit, package manifest edit, delete, rename, and new file.
-- [ ] For each fixture, record full reindex cost and incremental update cost.
-- [ ] Track wall time, provider calls, files scanned, files hashed, bytes read,
+- [x] For each fixture, record full reindex cost and incremental update cost.
+- [x] Track wall time, provider calls, files scanned, files hashed, bytes read,
   bytes written, changed vectors, reused vectors, BM25 shards, graph shards,
   database rows, peak RSS, and Python allocation peaks.
-- [ ] Store benchmark reports in a repeatable artifact format that can be
+- [x] Store benchmark reports in a repeatable artifact format that can be
   compared across commits.
 
 Exit criteria:
@@ -902,7 +902,7 @@ TODO:
 - [x] Expand the guard allowlist/scope to cover semantic patching.
 - [x] Add a NetworkX import boundary guard so new graph hot paths must be
   explicitly approved before importing NetworkX.
-- [ ] Expand the guard allowlist/scope to cover MCP graph helpers, projection
+- [x] Expand the guard allowlist/scope to cover MCP graph helpers, projection
   transforms, snapshot persistence, and query-time compact symbol-index
   registration; the current guard only covers a subset of hot materialization
   paths.
@@ -921,13 +921,13 @@ Exit criteria:
 
 TODO:
 
-- [ ] Benchmark NetworkX and `igraph` for IR graph build, cutoff reachability,
+- [x] Benchmark NetworkX and `igraph` for IR graph build, cutoff reachability,
   shortest path, projection scope, clustering, PageRank/centrality, and merge
   matching workloads.
-- [ ] Record memory use and wall time for small, medium, and large synthetic
+- [x] Record memory use and wall time for small, medium, and large synthetic
   snapshots plus at least one real representative repository.
-- [ ] Decide the canonical hot-path graph engine based on data.
-- [ ] Keep compatibility exporters isolated after the decision.
+- [x] Decide the canonical hot-path graph engine based on data.
+- [x] Keep compatibility exporters isolated after the decision.
 
 Exit criteria:
 
@@ -939,10 +939,10 @@ Exit criteria:
 
 TODO:
 
-- [ ] Add opt-in pipeline profiling that reports allocation peaks by stage.
-- [ ] Track temporary directories, copied bytes, hard-linked bytes, and deleted
+- [x] Add opt-in pipeline profiling that reports allocation peaks by stage.
+- [x] Track temporary directories, copied bytes, hard-linked bytes, and deleted
   bytes for scoped tool runs and artifact publication.
-- [ ] Track snapshot store bytes written for IR, graph, vector, lexical, unit
+- [x] Track snapshot store bytes written for IR, graph, vector, lexical, unit
   artifact, PG, and relational fact surfaces.
 
 Exit criteria:

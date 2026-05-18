@@ -23,7 +23,9 @@ FastCode is currently in a hardened pre-release state, not a real stable release
 The core algorithmic path is much stronger than the original prototype: snapshot indexing, IR/SCIP merge, semantic resolver fallback, query-time escalation, artifact isolation, and async endpoint offloading all have regression coverage and green smoke gates.
 
 The remaining gap to a stable release is no longer mainly "does the core pipeline work?" The gap is production evidence and operational hardening:
-- true incremental source/index/update caching at the pipeline core, beyond the currently partial manifest/scoped-frontier implementation
+- release-grade evidence and compatibility policy for the now-implemented
+  incremental, path-sharded artifact flow under real repositories, backend
+  services, and upgrade scenarios
 - first-class embedding/model fingerprint reuse across snapshots, vector
   artifacts, repository overviews, and query embeddings; active PG retrieval
   rows now carry embedding refs/fingerprints
@@ -35,9 +37,12 @@ The remaining gap to a stable release is no longer mainly "does the core pipelin
 - real external-tool integration evidence across supported languages
 - real PostgreSQL/backend semantics beyond local fakes
 - production deployment/auth runbooks for API/file-upload use beyond the current trusted-local/proxy-auth contract
-- request-local artifact serving that scales concurrent reads without the current public `FastCode` service lock serializing query paths
+- request-local artifact serving and query read sharing now exist, with
+  concurrency benchmarks; stable release still needs endpoint/operator evidence
+  under realistic mutation and streaming workloads
 - release gate documentation and a first compatibility policy now exist;
-  backend/tool/performance gates and operator runbooks remain open
+  backend/tool gate automation, dependency drift review, supported-version
+  matrix, and operator runbooks remain open
 
 Stable release should mean all of the following are true at once:
 - core indexing/query paths are incrementally efficient, not only correct
@@ -103,6 +108,44 @@ This audit checked current source and regression tests directly, not git history
 - real PostgreSQL migration/locking/outbox/redo/fact semantics under integration load
 - backend/tool/performance release gates, full artifact migration policy,
   dependency/supply-chain review, and deployment/operator runbooks
+
+## Source-level audit - May 18, 2026
+
+This pass reconciles the implementation tracker after completing
+[PERFORMANCE_TODOS.md](./PERFORMANCE_TODOS.md).
+
+**Verdict:** the performance checklist is closed, but this tracker still has
+six legitimate stable-release blockers in packaging, dependency, release-matrix,
+and documentation areas. They should remain unchecked until the repo has direct
+release evidence, not just implementation code.
+
+**Performance/incremental status now updated:**
+- Incremental artifact publication now has concrete vector, BM25, legacy graph,
+  snapshot shard, relational fact, and IR graph delta paths, with fallback
+  reasons recorded in metrics.
+- Snapshot persistence is manifest/shard based for units, supports, relations,
+  embeddings, and embedding vectors; lazy readers cover metadata, path/unit
+  subsets, relations, supports, and embeddings.
+- Query-time lexical retrieval can load shard-native BM25 metadata and score
+  only needed shards/postings instead of rebuilding a full `BM25Okapi` object
+  on the primary sharded path.
+- Projection building uses a projection-native graph representation and
+  `igraph` for hot algorithms; NetworkX is retained for compatibility/export
+  surfaces.
+- MCP graph tools route compact paths and cluster projection rebuilds through
+  saved graph handles and sidecar symbol maps when available, with explicit
+  compatibility fallback metadata.
+- Helper-backed semantic resolver runs now have artifact-native cache keys and
+  cache hit/miss metadata under `.fastcode/semantic_helper_cache`.
+- Benchmarks now cover edit classes, concurrent query/mutation scenarios,
+  materialization surfaces, and graph-engine decisions.
+
+**Open after this audit:**
+- supported OS/Python/backend matrix and multi-Python release-gate execution
+- dependency drift/security review and high-risk runtime constraints
+- optional extras/dependency release review
+- a single tag checklist with expected outputs across every release gate
+- release-grade install/deployment/operator runbooks
 
 ## Source-level audit - May 11, 2026
 
@@ -674,6 +717,9 @@ install path. The latest checked run passed on May 13, 2026 with Python 3.13.13.
 
 **Remaining stable-release gap:** the gate still runs only on the active host
 interpreter, and the supported-version matrix is not yet encoded in automation.
+Audit on May 18, 2026 found these release blockers still open; the current
+package metadata declares Python `>=3.11`, but only the active Python 3.13 host
+has recent gate evidence.
 
 **Required work:**
 - [x] Build and test both wheel and sdist from a clean checkout.
@@ -1170,16 +1216,16 @@ blocking rules, acceptable degraded behavior, and a first pre-stable artifact
 compatibility policy. `scripts/release_gate.py` implements the package/install
 tier for built artifacts.
 
-**Remaining stable-release gap:** backend, external-tool, and performance gates
-are documented but not implemented as release automation, and the artifact
-migration policy still needs concrete artifact-family versions and
-compatibility tests.
+**Remaining stable-release gap:** backend and external-tool gates are documented
+but not implemented as release automation. Performance benchmarks now exist for
+the main hot paths, but stable release still needs a release-threshold policy,
+captured expected outputs, and artifact-family compatibility tests.
 
 **Required work:**
 - [ ] Define supported OS/Python/backend matrix.
 - [x] Define initial semantic versioning and compatibility promises for snapshots, manifests, and projection artifacts.
 - [x] Add release checklist: tests, packaging, install smoke, migration smoke, docs update, changelog.
-- Add a minimal benchmark/performance envelope for medium repositories to catch major regressions.
+- [x] Add a minimal benchmark/performance envelope for medium repositories to catch major regressions.
 - [x] Separate release gates into explicit tiers:
   - architecture gate
   - package/install gate
@@ -1205,6 +1251,10 @@ semantics as gate-open.
 **Remaining stable-release gap:** full production runbooks are still missing
 for backup/restore, migration/rollback, cache invalidation, lock/fencing
 incident recovery, and optional language-tool installation.
+May 18, 2026 audit: `DEPLOYMENT.md` and `docs/release.md` cover release-gate
+validation, local install, built-artifact smoke, trusted-local API/web exposure,
+CORS, upload safety, and service extras. They do not yet meet the release-grade
+guide/runbook bar below, so the install-guide checkbox remains open.
 
 **Required work:**
 - [ ] Write a release-grade install guide for:
@@ -1378,38 +1428,36 @@ This item should be treated as the implementation slice of the broader P0.6a sch
 **Gap:** Several hot-path dependencies are selected for convenience or compatibility rather than measured runtime efficiency. Stable release should not carry pure-Python bottlenecks in the core path if there is already a viable compiled/runtime-efficient alternative.
 
 **Current audit findings:**
-- `networkx` is still used in active graph paths:
-  - `ir/graph.py`
-  - `ir/merge.py`
+- May 18, 2026 update: the graph-engine decision is now recorded in
+  [GRAPH_ENGINE_DECISION.md](./GRAPH_ENGINE_DECISION.md).
+- The canonical hot path is `IRGraphView` / `igraph`:
+  - `ir/graph.py` now provides compact native traversal, shortest path,
+    component stats, degree, neighbor iteration, and undirected views.
+  - `indexing/projection_transform.py` uses a projection-native graph
+    representation and `igraph` algorithms instead of constructing a primary
+    NetworkX graph.
+  - MCP directed path, impact, caller, Steiner, and compact cluster projection
+    paths use saved graph handles when available.
+- `networkx` remains for compatibility/export/debug and legacy graph surfaces:
   - `graph/build.py`
-  - `retrieval/hybrid.py`
-  - `mcp/graph_tools.py`
-  - `store/snapshot.py`
-- `python-igraph` is already present as a dependency and is only partially used today:
-  - `indexing/projection_transform.py` prefers `igraph` and falls back to `networkx`
-  - main composition-root callees/callers/dependencies already use compact
-    graph handles instead of importing NetworkX directly
-  - MCP graph tools still import `networkx` for legacy fallback, but the
-    directed path, impact, caller, and Steiner primary paths use compact saved
-    graph handles when available
-- this means the project currently pays:
-  - dependency weight for both graph stacks
-  - Python-object overhead in core graph operations
-  - inconsistent graph semantics and conversion cost across modules
+  - `mcp/graph_tools.py` compatibility fallbacks
+  - explicit `IRGraphView.to_networkx()` / legacy JSON graph loading
+- residual dependency optimization now belongs mostly to P1.9 unless a new hot
+  path starts converting native graph handles back to NetworkX.
 
 **Required work:**
-- Benchmark graph-heavy operations under `networkx` vs `igraph` on representative repository snapshots:
+- [x] Benchmark graph-heavy operations under `networkx` vs `igraph` on representative repository snapshots:
   - graph build
   - path/impact analysis
   - community clustering
   - retrieval graph expansion
   - snapshot graph load/save conversion
-- Decide the graph contract intentionally:
+- [x] Decide the graph contract intentionally:
   - `igraph` as primary runtime graph engine for hot paths
   - `networkx` retained only as compatibility/test adapter if needed
-- If `igraph` wins materially, refactor toward one canonical internal graph representation for hot paths and isolate conversions at boundaries.
-- Avoid dual-maintenance where one module uses `igraph` and the next immediately converts back to `networkx`.
-- Add correctness regression tests proving graph engine substitution preserves:
+- [x] If `igraph` wins materially, refactor toward one canonical internal graph representation for hot paths and isolate conversions at boundaries.
+- [x] Avoid dual-maintenance where one module uses `igraph` and the next immediately converts back to `networkx`.
+- [x] Add correctness regression tests proving graph engine substitution preserves:
   - directed/undirected semantics
   - edge attributes
   - multi-edge expectations or explicit non-support

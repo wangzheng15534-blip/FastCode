@@ -39,6 +39,10 @@ def _disk_store(tmp_path: Path) -> VectorStore:
     return VectorStore({"vector_store": {"persist_directory": str(tmp_path)}})
 
 
+def _disk_store_with_vector_config(tmp_path: Path, **config: Any) -> VectorStore:
+    return VectorStore({"vector_store": {"persist_directory": str(tmp_path), **config}})
+
+
 def _meta(element_id: str, path: str) -> dict[str, Any]:
     return {
         "id": element_id,
@@ -150,12 +154,23 @@ def test_repository_overview_persists_as_explicit_manifest_and_embedding_archive
     tmp_path: Path,
 ) -> None:
     store = _disk_store(tmp_path)
+    fingerprint = {
+        "version": 2,
+        "provider": "test",
+        "model": "overview",
+        "dimension": 2,
+        "text_schema_version": 1,
+    }
 
     store.save_repo_overview(
         "repo",
         "content",
         np.asarray([3.0, 4.0], dtype=np.float64),
-        {"summary": "stored overview", "opaque": _OpaqueValue()},
+        {
+            "summary": "stored overview",
+            "opaque": _OpaqueValue(),
+            "embedding_fingerprint": fingerprint,
+        },
     )
 
     manifest_path = tmp_path / "repo_overviews.json"
@@ -168,13 +183,16 @@ def test_repository_overview_persists_as_explicit_manifest_and_embedding_archive
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     repo_entry = manifest["repos"]["repo"]
     assert repo_entry["content"] == "content"
+    assert repo_entry["embedding_fingerprint"] == fingerprint
     assert json.loads(repo_entry["metadata_json"]) == {
+        "embedding_fingerprint": fingerprint,
         "opaque": "<opaque>",
         "summary": "stored overview",
     }
 
     loaded = store.load_repo_overviews()
     assert loaded["repo"]["metadata"] == {
+        "embedding_fingerprint": fingerprint,
         "opaque": "<opaque>",
         "summary": "stored overview",
     }
@@ -477,6 +495,19 @@ def _metadata_row(path: str, *, element_id: str, summary: str) -> dict[str, Any]
     }
 
 
+def _metadata_row_with_fingerprint(
+    path: str,
+    *,
+    element_id: str,
+    summary: str,
+    fingerprint: dict[str, Any],
+) -> dict[str, Any]:
+    row = _metadata_row(path, element_id=element_id, summary=summary)
+    row["embedding_fingerprint"] = dict(fingerprint)
+    row["metadata"]["embedding_fingerprint"] = dict(fingerprint)
+    return row
+
+
 def test_vector_store_save_load_uses_sharded_metadata_bundle(tmp_path: Path) -> None:
     store = _disk_store(tmp_path)
     store.initialize(3)
@@ -504,6 +535,92 @@ def test_vector_store_save_load_uses_sharded_metadata_bundle(tmp_path: Path) -> 
     assert loaded.get_count() == 2
 
 
+def test_vector_and_metadata_manifests_persist_embedding_fingerprint(
+    tmp_path: Path,
+) -> None:
+    fingerprint = {
+        "version": 2,
+        "provider": "test",
+        "model": "stub",
+        "dimension": 3,
+        "text_schema_version": 1,
+    }
+    store = _disk_store(tmp_path)
+    store.initialize(3)
+    store.add_vectors(
+        np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32),
+        [
+            _metadata_row_with_fingerprint(
+                "pkg/a.py",
+                element_id="elem:a",
+                summary="a",
+                fingerprint=fingerprint,
+            )
+        ],
+    )
+
+    store.save("repo")
+
+    vector_manifest = json.loads(
+        (tmp_path / "repo_vector_manifest.json").read_text(encoding="utf-8")
+    )
+    metadata_manifest = json.loads(
+        (tmp_path / "repo_metadata_manifest.json").read_text(encoding="utf-8")
+    )
+    assert vector_manifest["embedding_fingerprint"] == fingerprint
+    assert metadata_manifest["embedding_fingerprint"] == fingerprint
+
+
+def test_incremental_vector_save_refuses_reuse_on_embedding_fingerprint_change(
+    tmp_path: Path,
+) -> None:
+    previous_fingerprint = {
+        "version": 2,
+        "provider": "test",
+        "model": "old",
+        "dimension": 3,
+        "text_schema_version": 1,
+    }
+    current_fingerprint = {**previous_fingerprint, "model": "new"}
+    previous = _disk_store(tmp_path)
+    previous.initialize(3)
+    previous.add_vectors(
+        np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32),
+        [
+            _metadata_row_with_fingerprint(
+                "pkg/a.py",
+                element_id="elem:a",
+                summary="a",
+                fingerprint=previous_fingerprint,
+            )
+        ],
+    )
+    previous.save("old")
+
+    current = _disk_store(tmp_path)
+    current.initialize(3)
+    current.add_vectors(
+        np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32),
+        [
+            _metadata_row_with_fingerprint(
+                "pkg/a.py",
+                element_id="elem:a",
+                summary="a",
+                fingerprint=current_fingerprint,
+            )
+        ],
+    )
+
+    stats = current.save_incremental(
+        "new",
+        previous_name="old",
+        reusable_path_keys={"pkg/a.py"},
+    )
+
+    assert stats["vector_shards_reused"] == 0
+    assert stats["vector_shards_written"] == 1
+
+
 def test_vector_store_sharded_load_keeps_raw_rows_hot_for_search(
     tmp_path: Path,
 ) -> None:
@@ -527,6 +644,137 @@ def test_vector_store_sharded_load_keeps_raw_rows_hot_for_search(
     results = loaded.search(np.asarray([1.0, 0.0, 0.0], dtype=np.float32), k=1)
 
     assert loaded.index is None
+    assert results[0][0]["id"] == "elem:a"
+    assert results[0][1] == pytest.approx(1.0)
+
+
+def test_vector_store_can_persist_mmap_capable_npy_vector_shards(
+    tmp_path: Path,
+) -> None:
+    store = _disk_store_with_vector_config(tmp_path, shard_storage="npy")
+    store.initialize(3)
+    store.add_vectors(
+        np.asarray([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32),
+        [
+            _metadata_row("pkg/a.py", element_id="elem:a", summary="a"),
+            _metadata_row("pkg/b.py", element_id="elem:b", summary="b"),
+        ],
+    )
+
+    store.save("repo")
+
+    manifest = json.loads(
+        (tmp_path / "repo_vector_manifest.json").read_text(encoding="utf-8")
+    )
+    shard_entry = manifest["shards"][0]
+    assert shard_entry["storage_format"] == "npy"
+    assert "shard_file" not in shard_entry
+    sequence_path = tmp_path / "repo_vector_shards" / shard_entry["sequence_file"]
+    vector_path = tmp_path / "repo_vector_shards" / shard_entry["vector_file"]
+    assert sequence_path.suffix == ".npy"
+    assert vector_path.suffix == ".npy"
+    assert sequence_path.exists()
+    assert vector_path.exists()
+
+    loaded_arrays = store._load_vector_shard_arrays(
+        shard_dir=str(tmp_path / "repo_vector_shards"),
+        entry=shard_entry,
+        mmap_mode="r",
+    )
+    assert loaded_arrays is not None
+    loaded_sequences, loaded_vectors = loaded_arrays
+    assert isinstance(loaded_sequences, np.memmap)
+    assert isinstance(loaded_vectors, np.memmap)
+
+    loaded = _disk_store(tmp_path)
+    assert loaded.load("repo") is True
+    assert loaded._vector_rows is not None
+    assert np.array_equal(
+        loaded._vector_rows,
+        np.asarray([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32),
+    )
+    results = loaded.search(np.asarray([1.0, 0.0, 0.0], dtype=np.float32), k=1)
+    assert results[0][0]["id"] == "elem:a"
+
+
+def test_incremental_npy_publish_reads_sequence_shards_without_vectors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    previous = _disk_store_with_vector_config(tmp_path, shard_storage="npy")
+    previous.initialize(3)
+    previous.add_vectors(
+        np.asarray([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32),
+        [
+            _metadata_row("pkg/a.py", element_id="elem:a", summary="a"),
+            _metadata_row("pkg/b.py", element_id="elem:b", summary="b"),
+        ],
+    )
+    previous.save("prev")
+
+    current = _disk_store_with_vector_config(tmp_path, shard_storage="npy")
+    current.initialize(3)
+    current.add_vectors(
+        np.asarray([[1.0, 0.0, 0.0], [0.0, 0.5, 0.5]], dtype=np.float32),
+        [
+            _metadata_row("pkg/a.py", element_id="elem:a", summary="a"),
+            _metadata_row("pkg/b.py", element_id="elem:b", summary="b2"),
+        ],
+    )
+    monkeypatch.setattr(
+        current,
+        "_load_vector_shard_arrays",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("publication should read sequence shards only")
+        ),
+    )
+
+    stats = current.save_incremental(
+        "next",
+        previous_name="prev",
+        reusable_path_keys={"pkg/a.py"},
+    )
+
+    assert stats["vector_shards_reused"] == 1
+    assert stats["vector_shards_written"] == 1
+
+
+def test_vector_store_lazy_shard_search_avoids_eager_vector_payload_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _disk_store_with_vector_config(tmp_path, shard_storage="npy")
+    store.initialize(3)
+    store.add_vectors(
+        np.asarray([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32),
+        [
+            _metadata_row("pkg/a.py", element_id="elem:a", summary="a"),
+            _metadata_row("pkg/b.py", element_id="elem:b", summary="b"),
+        ],
+    )
+    store.save("repo")
+
+    loaded = VectorStore(
+        {
+            "vector_store": {
+                "persist_directory": str(tmp_path),
+                "lazy_shard_search": True,
+                "shard_storage": "npy",
+            }
+        }
+    )
+    monkeypatch.setattr(
+        loaded,
+        "load_vector_payload",
+        lambda _name: (_ for _ in ()).throw(
+            AssertionError("lazy shard search should not eager-load vectors")
+        ),
+    )
+
+    assert loaded.load("repo") is True
+    assert loaded._vector_rows is None
+    assert loaded._vector_shard_handles is not None
+
+    results = loaded.search(np.asarray([1.0, 0.0, 0.0], dtype=np.float32), k=1)
+
     assert results[0][0]["id"] == "elem:a"
     assert results[0][1] == pytest.approx(1.0)
 

@@ -148,6 +148,7 @@ class VectorStoreSettings(_BoundaryModel):
     type: str = "faiss"
     distance_metric: str = "cosine"
     index_type: str = "HNSW"
+    shard_storage: Literal["compressed", "npy", "mmap", "memory_mapped"] = "compressed"
     ef_construction: int = Field(default=200, ge=1)
     ef_search: int = Field(default=50, ge=1)
     m: int = Field(default=16, ge=1)
@@ -162,6 +163,7 @@ class VectorStoreConfig:
     type: str = "faiss"
     distance_metric: str = "cosine"
     index_type: str = "HNSW"
+    shard_storage: Literal["compressed", "npy"] = "compressed"
     ef_construction: int = 200
     ef_search: int = 50
     m: int = 16
@@ -172,10 +174,16 @@ class VectorStoreConfig:
 
     @classmethod
     def from_settings(cls, settings: VectorStoreSettings) -> VectorStoreConfig:
+        shard_storage = (
+            "npy"
+            if settings.shard_storage in {"npy", "mmap", "memory_mapped"}
+            else "compressed"
+        )
         return cls(
             type=settings.type,
             distance_metric=settings.distance_metric,
             index_type=settings.index_type,
+            shard_storage=shard_storage,
             ef_construction=int(settings.ef_construction),
             ef_search=int(settings.ef_search),
             m=int(settings.m),

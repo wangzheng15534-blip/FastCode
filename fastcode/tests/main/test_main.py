@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
 from dataclasses import is_dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -970,6 +971,93 @@ def test_service_state_lock_allows_concurrent_queries() -> None:
     assert not first.is_alive()
     assert not second.is_alive()
     assert not errors, f"Threads raised: {errors}"
+    assert max_concurrent == 2
+
+
+def test_snapshot_query_stream_releases_service_lock_after_handle_capture() -> None:
+    """Snapshot streams use immutable handles and do not fence later mutations."""
+    import threading
+    import time
+
+    fc = FastCode.__new__(FastCode)
+
+    concurrent_count = 0
+    max_concurrent = 0
+    calls: list[str] = []
+    count_lock = threading.Lock()
+    stream_started = threading.Event()
+    mutation_started = threading.Event()
+    errors: list[Exception] = []
+    handle_retriever = SimpleNamespace()
+
+    def _enter_critical(name: str) -> None:
+        nonlocal concurrent_count, max_concurrent
+        with count_lock:
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+            calls.append(name)
+        if name == "stream":
+            stream_started.set()
+            mutation_started.wait(timeout=2)
+            time.sleep(0.05)
+        else:
+            mutation_started.set()
+            time.sleep(0.05)
+        with count_lock:
+            concurrent_count -= 1
+
+    def _query_stream(
+        **kwargs: Any,
+    ) -> Generator[tuple[str | None, dict[str, Any] | None], None, None]:
+        assert kwargs["filters"] == {
+            "snapshot_id": "snap:1",
+            "artifact_key": "art_snap_1",
+        }
+        assert kwargs["retriever"] is handle_retriever
+        _enter_critical("stream")
+        yield None, {"status": "complete", "sources": []}
+
+    fc.snapshot_store = SimpleNamespace(
+        get_snapshot_record=lambda snapshot_id: SimpleNamespace(
+            artifact_key="art_snap_1"
+        )
+    )
+    fc.pipeline = SimpleNamespace(
+        load_snapshot_artifacts_handle=lambda artifact_key, **_kwargs: SimpleNamespace(
+            artifact_key=artifact_key,
+            retriever=handle_retriever,
+        )
+    )
+    fc.query_handler = SimpleNamespace(
+        _ensure_snapshot_symbol_index=lambda snapshot_id: None,
+        query_stream=_query_stream,
+    )
+    fc._index_repository_unlocked = lambda **_kwargs: _enter_critical("index")
+
+    def _run_stream() -> None:
+        try:
+            list(fc.query_stream("Where is auth?", filters={"snapshot_id": "snap:1"}))
+        except Exception as exc:
+            errors.append(exc)
+
+    def _run_mutation() -> None:
+        try:
+            assert stream_started.wait(timeout=5)
+            fc.index_repository(force=True)
+        except Exception as exc:
+            errors.append(exc)
+
+    stream_thread = threading.Thread(target=_run_stream)
+    mutation_thread = threading.Thread(target=_run_mutation)
+    stream_thread.start()
+    mutation_thread.start()
+    stream_thread.join(timeout=10)
+    mutation_thread.join(timeout=10)
+
+    assert not stream_thread.is_alive()
+    assert not mutation_thread.is_alive()
+    assert not errors, f"Threads raised: {errors}"
+    assert calls == ["stream", "index"]
     assert max_concurrent == 2
 
 

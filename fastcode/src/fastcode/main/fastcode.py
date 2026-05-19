@@ -1337,6 +1337,50 @@ class FastCode:
         ]
         | None = None,
     ) -> Generator[tuple[str | None, dict[str, Any] | None], Any, None]:
+        snapshot_value = (filters or {}).get("snapshot_id")
+        snapshot_id = (
+            snapshot_value
+            if isinstance(snapshot_value, str) and snapshot_value
+            else None
+        )
+
+        if snapshot_id:
+            with self._state_read_lock():
+                snapshot_record = self.snapshot_store.get_snapshot_record(snapshot_id)
+                if not snapshot_record:
+                    raise RuntimeError(f"snapshot not found: {snapshot_id}")
+                artifact_key = snapshot_record.artifact_key
+                loaded_artifacts = self.pipeline.load_snapshot_artifacts_handle(
+                    artifact_key,
+                    snapshot_id=snapshot_id,
+                )
+                if loaded_artifacts is None:
+                    raise RuntimeError(
+                        f"failed to load artifacts for snapshot: {snapshot_id}"
+                    )
+                self.query_handler._ensure_snapshot_symbol_index(snapshot_id)
+
+                merged_filters = dict(filters or {})
+                merged_filters["snapshot_id"] = snapshot_id
+                merged_filters["artifact_key"] = getattr(
+                    loaded_artifacts,
+                    "artifact_key",
+                    artifact_key,
+                )
+                retriever = loaded_artifacts.retriever
+
+            yield from self.query_handler.query_stream(
+                question=question,
+                filters=merged_filters,
+                repo_filter=repo_filter,
+                session_id=session_id,
+                enable_multi_turn=enable_multi_turn,
+                use_agency_mode=use_agency_mode,
+                prompt_builder=prompt_builder,
+                retriever=retriever,
+            )
+            return
+
         with self._state_read_lock():
             yield from self.query_handler.query_stream(
                 question=question,

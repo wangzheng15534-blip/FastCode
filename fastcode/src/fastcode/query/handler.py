@@ -511,6 +511,7 @@ class QueryPipeline:
             [str, str, dict[str, Any] | None, list[dict[str, Any]] | None], str
         ]
         | None = None,
+        retriever: HybridRetriever | None = None,
     ) -> Generator[tuple[str | None, dict[str, Any] | None], Any, None]:
         """
         Query the repository with streaming response (yields answer chunks)
@@ -531,7 +532,8 @@ class QueryPipeline:
             - During generation: (text_chunk, None)
             - Final yield: (None, {"status": "complete", "summary": ..., ...})
         """
-        if not self.is_repo_indexed():
+        active_retriever = retriever or self.retriever
+        if retriever is None and not self.is_repo_indexed():
             yield (
                 None,
                 {"error": "Repository not indexed. Call index_repository() first."},
@@ -572,8 +574,8 @@ class QueryPipeline:
 
             # Retrieval phase (same as query method)
             use_iterative_enhancement = (
-                self.retriever.enable_agency_mode
-                and self.retriever.iterative_agent is not None
+                active_retriever.enable_agency_mode
+                and active_retriever.iterative_agent is not None
             )
 
             if use_iterative_enhancement:
@@ -605,7 +607,7 @@ class QueryPipeline:
                 self.logger.info(f"Keywords: {processed_query.keywords}")
 
             # Retrieve relevant code
-            retrieved = self.retriever.retrieve(
+            retrieved = active_retriever.retrieve(
                 processed_query,
                 filters=filters,
                 repo_filter=repo_filter,
@@ -620,7 +622,7 @@ class QueryPipeline:
                 session_id=session_id,
                 filters=filters,
                 repo_filter=repo_filter,
-                retriever=self.retriever,
+                retriever=active_retriever,
             )
 
             # Notify start of generation

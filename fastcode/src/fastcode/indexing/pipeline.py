@@ -78,6 +78,14 @@ from .terminus import TerminusPublisher
 
 @dataclass(frozen=True)
 class LoadedSnapshotArtifacts:
+    """Read-only serving handles for immutable snapshot query requests.
+
+    The contained vector store, retriever, and graph builder are safe to share
+    across concurrent snapshot reads after construction. Mutation, repair, and
+    rebuild paths must publish a new handle and invalidate the old artifact-key
+    cache entry instead of modifying an active handle in place.
+    """
+
     artifact_key: str
     snapshot_id: str | None
     vector_store: VectorStore

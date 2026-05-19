@@ -9,7 +9,10 @@ returning hardcoded mock data.
 from __future__ import annotations
 
 import asyncio
+import functools
 import io
+import threading
+import time
 import zipfile
 from types import SimpleNamespace
 from typing import Any, cast
@@ -505,6 +508,80 @@ class TestUploadSecurity:
 
 
 class TestApiSerializationBoundaries:
+    def test_query_endpoint_allows_concurrent_snapshot_reads(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        concurrent_count = 0
+        max_concurrent = 0
+        count_lock = threading.Lock()
+        barrier = threading.Barrier(2, timeout=5)
+
+        class _ConcurrentFastCode:
+            def query_snapshot(self, **kwargs: Any) -> dict[str, Any]:
+                nonlocal concurrent_count, max_concurrent
+                barrier.wait(timeout=5)
+                with count_lock:
+                    concurrent_count += 1
+                    max_concurrent = max(max_concurrent, concurrent_count)
+                time.sleep(0.05)
+                with count_lock:
+                    concurrent_count -= 1
+                return {
+                    "answer": "ok",
+                    "query": kwargs["question"],
+                    "context_elements": 0,
+                    "sources": [],
+                }
+
+        async def _executor_to_thread(
+            func: Any, /, *args: Any, **kwargs: Any
+        ) -> Any:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None, functools.partial(func, *args, **kwargs)
+            )
+
+        monkeypatch.setattr(api.asyncio, "to_thread", _executor_to_thread)
+        with patch(
+            "fastcode.api.routes._ensure_fastcode_initialized",
+            return_value=_ConcurrentFastCode(),
+        ):
+
+            async def _run_queries() -> None:
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        api.query_repository(
+                            api.QueryRequest(
+                                question="Where is auth?",
+                                snapshot_id="snap:1",
+                                repo_name=None,
+                                ref_name=None,
+                                filters=None,
+                                repo_filter=None,
+                                multi_turn=False,
+                                session_id="sess-1",
+                            )
+                        ),
+                        api.query_repository(
+                            api.QueryRequest(
+                                question="Where is config?",
+                                snapshot_id="snap:2",
+                                repo_name=None,
+                                ref_name=None,
+                                filters=None,
+                                repo_filter=None,
+                                multi_turn=False,
+                                session_id="sess-2",
+                            )
+                        ),
+                    ),
+                    timeout=10,
+                )
+
+            asyncio.run(_run_queries())
+
+        assert max_concurrent == 2
+
     def test_query_endpoint_serializes_sources_explicitly(self) -> None:
         fake_fastcode = MagicMock()
         fake_fastcode.query_snapshot.return_value = {

@@ -96,8 +96,10 @@ This audit checked current source and regression tests directly, not git history
   rehydrates a full combined element list and builds temporary whole-snapshot
   artifacts, but persisted vector/BM25 shards, conservative legacy graph
   shards, and safe PostgreSQL relational fact publication now reuse prior
-  snapshot work for unchanged paths. Scoped SCIP still widens or falls back to
-  repo/tool scope in important cases.
+  snapshot work for unchanged paths. Incremental plans now also expose explicit
+  per-file interface digests, dependency-frontier metadata, and deterministic
+  degraded-mode reasons. Scoped SCIP still widens or falls back to repo/tool
+  scope in important cases.
 - Embedding identity is still not enforced uniformly across snapshots, vector
   stores, repository overviews, and query embeddings. Active PG retrieval rows
   now carry embedding artifact refs/fingerprints for code and documentation
@@ -834,7 +836,14 @@ The template philosophy remains correct for Python: use one importable package w
 
 **Research framing:** A graceful updater should widen work in proportion to semantic impact, not in proportion to raw textual churn.
 
-**Current status:** partially implemented. Incremental plans now classify change kinds, reuse changed-unit embeddings where the prepared text is unchanged, detect API-frontier changes, compute package-scope roots, and feed scoped semantic/SCIP refresh paths in the happy path. The missing release-grade pieces are explicit interface digests, dependency-frontier invalidation, deterministic degraded-mode metadata, and benchmark evidence by edit class.
+**Current status:** partially implemented. Incremental plans now classify
+change kinds, reuse changed-unit embeddings where the prepared text is
+unchanged, detect API-frontier changes, compute package-scope roots, persist
+per-file interface digests, emit dependency-frontier metadata, record
+deterministic degraded-mode reasons, and feed scoped semantic/SCIP refresh
+paths in the happy path. The remaining release-grade gap is broader
+file-shard-native end-to-end behavior plus backend/toolchain benchmark evidence
+by edit class.
 
 **Core idea:** Separate change detection into four classes and bind each class to an invalidation radius:
 - identity-stable: no rebuild

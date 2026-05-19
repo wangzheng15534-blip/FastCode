@@ -1575,6 +1575,7 @@ class IndexPipeline:
         }
         embedding_fingerprint = cast(dict[str, Any], manifest["embedding_fingerprint"])
         file_info_by_path = self._file_info_by_relative_path(current_files)
+        interface_digests = self._interface_digests_for_elements(elements)
 
         for elem in elements:
             rel_path = normalize_path(elem.relative_path or elem.file_path)
@@ -1592,14 +1593,20 @@ class IndexPipeline:
                         "content_hash": None,
                         "blob_oid": None,
                         "embedding_fingerprint": dict(embedding_fingerprint),
+                        "interface_digest": interface_digests.get(rel_path),
                         "element_ids": [],
                     }
                 else:
                     manifest["files"][rel_path] = {
                         **fingerprint,
                         "embedding_fingerprint": dict(embedding_fingerprint),
+                        "interface_digest": interface_digests.get(rel_path),
                         "element_ids": [],
                     }
+            if interface_digests.get(rel_path):
+                manifest["files"][rel_path]["interface_digest"] = interface_digests[
+                    rel_path
+                ]
             manifest["files"][rel_path]["element_ids"].append(elem.id)
 
         return manifest
@@ -1683,6 +1690,7 @@ class IndexPipeline:
                     "embedding_fingerprint": dict(
                         cast(dict[str, Any], manifest["embedding_fingerprint"])
                     ),
+                    "interface_digest": None,
                     "element_ids": [],
                 },
             )
@@ -2056,6 +2064,216 @@ class IndexPipeline:
                 indexed[str(stable_unit_id)] = row
         return indexed
 
+    @staticmethod
+    def _metadata_payload(value: Any) -> dict[str, Any]:
+        return (
+            dict(cast(dict[str, Any], value or {})) if isinstance(value, dict) else {}
+        )
+
+    @staticmethod
+    def _interface_payload_from_element(element: Any) -> dict[str, Any] | None:
+        rel_path = normalize_path(
+            str(
+                getattr(element, "relative_path", None)
+                or getattr(element, "file_path", None)
+                or ""
+            )
+        )
+        if not rel_path:
+            return None
+        metadata = IndexPipeline._metadata_payload(getattr(element, "metadata", None))
+        stable_unit_id = metadata.get("stable_unit_id") or getattr(element, "id", None)
+        return {
+            "path": rel_path,
+            "stable_unit_id": str(stable_unit_id or ""),
+            "kind": str(getattr(element, "type", "") or ""),
+            "name": str(getattr(element, "name", "") or ""),
+            "signature_hash": metadata.get("signature_hash"),
+            "api_surface_hash": metadata.get("api_surface_hash"),
+            "edge_surface_hash": metadata.get("edge_surface_hash"),
+        }
+
+    @staticmethod
+    def _interface_payload_from_metadata(
+        row: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        rel_path = normalize_path(
+            str(row.get("relative_path") or row.get("file_path") or "")
+        )
+        if not rel_path:
+            return None
+        metadata = IndexPipeline._metadata_payload(row.get("metadata"))
+        stable_unit_id = metadata.get("stable_unit_id") or row.get("id")
+        return {
+            "path": rel_path,
+            "stable_unit_id": str(stable_unit_id or ""),
+            "kind": str(row.get("type") or ""),
+            "name": str(row.get("name") or ""),
+            "signature_hash": metadata.get("signature_hash"),
+            "api_surface_hash": metadata.get("api_surface_hash"),
+            "edge_surface_hash": metadata.get("edge_surface_hash"),
+        }
+
+    @staticmethod
+    def _interface_digest(payloads: Sequence[Mapping[str, Any]]) -> str | None:
+        if not payloads:
+            return None
+        normalized = sorted(
+            [dict(payload) for payload in payloads],
+            key=lambda payload: (
+                str(payload.get("path") or ""),
+                str(payload.get("stable_unit_id") or ""),
+                str(payload.get("kind") or ""),
+                str(payload.get("name") or ""),
+            ),
+        )
+        encoded = json.dumps(
+            normalized,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+        return f"iface:{digest}"
+
+    @classmethod
+    def _interface_digests_for_elements(cls, elements: Sequence[Any]) -> dict[str, str]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for element in elements:
+            payload = cls._interface_payload_from_element(element)
+            if payload is None:
+                continue
+            grouped.setdefault(str(payload["path"]), []).append(payload)
+        return {
+            path: digest
+            for path, payloads in grouped.items()
+            if (digest := cls._interface_digest(payloads)) is not None
+        }
+
+    @classmethod
+    def _interface_digests_from_metadata(
+        cls, metadata_rows: Sequence[Mapping[str, Any]]
+    ) -> dict[str, str]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in metadata_rows:
+            payload = cls._interface_payload_from_metadata(row)
+            if payload is None:
+                continue
+            grouped.setdefault(str(payload["path"]), []).append(payload)
+        return {
+            path: digest
+            for path, payloads in grouped.items()
+            if (digest := cls._interface_digest(payloads)) is not None
+        }
+
+    @classmethod
+    def _previous_interface_digests(
+        cls,
+        manifest: Mapping[str, Any],
+        metadata_rows: Sequence[Mapping[str, Any]],
+    ) -> dict[str, str]:
+        metadata_digests = cls._interface_digests_from_metadata(metadata_rows)
+        files = manifest.get("files", {})
+        if not isinstance(files, Mapping):
+            return metadata_digests
+        digests = dict(metadata_digests)
+        for raw_path, raw_entry in cast(Mapping[Any, Any], files).items():
+            if not isinstance(raw_entry, Mapping):
+                continue
+            digest = raw_entry.get("interface_digest")
+            if digest:
+                digests[normalize_path(str(raw_path))] = str(digest)
+        return digests
+
+    @staticmethod
+    def _interface_digest_changed_paths(
+        *,
+        changed_paths: Sequence[str],
+        previous_digests: Mapping[str, str],
+        current_digests: Mapping[str, str],
+    ) -> list[str]:
+        changed: list[str] = []
+        for path in sorted(
+            {normalize_path(str(path)) for path in changed_paths if path}
+        ):
+            previous = previous_digests.get(path)
+            current = current_digests.get(path)
+            if previous is None or current is None or previous != current:
+                changed.append(path)
+        return changed
+
+    @staticmethod
+    def _incremental_degraded_reasons(
+        *,
+        changed_paths: Sequence[str],
+        removed_paths: Sequence[str],
+        semantic_frontier_widened: bool,
+        previous_interface_digests: Mapping[str, str],
+        current_interface_digests: Mapping[str, str],
+        new_elements: Sequence[Any],
+        existing_by_stable_unit_id: Mapping[str, Mapping[str, Any]],
+    ) -> list[str]:
+        reasons: set[str] = set()
+        if removed_paths:
+            reasons.add("file_delete_requires_full_tool_rerun")
+        if semantic_frontier_widened:
+            reasons.add("semantic_frontier_widened")
+        for path in {normalize_path(str(path)) for path in changed_paths if path}:
+            if path not in previous_interface_digests:
+                reasons.add("interface_digest_missing_previous")
+            if path not in current_interface_digests:
+                reasons.add("interface_digest_missing_current")
+        for element in new_elements:
+            metadata = IndexPipeline._metadata_payload(
+                getattr(element, "metadata", None)
+            )
+            stable_unit_id = metadata.get("stable_unit_id")
+            if not stable_unit_id:
+                reasons.add("stable_unit_id_missing")
+                continue
+            if str(stable_unit_id) not in existing_by_stable_unit_id:
+                reasons.add("stable_unit_id_new")
+        return sorted(reasons)
+
+    @staticmethod
+    def _dependency_frontier_metadata(
+        *,
+        changed_paths: Sequence[str],
+        interface_changed_paths: Sequence[str],
+        package_scope_roots: Sequence[str],
+        change_kinds: Sequence[str],
+        degraded_reasons: Sequence[str],
+    ) -> dict[str, Any]:
+        interface_change_set = {
+            normalize_path(str(path)) for path in interface_changed_paths if path
+        }
+        change_kind_set = {str(kind) for kind in change_kinds if kind}
+        if interface_change_set or change_kind_set & {
+            "api_surface_hash",
+            "signature_hash",
+            "edge_surface_hash",
+        }:
+            radius = "dependent_neighborhood"
+            strategy = "package"
+            target_paths = sorted(interface_change_set)
+        else:
+            radius = "file_local"
+            strategy = "file"
+            target_paths = sorted(
+                {normalize_path(str(path)) for path in changed_paths if path}
+            )
+        return {
+            "radius": radius,
+            "strategy": strategy,
+            "target_paths": target_paths,
+            "scope_roots": sorted(
+                {normalize_path(str(root)) for root in package_scope_roots if root}
+            ),
+            "change_kinds": sorted(change_kind_set),
+            "degraded": bool(degraded_reasons),
+            "degraded_reasons": sorted({str(reason) for reason in degraded_reasons}),
+        }
+
     def _reuse_changed_unit_embeddings(
         self,
         *,
@@ -2412,11 +2630,40 @@ class IndexPipeline:
             new_elements=new_elements,
             existing_by_stable_unit_id=existing_by_stable_unit_id,
         )
+        previous_interface_digests = self._previous_interface_digests(
+            manifest,
+            existing_metadata,
+        )
+        current_interface_digests = self._interface_digests_for_elements(new_elements)
+        changed_paths = sorted(set(added + modified))
+        interface_changed_paths = self._interface_digest_changed_paths(
+            changed_paths=changed_paths,
+            previous_digests=previous_interface_digests,
+            current_digests=current_interface_digests,
+        )
+        api_frontier_changed_paths = sorted(
+            set(api_frontier_changed_paths) | set(interface_changed_paths)
+        )
         package_scope_roots = self._package_scope_roots(
             self.loader.repo_path or "",
             api_frontier_changed_paths,
         )
-        changed_paths = sorted(set(added + modified))
+        degraded_reasons = self._incremental_degraded_reasons(
+            changed_paths=changed_paths,
+            removed_paths=deleted,
+            semantic_frontier_widened=semantic_frontier_widened,
+            previous_interface_digests=previous_interface_digests,
+            current_interface_digests=current_interface_digests,
+            new_elements=new_elements,
+            existing_by_stable_unit_id=existing_by_stable_unit_id,
+        )
+        dependency_frontier = self._dependency_frontier_metadata(
+            changed_paths=changed_paths,
+            interface_changed_paths=interface_changed_paths,
+            package_scope_roots=package_scope_roots,
+            change_kinds=sorted(change_kinds),
+            degraded_reasons=degraded_reasons,
+        )
         summary = {
             "previous_snapshot_id": previous_snapshot_id,
             "previous_artifact_key": previous_artifact_key,
@@ -2438,6 +2685,15 @@ class IndexPipeline:
             "api_frontier_changed_paths": api_frontier_changed_paths,
             "package_scope_roots": package_scope_roots,
             "change_kinds": sorted(change_kinds),
+            "interface_digest_changed_paths": interface_changed_paths,
+            "interface_digests": {
+                path: current_interface_digests[path]
+                for path in sorted(current_interface_digests)
+                if path in set(changed_paths)
+            },
+            "dependency_frontier": dependency_frontier,
+            "degraded": bool(degraded_reasons),
+            "degraded_reasons": degraded_reasons,
         }
         return new_elements, summary
 

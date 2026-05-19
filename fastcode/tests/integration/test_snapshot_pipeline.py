@@ -1341,7 +1341,8 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             }
         ]
         assert bm25_incremental_calls == vector_incremental_calls
-        assert result["incremental_prefilter"] == {
+        prefilter = result["incremental_prefilter"]
+        expected_prefilter = {
             "previous_snapshot_id": "snap:repo:prev",
             "previous_artifact_key": previous_record.artifact_key,
             "artifact_delta_mode": True,
@@ -1370,12 +1371,40 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
                 "embedding_text_hash",
                 "signature_hash",
             ],
-            "artifact_shard_reuse": {
-                "vector_shards_reused": 1,
-                "bm25_shards_reused": 1,
-                "graph_fallback_reason": "edge_or_delete_frontier_requires_full_graph",
-            },
         }
+        for key, value in expected_prefilter.items():
+            assert prefilter[key] == value
+        assert prefilter["artifact_shard_reuse"] == {
+            "vector_shards_reused": 1,
+            "bm25_shards_reused": 1,
+            "graph_fallback_reason": "edge_or_delete_frontier_requires_full_graph",
+        }
+        assert prefilter["interface_digest_changed_paths"] == ["b.py"]
+        assert prefilter["interface_digests"]["b.py"].startswith("iface:")
+        assert prefilter["dependency_frontier"] == {
+            "radius": "dependent_neighborhood",
+            "strategy": "package",
+            "target_paths": ["b.py"],
+            "scope_roots": ["."],
+            "change_kinds": [
+                "api_surface_hash",
+                "edge_surface_hash",
+                "embedding_text_hash",
+                "signature_hash",
+            ],
+            "degraded": True,
+            "degraded_reasons": [
+                "interface_digest_missing_previous",
+                "semantic_frontier_widened",
+                "stable_unit_id_missing",
+            ],
+        }
+        assert prefilter["degraded"] is True
+        assert prefilter["degraded_reasons"] == [
+            "interface_digest_missing_previous",
+            "semantic_frontier_widened",
+            "stable_unit_id_missing",
+        ]
         assert result["repair_queue"]["pending"] == 1
         assert result["repair_queue"]["task_type"] == "semantic_repair_frontier"
         assert result["repair_queue"]["scope_kind"] == "package"

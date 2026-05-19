@@ -90,6 +90,35 @@ def test_add_vectors_uses_growing_row_buffer_without_vstack_double(
     assert store.search(np.asarray([1.0, 0.0], dtype=np.float32), k=1)
 
 
+def test_search_filters_same_dimension_stale_embedding_fingerprint_double() -> None:
+    store = _store()
+    store.initialize(2)
+    stale_fingerprint = {
+        "version": 2,
+        "provider": "test",
+        "model": "old",
+        "dimension": 2,
+        "text_schema_version": 1,
+    }
+    current_fingerprint = {**stale_fingerprint, "model": "current"}
+    stale = _meta("stale", "stale.py")
+    stale["metadata"]["embedding_fingerprint"] = stale_fingerprint
+    current = _meta("current", "current.py")
+    current["embedding_fingerprint"] = current_fingerprint
+    store.add_vectors(
+        np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+        [stale, current],
+    )
+
+    results = store.search(
+        np.asarray([1.0, 0.0], dtype=np.float32),
+        k=1,
+        query_embedding_fingerprint=current_fingerprint,
+    )
+
+    assert [metadata["id"] for metadata, _score in results] == ["current"]
+
+
 def test_repository_overview_search_only_materializes_returned_metadata_double() -> (
     None
 ):
@@ -126,6 +155,40 @@ def test_repository_overview_search_only_materializes_returned_metadata_double()
             1.0,
         )
     ]
+
+
+def test_repository_overview_search_filters_stale_embedding_fingerprint_double() -> (
+    None
+):
+    store = _store()
+    stale_fingerprint = {
+        "version": 2,
+        "provider": "test",
+        "model": "old",
+        "dimension": 2,
+        "text_schema_version": 1,
+    }
+    current_fingerprint = {**stale_fingerprint, "model": "current"}
+    store.save_repo_overview(
+        "stale",
+        "stale content",
+        np.asarray([1.0, 0.0], dtype=np.float32),
+        {"summary": "stale", "embedding_fingerprint": stale_fingerprint},
+    )
+    store.save_repo_overview(
+        "current",
+        "current content",
+        np.asarray([0.0, 1.0], dtype=np.float32),
+        {"summary": "current", "embedding_fingerprint": current_fingerprint},
+    )
+
+    results = store.search_repository_overviews(
+        np.asarray([1.0, 0.0], dtype=np.float32),
+        k=1,
+        query_embedding_fingerprint=current_fingerprint,
+    )
+
+    assert [metadata["repo_name"] for metadata, _score in results] == ["current"]
 
 
 def test_repository_overview_search_does_not_mutate_stored_embeddings_double() -> None:

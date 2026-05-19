@@ -100,10 +100,13 @@ This audit checked current source and regression tests directly, not git history
   per-file interface digests, dependency-frontier metadata, and deterministic
   degraded-mode reasons. Scoped SCIP still widens or falls back to repo/tool
   scope in important cases.
-- Embedding identity is still not enforced uniformly across snapshots, vector
-  stores, repository overviews, and query embeddings. Active PG retrieval rows
-  now carry embedding artifact refs/fingerprints for code and documentation
-  chunks, verified against real PostgreSQL.
+- Embedding identity is closer to a uniform serving contract: snapshot/vector
+  artifacts persist fingerprints, repository overviews carry fingerprints, and
+  query-time semantic search now passes the active embedding fingerprint into
+  local vector search, repository-overview vector search, and PostgreSQL
+  semantic search so same-dimension stale vectors are filtered instead of
+  silently reused. The remaining gap is formalizing the embedder boundary and
+  extending backend/release evidence beyond retrieval rows.
 - Snapshot artifact handles are closer to serving isolation: public
   `FastCode.query()`, `FastCode.query_snapshot()`, and `FastCode.query_stream()`
   now share the read side of the service state lock while mutations keep the
@@ -901,10 +904,13 @@ by edit class.
 
 **Why this is core-level:** Stable release users will judge the system by repeated indexing/update cost. Without a correct embedding cache, model inference dominates runtime and cost even when source changes are small.
 
-**Current status:** partially implemented. The active embedder path deduplicates identical prepared texts, stores cached vectors as `float32` buffer payloads, treats stale list-format cache entries as misses, validates active cache and changed-unit reuse with a typed embedding fingerprint, and now carries embedding refs/fingerprints into active PG retrieval rows for both code and documentation chunks. The remaining gap is propagating the same fingerprint contract across every other artifact and reuse surface that can serve vectors.
+**Current status:** partially implemented. The active embedder path deduplicates identical prepared texts, stores cached vectors as `float32` buffer payloads, treats stale list-format cache entries as misses, validates active cache and changed-unit reuse with a typed embedding fingerprint, carries embedding refs/fingerprints into active PG retrieval rows for both code and documentation chunks, persists fingerprints on vector artifacts and repository overviews, and now carries the active query embedding fingerprint into local vector search, repository-overview vector search, and PostgreSQL semantic search. Same-dimension stale vectors are filtered on those serving paths. The remaining gap is formalizing the embedder boundary and extending the same release-grade evidence across every backend/reuse surface that can serve vectors.
 
 **Current failure modes:**
-- embedding cache identity is still mostly local to `CodeEmbedder`; snapshot metadata, vector artifacts, repo-overview artifacts, and query embeddings do not yet share one first-class embedding fingerprint contract.
+- embedding cache identity is still mostly implemented through `CodeEmbedder`
+  compatibility helpers rather than a first-class service boundary, although
+  snapshot manifests, vector artifacts, repo-overview artifacts, and query
+  semantic search now share the persisted fingerprint payload.
 - PG retrieval rows now carry embedding refs/fingerprints, but backend evidence still needs to expand beyond retrieval rows into locks, migrations, outbox/redo, and relational facts.
 - the incremental manifest compatibility hash checks major embedding settings, but the same fingerprint discipline is not yet propagated uniformly across all reuse surfaces.
 - Ollama embedding uses the true `/api/embed` batch endpoint where supported and

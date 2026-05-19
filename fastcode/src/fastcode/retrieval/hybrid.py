@@ -15,7 +15,7 @@ import os
 import pickle
 import shutil
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -184,6 +184,28 @@ class HybridRetriever:
         self.last_tool_observations: list[dict[str, Any]] = []
         self.last_handoff_artifact: dict[str, Any] | None = None
         self.last_reset_recommended: bool = False
+
+    def _query_embedding_fingerprint(self) -> dict[str, Any] | None:
+        fingerprint_record = getattr(
+            self.embedder, "embedding_fingerprint_record", None
+        )
+        fingerprint = getattr(self.embedder, "embedding_fingerprint", None)
+        payload: Any = None
+        if callable(fingerprint_record):
+            try:
+                record = fingerprint_record(resolve_dimension=True)
+            except TypeError:
+                record = fingerprint_record()
+            to_payload = getattr(record, "to_payload", None)
+            payload = to_payload() if callable(to_payload) else record
+        elif callable(fingerprint):
+            try:
+                payload = fingerprint(resolve_dimension=True)
+            except TypeError:
+                payload = fingerprint()
+        if isinstance(payload, Mapping):
+            return dict(cast(Mapping[str, Any], payload))
+        return None
 
     def index_for_bm25(self, elements: list[CodeElement]):
         """
@@ -886,10 +908,12 @@ class HybridRetriever:
 
         # Stage 1: Semantic search on repository overviews (use separate storage)
         query_embedding = self.embedder.embed_text(semantic_query_text)
+        query_embedding_fingerprint = self._query_embedding_fingerprint()
         semantic_results = self.vector_store.search_repository_overviews(
             query_embedding,
             k=top_k * 2,  # Get more candidates for combining
             min_score=self.min_repo_similarity,
+            query_embedding_fingerprint=query_embedding_fingerprint,
         )
 
         # Stage 2: BM25 search on repository overviews (use separate BM25 index)
@@ -1312,6 +1336,7 @@ class HybridRetriever:
         """
         # Embed query
         query_embedding = self.embedder.embed_text(query)
+        query_embedding_fingerprint = self._query_embedding_fingerprint()
 
         if (
             self.retrieval_backend == "pg_hybrid"
@@ -1325,6 +1350,7 @@ class HybridRetriever:
                 repo_filter=repo_filter,
                 element_types=element_types,
                 top_k=top_k,
+                query_embedding_fingerprint=query_embedding_fingerprint,
             )
             if pg_results:
                 return cast(list[tuple[CodeElementMeta, float]], pg_results)
@@ -1341,6 +1367,7 @@ class HybridRetriever:
                 k=top_k * 2,  # Get more candidates for filtering
                 min_score=self.min_similarity,
                 repo_filter=repo_filter,  # Apply filter for safety
+                query_embedding_fingerprint=query_embedding_fingerprint,
             )
             self.logger.debug(
                 f"Semantic search (filtered) found {len(results)} results"
@@ -1352,6 +1379,7 @@ class HybridRetriever:
                 k=top_k,
                 min_score=self.min_similarity,
                 repo_filter=repo_filter,
+                query_embedding_fingerprint=query_embedding_fingerprint,
             )
             self.logger.debug(f"Semantic search (full) found {len(results)} results")
 

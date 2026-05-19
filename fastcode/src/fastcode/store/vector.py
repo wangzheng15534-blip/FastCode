@@ -255,6 +255,7 @@ class VectorStore:
         min_score: float | None = None,
         repo_filter: list[str] | None = None,
         element_type_filter: str | None = None,
+        query_embedding_fingerprint: Mapping[str, Any] | None = None,
     ) -> list[tuple[CodeElementMeta, float]]:
         """
         Search for similar vectors
@@ -281,6 +282,7 @@ class VectorStore:
                 min_score=min_score,
                 repo_filter=repo_filter,
                 element_type_filter=element_type_filter,
+                query_embedding_fingerprint=query_embedding_fingerprint,
             )
         if self._vector_shard_handles is not None:
             return self._search_with_vector_shard_handles(
@@ -289,6 +291,7 @@ class VectorStore:
                 min_score=min_score,
                 repo_filter=repo_filter,
                 element_type_filter=element_type_filter,
+                query_embedding_fingerprint=query_embedding_fingerprint,
             )
         if self.index is None and not self._ensure_faiss_index():
             return []
@@ -308,7 +311,13 @@ class VectorStore:
 
         # Search with larger k only for element_type_filter (not repo_filter)
         # Note: repo_filter now uses reloaded indexes, so no need to multiply k
-        search_k = k * 5 if element_type_filter else k
+        search_k = (
+            len(self.metadata)
+            if query_embedding_fingerprint is not None
+            else k * 5
+            if element_type_filter
+            else k
+        )
         search_k = min(search_k, len(self.metadata))
         distances, indices = self.index.search(query_vector, search_k)
 
@@ -329,6 +338,10 @@ class VectorStore:
                 elem_type = self.metadata[idx].get("type")
                 if elem_type != element_type_filter:
                     continue
+            if not self._metadata_embedding_fingerprint_matches(
+                self.metadata[idx], query_embedding_fingerprint
+            ):
+                continue
 
             # Convert distance to similarity score
             if self.distance_metric == "cosine":
@@ -369,15 +382,21 @@ class VectorStore:
         if normalized_embedding is None:
             raise ValueError("Repository overview embedding must be a numeric vector")
         normalized_metadata = metadata
+        embedding_fingerprint = self._repo_overview_embedding_fingerprint(
+            {"metadata": normalized_metadata},
+        )
 
         if self.in_memory:
             # Keep entirely in memory during evaluation.
-            self._in_memory_repo_overviews[repo_name] = {
+            overview_entry: dict[str, Any] = {
                 "repo_name": repo_name,
                 "content": overview_content,
                 "embedding": normalized_embedding,
                 "metadata": normalized_metadata,
             }
+            if embedding_fingerprint is not None:
+                overview_entry["embedding_fingerprint"] = embedding_fingerprint
+            self._in_memory_repo_overviews[repo_name] = overview_entry
             self.logger.info(f"Stored repository overview for {repo_name} (in-memory)")
             return
 
@@ -462,7 +481,11 @@ class VectorStore:
         )
 
     def search_repository_overviews(
-        self, query_vector: np.ndarray, k: int = 5, min_score: float | None = None
+        self,
+        query_vector: np.ndarray,
+        k: int = 5,
+        min_score: float | None = None,
+        query_embedding_fingerprint: Mapping[str, Any] | None = None,
     ) -> list[tuple[dict[str, Any], float]]:
         """
         Search specifically for repository overview elements using separate storage
@@ -494,6 +517,12 @@ class VectorStore:
         overview_payloads: list[_RepoOverviewStoredEntry] = []
         embedding_rows: list[np.ndarray] = []
         for repo_name, overview_data in overviews.items():
+            if not self._repo_overview_embedding_fingerprint_matches(
+                overview_data,
+                query_embedding_fingerprint,
+                metadata_json=overview_data.get("metadata_json"),
+            ):
+                continue
             embedding = as_float32_vector(
                 overview_data.get("embedding"), copy_policy="view"
             )
@@ -1282,6 +1311,7 @@ class VectorStore:
         min_score: float | None,
         repo_filter: list[str] | None,
         element_type_filter: str | None,
+        query_embedding_fingerprint: Mapping[str, Any] | None,
     ) -> list[tuple[CodeElementMeta, float]]:
         if k <= 0 or vector_rows.ndim != 2 or vector_rows.shape[0] == 0:
             return []
@@ -1317,6 +1347,15 @@ class VectorStore:
                     for idx in candidate_indexes
                 ]
             ]
+        if query_embedding_fingerprint is not None:
+            candidate_indexes = candidate_indexes[
+                [
+                    self._metadata_embedding_fingerprint_matches(
+                        self.metadata[int(idx)], query_embedding_fingerprint
+                    )
+                    for idx in candidate_indexes
+                ]
+            ]
         if candidate_indexes.size == 0:
             return []
 
@@ -1340,6 +1379,7 @@ class VectorStore:
         min_score: float | None,
         repo_filter: list[str] | None,
         element_type_filter: str | None,
+        query_embedding_fingerprint: Mapping[str, Any] | None,
     ) -> list[tuple[CodeElementMeta, float]]:
         if k <= 0 or self.dimension is None:
             return []
@@ -1382,6 +1422,10 @@ class VectorStore:
                 if allowed_repos and metadata.get("repo_name") not in allowed_repos:
                     continue
                 if element_type_filter and metadata.get("type") != element_type_filter:
+                    continue
+                if not self._metadata_embedding_fingerprint_matches(
+                    metadata, query_embedding_fingerprint
+                ):
                     continue
                 score = float(scores[local_index])
                 if min_score is not None and score < min_score:
@@ -1491,6 +1535,32 @@ class VectorStore:
         if isinstance(nested, Mapping):
             return nested.get("embedding_fingerprint")
         return None
+
+    @staticmethod
+    def _embedding_fingerprint_matches(
+        stored: Any,
+        expected: Mapping[str, Any] | None,
+    ) -> bool:
+        if expected is None:
+            return True
+        if not isinstance(stored, Mapping):
+            return False
+        stored_payload = cast(Mapping[str, Any], stored)
+        for field_name, expected_value in expected.items():
+            if stored_payload.get(field_name) != expected_value:
+                return False
+        return True
+
+    @classmethod
+    def _metadata_embedding_fingerprint_matches(
+        cls,
+        meta: Mapping[str, Any],
+        expected: Mapping[str, Any] | None,
+    ) -> bool:
+        return cls._embedding_fingerprint_matches(
+            cls._metadata_embedding_fingerprint_value(meta),
+            expected,
+        )
 
     @classmethod
     def _embedding_fingerprint_from_metadata(
@@ -2940,6 +3010,22 @@ class VectorStore:
             if isinstance(value, Mapping):
                 return dict(cast(Mapping[str, Any], value))
         return None
+
+    def _repo_overview_embedding_fingerprint_matches(
+        self,
+        entry: Mapping[str, Any],
+        expected: Mapping[str, Any] | None,
+        *,
+        metadata_json: str | None = None,
+    ) -> bool:
+        return self._embedding_fingerprint_matches(
+            self._repo_overview_embedding_fingerprint(
+                entry,
+                metadata_json=metadata_json,
+                include_metadata=expected is not None,
+            ),
+            expected,
+        )
 
     def _load_repo_overview_entries(
         self,

@@ -184,13 +184,57 @@ class PgRetrievalStore:
             return None
         return cast(dict[str, Any], parsed) if isinstance(parsed, dict) else None
 
+    @staticmethod
+    def _embedding_fingerprint_matches(
+        metadata: Mapping[str, Any],
+        expected: Mapping[str, Any] | None,
+    ) -> bool:
+        if expected is None:
+            return True
+        fingerprint = metadata.get("embedding_fingerprint")
+        if not isinstance(fingerprint, Mapping):
+            nested = metadata.get("metadata")
+            if isinstance(nested, Mapping):
+                nested_metadata = cast(Mapping[str, Any], nested)
+                fingerprint = nested_metadata.get("embedding_fingerprint")
+        if not isinstance(fingerprint, Mapping):
+            return False
+        stored = cast(Mapping[str, Any], fingerprint)
+        for field_name, expected_value in expected.items():
+            if stored.get(field_name) != expected_value:
+                return False
+        return True
+
+    @staticmethod
+    def _embedding_fingerprint_sql_filter(
+        expected: Mapping[str, Any] | None,
+    ) -> tuple[str | None, str | None, str | None]:
+        if expected is None:
+            return (None, None, None)
+        fingerprint_json = json.dumps(
+            {"embedding_fingerprint": dict(expected)},
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        return (fingerprint_json, fingerprint_json, fingerprint_json)
+
     @classmethod
-    def _metadata_score_rows(cls, rows: Any) -> list[tuple[dict[str, Any], float]]:
+    def _metadata_score_rows(
+        cls,
+        rows: Any,
+        *,
+        query_embedding_fingerprint: Mapping[str, Any] | None = None,
+    ) -> list[tuple[dict[str, Any], float]]:
         out: list[tuple[dict[str, Any], float]] = []
         for row in rows:
             raw_metadata = cls._row_value(row, 0, "metadata_json")
             metadata = cls._decode_metadata(raw_metadata)
             if metadata is None:
+                continue
+            if not cls._embedding_fingerprint_matches(
+                metadata, query_embedding_fingerprint
+            ):
                 continue
             raw_score = cls._row_value(row, 1, "score")
             out.append((metadata, float(raw_score or 0.0)))
@@ -542,11 +586,16 @@ class PgRetrievalStore:
         repo_filter: list[str] | None = None,
         element_types: list[str] | None = None,
         top_k: int = 20,
+        query_embedding_fingerprint: Mapping[str, Any] | None = None,
     ) -> list[tuple[dict[str, Any], float]]:
         query_vector = self._vector_array(query_embedding)
         if not self.enabled or query_vector is None or top_k <= 0:
             return []
         vector_param = self._vector_parameter(query_vector)
+        fetch_limit = top_k if query_embedding_fingerprint is None else top_k * 8
+        fingerprint_params = self._embedding_fingerprint_sql_filter(
+            query_embedding_fingerprint
+        )
 
         with self.db_runtime.connect() as conn:
             cur = conn.cursor()
@@ -559,6 +608,11 @@ class PgRetrievalStore:
                         WHERE snapshot_id=%s
                           AND repo_name = ANY(%s)
                           AND element_type = ANY(%s)
+                          AND (
+                            %s::jsonb IS NULL
+                            OR metadata_json @> %s::jsonb
+                            OR (metadata_json->'metadata') @> %s::jsonb
+                          )
                         ORDER BY embedding <=> %s::vector
                         LIMIT %s
                         """,
@@ -567,8 +621,9 @@ class PgRetrievalStore:
                             snapshot_id,
                             repo_filter,
                             element_types,
+                            *fingerprint_params,
                             vector_param,
-                            top_k,
+                            fetch_limit,
                         ),
                     )
                 elif repo_filter:
@@ -578,6 +633,11 @@ class PgRetrievalStore:
                         FROM embedding_vectors
                         WHERE snapshot_id=%s
                           AND repo_name = ANY(%s)
+                          AND (
+                            %s::jsonb IS NULL
+                            OR metadata_json @> %s::jsonb
+                            OR (metadata_json->'metadata') @> %s::jsonb
+                          )
                         ORDER BY embedding <=> %s::vector
                         LIMIT %s
                         """,
@@ -585,8 +645,9 @@ class PgRetrievalStore:
                             vector_param,
                             snapshot_id,
                             repo_filter,
+                            *fingerprint_params,
                             vector_param,
-                            top_k,
+                            fetch_limit,
                         ),
                     )
                 elif element_types:
@@ -596,6 +657,11 @@ class PgRetrievalStore:
                         FROM embedding_vectors
                         WHERE snapshot_id=%s
                           AND element_type = ANY(%s)
+                          AND (
+                            %s::jsonb IS NULL
+                            OR metadata_json @> %s::jsonb
+                            OR (metadata_json->'metadata') @> %s::jsonb
+                          )
                         ORDER BY embedding <=> %s::vector
                         LIMIT %s
                         """,
@@ -603,8 +669,9 @@ class PgRetrievalStore:
                             vector_param,
                             snapshot_id,
                             element_types,
+                            *fingerprint_params,
                             vector_param,
-                            top_k,
+                            fetch_limit,
                         ),
                     )
                 else:
@@ -613,12 +680,26 @@ class PgRetrievalStore:
                         SELECT metadata_json, (1 - (embedding <=> %s::vector)) AS score
                         FROM embedding_vectors
                         WHERE snapshot_id=%s
+                          AND (
+                            %s::jsonb IS NULL
+                            OR metadata_json @> %s::jsonb
+                            OR (metadata_json->'metadata') @> %s::jsonb
+                          )
                         ORDER BY embedding <=> %s::vector
                         LIMIT %s
                         """,
-                        (vector_param, snapshot_id, vector_param, top_k),
+                        (
+                            vector_param,
+                            snapshot_id,
+                            *fingerprint_params,
+                            vector_param,
+                            fetch_limit,
+                        ),
                     )
-                return self._metadata_score_rows(cur.fetchall())
+                return self._metadata_score_rows(
+                    cur.fetchall(),
+                    query_embedding_fingerprint=query_embedding_fingerprint,
+                )[:top_k]
             except Exception as exc:
                 self.logger.debug(
                     "pgvector query failed, falling back to client-side cosine: %s", exc
@@ -630,6 +711,7 @@ class PgRetrievalStore:
                     repo_filter=repo_filter,
                     element_types=element_types,
                     top_k=top_k,
+                    query_embedding_fingerprint=query_embedding_fingerprint,
                 )
 
     def _semantic_search_fallback(
@@ -641,6 +723,7 @@ class PgRetrievalStore:
         repo_filter: list[str] | None = None,
         element_types: list[str] | None = None,
         top_k: int = 20,
+        query_embedding_fingerprint: Mapping[str, Any] | None = None,
     ) -> list[tuple[dict[str, Any], float]]:
         # Fallback: compute cosine with embedding_arr client-side. Keep metadata
         # raw until ranking picks the rows that must cross the Python boundary.
@@ -717,6 +800,12 @@ class PgRetrievalStore:
                 embedding = self._vector_array(self._row_value(row, 2, "embedding_arr"))
             if embedding is None or embedding.size != query_vector.size:
                 continue
+            if query_embedding_fingerprint is not None:
+                metadata = self._decode_metadata(raw_metadata)
+                if metadata is None or not self._embedding_fingerprint_matches(
+                    metadata, query_embedding_fingerprint
+                ):
+                    continue
             raw_metadata_by_index.append(raw_metadata)
             vectors.append(embedding)
 
@@ -748,6 +837,10 @@ class PgRetrievalStore:
                 meta_repo = metadata.get("repo_name")
                 if meta_repo not in allowed_repos:
                     continue
+            if not self._embedding_fingerprint_matches(
+                metadata, query_embedding_fingerprint
+            ):
+                continue
             out.append((metadata, float(scores[index])))
             if len(out) >= top_k:
                 break

@@ -171,6 +171,47 @@ def test_adaptive_fusion_entropy_signal_affects_alpha_and_k():
     assert k_code_high > k_code_low
 
 
+def test_semantic_search_passes_query_embedding_fingerprint_to_vector_store():
+    fingerprint = {
+        "version": 2,
+        "provider": "test",
+        "model": "current",
+        "dimension": 2,
+        "text_schema_version": 1,
+    }
+    captured: dict[str, Any] = {}
+
+    class _Embedder:
+        def embed_text(self, query: str) -> np.ndarray:
+            assert query == "find alpha"
+            return np.asarray([1.0, 0.0], dtype=np.float32)
+
+        def embedding_fingerprint(
+            self, *, resolve_dimension: bool = False
+        ) -> dict[str, Any]:
+            assert resolve_dimension is True
+            return fingerprint
+
+    class _VectorStore:
+        def search(self, query_embedding: np.ndarray, **kwargs: Any) -> list[Any]:
+            captured["query_embedding"] = query_embedding
+            captured["kwargs"] = kwargs
+            return [({"id": "elem:alpha", "repo_name": "repo"}, 1.0)]
+
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.embedder = _Embedder()
+    retriever.vector_store = _VectorStore()
+    retriever.filtered_vector_store = None
+    retriever.min_similarity = 0.1
+
+    results = retriever._semantic_search("find alpha", top_k=3)
+
+    assert results[0][0]["id"] == "elem:alpha"
+    assert captured["kwargs"]["query_embedding_fingerprint"] == fingerprint
+    assert captured["kwargs"]["k"] == 3
+
+
 # --- Doc channel projection tests ---
 
 

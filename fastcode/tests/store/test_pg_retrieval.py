@@ -26,6 +26,18 @@ class _FakeCursor:
         return list(self.rows)
 
 
+class _StaticCursor:
+    def __init__(self, rows: Any) -> None:
+        self.rows = rows
+        self.calls: list[tuple[Any, Any]] = []
+
+    def execute(self, sql: Any, params: Any = ()) -> None:
+        self.calls.append((sql, params))
+
+    def fetchall(self) -> Any:
+        return list(self.rows)
+
+
 class _RecordingCursor:
     def __init__(self) -> None:
         self.calls: list[tuple[Any, Any]] = []
@@ -124,6 +136,114 @@ def test_semantic_fallback_only_materializes_ranked_metadata_double():
     )
 
     assert out == [({"id": "best", "type": "function", "repo_name": "repoA"}, 1.0)]
+
+
+def test_semantic_search_filters_same_dimension_stale_embedding_fingerprint_double():
+    stale_fingerprint = {
+        "version": 2,
+        "provider": "test",
+        "model": "old",
+        "dimension": 2,
+        "text_schema_version": 1,
+    }
+    current_fingerprint = {**stale_fingerprint, "model": "current"}
+    cursor = _StaticCursor(
+        [
+            (
+                json.dumps(
+                    {
+                        "id": "stale",
+                        "type": "function",
+                        "repo_name": "repoA",
+                        "embedding_fingerprint": stale_fingerprint,
+                    }
+                ),
+                0.99,
+            ),
+            (
+                json.dumps(
+                    {
+                        "id": "current",
+                        "type": "function",
+                        "repo_name": "repoA",
+                        "metadata": {
+                            "embedding_fingerprint": current_fingerprint,
+                        },
+                    }
+                ),
+                0.2,
+            ),
+        ]
+    )
+    store = PgRetrievalStore.__new__(PgRetrievalStore)
+    store.enabled = True
+    store.logger = logging.getLogger(__name__)
+    store.db_runtime = _FakeDBRuntime(_FakeConn(cursor))
+
+    out = store.semantic_search(
+        snapshot_id="snap:1",
+        query_embedding=np.asarray([1.0, 0.0], dtype=np.float32),
+        top_k=1,
+        query_embedding_fingerprint=current_fingerprint,
+    )
+
+    assert [metadata["id"] for metadata, _score in out] == ["current"]
+
+
+def test_semantic_fallback_filters_stale_embedding_fingerprint_double():
+    stale_fingerprint = {
+        "version": 2,
+        "provider": "test",
+        "model": "old",
+        "dimension": 2,
+        "text_schema_version": 1,
+    }
+    current_fingerprint = {**stale_fingerprint, "model": "current"}
+    rows = [
+        (
+            json.dumps(
+                {
+                    "id": "stale",
+                    "type": "function",
+                    "repo_name": "repoA",
+                    "embedding_fingerprint": stale_fingerprint,
+                }
+            ),
+            None,
+            [1.0, 0.0],
+            "repoA",
+            "function",
+        ),
+        (
+            json.dumps(
+                {
+                    "id": "current",
+                    "type": "function",
+                    "repo_name": "repoA",
+                    "metadata": {
+                        "embedding_fingerprint": current_fingerprint,
+                    },
+                }
+            ),
+            None,
+            [0.0, 1.0],
+            "repoA",
+            "function",
+        ),
+    ]
+    store = PgRetrievalStore.__new__(PgRetrievalStore)
+    store.enabled = True
+    store.logger = logging.getLogger(__name__)
+    store.db_runtime = _FakeDBRuntime(_FakeConn(_FakeCursor(rows)))
+
+    out = store.semantic_search(
+        snapshot_id="snap:1",
+        query_embedding=np.asarray([1.0, 0.0], dtype=np.float32),
+        top_k=1,
+        query_embedding_fingerprint=current_fingerprint,
+    )
+
+    assert [metadata["id"] for metadata, _score in out] == ["current"]
 
 
 def test_upsert_elements_keeps_embedding_out_of_metadata_json_double():

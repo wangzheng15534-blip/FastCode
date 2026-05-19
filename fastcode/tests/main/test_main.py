@@ -1220,17 +1220,22 @@ def test_context_bundle_facade_reads_renders_expands_and_activates() -> None:
     assert saved_activations[0].reason == "focused_answer"
 
 
-def test_snapshot_artifact_handle_loader_caches_by_artifact_key(
+def _snapshot_artifact_handle_pipeline(
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    *,
+    cache_size: int = 2,
+) -> tuple[Any, dict[str, list[str]]]:
     import threading
     from collections import OrderedDict
 
     import fastcode.indexing.pipeline as pipeline_module
 
-    vector_loads: list[str] = []
-    bm25_loads: list[str] = []
-    ir_graph_loads: list[str] = []
+    loads: dict[str, list[str]] = {
+        "vector": [],
+        "bm25": [],
+        "graph": [],
+        "ir_graph": [],
+    }
 
     class FakeVectorStore:
         def __init__(self, config: dict[str, Any]) -> None:
@@ -1256,7 +1261,7 @@ def test_snapshot_artifact_handle_loader_caches_by_artifact_key(
             ]
 
         def load(self, artifact_key: str) -> bool:
-            vector_loads.append(artifact_key)
+            loads["vector"].append(artifact_key)
             return True
 
     class FakeGraphBuilder:
@@ -1264,6 +1269,7 @@ def test_snapshot_artifact_handle_loader_caches_by_artifact_key(
             self.config = config
 
         def load(self, artifact_key: str) -> bool:
+            loads["graph"].append(artifact_key)
             return True
 
     class FakeRetriever:
@@ -1284,7 +1290,7 @@ def test_snapshot_artifact_handle_loader_caches_by_artifact_key(
             self.store = store
 
         def load_bm25(self, artifact_key: str) -> bool:
-            bm25_loads.append(artifact_key)
+            loads["bm25"].append(artifact_key)
             return True
 
         def set_ir_graphs(self, ir_graphs: Any, snapshot_id: str | None = None) -> None:
@@ -1308,35 +1314,89 @@ def test_snapshot_artifact_handle_loader_caches_by_artifact_key(
     monkeypatch.setattr(pipeline_module, "HybridRetriever", FakeRetriever)
 
     pipeline = pipeline_module.IndexPipeline.__new__(pipeline_module.IndexPipeline)
-    pipeline.config = {"query": {"snapshot_handle_cache_size": 2}}
+    pipeline.config = {"query": {"snapshot_handle_cache_size": cache_size}}
     pipeline.embedder = object()
     pipeline.loader = SimpleNamespace(repo_path="/tmp/repo")
 
     def _load_ir_graphs(snapshot_id: str) -> str:
-        ir_graph_loads.append(snapshot_id)
-        return "ir-graphs"
+        loads["ir_graph"].append(snapshot_id)
+        return f"ir-graphs:{snapshot_id}"
 
     pipeline.snapshot_store = SimpleNamespace(
         load_ir_graphs=_load_ir_graphs,
-        find_by_artifact_key=lambda artifact_key: {"snapshot_id": "snap:1"},
+        find_by_artifact_key=lambda artifact_key: {
+            "snapshot_id": artifact_key.replace("art:", "snap:")
+        },
     )
     pipeline.pg_retrieval_store = None
     pipeline._artifact_lock = threading.RLock()
     pipeline._artifact_handle_cache = OrderedDict()
+    return pipeline, loads
+
+
+def test_snapshot_artifact_handle_loader_caches_by_artifact_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline, loads = _snapshot_artifact_handle_pipeline(monkeypatch)
 
     first = pipeline.load_snapshot_artifacts_handle(
-        "snap_cache",
+        "art:cache",
         snapshot_id="snap:1",
     )
     second = pipeline.load_snapshot_artifacts_handle(
-        "snap_cache",
+        "art:cache",
         snapshot_id="snap:1",
     )
 
     assert first is second
-    assert vector_loads == ["snap_cache"]
-    assert bm25_loads == ["snap_cache"]
-    assert ir_graph_loads == []
+    assert loads["vector"] == ["art:cache"]
+    assert loads["bm25"] == ["art:cache"]
+    assert loads["graph"] == ["art:cache"]
+    assert loads["ir_graph"] == []
     assert first.retriever.snapshot_id == "snap:1"
-    assert first.retriever.ir_graph_loader("snap:1") == "ir-graphs"
-    assert ir_graph_loads == ["snap:1"]
+    assert first.retriever.ir_graph_loader("snap:1") == "ir-graphs:snap:1"
+    assert loads["ir_graph"] == ["snap:1"]
+
+
+def test_snapshot_artifact_handle_cache_is_bounded_lru(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline, loads = _snapshot_artifact_handle_pipeline(monkeypatch, cache_size=2)
+
+    first = pipeline.load_snapshot_artifacts_handle("art:one", snapshot_id="snap:one")
+    second = pipeline.load_snapshot_artifacts_handle("art:two", snapshot_id="snap:two")
+    refreshed_first = pipeline.load_snapshot_artifacts_handle(
+        "art:one",
+        snapshot_id="snap:one",
+    )
+    third = pipeline.load_snapshot_artifacts_handle("art:three", snapshot_id="snap:3")
+    reloaded_second = pipeline.load_snapshot_artifacts_handle(
+        "art:two",
+        snapshot_id="snap:two",
+    )
+
+    assert first is refreshed_first
+    assert second is not reloaded_second
+    assert third is not None
+    assert loads["vector"] == ["art:one", "art:two", "art:three", "art:two"]
+    assert list(pipeline._artifact_handle_cache) == ["art:three", "art:two"]
+
+
+def test_snapshot_artifact_handle_cache_isolates_distinct_snapshot_handles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline, loads = _snapshot_artifact_handle_pipeline(monkeypatch)
+
+    first = pipeline.load_snapshot_artifacts_handle("art:one", snapshot_id="snap:one")
+    second = pipeline.load_snapshot_artifacts_handle("art:two", snapshot_id="snap:two")
+
+    assert first is not second
+    assert first.snapshot_id == "snap:one"
+    assert second.snapshot_id == "snap:two"
+    assert first.retriever is not second.retriever
+    assert first.retriever.snapshot_id == "snap:one"
+    assert second.retriever.snapshot_id == "snap:two"
+    assert first.retriever.ir_graph_loader("snap:one") == "ir-graphs:snap:one"
+    assert second.retriever.ir_graph_loader("snap:two") == "ir-graphs:snap:two"
+    assert loads["vector"] == ["art:one", "art:two"]
+    assert loads["ir_graph"] == ["snap:one", "snap:two"]

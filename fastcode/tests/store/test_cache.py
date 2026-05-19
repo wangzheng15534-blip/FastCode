@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -166,8 +167,15 @@ def test_dialogue_record_accessors_use_explicit_serializers(
             "cache manager must not call DialogueSessionRecord.to_dict()"
         )
 
+    def _boom_from_dict(cls: type[object], _payload: dict[str, Any]) -> object:
+        raise AssertionError(f"cache manager must not call {cls.__name__}.from_dict()")
+
     monkeypatch.setattr(DialogueTurnRecord, "to_dict", _boom_turn)
     monkeypatch.setattr(DialogueSessionRecord, "to_dict", _boom_session)
+    monkeypatch.setattr(DialogueTurnRecord, "from_dict", classmethod(_boom_from_dict))
+    monkeypatch.setattr(
+        DialogueSessionRecord, "from_dict", classmethod(_boom_from_dict)
+    )
 
     try:
         assert manager.save_dialogue_turn(
@@ -261,9 +269,17 @@ def test_agent_context_records_roundtrip_and_delete_with_session(
             "cache manager must not call HandoffArtifactRecord.to_dict()"
         )
 
+    def _boom_from_dict(cls: type[object], _payload: dict[str, Any]) -> object:
+        raise AssertionError(f"cache manager must not call {cls.__name__}.from_dict()")
+
     monkeypatch.setattr(WorkingMemoryRecord, "to_dict", _boom_working_memory)
     monkeypatch.setattr(TurnJournalRecord, "to_dict", _boom_journal)
     monkeypatch.setattr(HandoffArtifactRecord, "to_dict", _boom_handoff)
+    monkeypatch.setattr(WorkingMemoryRecord, "from_dict", classmethod(_boom_from_dict))
+    monkeypatch.setattr(TurnJournalRecord, "from_dict", classmethod(_boom_from_dict))
+    monkeypatch.setattr(
+        HandoffArtifactRecord, "from_dict", classmethod(_boom_from_dict)
+    )
 
     try:
         assert manager.save_dialogue_turn(

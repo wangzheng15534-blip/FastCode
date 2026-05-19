@@ -126,6 +126,54 @@ class CacheManager:
         }
 
     @staticmethod
+    def _dict_list_payload(value: Any) -> list[dict[str, Any]]:
+        if isinstance(value, list):
+            items = cast(list[Any], value)
+        elif isinstance(value, tuple):
+            items = list(cast(tuple[Any, ...], value))
+        else:
+            return []
+        payload: list[dict[str, Any]] = []
+        for item in items:
+            if isinstance(item, dict):
+                payload.append(
+                    {
+                        str(key): sub_item
+                        for key, sub_item in cast(dict[Any, Any], item).items()
+                    }
+                )
+        return payload
+
+    @staticmethod
+    def _string_key_mapping_payload(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        return {str(key): item for key, item in cast(dict[Any, Any], value).items()}
+
+    @staticmethod
+    def _optional_string_payload(value: Any) -> str | None:
+        return str(value) if value is not None else None
+
+    @staticmethod
+    def _float_payload(value: Any) -> float:
+        return float(value) if isinstance(value, (int, float)) else 0.0
+
+    @staticmethod
+    def _dialogue_turn_record(payload: dict[str, Any]) -> DialogueTurnRecord:
+        return DialogueTurnRecord(
+            session_id=str(payload.get("session_id") or ""),
+            turn_number=int(payload.get("turn_number") or 0),
+            timestamp=CacheManager._float_payload(payload.get("timestamp")),
+            query=str(payload.get("query") or ""),
+            answer=str(payload.get("answer") or ""),
+            summary=str(payload.get("summary") or ""),
+            retrieved_elements=CacheManager._dict_list_payload(
+                payload.get("retrieved_elements")
+            ),
+            metadata=CacheManager._string_key_mapping_payload(payload.get("metadata")),
+        )
+
+    @staticmethod
     def _dialogue_session_payload(record: DialogueSessionRecord) -> dict[str, Any]:
         return {
             "session_id": record.session_id,
@@ -134,6 +182,16 @@ class CacheManager:
             "last_updated": record.last_updated,
             "multi_turn": record.multi_turn,
         }
+
+    @staticmethod
+    def _dialogue_session_record(payload: dict[str, Any]) -> DialogueSessionRecord:
+        return DialogueSessionRecord(
+            session_id=str(payload.get("session_id") or ""),
+            created_at=CacheManager._float_payload(payload.get("created_at")),
+            total_turns=int(payload.get("total_turns") or 0),
+            last_updated=CacheManager._float_payload(payload.get("last_updated")),
+            multi_turn=bool(payload.get("multi_turn", False)),
+        )
 
     @staticmethod
     def _turn_journal_payload(record: TurnJournalRecord) -> dict[str, Any]:
@@ -146,6 +204,22 @@ class CacheManager:
             "payload_json": record.payload_json,
             "created_at": record.created_at,
         }
+
+    @staticmethod
+    def _turn_journal_record(payload: dict[str, Any]) -> TurnJournalRecord:
+        return TurnJournalRecord(
+            session_id=str(payload.get("session_id") or ""),
+            turn_number=int(payload.get("turn_number") or 0),
+            snapshot_id=CacheManager._optional_string_payload(
+                payload.get("snapshot_id")
+            ),
+            artifact_key=CacheManager._optional_string_payload(
+                payload.get("artifact_key")
+            ),
+            compiler_fingerprint=str(payload.get("compiler_fingerprint") or ""),
+            payload_json=str(payload.get("payload_json") or ""),
+            created_at=CacheManager._float_payload(payload.get("created_at")),
+        )
 
     @staticmethod
     def _working_memory_payload(record: WorkingMemoryRecord) -> dict[str, Any]:
@@ -164,6 +238,26 @@ class CacheManager:
         }
 
     @staticmethod
+    def _working_memory_record(payload: dict[str, Any]) -> WorkingMemoryRecord:
+        return WorkingMemoryRecord(
+            session_id=str(payload.get("session_id") or ""),
+            turn_number=int(payload.get("turn_number") or 0),
+            snapshot_id=CacheManager._optional_string_payload(
+                payload.get("snapshot_id")
+            ),
+            artifact_key=CacheManager._optional_string_payload(
+                payload.get("artifact_key")
+            ),
+            compiler_fingerprint=str(payload.get("compiler_fingerprint") or ""),
+            payload_json=str(payload.get("payload_json") or ""),
+            stable_fcx=str(payload.get("stable_fcx") or ""),
+            turn_fcx=str(payload.get("turn_fcx") or ""),
+            obs_fcx=str(payload.get("obs_fcx") or ""),
+            full_fcx=str(payload.get("full_fcx") or ""),
+            created_at=CacheManager._float_payload(payload.get("created_at")),
+        )
+
+    @staticmethod
     def _handoff_artifact_payload(record: HandoffArtifactRecord) -> dict[str, Any]:
         return {
             "artifact_id": record.artifact_id,
@@ -176,6 +270,22 @@ class CacheManager:
             "full_fcx": record.full_fcx,
             "created_at": record.created_at,
         }
+
+    @staticmethod
+    def _handoff_artifact_record(payload: dict[str, Any]) -> HandoffArtifactRecord:
+        return HandoffArtifactRecord(
+            artifact_id=str(payload.get("artifact_id") or ""),
+            session_id=str(payload.get("session_id") or ""),
+            turn_number=int(payload.get("turn_number") or 0),
+            snapshot_id=CacheManager._optional_string_payload(
+                payload.get("snapshot_id")
+            ),
+            compiler_fingerprint=str(payload.get("compiler_fingerprint") or ""),
+            mode=str(payload.get("mode") or ""),
+            payload_json=str(payload.get("payload_json") or ""),
+            full_fcx=str(payload.get("full_fcx") or ""),
+            created_at=CacheManager._float_payload(payload.get("created_at")),
+        )
 
     @staticmethod
     def _embedding_cache_payload(value: dict[str, Any]) -> bytes:
@@ -491,7 +601,7 @@ class CacheManager:
         value = self.get(key)
         if not isinstance(value, dict):
             return None
-        return DialogueTurnRecord.from_dict(cast(dict[str, Any], value))
+        return self._dialogue_turn_record(cast(dict[str, Any], value))
 
     def get_dialogue_history_records(
         self, session_id: str, max_turns: int | None = None
@@ -607,7 +717,7 @@ class CacheManager:
         value = self.get(key)
         if not isinstance(value, dict):
             return None
-        return TurnJournalRecord.from_dict(cast(dict[str, Any], value))
+        return self._turn_journal_record(cast(dict[str, Any], value))
 
     def get_turn_journal_records(
         self, session_id: str, max_turns: int | None = None
@@ -654,7 +764,7 @@ class CacheManager:
         value = self.get(key)
         if not isinstance(value, dict):
             return None
-        return WorkingMemoryRecord.from_dict(cast(dict[str, Any], value))
+        return self._working_memory_record(cast(dict[str, Any], value))
 
     def get_working_memory_records(
         self, session_id: str, max_turns: int | None = None
@@ -709,7 +819,7 @@ class CacheManager:
         value = self.get(key)
         if not isinstance(value, dict):
             return None
-        return HandoffArtifactRecord.from_dict(cast(dict[str, Any], value))
+        return self._handoff_artifact_record(cast(dict[str, Any], value))
 
     def list_handoff_artifact_records(
         self, session_id: str | None = None
@@ -732,7 +842,7 @@ class CacheManager:
                 value = self.get(key)
                 if not isinstance(value, dict):
                     continue
-                record = HandoffArtifactRecord.from_dict(cast(dict[str, Any], value))
+                record = self._handoff_artifact_record(cast(dict[str, Any], value))
                 if session_id is None or record.session_id == session_id:
                     records.append(record)
             records.sort(key=lambda record: record.created_at, reverse=True)
@@ -788,7 +898,7 @@ class CacheManager:
         value = self.get(key)
         if not isinstance(value, dict):
             return None
-        return DialogueSessionRecord.from_dict(cast(dict[str, Any], value))
+        return self._dialogue_session_record(cast(dict[str, Any], value))
 
     def _get_session_index(self, session_id: str) -> dict[str, Any] | None:
         """Get session index"""
@@ -875,7 +985,7 @@ class CacheManager:
                         session_data = self.get(key)
                         if isinstance(session_data, dict):
                             sessions.append(
-                                DialogueSessionRecord.from_dict(
+                                self._dialogue_session_record(
                                     cast(dict[str, Any], session_data)
                                 )
                             )
@@ -888,7 +998,7 @@ class CacheManager:
                     )
                     if isinstance(session_data, dict):
                         sessions.append(
-                            DialogueSessionRecord.from_dict(
+                            self._dialogue_session_record(
                                 cast(dict[str, Any], session_data)
                             )
                         )

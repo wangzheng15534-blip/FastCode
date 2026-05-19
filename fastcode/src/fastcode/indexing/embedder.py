@@ -11,11 +11,11 @@ import logging
 import platform
 import threading
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 if TYPE_CHECKING:
     from ..ir.element import CodeElementMeta
@@ -55,6 +55,23 @@ class EmbeddingFingerprint:
 
     def stable_json(self) -> str:
         return json.dumps(self.to_payload(), sort_keys=True, separators=(",", ":"))
+
+
+@runtime_checkable
+class EmbeddingService(Protocol):
+    """Boundary contract for prepared-text embedding and reuse decisions."""
+
+    def prepare_text(self, element: CodeElementMeta) -> str: ...
+
+    def fingerprint(self, *, resolve_dimension: bool = False) -> dict[str, Any]: ...
+
+    def embed_many(self, texts: Sequence[str]) -> np.ndarray: ...
+
+    def embed_elements(
+        self,
+        elements: Sequence[CodeElementMeta],
+        reuse_index: Mapping[str, CodeElementMeta] | None = None,
+    ) -> list[CodeElementMeta]: ...
 
 
 class CodeEmbedder:
@@ -294,6 +311,42 @@ class CodeEmbedder:
             resolve_dimension=resolve_dimension
         ).to_payload()
 
+    def fingerprint(self, *, resolve_dimension: bool = False) -> dict[str, Any]:
+        """Return the service-level embedding identity payload."""
+        return self.embedding_fingerprint(resolve_dimension=resolve_dimension)
+
+    def prepare_text(self, element: CodeElementMeta) -> str:
+        """
+        Prepare code element text for embedding.
+
+        This is the public service boundary equivalent of the historical
+        ``_prepare_code_text`` helper.
+        """
+        parts: list[str] = []
+
+        if "type" in element:
+            parts.append(f"Type: {element['type']}")
+
+        if "name" in element:
+            parts.append(f"Name: {element['name']}")
+
+        if "signature" in element:
+            parts.append(f"Signature: {element['signature']}")
+
+        if element.get("docstring"):
+            parts.append(f"Documentation: {element['docstring']}")
+
+        if summary := element.get("summary"):
+            parts.append(summary)
+
+        if "code" in element:
+            code = element["code"]
+            if len(code) > 10000:
+                code = code[:10000] + "..."
+            parts.append(f"Code:\n{code}")
+
+        return "\n".join(parts)
+
     def embed_text(self, text: str) -> np.ndarray:
         """
         Generate embedding for a single text
@@ -309,6 +362,10 @@ class CodeEmbedder:
     def embed_batch(self, texts: list[str]) -> np.ndarray:
         """Generate embeddings for a batch of texts with cache reuse."""
         return self._embed_texts_with_cache(texts)
+
+    def embed_many(self, texts: Sequence[str]) -> np.ndarray:
+        """Generate embeddings for prepared texts through the service boundary."""
+        return self._embed_texts_with_cache(list(texts))
 
     def _embed_batch_uncached(self, texts: list[str]) -> np.ndarray:
         """
@@ -618,6 +675,14 @@ class CodeEmbedder:
     def embed_code_elements(
         self, elements: list[CodeElementMeta]
     ) -> list[CodeElementMeta]:
+        """Compatibility wrapper for callers not yet migrated to embed_elements."""
+        return self.embed_elements(elements)
+
+    def embed_elements(
+        self,
+        elements: Sequence[CodeElementMeta],
+        reuse_index: Mapping[str, CodeElementMeta] | None = None,
+    ) -> list[CodeElementMeta]:
         """
         Generate embeddings for code elements (functions, classes, etc.)
 
@@ -630,30 +695,154 @@ class CodeEmbedder:
         if not elements:
             return []
 
-        # Prepare texts for embedding
-        texts = [self._prepare_code_text(elem) for elem in elements]
+        mutable_elements = list(elements)
+        texts = [self.prepare_text(elem) for elem in mutable_elements]
 
-        # Generate embeddings
         self.logger.info(f"Generating embeddings for {len(texts)} code elements")
-        embeddings = self._embed_texts_with_cache(texts)
+
+        missing_indexes: list[int] = []
+        current_fingerprint = self.fingerprint(resolve_dimension=False)
+        reuse_hits = 0
+        for index, (elem, text) in enumerate(zip(mutable_elements, texts, strict=True)):
+            if self._try_reuse_element_embedding(
+                elem,
+                text=text,
+                reuse_index=reuse_index,
+                current_fingerprint=current_fingerprint,
+            ):
+                reuse_hits += 1
+                continue
+            missing_indexes.append(index)
+
+        if missing_indexes:
+            miss_texts = [texts[index] for index in missing_indexes]
+            embeddings = self.embed_many(miss_texts)
+            fingerprint_payload = self.fingerprint(resolve_dimension=True)
+            for index, embedding in zip(missing_indexes, embeddings, strict=True):
+                self._attach_embedding_to_element(
+                    mutable_elements[index],
+                    text=texts[index],
+                    embedding=embedding,
+                    fingerprint_payload=fingerprint_payload,
+                    artifact_ref=None,
+                )
+
+        if reuse_hits:
+            self._increment_embedding_metric("reuse_index_hit_count", reuse_hits)
         self.logger.info(
-            f"✓ Successfully generated embeddings for {len(embeddings)} code elements"
+            f"✓ Successfully generated embeddings for {len(mutable_elements)} code elements"
         )
 
-        fingerprint_payload = self.embedding_fingerprint(resolve_dimension=True)
-        # Add embeddings to elements
-        for elem, text, embedding in zip(elements, texts, embeddings, strict=True):
-            elem["embedding"] = embedding
-            elem["embedding_text"] = text
-            elem["embedding_artifact_ref"] = self.embedding_artifact_ref(text)
-            metadata = dict(elem.get("metadata", {}) or {})
-            metadata["embedding_text_hash"] = hashlib.sha256(
-                text.encode("utf-8")
-            ).hexdigest()
-            metadata["embedding_fingerprint"] = dict(fingerprint_payload)
-            elem["metadata"] = metadata
+        return mutable_elements
 
-        return elements
+    def _try_reuse_element_embedding(
+        self,
+        element: CodeElementMeta,
+        *,
+        text: str,
+        reuse_index: Mapping[str, CodeElementMeta] | None,
+        current_fingerprint: Mapping[str, Any],
+    ) -> bool:
+        if not reuse_index:
+            return False
+        text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        for key in self._reuse_lookup_keys(element, text_hash):
+            existing = reuse_index.get(key)
+            if existing is None:
+                continue
+            existing_metadata = self._element_metadata(existing)
+            existing_text_hash = existing_metadata.get(
+                "embedding_text_hash"
+            ) or existing.get("embedding_text_hash")
+            if existing_text_hash != text_hash:
+                continue
+            existing_fingerprint = existing_metadata.get(
+                "embedding_fingerprint"
+            ) or existing.get("embedding_fingerprint")
+            if not self._embedding_payload_matches(
+                existing_fingerprint,
+                current_fingerprint,
+            ):
+                continue
+            embedding = existing.get("embedding")
+            embedding_text = existing.get("embedding_text")
+            if embedding is None or embedding_text != text:
+                continue
+            artifact_ref = existing.get("embedding_artifact_ref")
+            self._attach_embedding_to_element(
+                element,
+                text=text,
+                embedding=np.asarray(embedding, dtype=np.float32),
+                fingerprint_payload=dict(cast(Mapping[str, Any], existing_fingerprint)),
+                artifact_ref=artifact_ref if isinstance(artifact_ref, str) else None,
+            )
+            return True
+        return False
+
+    @staticmethod
+    def _element_metadata(element: Mapping[str, Any]) -> dict[str, Any]:
+        metadata = element.get("metadata")
+        return (
+            dict(cast(Mapping[str, Any], metadata))
+            if isinstance(metadata, Mapping)
+            else {}
+        )
+
+    @classmethod
+    def _reuse_lookup_keys(
+        cls,
+        element: CodeElementMeta,
+        text_hash: str,
+    ) -> list[str]:
+        metadata = cls._element_metadata(element)
+        keys: list[str] = [text_hash]
+        for value in (
+            element.get("stable_unit_id"),
+            metadata.get("stable_unit_id"),
+            element.get("id"),
+        ):
+            if isinstance(value, str) and value and value not in keys:
+                keys.append(value)
+        return keys
+
+    @staticmethod
+    def _embedding_payload_matches(
+        existing: Any,
+        current: Mapping[str, Any],
+    ) -> bool:
+        if not isinstance(existing, Mapping):
+            return False
+        existing_mapping = cast(Mapping[str, Any], existing)
+        for field_name, expected_value in current.items():
+            existing_value = existing_mapping.get(field_name)
+            if field_name == "dimension" and (
+                expected_value is None or existing_value is None
+            ):
+                continue
+            if existing_value != expected_value:
+                return False
+        return True
+
+    def _attach_embedding_to_element(
+        self,
+        element: CodeElementMeta,
+        *,
+        text: str,
+        embedding: np.ndarray,
+        fingerprint_payload: Mapping[str, Any],
+        artifact_ref: str | None,
+    ) -> None:
+        element["embedding"] = np.asarray(embedding, dtype=np.float32)
+        element["embedding_text"] = text
+        element["embedding_artifact_ref"] = artifact_ref or self.embedding_artifact_ref(
+            text
+        )
+        metadata = dict(element.get("metadata", {}) or {})
+        metadata["embedding_text_hash"] = hashlib.sha256(
+            text.encode("utf-8")
+        ).hexdigest()
+        metadata["embedding_fingerprint"] = dict(fingerprint_payload)
+        element["metadata"] = metadata
 
     def _prepare_code_text(self, element: CodeElementMeta) -> str:
         """
@@ -662,36 +851,7 @@ class CodeEmbedder:
         Combines various parts of the code element into a single text
         suitable for embedding
         """
-        parts: list[str] = []
-
-        # Add type
-        if "type" in element:
-            parts.append(f"Type: {element['type']}")
-
-        # Add name
-        if "name" in element:
-            parts.append(f"Name: {element['name']}")
-
-        # Add signature (for functions)
-        if "signature" in element:
-            parts.append(f"Signature: {element['signature']}")
-
-        # Add docstring/description
-        if element.get("docstring"):
-            parts.append(f"Documentation: {element['docstring']}")
-
-        # Add summary
-        if summary := element.get("summary"):
-            parts.append(summary)
-
-        # Add code snippet (truncated)
-        if "code" in element:
-            code = element["code"]
-            if len(code) > 10000:  # Truncate long code
-                code = code[:10000] + "..."
-            parts.append(f"Code:\n{code}")
-
-        return "\n".join(parts)
+        return self.prepare_text(element)
 
     def compute_similarity(
         self, embedding1: np.ndarray, embedding2: np.ndarray

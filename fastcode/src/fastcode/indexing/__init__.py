@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .doc_ingester import KeyDocIngester
-    from .embedder import CodeEmbedder
+    from .embedder import CodeEmbedder, EmbeddingService
     from .global_builder import GlobalIndexBuilder
     from .incremental import apply_incremental_update, diff_changed_files
     from .indexer import CodeIndexer
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 _EXPORTS = {
     "CodeEmbedder": ("fastcode.indexing.embedder", "CodeEmbedder"),
+    "EmbeddingService": ("fastcode.indexing.embedder", "EmbeddingService"),
     "CodeIndexer": ("fastcode.indexing.indexer", "CodeIndexer"),
     "CodeParser": ("fastcode.indexing.parser", "CodeParser"),
     "GlobalIndexBuilder": ("fastcode.indexing.global_builder", "GlobalIndexBuilder"),
@@ -62,6 +63,7 @@ __all__ = [
     "CodeEmbedder",
     "CodeIndexer",
     "CodeParser",
+    "EmbeddingService",
     "GlobalIndexBuilder",
     "IndexPipeline",
     "KeyDocIngester",

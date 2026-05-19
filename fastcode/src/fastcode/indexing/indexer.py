@@ -15,7 +15,7 @@ from tqdm import tqdm
 from ..ir.element import CodeElement, CodeElementMeta
 from ..store.vector import VectorStore
 from ..utils import normalize_path
-from .embedder import CodeEmbedder
+from .embedder import EmbeddingService
 from .loader import RepositoryLoader
 from .overview import RepositoryOverviewGenerator
 from .parser import CodeParser, FileParseResult, ImportInfo
@@ -29,7 +29,7 @@ class CodeIndexer:
         config: dict[str, Any],
         loader: RepositoryLoader,
         parser: CodeParser,
-        embedder: CodeEmbedder,
+        embedder: EmbeddingService,
         vector_store: VectorStore | None = None,
     ) -> None:
         self.config = config
@@ -599,7 +599,7 @@ class CodeIndexer:
             )
 
         # Generate embedding for the overview
-        embedding = self.embedder.embed_text(overview_text)
+        embedding = self.embedder.embed_many([overview_text])[0]
 
         # Prepare metadata
         metadata = {
@@ -610,14 +610,9 @@ class CodeIndexer:
             "has_readme": repo_overview.get("has_readme", False),
             "repo_url": self.current_repo_url,
         }
-        embedding_fingerprint = getattr(self.embedder, "embedding_fingerprint", None)
-        if callable(embedding_fingerprint):
-            try:
-                metadata["embedding_fingerprint"] = embedding_fingerprint(
-                    resolve_dimension=True
-                )
-            except TypeError:
-                metadata["embedding_fingerprint"] = embedding_fingerprint()
+        metadata["embedding_fingerprint"] = self.embedder.fingerprint(
+            resolve_dimension=True
+        )
 
         # Save to separate storage via vector_store
         if self.vector_store:
@@ -698,7 +693,7 @@ class CodeIndexer:
         element_payloads = [
             self._serialize_element_for_embedding(element) for element in self.elements
         ]
-        elements_with_embeddings = self.embedder.embed_code_elements(element_payloads)
+        elements_with_embeddings = self.embedder.embed_elements(element_payloads)
 
         for element, embedded_payload in zip(
             self.elements, elements_with_embeddings, strict=True

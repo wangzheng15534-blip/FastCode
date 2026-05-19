@@ -9,7 +9,11 @@ from typing import Any
 
 import numpy as np
 
-from fastcode.indexing.embedder import CodeEmbedder, EmbeddingFingerprint
+from fastcode.indexing.embedder import (
+    CodeEmbedder,
+    EmbeddingFingerprint,
+    EmbeddingService,
+)
 
 
 class _MemoryCache:
@@ -339,6 +343,71 @@ def test_embed_code_elements_deduplicates_batch_and_persists_cache() -> None:
     assert first_batch[0]["embedding_text"] == prepared_same
     assert first_batch[0]["embedding"].shape == (3,)
     assert np.array_equal(first_batch[0]["embedding"], second_batch[0]["embedding"])
+
+
+def test_code_embedder_satisfies_embedding_service_boundary() -> None:
+    cache = _MemoryCache()
+    embedder = _CountingEmbedder(cache)
+    element = _element("boundary")
+
+    prepared_text = embedder.prepare_text(element)
+    embedding = embedder.embed_many([prepared_text])
+
+    assert isinstance(embedder, EmbeddingService)
+    assert prepared_text == embedder._prepare_code_text(element)
+    assert embedder.fingerprint() == embedder.embedding_fingerprint()
+    assert embedding.shape == (1, 3)
+
+
+def test_embed_elements_reuses_matching_reuse_index_without_provider_call() -> None:
+    cache = _MemoryCache()
+    embedder = _CountingEmbedder(cache)
+    existing_batch = [_element("same")]
+    embedder.embed_elements(existing_batch)
+    existing = existing_batch[0]
+    candidate = _element("same")
+    stable_unit_id = str(candidate["metadata"]["stable_unit_id"])
+    embedder.raw_batches.clear()
+
+    result = embedder.embed_elements(
+        [candidate],
+        reuse_index={stable_unit_id: existing},
+    )
+
+    assert embedder.raw_batches == []
+    assert result[0].get("embedding_text") == existing.get("embedding_text")
+    assert result[0].get("embedding_artifact_ref") == existing.get(
+        "embedding_artifact_ref"
+    )
+    assert np.array_equal(result[0].get("embedding"), existing.get("embedding"))
+    assert embedder.embedding_metrics()["reuse_index_hit_count"] == 1
+
+
+def test_embed_elements_recomputes_stale_reuse_index_fingerprint() -> None:
+    cache = _MemoryCache()
+    embedder = _CountingEmbedder(cache)
+    existing_batch = [_element("same")]
+    embedder.embed_elements(existing_batch)
+    existing = existing_batch[0]
+    metadata = dict(existing["metadata"])
+    stale_fingerprint = dict(metadata["embedding_fingerprint"])
+    stale_fingerprint["model"] = "stale"
+    metadata["embedding_fingerprint"] = stale_fingerprint
+    existing["metadata"] = metadata
+    candidate = _element("same")
+    stable_unit_id = str(candidate["metadata"]["stable_unit_id"])
+    embedder._embedding_cache_enabled = False
+    embedder.raw_batches.clear()
+
+    result = embedder.embed_elements(
+        [candidate],
+        reuse_index={stable_unit_id: existing},
+    )
+
+    assert embedder.raw_batches == [[embedder.prepare_text(candidate)]]
+    assert result[0]["metadata"]["embedding_fingerprint"] == embedder.fingerprint(
+        resolve_dimension=True
+    )
 
 
 def test_embedding_cache_key_is_model_aware() -> None:

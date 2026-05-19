@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -31,21 +32,31 @@ class _ParserStub:
 class _EmbedderStub:
     def __init__(self) -> None:
         self.prepared_batches: list[list[dict[str, Any]]] = []
+        self.prepared_text_batches: list[list[str]] = []
 
     def embed_code_elements(
-        self, elements: list[dict[str, Any]]
+        self, _elements: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
+        raise AssertionError("CodeIndexer should use EmbeddingService.embed_elements")
+
+    def embed_elements(
+        self,
+        elements: Sequence[dict[str, Any]],
+        reuse_index: Mapping[str, dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        assert reuse_index is None
+        mutable_elements = list(elements)
         self.prepared_batches.append(
             [
                 {
                     **element,
                     "metadata": dict(element.get("metadata", {}) or {}),
                 }
-                for element in elements
+                for element in mutable_elements
             ]
         )
 
-        for index, element in enumerate(elements):
+        for index, element in enumerate(mutable_elements):
             element["embedding"] = np.asarray([float(index), float(index + 1)])
             element["embedding_text"] = f"text:{element['id']}"
             element["embedding_artifact_ref"] = f"artifact:{element['id']}"
@@ -58,14 +69,24 @@ class _EmbedderStub:
             }
             element["metadata"] = metadata
 
-        return elements
+        return mutable_elements
 
     def embed_text(self, _text: str) -> np.ndarray:
-        return np.asarray([1.0, 0.0], dtype=np.float32)
+        raise AssertionError("CodeIndexer should use EmbeddingService.embed_many")
+
+    def embed_many(self, texts: Sequence[str]) -> np.ndarray:
+        self.prepared_text_batches.append(list(texts))
+        return np.asarray(
+            [[1.0, 0.0] for _text in texts],
+            dtype=np.float32,
+        )
 
     def embedding_fingerprint(
         self, *, resolve_dimension: bool = False
     ) -> dict[str, Any]:
+        raise AssertionError("CodeIndexer should use EmbeddingService.fingerprint")
+
+    def fingerprint(self, *, resolve_dimension: bool = False) -> dict[str, Any]:
         return {
             "provider": "test",
             "model": "stub",
@@ -212,6 +233,7 @@ def test_repository_overview_metadata_includes_embedding_fingerprint() -> None:
     )
 
     assert len(vector_store.saved_overviews) == 1
+    assert embedder.prepared_text_batches == [["summary"]]
     assert vector_store.saved_overviews[0]["metadata"]["embedding_fingerprint"] == {
         "provider": "test",
         "model": "stub",

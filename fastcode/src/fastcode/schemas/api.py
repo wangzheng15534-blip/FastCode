@@ -120,6 +120,32 @@ class ExpandContextRefRequest(BaseModel):
     depth: str = Field("L2", description="Requested expansion depth")
 
 
+class ExpandContextBundleRefRequest(BaseModel):
+    ref_id: str = Field(..., description="Evidence ref ID, such as e1")
+    session_id: str | None = Field(
+        None, description="Session ID containing the context bundle"
+    )
+    turn_number: int | None = Field(None, description="Optional turn number")
+    bundle_id: str | None = Field(None, description="Direct context bundle ID")
+    depth: str = Field("L2", description="Requested expansion depth")
+
+
+class ContextActivationRequest(BaseModel):
+    session_id: str | None = Field(
+        None, description="Session ID containing the context bundle"
+    )
+    turn_number: int | None = Field(None, description="Optional turn number")
+    bundle_id: str | None = Field(None, description="Direct context bundle ID")
+    active_ref_ids: list[str] | None = Field(
+        None, description="Evidence refs to activate"
+    )
+    active_fact_ids: list[str] | None = Field(None, description="Facts to activate")
+    active_hypothesis_ids: list[str] | None = Field(
+        None, description="Hypotheses to activate"
+    )
+    reason: str | None = Field(None, description="Activation reason")
+
+
 class LoadRepositoriesRequest(BaseModel):
     repo_names: list[str] = Field(
         ..., description="Repository names to load from existing indexes"

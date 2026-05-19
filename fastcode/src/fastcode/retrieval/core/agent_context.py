@@ -659,6 +659,221 @@ class TurnJournal:
         )
 
 
+@dataclass(frozen=True)
+class DistillationRecord:
+    distillation_id: str
+    session_id: str
+    turn_number: int
+    snapshot_id: str | None
+    compiler_fingerprint: str
+    summary: str
+    source_refs: tuple[EvidenceRef, ...]
+    accepted_facts: tuple[AcceptedFact, ...]
+    reused_from_distillation_id: str | None
+    invalidation_key: str
+    created_at: float
+    projection_fingerprint: str = "projection:none"
+    embedding_fingerprint: str = "embedding:unknown"
+    retrieval_policy_fingerprint: str = "retrieval:default"
+    distillation_prompt_fingerprint: str = "distill:v1"
+    budget_fingerprint: str = "budget:default"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "distillation_id": self.distillation_id,
+            "session_id": self.session_id,
+            "turn_number": self.turn_number,
+            "snapshot_id": self.snapshot_id,
+            "compiler_fingerprint": self.compiler_fingerprint,
+            "summary": self.summary,
+            "source_refs": [item.to_dict() for item in self.source_refs],
+            "accepted_facts": [item.to_dict() for item in self.accepted_facts],
+            "reused_from_distillation_id": self.reused_from_distillation_id,
+            "invalidation_key": self.invalidation_key,
+            "created_at": self.created_at,
+            "projection_fingerprint": self.projection_fingerprint,
+            "embedding_fingerprint": self.embedding_fingerprint,
+            "retrieval_policy_fingerprint": self.retrieval_policy_fingerprint,
+            "distillation_prompt_fingerprint": (self.distillation_prompt_fingerprint),
+            "budget_fingerprint": self.budget_fingerprint,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DistillationRecord:
+        created_at_value = data.get("created_at")
+        return cls(
+            distillation_id=_string(data.get("distillation_id")),
+            session_id=_string(data.get("session_id")),
+            turn_number=int(data.get("turn_number") or 0),
+            snapshot_id=_string_or_none(data.get("snapshot_id")),
+            compiler_fingerprint=_string(data.get("compiler_fingerprint")),
+            summary=_string(data.get("summary")),
+            source_refs=tuple(
+                EvidenceRef.from_dict(item)
+                for item in _dict_tuple(data.get("source_refs"))
+            ),
+            accepted_facts=tuple(
+                AcceptedFact.from_dict(item)
+                for item in _dict_tuple(data.get("accepted_facts"))
+            ),
+            reused_from_distillation_id=_string_or_none(
+                data.get("reused_from_distillation_id")
+            ),
+            invalidation_key=_string(data.get("invalidation_key")),
+            created_at=(
+                float(created_at_value)
+                if isinstance(created_at_value, (int, float))
+                else 0.0
+            ),
+            projection_fingerprint=_string(
+                data.get("projection_fingerprint") or "projection:none"
+            ),
+            embedding_fingerprint=_string(
+                data.get("embedding_fingerprint") or "embedding:unknown"
+            ),
+            retrieval_policy_fingerprint=_string(
+                data.get("retrieval_policy_fingerprint") or "retrieval:default"
+            ),
+            distillation_prompt_fingerprint=_string(
+                data.get("distillation_prompt_fingerprint") or "distill:v1"
+            ),
+            budget_fingerprint=_string(
+                data.get("budget_fingerprint") or "budget:default"
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ActivationRecord:
+    activation_id: str
+    bundle_id: str
+    session_id: str
+    turn_number: int
+    snapshot_id: str | None
+    compiler_fingerprint: str
+    active_ref_ids: tuple[str, ...]
+    active_fact_ids: tuple[str, ...]
+    active_hypothesis_ids: tuple[str, ...]
+    reason: str
+    created_at: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "activation_id": self.activation_id,
+            "bundle_id": self.bundle_id,
+            "session_id": self.session_id,
+            "turn_number": self.turn_number,
+            "snapshot_id": self.snapshot_id,
+            "compiler_fingerprint": self.compiler_fingerprint,
+            "active_ref_ids": list(self.active_ref_ids),
+            "active_fact_ids": list(self.active_fact_ids),
+            "active_hypothesis_ids": list(self.active_hypothesis_ids),
+            "reason": self.reason,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ActivationRecord:
+        created_at_value = data.get("created_at")
+        return cls(
+            activation_id=_string(data.get("activation_id")),
+            bundle_id=_string(data.get("bundle_id")),
+            session_id=_string(data.get("session_id")),
+            turn_number=int(data.get("turn_number") or 0),
+            snapshot_id=_string_or_none(data.get("snapshot_id")),
+            compiler_fingerprint=_string(data.get("compiler_fingerprint")),
+            active_ref_ids=_string_tuple(data.get("active_ref_ids")),
+            active_fact_ids=_string_tuple(data.get("active_fact_ids")),
+            active_hypothesis_ids=_string_tuple(data.get("active_hypothesis_ids")),
+            reason=_string(data.get("reason")),
+            created_at=(
+                float(created_at_value)
+                if isinstance(created_at_value, (int, float))
+                else 0.0
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ContextBundle:
+    bundle_id: str
+    session_id: str
+    turn_number: int
+    snapshot_id: str | None
+    artifact_key: str | None
+    compiler_fingerprint: str
+    working_memory: WorkingMemoryArtifact
+    turn_journal: TurnJournal
+    distillation: DistillationRecord
+    activation: ActivationRecord
+    created_at: float
+    projection_fingerprint: str = "projection:none"
+    embedding_fingerprint: str = "embedding:unknown"
+    retrieval_policy_fingerprint: str = "retrieval:default"
+    distillation_prompt_fingerprint: str = "distill:v1"
+    budget_fingerprint: str = "budget:default"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "bundle_id": self.bundle_id,
+            "session_id": self.session_id,
+            "turn_number": self.turn_number,
+            "snapshot_id": self.snapshot_id,
+            "artifact_key": self.artifact_key,
+            "compiler_fingerprint": self.compiler_fingerprint,
+            "working_memory": self.working_memory.to_dict(),
+            "turn_journal": self.turn_journal.to_dict(),
+            "distillation": self.distillation.to_dict(),
+            "activation": self.activation.to_dict(),
+            "created_at": self.created_at,
+            "projection_fingerprint": self.projection_fingerprint,
+            "embedding_fingerprint": self.embedding_fingerprint,
+            "retrieval_policy_fingerprint": self.retrieval_policy_fingerprint,
+            "distillation_prompt_fingerprint": (self.distillation_prompt_fingerprint),
+            "budget_fingerprint": self.budget_fingerprint,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ContextBundle:
+        created_at_value = data.get("created_at")
+        return cls(
+            bundle_id=_string(data.get("bundle_id")),
+            session_id=_string(data.get("session_id")),
+            turn_number=int(data.get("turn_number") or 0),
+            snapshot_id=_string_or_none(data.get("snapshot_id")),
+            artifact_key=_string_or_none(data.get("artifact_key")),
+            compiler_fingerprint=_string(data.get("compiler_fingerprint")),
+            working_memory=WorkingMemoryArtifact.from_dict(
+                _dict_value(data.get("working_memory"))
+            ),
+            turn_journal=TurnJournal.from_dict(_dict_value(data.get("turn_journal"))),
+            distillation=DistillationRecord.from_dict(
+                _dict_value(data.get("distillation"))
+            ),
+            activation=ActivationRecord.from_dict(_dict_value(data.get("activation"))),
+            created_at=(
+                float(created_at_value)
+                if isinstance(created_at_value, (int, float))
+                else 0.0
+            ),
+            projection_fingerprint=_string(
+                data.get("projection_fingerprint") or "projection:none"
+            ),
+            embedding_fingerprint=_string(
+                data.get("embedding_fingerprint") or "embedding:unknown"
+            ),
+            retrieval_policy_fingerprint=_string(
+                data.get("retrieval_policy_fingerprint") or "retrieval:default"
+            ),
+            distillation_prompt_fingerprint=_string(
+                data.get("distillation_prompt_fingerprint") or "distill:v1"
+            ),
+            budget_fingerprint=_string(
+                data.get("budget_fingerprint") or "budget:default"
+            ),
+        )
+
+
 def build_acceptance_contract(
     requested_outcome: str = "answer",
     allowed_tools: tuple[str, ...] = (

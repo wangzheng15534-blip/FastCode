@@ -8,6 +8,7 @@ import json
 import os
 import pickle
 import threading
+import time
 from collections.abc import Callable, Generator, Iterable, Mapping
 from contextlib import contextmanager
 from datetime import datetime
@@ -42,8 +43,23 @@ from ..query.answer import AnswerGenerator
 from ..query.handler import QueryPipeline
 from ..query.processor import QueryProcessor
 from ..retrieval.core import snapshot as _snapshot
-from ..retrieval.core.agent_context import HandoffArtifact, WorkingMemoryArtifact
-from ..retrieval.core.context_compiler import build_handoff_from_working_memory
+from ..retrieval.core.agent_context import (
+    ContextBundle,
+    HandoffArtifact,
+    TurnJournal,
+    WorkingMemoryArtifact,
+)
+from ..retrieval.core.context_compiler import (
+    build_activation_record,
+    build_handoff_from_working_memory,
+    expand_bundle_source_ref,
+)
+from ..retrieval.core.context_compiler import (
+    build_context_bundle as build_context_bundle_artifact,
+)
+from ..retrieval.core.context_compiler import (
+    render_context_bundle as render_context_bundle_artifact,
+)
 from ..retrieval.hybrid import HybridRetriever
 from ..schemas.config import FastCodeConfig, config_from_mapping
 from ..scip.symbol_resolver import SymbolResolver
@@ -54,7 +70,10 @@ from ..store.index_run import IndexRunStore
 from ..store.manifest import ManifestStore
 from ..store.pg_retrieval import PgRetrievalStore
 from ..store.projection import ProjectionStore
-from ..store.records import HandoffArtifactRecord
+from ..store.records import (
+    ContextActivationRecord,
+    HandoffArtifactRecord,
+)
 from ..store.snapshot import SnapshotStore
 from ..store.unit_artifacts import UnitArtifactStore
 from ..store.vector import VectorStore
@@ -2529,6 +2548,117 @@ class FastCode:
             raise RuntimeError("handoff artifact payload is invalid")
         return HandoffArtifact.from_dict(payload)
 
+    @staticmethod
+    def _parse_turn_journal_record_payload(record: Any) -> TurnJournal:
+        payload = json.loads(str(record.payload_json or "{}"))
+        if not isinstance(payload, dict):
+            raise RuntimeError("turn journal payload is invalid")
+        return TurnJournal.from_dict(payload)
+
+    @staticmethod
+    def _parse_context_bundle_record_payload(record: Any) -> ContextBundle:
+        payload = json.loads(str(record.payload_json or "{}"))
+        if not isinstance(payload, dict):
+            raise RuntimeError("context bundle payload is invalid")
+        return ContextBundle.from_dict(payload)
+
+    @staticmethod
+    def _optional_string_tuple(
+        value: Iterable[str] | str | None,
+    ) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return (value,)
+        return tuple(str(item) for item in value)
+
+    def _load_context_bundle_artifact(
+        self,
+        *,
+        session_id: str | None = None,
+        turn_number: int | None = None,
+        bundle_id: str | None = None,
+    ) -> ContextBundle:
+        if bundle_id:
+            get_by_id = getattr(
+                self.cache_manager, "get_context_bundle_record_by_id", None
+            )
+            record = get_by_id(bundle_id) if callable(get_by_id) else None
+            if record is None:
+                raise RuntimeError(f"context bundle not found: {bundle_id}")
+            return self._parse_context_bundle_record_payload(record)
+
+        if not session_id:
+            raise RuntimeError("session_id is required when bundle_id is omitted")
+
+        record = None
+        if turn_number is None:
+            get_latest = getattr(
+                self.cache_manager, "get_latest_context_bundle_record", None
+            )
+            record = get_latest(session_id) if callable(get_latest) else None
+        else:
+            get_record = getattr(self.cache_manager, "get_context_bundle_record", None)
+            record = (
+                get_record(session_id, turn_number) if callable(get_record) else None
+            )
+        if record is not None:
+            return self._parse_context_bundle_record_payload(record)
+
+        working_memory_record = (
+            self.cache_manager.get_latest_working_memory_record(session_id)
+            if turn_number is None
+            else self.cache_manager.get_working_memory_record(session_id, turn_number)
+        )
+        if working_memory_record is None:
+            raise RuntimeError(
+                f"context bundle not found for session={session_id}, turn={turn_number}"
+            )
+        resolved_turn = int(working_memory_record.turn_number)
+        journal_record = self.cache_manager.get_turn_journal_record(
+            session_id, resolved_turn
+        )
+        if journal_record is None:
+            raise RuntimeError(
+                f"turn journal not found for session={session_id}, turn={resolved_turn}"
+            )
+        return build_context_bundle_artifact(
+            working_memory=self._parse_working_memory_record_payload(
+                working_memory_record
+            ),
+            turn_journal=self._parse_turn_journal_record_payload(journal_record),
+        )
+
+    @staticmethod
+    def _context_bundle_response(
+        bundle: ContextBundle,
+        *,
+        format: str,
+        token_budget: int,
+    ) -> dict[str, Any]:
+        response: dict[str, Any] = {
+            "bundle_id": bundle.bundle_id,
+            "session_id": bundle.session_id,
+            "turn_number": bundle.turn_number,
+            "snapshot_id": bundle.snapshot_id,
+            "artifact_key": bundle.artifact_key,
+            "compiler_fingerprint": bundle.compiler_fingerprint,
+            "format": format,
+            "invalidation_key": bundle.distillation.invalidation_key,
+            "activation_id": bundle.activation.activation_id,
+            "distillation_id": bundle.distillation.distillation_id,
+        }
+        if format == "json":
+            response["bundle"] = bundle.to_dict()
+            return response
+        if format == "rendered":
+            response["rendered"] = render_context_bundle_artifact(
+                bundle,
+                token_budget=token_budget,
+            )
+            return response
+        raise RuntimeError("format must be one of: json, rendered")
+
     def get_turn_context(
         self,
         session_id: str,
@@ -2608,6 +2738,102 @@ class FastCode:
         if record is None:
             raise RuntimeError(f"handoff artifact not found: {artifact_id}")
         return self._parse_handoff_record_payload(record).to_dict()
+
+    def get_context_bundle(
+        self,
+        session_id: str,
+        turn_number: int | None = None,
+        format: str = "json",
+        token_budget: int = 2048,
+    ) -> dict[str, Any]:
+        bundle = self._load_context_bundle_artifact(
+            session_id=session_id,
+            turn_number=turn_number,
+        )
+        return self._context_bundle_response(
+            bundle,
+            format=format,
+            token_budget=token_budget,
+        )
+
+    def get_context_bundle_by_id(
+        self,
+        bundle_id: str,
+        format: str = "json",
+        token_budget: int = 2048,
+    ) -> dict[str, Any]:
+        bundle = self._load_context_bundle_artifact(bundle_id=bundle_id)
+        return self._context_bundle_response(
+            bundle,
+            format=format,
+            token_budget=token_budget,
+        )
+
+    def expand_context_bundle_ref(
+        self,
+        ref_id: str,
+        *,
+        session_id: str | None = None,
+        turn_number: int | None = None,
+        bundle_id: str | None = None,
+        depth: str = "L2",
+    ) -> dict[str, Any]:
+        bundle = self._load_context_bundle_artifact(
+            session_id=session_id,
+            turn_number=turn_number,
+            bundle_id=bundle_id,
+        )
+        expanded = expand_bundle_source_ref(bundle, ref_id, depth=depth)
+        if expanded is None:
+            raise RuntimeError(f"context bundle ref not found: {ref_id}")
+        return expanded
+
+    def create_context_activation(
+        self,
+        session_id: str | None = None,
+        turn_number: int | None = None,
+        bundle_id: str | None = None,
+        active_ref_ids: Iterable[str] | str | None = None,
+        active_fact_ids: Iterable[str] | str | None = None,
+        active_hypothesis_ids: Iterable[str] | str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        bundle = self._load_context_bundle_artifact(
+            session_id=session_id,
+            turn_number=turn_number,
+            bundle_id=bundle_id,
+        )
+        activation = build_activation_record(
+            bundle_id=bundle.bundle_id,
+            working_memory=bundle.working_memory,
+            active_ref_ids=self._optional_string_tuple(active_ref_ids),
+            active_fact_ids=self._optional_string_tuple(active_fact_ids),
+            active_hypothesis_ids=self._optional_string_tuple(active_hypothesis_ids),
+            reason=reason,
+            created_at=time.time(),
+        )
+        payload_json = json.dumps(
+            activation.to_dict(),
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        self.cache_manager.save_context_activation_record(
+            ContextActivationRecord(
+                activation_id=activation.activation_id,
+                bundle_id=activation.bundle_id,
+                session_id=activation.session_id,
+                turn_number=activation.turn_number,
+                snapshot_id=activation.snapshot_id,
+                compiler_fingerprint=activation.compiler_fingerprint,
+                active_ref_ids=activation.active_ref_ids,
+                active_fact_ids=activation.active_fact_ids,
+                active_hypothesis_ids=activation.active_hypothesis_ids,
+                reason=activation.reason,
+                payload_json=payload_json,
+                created_at=activation.created_at,
+            )
+        )
+        return activation.to_dict()
 
     def expand_context_ref(
         self,

@@ -82,7 +82,14 @@ This audit checked current source and regression tests directly, not git history
 - Embedding cache reuse is active for repeated texts and writes `float32` buffer payloads. Focused cache/materialization tests pass.
 - `LoadedSnapshotArtifacts` plus an artifact-key LRU exist in `IndexPipeline`, and `QueryPipeline.query_snapshot()` can use request-local retriever/graph handles without its own snapshot-query lock.
 - API upload/CORS hardening is closed for the current trusted-local/proxy-auth contract: active ZIP paths use safe extraction, defaults are local CORS origins and localhost binding, and blocking endpoint work is offloaded with `asyncio.to_thread`.
-- A turn-journal/context-compiler v0 exists: typed `EvidenceRef`, `ToolObservation`, `RiskState`, `AcceptanceContract`, `TurnIntent`, `TurnPlan`, `WorkingMemoryArtifact`, `TurnJournal`, and `HandoffArtifact`; typed cache records; REST/web/MCP facades for turn context, ref expansion, and handoff.
+- A turn-journal/context-compiler v0 exists: typed `EvidenceRef`,
+  `ToolObservation`, `RiskState`, `AcceptanceContract`, `TurnIntent`,
+  `TurnPlan`, `WorkingMemoryArtifact`, `TurnJournal`, `ContextBundle`,
+  `DistillationRecord`, `ActivationRecord`, and `HandoffArtifact`; typed cache
+  records; bundle invalidation fingerprints; source-ref-preserving distillation
+  reuse; and REST/web/MCP facades for turn context, bundle render/ref expansion,
+  activation, and handoff. Verified with focused context bundle/cache/query/API
+  tests plus touched-file ruff and pyright checks.
 
 **Still only partially implemented against the non-functional goals:**
 - Incremental update is not file-shard-native end to end. The pipeline still
@@ -100,7 +107,6 @@ This audit checked current source and regression tests directly, not git history
   now share the read side of the service state lock while mutations keep the
   write side. Endpoint-level concurrency tests and benchmarks are still open.
 - FP/FCIS dataflow is much better but not complete. Store hot paths have many typed-record adapters and regression guards, while query/retrieval/API compatibility surfaces still pass raw dict-shaped payloads in several places.
-- Agent-native context bundles are not implemented. The v0 turn compiler is real, but there are no durable `ContextBundle`, `DistillationRecord`, or `ActivationRecord` records, no bundle cache/invalidation path, and no source-ref-preserving distillation reuse.
 
 **Still open:**
 - multi-Python wheel/sdist install smoke from built artifacts

@@ -758,3 +758,215 @@ class HandoffArtifactRecord:
             if isinstance(created_at, (int, float))
             else 0.0,
         )
+
+
+@dataclass(frozen=True)
+class ContextBundleRecord:
+    bundle_id: str
+    session_id: str
+    turn_number: int
+    snapshot_id: str | None
+    artifact_key: str | None
+    compiler_fingerprint: str
+    payload_json: str
+    invalidation_key: str
+    created_at: float
+    projection_fingerprint: str = "projection:none"
+    embedding_fingerprint: str = "embedding:unknown"
+    retrieval_policy_fingerprint: str = "retrieval:default"
+    distillation_prompt_fingerprint: str = "distill:v1"
+    budget_fingerprint: str = "budget:default"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "bundle_id": self.bundle_id,
+            "session_id": self.session_id,
+            "turn_number": self.turn_number,
+            "snapshot_id": self.snapshot_id,
+            "artifact_key": self.artifact_key,
+            "compiler_fingerprint": self.compiler_fingerprint,
+            "payload_json": self.payload_json,
+            "invalidation_key": self.invalidation_key,
+            "created_at": self.created_at,
+            "projection_fingerprint": self.projection_fingerprint,
+            "embedding_fingerprint": self.embedding_fingerprint,
+            "retrieval_policy_fingerprint": self.retrieval_policy_fingerprint,
+            "distillation_prompt_fingerprint": (self.distillation_prompt_fingerprint),
+            "budget_fingerprint": self.budget_fingerprint,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ContextBundleRecord:
+        created_at = data.get("created_at")
+        return cls(
+            bundle_id=str(data.get("bundle_id") or ""),
+            session_id=str(data.get("session_id") or ""),
+            turn_number=int(data.get("turn_number") or 0),
+            snapshot_id=(
+                str(data["snapshot_id"])
+                if data.get("snapshot_id") is not None
+                else None
+            ),
+            artifact_key=(
+                str(data["artifact_key"])
+                if data.get("artifact_key") is not None
+                else None
+            ),
+            compiler_fingerprint=str(data.get("compiler_fingerprint") or ""),
+            payload_json=str(data.get("payload_json") or ""),
+            invalidation_key=str(data.get("invalidation_key") or ""),
+            created_at=float(created_at)
+            if isinstance(created_at, (int, float))
+            else 0.0,
+            projection_fingerprint=str(
+                data.get("projection_fingerprint") or "projection:none"
+            ),
+            embedding_fingerprint=str(
+                data.get("embedding_fingerprint") or "embedding:unknown"
+            ),
+            retrieval_policy_fingerprint=str(
+                data.get("retrieval_policy_fingerprint") or "retrieval:default"
+            ),
+            distillation_prompt_fingerprint=str(
+                data.get("distillation_prompt_fingerprint") or "distill:v1"
+            ),
+            budget_fingerprint=str(data.get("budget_fingerprint") or "budget:default"),
+        )
+
+
+@dataclass(frozen=True)
+class ContextDistillationRecord:
+    distillation_id: str
+    session_id: str
+    turn_number: int
+    snapshot_id: str | None
+    compiler_fingerprint: str
+    summary: str
+    payload_json: str
+    invalidation_key: str
+    source_ref_ids: tuple[str, ...]
+    reused_from_distillation_id: str | None
+    created_at: float
+    projection_fingerprint: str = "projection:none"
+    embedding_fingerprint: str = "embedding:unknown"
+    retrieval_policy_fingerprint: str = "retrieval:default"
+    distillation_prompt_fingerprint: str = "distill:v1"
+    budget_fingerprint: str = "budget:default"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "distillation_id": self.distillation_id,
+            "session_id": self.session_id,
+            "turn_number": self.turn_number,
+            "snapshot_id": self.snapshot_id,
+            "compiler_fingerprint": self.compiler_fingerprint,
+            "summary": self.summary,
+            "payload_json": self.payload_json,
+            "invalidation_key": self.invalidation_key,
+            "source_ref_ids": list(self.source_ref_ids),
+            "reused_from_distillation_id": self.reused_from_distillation_id,
+            "created_at": self.created_at,
+            "projection_fingerprint": self.projection_fingerprint,
+            "embedding_fingerprint": self.embedding_fingerprint,
+            "retrieval_policy_fingerprint": self.retrieval_policy_fingerprint,
+            "distillation_prompt_fingerprint": (self.distillation_prompt_fingerprint),
+            "budget_fingerprint": self.budget_fingerprint,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ContextDistillationRecord:
+        created_at = data.get("created_at")
+        return cls(
+            distillation_id=str(data.get("distillation_id") or ""),
+            session_id=str(data.get("session_id") or ""),
+            turn_number=int(data.get("turn_number") or 0),
+            snapshot_id=(
+                str(data["snapshot_id"])
+                if data.get("snapshot_id") is not None
+                else None
+            ),
+            compiler_fingerprint=str(data.get("compiler_fingerprint") or ""),
+            summary=str(data.get("summary") or ""),
+            payload_json=str(data.get("payload_json") or ""),
+            invalidation_key=str(data.get("invalidation_key") or ""),
+            source_ref_ids=tuple(_string_list_payload(data.get("source_ref_ids"))),
+            reused_from_distillation_id=(
+                str(data["reused_from_distillation_id"])
+                if data.get("reused_from_distillation_id") is not None
+                else None
+            ),
+            created_at=float(created_at)
+            if isinstance(created_at, (int, float))
+            else 0.0,
+            projection_fingerprint=str(
+                data.get("projection_fingerprint") or "projection:none"
+            ),
+            embedding_fingerprint=str(
+                data.get("embedding_fingerprint") or "embedding:unknown"
+            ),
+            retrieval_policy_fingerprint=str(
+                data.get("retrieval_policy_fingerprint") or "retrieval:default"
+            ),
+            distillation_prompt_fingerprint=str(
+                data.get("distillation_prompt_fingerprint") or "distill:v1"
+            ),
+            budget_fingerprint=str(data.get("budget_fingerprint") or "budget:default"),
+        )
+
+
+@dataclass(frozen=True)
+class ContextActivationRecord:
+    activation_id: str
+    bundle_id: str
+    session_id: str
+    turn_number: int
+    snapshot_id: str | None
+    compiler_fingerprint: str
+    active_ref_ids: tuple[str, ...]
+    active_fact_ids: tuple[str, ...]
+    active_hypothesis_ids: tuple[str, ...]
+    reason: str
+    payload_json: str
+    created_at: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "activation_id": self.activation_id,
+            "bundle_id": self.bundle_id,
+            "session_id": self.session_id,
+            "turn_number": self.turn_number,
+            "snapshot_id": self.snapshot_id,
+            "compiler_fingerprint": self.compiler_fingerprint,
+            "active_ref_ids": list(self.active_ref_ids),
+            "active_fact_ids": list(self.active_fact_ids),
+            "active_hypothesis_ids": list(self.active_hypothesis_ids),
+            "reason": self.reason,
+            "payload_json": self.payload_json,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ContextActivationRecord:
+        created_at = data.get("created_at")
+        return cls(
+            activation_id=str(data.get("activation_id") or ""),
+            bundle_id=str(data.get("bundle_id") or ""),
+            session_id=str(data.get("session_id") or ""),
+            turn_number=int(data.get("turn_number") or 0),
+            snapshot_id=(
+                str(data["snapshot_id"])
+                if data.get("snapshot_id") is not None
+                else None
+            ),
+            compiler_fingerprint=str(data.get("compiler_fingerprint") or ""),
+            active_ref_ids=tuple(_string_list_payload(data.get("active_ref_ids"))),
+            active_fact_ids=tuple(_string_list_payload(data.get("active_fact_ids"))),
+            active_hypothesis_ids=tuple(
+                _string_list_payload(data.get("active_hypothesis_ids"))
+            ),
+            reason=str(data.get("reason") or ""),
+            payload_json=str(data.get("payload_json") or ""),
+            created_at=float(created_at)
+            if isinstance(created_at, (int, float))
+            else 0.0,
+        )

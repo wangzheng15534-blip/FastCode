@@ -4,6 +4,7 @@ QueryPipeline — query, query_stream, and query_snapshot extracted from FastCod
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -13,6 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from ..retrieval.core import snapshot as _snapshot
 from ..retrieval.core.agent_context import (
+    DistillationRecord,
     ToolObservation,
     TurnIntent,
     build_acceptance_contract,
@@ -21,6 +23,12 @@ from ..retrieval.core.agent_context import (
 )
 from ..retrieval.core.context_compiler import (
     COMPILER_FINGERPRINT,
+    DEFAULT_BUDGET_FINGERPRINT,
+    DEFAULT_DISTILLATION_PROMPT_FINGERPRINT,
+    DEFAULT_EMBEDDING_FINGERPRINT,
+    DEFAULT_PROJECTION_FINGERPRINT,
+    build_context_bundle,
+    build_context_invalidation_key,
     build_evidence_refs_from_sources,
     build_tool_observation,
     build_turn_journal,
@@ -31,7 +39,13 @@ from ..retrieval.hybrid import HybridRetriever
 from ..semantic.symbol_index import SnapshotSymbolIndex
 from ..store.cache import CacheManager
 from ..store.manifest import ManifestStore
-from ..store.records import TurnJournalRecord, WorkingMemoryRecord
+from ..store.records import (
+    ContextActivationRecord,
+    ContextBundleRecord,
+    ContextDistillationRecord,
+    TurnJournalRecord,
+    WorkingMemoryRecord,
+)
 from ..store.snapshot import SnapshotStore
 from .answer import AnswerGenerator
 from .processor import QueryProcessor
@@ -701,6 +715,36 @@ class QueryPipeline:
         return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
     @staticmethod
+    def _fingerprint_payload(prefix: str, payload: Any) -> str:
+        encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+        return f"{prefix}:{digest}"
+
+    @staticmethod
+    def _mapping_or_empty(value: Any) -> dict[str, Any]:
+        if not isinstance(value, Mapping):
+            return {}
+        return {
+            str(key): item
+            for key, item in cast(Mapping[Any, Any], value).items()
+            if isinstance(key, str | int | float | bool)
+        }
+
+    @staticmethod
+    def _decode_distillation_record(
+        record: ContextDistillationRecord | None,
+    ) -> DistillationRecord | None:
+        if record is None:
+            return None
+        try:
+            payload = json.loads(str(record.payload_json or "{}"))
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return DistillationRecord.from_dict(cast(dict[str, Any], payload))
+
+    @staticmethod
     def _resolve_snapshot_scope(
         filters: dict[str, Any] | None,
     ) -> tuple[str | None, str | None]:
@@ -735,6 +779,91 @@ class QueryPipeline:
             return None
         return payload
 
+    def _context_bundle_fingerprints(
+        self,
+        *,
+        session_prefix: dict[str, Any] | None,
+        retrieved: list[dict[str, Any]],
+        filters: dict[str, Any] | None,
+        repo_filter: list[str] | None,
+        retriever: HybridRetriever,
+    ) -> dict[str, str]:
+        projection_payload: dict[str, Any] = {
+            "snapshot_id": (filters or {}).get("snapshot_id"),
+            "artifact_key": (filters or {}).get("artifact_key"),
+            "projection_id": None,
+        }
+        if isinstance(session_prefix, dict):
+            projection_payload["projection_id"] = session_prefix.get("projection_id")
+
+        embedding_refs: list[Any] = []
+        for item in retrieved:
+            raw_element = item.get("element")
+            if not isinstance(raw_element, dict):
+                continue
+            element = cast(dict[str, Any], raw_element)
+            raw_metadata = element.get("metadata")
+            metadata_payload = (
+                cast(dict[str, Any], raw_metadata)
+                if isinstance(raw_metadata, dict)
+                else {}
+            )
+            fingerprint = element.get("embedding_fingerprint") or metadata_payload.get(
+                "embedding_fingerprint"
+            )
+            artifact_ref = element.get(
+                "embedding_artifact_ref"
+            ) or metadata_payload.get("embedding_artifact_ref")
+            if fingerprint is not None or artifact_ref is not None:
+                embedding_refs.append(
+                    {
+                        "path": element.get("relative_path") or element.get("path"),
+                        "fingerprint": fingerprint,
+                        "artifact_ref": artifact_ref,
+                    }
+                )
+
+        retrieval_config = self._mapping_or_empty(
+            getattr(retriever, "retrieval_config", {})
+        )
+        iteration_value = getattr(retriever, "last_iteration_metadata", None)
+        iteration_metadata = (
+            self._mapping_or_empty(iteration_value)
+            if isinstance(iteration_value, Mapping)
+            else None
+        )
+        retrieval_policy_payload = {
+            "repo_filter": list(repo_filter or []),
+            "config": retrieval_config,
+            "iteration_metadata": iteration_metadata,
+        }
+        generation_config = self.config.get("generation", {})
+        token_budget = generation_config.get("context_token_budget")
+        if token_budget is None:
+            token_budget = generation_config.get("max_context_tokens")
+
+        return {
+            "projection_fingerprint": (
+                self._fingerprint_payload("projection", projection_payload)
+                if any(value is not None for value in projection_payload.values())
+                else DEFAULT_PROJECTION_FINGERPRINT
+            ),
+            "embedding_fingerprint": (
+                self._fingerprint_payload("embedding", embedding_refs)
+                if embedding_refs
+                else DEFAULT_EMBEDDING_FINGERPRINT
+            ),
+            "retrieval_policy_fingerprint": self._fingerprint_payload(
+                "retrieval", retrieval_policy_payload
+            ),
+            "distillation_prompt_fingerprint": DEFAULT_DISTILLATION_PROMPT_FINGERPRINT,
+            "budget_fingerprint": (
+                self._fingerprint_payload("budget", {"token_budget": token_budget})
+                if token_budget is not None
+                else DEFAULT_BUDGET_FINGERPRINT
+            ),
+        }
+
     def _load_prior_compiled_context(self, session_id: str | None) -> str | None:
         if not session_id:
             return None
@@ -762,9 +891,8 @@ class QueryPipeline:
     ) -> tuple[ToolObservation, ...]:
         observations: list[ToolObservation] = []
         ref_ids = tuple(item.ref_id for item in evidence_refs)
-        iteration_metadata = cast(
-            dict[str, Any],
-            getattr(retriever, "last_iteration_metadata", None) or {},
+        iteration_metadata = self._mapping_or_empty(
+            getattr(retriever, "last_iteration_metadata", None)
         )
         retrieval_mode = (
             "iterative"
@@ -800,9 +928,11 @@ class QueryPipeline:
             if item.path:
                 path_to_ref_ids.setdefault(item.path, []).append(item.ref_id)
 
-        raw_tool_observations = cast(
-            list[dict[str, Any]],
-            getattr(retriever, "last_tool_observations", []) or [],
+        raw_tool_value = getattr(retriever, "last_tool_observations", [])
+        raw_tool_observations = (
+            cast(list[dict[str, Any]], raw_tool_value)
+            if isinstance(raw_tool_value, list)
+            else []
         )
         for index, raw in enumerate(raw_tool_observations, 1):
             parameters_value = raw.get("parameters")
@@ -905,6 +1035,7 @@ class QueryPipeline:
             artifact_key=artifact_key,
             repo_filter=tuple(repo_filter or ()),
         )
+        session_prefix = self._safe_get_session_prefix(snapshot_id)
         working_memory = compile_working_memory(
             intent=turn_intent,
             contract=acceptance_contract,
@@ -916,7 +1047,14 @@ class QueryPipeline:
             hypotheses=hypotheses,
             rejected_hypotheses=rejected_hypotheses,
             unresolved_questions=unresolved_questions,
-            session_prefix=self._safe_get_session_prefix(snapshot_id),
+            session_prefix=session_prefix,
+        )
+        context_fingerprints = self._context_bundle_fingerprints(
+            session_prefix=session_prefix,
+            retrieved=retrieved,
+            filters=filters,
+            repo_filter=repo_filter,
+            retriever=retriever,
         )
         compiled_context = "\n\n".join(
             part for part in (prior_compiled_context, working_memory.full_fcx) if part
@@ -935,6 +1073,7 @@ class QueryPipeline:
             "hypotheses": hypotheses,
             "rejected_hypotheses": rejected_hypotheses,
             "accepted_facts": accepted_facts,
+            "context_fingerprints": context_fingerprints,
         }
 
     def _persist_turn_artifacts(
@@ -991,8 +1130,92 @@ class QueryPipeline:
             payload_json=self._encode_payload_json(journal.to_dict()),
             created_at=journal.created_at,
         )
+        invalidation_key = build_context_invalidation_key(
+            session_id=working_memory.session_id,
+            snapshot_id=working_memory.snapshot_id,
+            artifact_key=working_memory.artifact_key,
+            evidence_refs=working_memory.evidence_refs,
+            compiler_fingerprint=working_memory.compiler_fingerprint,
+            **bundle["context_fingerprints"],
+        )
+        prior_distillation = self._decode_distillation_record(
+            self.cache_manager.find_reusable_context_distillation_record(
+                working_memory.session_id,
+                invalidation_key=invalidation_key,
+                compiler_fingerprint=working_memory.compiler_fingerprint,
+            )
+        )
+        context_bundle = build_context_bundle(
+            working_memory=working_memory,
+            turn_journal=journal,
+            previous_distillation=prior_distillation,
+            **bundle["context_fingerprints"],
+        )
+        context_bundle_record = ContextBundleRecord(
+            bundle_id=context_bundle.bundle_id,
+            session_id=context_bundle.session_id,
+            turn_number=context_bundle.turn_number,
+            snapshot_id=context_bundle.snapshot_id,
+            artifact_key=context_bundle.artifact_key,
+            compiler_fingerprint=context_bundle.compiler_fingerprint,
+            payload_json=self._encode_payload_json(context_bundle.to_dict()),
+            invalidation_key=context_bundle.distillation.invalidation_key,
+            created_at=context_bundle.created_at,
+            projection_fingerprint=context_bundle.projection_fingerprint,
+            embedding_fingerprint=context_bundle.embedding_fingerprint,
+            retrieval_policy_fingerprint=context_bundle.retrieval_policy_fingerprint,
+            distillation_prompt_fingerprint=(
+                context_bundle.distillation_prompt_fingerprint
+            ),
+            budget_fingerprint=context_bundle.budget_fingerprint,
+        )
+        context_distillation_record = ContextDistillationRecord(
+            distillation_id=context_bundle.distillation.distillation_id,
+            session_id=context_bundle.distillation.session_id,
+            turn_number=context_bundle.distillation.turn_number,
+            snapshot_id=context_bundle.distillation.snapshot_id,
+            compiler_fingerprint=context_bundle.distillation.compiler_fingerprint,
+            summary=context_bundle.distillation.summary,
+            payload_json=self._encode_payload_json(
+                context_bundle.distillation.to_dict()
+            ),
+            invalidation_key=context_bundle.distillation.invalidation_key,
+            source_ref_ids=tuple(
+                ref.ref_id for ref in context_bundle.distillation.source_refs
+            ),
+            reused_from_distillation_id=(
+                context_bundle.distillation.reused_from_distillation_id
+            ),
+            created_at=context_bundle.distillation.created_at,
+            projection_fingerprint=context_bundle.distillation.projection_fingerprint,
+            embedding_fingerprint=context_bundle.distillation.embedding_fingerprint,
+            retrieval_policy_fingerprint=(
+                context_bundle.distillation.retrieval_policy_fingerprint
+            ),
+            distillation_prompt_fingerprint=(
+                context_bundle.distillation.distillation_prompt_fingerprint
+            ),
+            budget_fingerprint=context_bundle.distillation.budget_fingerprint,
+        )
+        context_activation_record = ContextActivationRecord(
+            activation_id=context_bundle.activation.activation_id,
+            bundle_id=context_bundle.activation.bundle_id,
+            session_id=context_bundle.activation.session_id,
+            turn_number=context_bundle.activation.turn_number,
+            snapshot_id=context_bundle.activation.snapshot_id,
+            compiler_fingerprint=context_bundle.activation.compiler_fingerprint,
+            active_ref_ids=context_bundle.activation.active_ref_ids,
+            active_fact_ids=context_bundle.activation.active_fact_ids,
+            active_hypothesis_ids=context_bundle.activation.active_hypothesis_ids,
+            reason=context_bundle.activation.reason,
+            payload_json=self._encode_payload_json(context_bundle.activation.to_dict()),
+            created_at=context_bundle.activation.created_at,
+        )
         self.cache_manager.save_working_memory_record(working_memory_record)
         self.cache_manager.save_turn_journal_record(journal_record)
+        self.cache_manager.save_context_bundle_record(context_bundle_record)
+        self.cache_manager.save_context_distillation_record(context_distillation_record)
+        self.cache_manager.save_context_activation_record(context_activation_record)
 
         dialogue_summary = self._answer_summary(summary, answer)
         metadata = {

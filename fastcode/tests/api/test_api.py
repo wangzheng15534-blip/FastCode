@@ -654,6 +654,36 @@ class TestAgentContextRoutes:
             "ref_id": "e1",
             "path": "src/auth.py",
         }
+        fake_fastcode.get_context_bundle.side_effect = [
+            {
+                "bundle_id": "ctxb_latest",
+                "session_id": "sess-1",
+                "turn_number": 3,
+                "format": "rendered",
+                "rendered": {"text": "bundle ctxb_latest"},
+            },
+            {
+                "bundle_id": "ctxb_123",
+                "session_id": "sess-1",
+                "turn_number": 2,
+                "format": "json",
+                "bundle": {"turn_number": 2},
+            },
+        ]
+        fake_fastcode.get_context_bundle_by_id.return_value = {
+            "bundle_id": "ctxb_123",
+            "session_id": "sess-1",
+        }
+        fake_fastcode.expand_context_bundle_ref.return_value = {
+            "bundle_id": "ctxb_123",
+            "ref_id": "e1",
+            "path": "src/auth.py",
+        }
+        fake_fastcode.create_context_activation.return_value = {
+            "activation_id": "act_123",
+            "bundle_id": "ctxb_123",
+            "active_ref_ids": ["e1"],
+        }
 
         with patch(
             "fastcode.api.routes._ensure_fastcode_initialized",
@@ -661,6 +691,52 @@ class TestAgentContextRoutes:
         ):
             latest = asyncio.run(api.get_latest_turn_context("sess-1", format="fcx"))
             turn = asyncio.run(api.get_turn_context("sess-1", 2, format="json"))
+            latest_bundle = asyncio.run(
+                api.get_latest_context_bundle(
+                    "sess-1",
+                    format="rendered",
+                    token_budget=32,
+                )
+            )
+            bundle = asyncio.run(
+                api.get_context_bundle(
+                    "sess-1",
+                    2,
+                    format="json",
+                    token_budget=2048,
+                )
+            )
+            bundle_by_id = asyncio.run(
+                api.get_context_bundle_by_id(
+                    "ctxb_123",
+                    format="json",
+                    token_budget=2048,
+                )
+            )
+            expanded_bundle = asyncio.run(
+                api.expand_agent_context_bundle_ref(
+                    api.ExpandContextBundleRefRequest(
+                        ref_id="e1",
+                        session_id=None,
+                        turn_number=None,
+                        bundle_id="ctxb_123",
+                        depth="L2",
+                    )
+                )
+            )
+            activation = asyncio.run(
+                api.create_agent_context_activation(
+                    api.ContextActivationRequest(
+                        session_id=None,
+                        turn_number=None,
+                        bundle_id="ctxb_123",
+                        active_ref_ids=["e1"],
+                        active_fact_ids=["f1"],
+                        active_hypothesis_ids=["h1"],
+                        reason="focused_answer",
+                    )
+                )
+            )
             handoff = asyncio.run(
                 api.create_agent_context_handoff(
                     api.AgentContextHandoffRequest(
@@ -684,6 +760,11 @@ class TestAgentContextRoutes:
 
         assert latest["result"]["turn_number"] == 3
         assert turn["result"]["artifact"]["turn_number"] == 2
+        assert latest_bundle["result"]["rendered"]["text"] == "bundle ctxb_latest"
+        assert bundle["result"]["bundle"]["turn_number"] == 2
+        assert bundle_by_id["result"]["bundle_id"] == "ctxb_123"
+        assert expanded_bundle["result"]["path"] == "src/auth.py"
+        assert activation["result"]["active_ref_ids"] == ["e1"]
         assert handoff["result"]["artifact_id"] == "hf_123"
         assert restored["result"]["session_id"] == "sess-1"
         assert expanded["result"]["path"] == "src/auth.py"
@@ -697,6 +778,33 @@ class TestAgentContextRoutes:
             2,
             "json",
         )
+        assert fake_fastcode.get_context_bundle.call_args_list[0].args == (
+            "sess-1",
+            None,
+            "rendered",
+            32,
+        )
+        assert fake_fastcode.get_context_bundle.call_args_list[1].args == (
+            "sess-1",
+            2,
+            "json",
+            2048,
+        )
+        assert fake_fastcode.expand_context_bundle_ref.call_args.kwargs == {
+            "session_id": None,
+            "turn_number": None,
+            "bundle_id": "ctxb_123",
+            "depth": "L2",
+        }
+        assert fake_fastcode.create_context_activation.call_args.kwargs == {
+            "session_id": None,
+            "turn_number": None,
+            "bundle_id": "ctxb_123",
+            "active_ref_ids": ["e1"],
+            "active_fact_ids": ["f1"],
+            "active_hypothesis_ids": ["h1"],
+            "reason": "focused_answer",
+        }
 
     def test_agent_context_routes_surface_not_found_as_http_404(self) -> None:
         fake_fastcode = MagicMock()

@@ -21,15 +21,23 @@ from fastcode.retrieval.core.agent_context import (
     Hypothesis,
     RiskState,
     TurnIntent,
+    WorkingMemoryArtifact,
 )
 from fastcode.retrieval.core.context_compiler import (
+    build_context_bundle,
     build_tool_observation,
+    build_turn_journal,
     build_turn_plan,
     compile_working_memory,
 )
 from fastcode.schemas.config import config_from_mapping
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
-from fastcode.store.records import WorkingMemoryRecord
+from fastcode.store.records import (
+    ContextActivationRecord,
+    ContextBundleRecord,
+    TurnJournalRecord,
+    WorkingMemoryRecord,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers (basic / doc pipeline tests)
@@ -1023,6 +1031,105 @@ def test_handoff_facade_persists_and_restores_typed_handoff_artifact() -> None:
     assert saved_records
     assert saved_records[0].artifact_id == handoff["artifact_id"]
     assert restored == handoff
+
+
+def test_context_bundle_facade_reads_renders_expands_and_activates() -> None:
+    working_memory_record, artifact_payload = _make_working_memory_record()
+    working_memory = WorkingMemoryArtifact.from_dict(artifact_payload)
+    journal = build_turn_journal(
+        intent=TurnIntent.from_dict(
+            {
+                "session_id": working_memory.session_id,
+                "turn_number": working_memory.turn_number,
+                "question": "Where is auth handled?",
+                "kind": "debug",
+                "requested_outcome": "answer",
+                "snapshot_id": working_memory.snapshot_id,
+                "artifact_key": working_memory.artifact_key,
+                "repo_filter": ("repo",),
+            }
+        ),
+        plan=build_turn_plan(
+            risk_state=working_memory.risk_state,
+            contract=working_memory.acceptance_contract,
+        ),
+        observations=(),
+        evidence_refs=working_memory.evidence_refs,
+        risk_state=working_memory.risk_state,
+        acceptance_contract=working_memory.acceptance_contract,
+        hypotheses=working_memory.hypotheses,
+        rejected_hypotheses=working_memory.rejected_hypotheses,
+        accepted_facts=working_memory.accepted_facts,
+        working_set=working_memory.working_set,
+        answer_summary="Auth behavior is grounded in src/auth.py.",
+        created_at=working_memory.created_at,
+    )
+    bundle = build_context_bundle(
+        working_memory=working_memory,
+        turn_journal=journal,
+    )
+    bundle_record = ContextBundleRecord(
+        bundle_id=bundle.bundle_id,
+        session_id=bundle.session_id,
+        turn_number=bundle.turn_number,
+        snapshot_id=bundle.snapshot_id,
+        artifact_key=bundle.artifact_key,
+        compiler_fingerprint=bundle.compiler_fingerprint,
+        payload_json=json.dumps(
+            bundle.to_dict(), separators=(",", ":"), sort_keys=True
+        ),
+        invalidation_key=bundle.distillation.invalidation_key,
+        created_at=bundle.created_at,
+    )
+    journal_record = TurnJournalRecord(
+        session_id=journal.session_id,
+        turn_number=journal.turn_number,
+        snapshot_id=journal.snapshot_id,
+        artifact_key=journal.artifact_key,
+        compiler_fingerprint=journal.compiler_fingerprint,
+        payload_json=json.dumps(
+            journal.to_dict(), separators=(",", ":"), sort_keys=True
+        ),
+        created_at=journal.created_at,
+    )
+    saved_activations: list[ContextActivationRecord] = []
+
+    fc = FastCode.__new__(FastCode)
+    fc.cache_manager = SimpleNamespace(
+        get_latest_context_bundle_record=lambda session_id: bundle_record,
+        get_context_bundle_record=lambda session_id, turn_number: bundle_record,
+        get_context_bundle_record_by_id=lambda bundle_id: bundle_record,
+        get_latest_working_memory_record=lambda session_id: working_memory_record,
+        get_working_memory_record=lambda session_id, turn_number: working_memory_record,
+        get_turn_journal_record=lambda session_id, turn_number: journal_record,
+        save_context_activation_record=lambda record: (
+            saved_activations.append(record) or True
+        ),
+    )
+
+    structured = fc.get_context_bundle("sess-1", 2, "json")
+    rendered = fc.get_context_bundle_by_id(bundle.bundle_id, "rendered", 24)
+    expanded = fc.expand_context_bundle_ref("e1", bundle_id=bundle.bundle_id)
+    activation = fc.create_context_activation(
+        bundle_id=bundle.bundle_id,
+        active_ref_ids=("e1",),
+        active_fact_ids=("f1",),
+        active_hypothesis_ids=("h1",),
+        reason="focused_answer",
+    )
+
+    assert structured["bundle_id"] == bundle.bundle_id
+    assert structured["bundle"]["distillation"]["source_refs"][0]["path"] == (
+        "src/auth.py"
+    )
+    assert rendered["rendered"]["text"].startswith(f"bundle {bundle.bundle_id}")
+    assert expanded["path"] == "src/auth.py"
+    assert expanded["lines"] == "10-20"
+    assert activation["active_ref_ids"] == ["e1"]
+    assert activation["active_fact_ids"] == ["f1"]
+    assert activation["active_hypothesis_ids"] == ["h1"]
+    assert saved_activations
+    assert saved_activations[0].reason == "focused_answer"
 
 
 def test_snapshot_artifact_handle_loader_caches_by_artifact_key(

@@ -41,7 +41,9 @@ from fastcode.api.serialization import (
 from fastcode.main.fastcode import FastCode
 from fastcode.schemas.api import (
     AgentContextHandoffRequest,
+    ContextActivationRequest,
     DeleteReposRequest,
+    ExpandContextBundleRefRequest,
     ExpandContextRefRequest,
     IndexMultipleRequest,
     LoadRepositoriesRequest,
@@ -804,6 +806,117 @@ async def get_turn_context(
         return {"status": "success", "result": result}
     except Exception as e:
         logger.error(f"Turn context fetch failed: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/agent-context/session/{session_id}/bundle/latest")
+async def get_latest_context_bundle(
+    session_id: str,
+    format: str = "json",
+    token_budget: int = 2048,
+):
+    """Fetch the latest durable context bundle for a session."""
+    if fastcode_instance is None:
+        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    try:
+        result = await asyncio.to_thread(
+            fastcode_instance.get_context_bundle,
+            session_id,
+            None,
+            format,
+            token_budget,
+        )
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Latest context bundle fetch failed: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/agent-context/session/{session_id}/bundle/{turn_number}")
+async def get_context_bundle(
+    session_id: str,
+    turn_number: int,
+    format: str = "json",
+    token_budget: int = 2048,
+):
+    """Fetch a durable context bundle for a session turn."""
+    if fastcode_instance is None:
+        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    try:
+        result = await asyncio.to_thread(
+            fastcode_instance.get_context_bundle,
+            session_id,
+            turn_number,
+            format,
+            token_budget,
+        )
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Context bundle fetch failed: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/agent-context/bundle/{bundle_id}")
+async def get_context_bundle_by_id(
+    bundle_id: str,
+    format: str = "json",
+    token_budget: int = 2048,
+):
+    """Fetch a durable context bundle by bundle ID."""
+    if fastcode_instance is None:
+        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    try:
+        result = await asyncio.to_thread(
+            fastcode_instance.get_context_bundle_by_id,
+            bundle_id,
+            format,
+            token_budget,
+        )
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Context bundle fetch failed: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/agent-context/bundle/expand")
+async def expand_agent_context_bundle_ref(request: ExpandContextBundleRefRequest):
+    """Expand a single source ref from a durable context bundle."""
+    if fastcode_instance is None:
+        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    try:
+        result = await asyncio.to_thread(
+            fastcode_instance.expand_context_bundle_ref,
+            request.ref_id,
+            session_id=request.session_id,
+            turn_number=request.turn_number,
+            bundle_id=request.bundle_id,
+            depth=request.depth,
+        )
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Context bundle ref expansion failed: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/agent-context/bundle/activation")
+async def create_agent_context_activation(request: ContextActivationRequest):
+    """Create and persist an activation record for a context bundle."""
+    if fastcode_instance is None:
+        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    try:
+        result = await asyncio.to_thread(
+            fastcode_instance.create_context_activation,
+            session_id=request.session_id,
+            turn_number=request.turn_number,
+            bundle_id=request.bundle_id,
+            active_ref_ids=request.active_ref_ids,
+            active_fact_ids=request.active_fact_ids,
+            active_hypothesis_ids=request.active_hypothesis_ids,
+            reason=request.reason,
+        )
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Context activation creation failed: {e}")
         raise HTTPException(status_code=404, detail=str(e))
 
 

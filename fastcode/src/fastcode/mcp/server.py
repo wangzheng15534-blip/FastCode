@@ -385,6 +385,118 @@ def get_turn_context(
 
 
 @mcp.tool()
+def get_context_bundle(
+    session_id: str,
+    turn_number: int | None = None,
+    format: str = "json",
+    token_budget: int = 2048,
+) -> str:
+    """Get a durable context bundle for a session turn.
+
+    Args:
+        session_id: Session identifier.
+        turn_number: Optional turn number. If omitted, the latest turn is used.
+        format: "json" for structured payloads or "rendered" for compact text.
+        token_budget: Approximate token budget for rendered bundles.
+
+    Returns:
+        JSON describing the requested context bundle.
+    """
+    fc = _get_fastcode()
+    result = fc.get_context_bundle(session_id, turn_number, format, token_budget)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def get_context_bundle_by_id(
+    bundle_id: str,
+    format: str = "json",
+    token_budget: int = 2048,
+) -> str:
+    """Get a durable context bundle by bundle ID.
+
+    Args:
+        bundle_id: Context bundle identifier.
+        format: "json" for structured payloads or "rendered" for compact text.
+        token_budget: Approximate token budget for rendered bundles.
+
+    Returns:
+        JSON describing the requested context bundle.
+    """
+    fc = _get_fastcode()
+    result = fc.get_context_bundle_by_id(bundle_id, format, token_budget)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def expand_context_bundle_ref(
+    ref_id: str,
+    session_id: str | None = None,
+    turn_number: int | None = None,
+    bundle_id: str | None = None,
+    depth: str = "L2",
+) -> str:
+    """Expand a specific source ref from a durable context bundle.
+
+    Args:
+        ref_id: Evidence ref ID such as e1.
+        session_id: Optional session identifier.
+        turn_number: Optional turn number.
+        bundle_id: Optional direct context bundle identifier.
+        depth: Requested expansion depth label.
+
+    Returns:
+        JSON with the resolved bundle source-ref payload.
+    """
+    fc = _get_fastcode()
+    result = fc.expand_context_bundle_ref(
+        ref_id,
+        session_id=session_id,
+        turn_number=turn_number,
+        bundle_id=bundle_id,
+        depth=depth,
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def create_context_activation(
+    session_id: str | None = None,
+    turn_number: int | None = None,
+    bundle_id: str | None = None,
+    active_ref_ids: list[str] | None = None,
+    active_fact_ids: list[str] | None = None,
+    active_hypothesis_ids: list[str] | None = None,
+    reason: str | None = None,
+) -> str:
+    """Create an activation record for a durable context bundle.
+
+    Args:
+        session_id: Optional session identifier.
+        turn_number: Optional turn number.
+        bundle_id: Optional direct context bundle identifier.
+        active_ref_ids: Evidence refs to activate.
+        active_fact_ids: Facts to activate.
+        active_hypothesis_ids: Hypotheses to activate.
+        reason: Activation reason.
+
+    Returns:
+        JSON describing the persisted activation.
+    """
+    fc = _get_fastcode()
+    result = fc.create_context_activation(
+        session_id=session_id,
+        turn_number=turn_number,
+        bundle_id=bundle_id,
+        active_ref_ids=active_ref_ids,
+        active_fact_ids=active_fact_ids,
+        active_hypothesis_ids=active_hypothesis_ids,
+        reason=reason,
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
 def create_handoff(
     session_id: str,
     turn_number: int | None = None,

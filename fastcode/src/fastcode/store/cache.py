@@ -14,6 +14,9 @@ from typing import Any, cast
 from diskcache import Cache as DiskCache
 
 from .records import (
+    ContextActivationRecord,
+    ContextBundleRecord,
+    ContextDistillationRecord,
     DialogueSessionRecord,
     DialogueTurnRecord,
     HandoffArtifactRecord,
@@ -159,6 +162,16 @@ class CacheManager:
         return float(value) if isinstance(value, (int, float)) else 0.0
 
     @staticmethod
+    def _string_tuple_payload(value: Any) -> tuple[str, ...]:
+        if isinstance(value, list):
+            return tuple(str(item) for item in cast(list[Any], value))
+        if isinstance(value, tuple):
+            return tuple(str(item) for item in cast(tuple[Any, ...], value))
+        if value is None:
+            return ()
+        return (str(value),)
+
+    @staticmethod
     def _dialogue_turn_record(payload: dict[str, Any]) -> DialogueTurnRecord:
         return DialogueTurnRecord(
             session_id=str(payload.get("session_id") or ""),
@@ -284,6 +297,164 @@ class CacheManager:
             mode=str(payload.get("mode") or ""),
             payload_json=str(payload.get("payload_json") or ""),
             full_fcx=str(payload.get("full_fcx") or ""),
+            created_at=CacheManager._float_payload(payload.get("created_at")),
+        )
+
+    @staticmethod
+    def _context_bundle_payload(record: ContextBundleRecord) -> dict[str, Any]:
+        return {
+            "bundle_id": record.bundle_id,
+            "session_id": record.session_id,
+            "turn_number": record.turn_number,
+            "snapshot_id": record.snapshot_id,
+            "artifact_key": record.artifact_key,
+            "compiler_fingerprint": record.compiler_fingerprint,
+            "payload_json": record.payload_json,
+            "invalidation_key": record.invalidation_key,
+            "created_at": record.created_at,
+            "projection_fingerprint": record.projection_fingerprint,
+            "embedding_fingerprint": record.embedding_fingerprint,
+            "retrieval_policy_fingerprint": record.retrieval_policy_fingerprint,
+            "distillation_prompt_fingerprint": (record.distillation_prompt_fingerprint),
+            "budget_fingerprint": record.budget_fingerprint,
+        }
+
+    @staticmethod
+    def _context_bundle_record(payload: dict[str, Any]) -> ContextBundleRecord:
+        return ContextBundleRecord(
+            bundle_id=str(payload.get("bundle_id") or ""),
+            session_id=str(payload.get("session_id") or ""),
+            turn_number=int(payload.get("turn_number") or 0),
+            snapshot_id=CacheManager._optional_string_payload(
+                payload.get("snapshot_id")
+            ),
+            artifact_key=CacheManager._optional_string_payload(
+                payload.get("artifact_key")
+            ),
+            compiler_fingerprint=str(payload.get("compiler_fingerprint") or ""),
+            payload_json=str(payload.get("payload_json") or ""),
+            invalidation_key=str(payload.get("invalidation_key") or ""),
+            created_at=CacheManager._float_payload(payload.get("created_at")),
+            projection_fingerprint=str(
+                payload.get("projection_fingerprint") or "projection:none"
+            ),
+            embedding_fingerprint=str(
+                payload.get("embedding_fingerprint") or "embedding:unknown"
+            ),
+            retrieval_policy_fingerprint=str(
+                payload.get("retrieval_policy_fingerprint") or "retrieval:default"
+            ),
+            distillation_prompt_fingerprint=str(
+                payload.get("distillation_prompt_fingerprint") or "distill:v1"
+            ),
+            budget_fingerprint=str(
+                payload.get("budget_fingerprint") or "budget:default"
+            ),
+        )
+
+    @staticmethod
+    def _context_distillation_payload(
+        record: ContextDistillationRecord,
+    ) -> dict[str, Any]:
+        return {
+            "distillation_id": record.distillation_id,
+            "session_id": record.session_id,
+            "turn_number": record.turn_number,
+            "snapshot_id": record.snapshot_id,
+            "compiler_fingerprint": record.compiler_fingerprint,
+            "summary": record.summary,
+            "payload_json": record.payload_json,
+            "invalidation_key": record.invalidation_key,
+            "source_ref_ids": list(record.source_ref_ids),
+            "reused_from_distillation_id": record.reused_from_distillation_id,
+            "created_at": record.created_at,
+            "projection_fingerprint": record.projection_fingerprint,
+            "embedding_fingerprint": record.embedding_fingerprint,
+            "retrieval_policy_fingerprint": record.retrieval_policy_fingerprint,
+            "distillation_prompt_fingerprint": (record.distillation_prompt_fingerprint),
+            "budget_fingerprint": record.budget_fingerprint,
+        }
+
+    @staticmethod
+    def _context_distillation_record(
+        payload: dict[str, Any],
+    ) -> ContextDistillationRecord:
+        return ContextDistillationRecord(
+            distillation_id=str(payload.get("distillation_id") or ""),
+            session_id=str(payload.get("session_id") or ""),
+            turn_number=int(payload.get("turn_number") or 0),
+            snapshot_id=CacheManager._optional_string_payload(
+                payload.get("snapshot_id")
+            ),
+            compiler_fingerprint=str(payload.get("compiler_fingerprint") or ""),
+            summary=str(payload.get("summary") or ""),
+            payload_json=str(payload.get("payload_json") or ""),
+            invalidation_key=str(payload.get("invalidation_key") or ""),
+            source_ref_ids=CacheManager._string_tuple_payload(
+                payload.get("source_ref_ids")
+            ),
+            reused_from_distillation_id=CacheManager._optional_string_payload(
+                payload.get("reused_from_distillation_id")
+            ),
+            created_at=CacheManager._float_payload(payload.get("created_at")),
+            projection_fingerprint=str(
+                payload.get("projection_fingerprint") or "projection:none"
+            ),
+            embedding_fingerprint=str(
+                payload.get("embedding_fingerprint") or "embedding:unknown"
+            ),
+            retrieval_policy_fingerprint=str(
+                payload.get("retrieval_policy_fingerprint") or "retrieval:default"
+            ),
+            distillation_prompt_fingerprint=str(
+                payload.get("distillation_prompt_fingerprint") or "distill:v1"
+            ),
+            budget_fingerprint=str(
+                payload.get("budget_fingerprint") or "budget:default"
+            ),
+        )
+
+    @staticmethod
+    def _context_activation_payload(record: ContextActivationRecord) -> dict[str, Any]:
+        return {
+            "activation_id": record.activation_id,
+            "bundle_id": record.bundle_id,
+            "session_id": record.session_id,
+            "turn_number": record.turn_number,
+            "snapshot_id": record.snapshot_id,
+            "compiler_fingerprint": record.compiler_fingerprint,
+            "active_ref_ids": list(record.active_ref_ids),
+            "active_fact_ids": list(record.active_fact_ids),
+            "active_hypothesis_ids": list(record.active_hypothesis_ids),
+            "reason": record.reason,
+            "payload_json": record.payload_json,
+            "created_at": record.created_at,
+        }
+
+    @staticmethod
+    def _context_activation_record(
+        payload: dict[str, Any],
+    ) -> ContextActivationRecord:
+        return ContextActivationRecord(
+            activation_id=str(payload.get("activation_id") or ""),
+            bundle_id=str(payload.get("bundle_id") or ""),
+            session_id=str(payload.get("session_id") or ""),
+            turn_number=int(payload.get("turn_number") or 0),
+            snapshot_id=CacheManager._optional_string_payload(
+                payload.get("snapshot_id")
+            ),
+            compiler_fingerprint=str(payload.get("compiler_fingerprint") or ""),
+            active_ref_ids=CacheManager._string_tuple_payload(
+                payload.get("active_ref_ids")
+            ),
+            active_fact_ids=CacheManager._string_tuple_payload(
+                payload.get("active_fact_ids")
+            ),
+            active_hypothesis_ids=CacheManager._string_tuple_payload(
+                payload.get("active_hypothesis_ids")
+            ),
+            reason=str(payload.get("reason") or ""),
+            payload_json=str(payload.get("payload_json") or ""),
             created_at=CacheManager._float_payload(payload.get("created_at")),
         )
 
@@ -851,6 +1022,203 @@ class CacheManager:
             self.logger.error(f"Failed to list handoff artifact records: {e}")
             return []
 
+    def save_context_bundle_record(self, record: ContextBundleRecord) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            key = f"context_bundle_{record.session_id}_turn_{record.turn_number}"
+            self._cache_set_raw(
+                key,
+                self._json_cache_payload(self._context_bundle_payload(record)),
+                self.dialogue_ttl,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to save context bundle record: {e}")
+            return False
+
+    def get_context_bundle_record(
+        self, session_id: str, turn_number: int
+    ) -> ContextBundleRecord | None:
+        if not self.enabled:
+            return None
+        key = f"context_bundle_{session_id}_turn_{turn_number}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return self._context_bundle_record(cast(dict[str, Any], value))
+
+    def get_latest_context_bundle_record(
+        self, session_id: str
+    ) -> ContextBundleRecord | None:
+        session_index = self.get_session_index_record(session_id)
+        if session_index is None or session_index.total_turns <= 0:
+            return None
+        return self.get_context_bundle_record(session_id, session_index.total_turns)
+
+    def list_context_bundle_records(
+        self, session_id: str | None = None
+    ) -> list[ContextBundleRecord]:
+        if not self.enabled or self.cache is None:
+            return []
+        records: list[ContextBundleRecord] = []
+        try:
+            if self.backend == "disk":
+                iterable: Iterable[Any] = self.cache.iterkeys()
+            elif self.backend == "redis":
+                iterable = self.cache.scan_iter(match="context_bundle_*")
+            else:
+                iterable = []
+
+            for raw_key in iterable:
+                key = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+                if not isinstance(key, str) or not key.startswith("context_bundle_"):
+                    continue
+                value = self.get(key)
+                if not isinstance(value, dict):
+                    continue
+                record = self._context_bundle_record(cast(dict[str, Any], value))
+                if session_id is None or record.session_id == session_id:
+                    records.append(record)
+            records.sort(key=lambda record: record.created_at, reverse=True)
+            return records
+        except Exception as e:
+            self.logger.error(f"Failed to list context bundle records: {e}")
+            return []
+
+    def get_context_bundle_record_by_id(
+        self, bundle_id: str
+    ) -> ContextBundleRecord | None:
+        for record in self.list_context_bundle_records():
+            if record.bundle_id == bundle_id:
+                return record
+        return None
+
+    def save_context_distillation_record(
+        self, record: ContextDistillationRecord
+    ) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            key = f"context_distillation_{record.session_id}_turn_{record.turn_number}"
+            self._cache_set_raw(
+                key,
+                self._json_cache_payload(self._context_distillation_payload(record)),
+                self.dialogue_ttl,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to save context distillation record: {e}")
+            return False
+
+    def get_context_distillation_record(
+        self, session_id: str, turn_number: int
+    ) -> ContextDistillationRecord | None:
+        if not self.enabled:
+            return None
+        key = f"context_distillation_{session_id}_turn_{turn_number}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return self._context_distillation_record(cast(dict[str, Any], value))
+
+    def find_reusable_context_distillation_record(
+        self,
+        session_id: str,
+        *,
+        invalidation_key: str,
+        compiler_fingerprint: str,
+    ) -> ContextDistillationRecord | None:
+        session_index = self.get_session_index_record(session_id)
+        if session_index is None or session_index.total_turns <= 0:
+            return None
+        for turn_number in range(session_index.total_turns, 0, -1):
+            record = self.get_context_distillation_record(session_id, turn_number)
+            if record is None:
+                continue
+            if (
+                record.invalidation_key == invalidation_key
+                and record.compiler_fingerprint == compiler_fingerprint
+            ):
+                return record
+        return None
+
+    def save_context_activation_record(self, record: ContextActivationRecord) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            key = f"context_activation_{record.session_id}_turn_{record.turn_number}"
+            id_key = f"context_activation_id_{record.activation_id}"
+            payload = self._json_cache_payload(self._context_activation_payload(record))
+            self._cache_set_raw(
+                key,
+                payload,
+                self.dialogue_ttl,
+            )
+            self._cache_set_raw(
+                id_key,
+                payload,
+                self.dialogue_ttl,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to save context activation record: {e}")
+            return False
+
+    def get_context_activation_record(
+        self, session_id: str, turn_number: int
+    ) -> ContextActivationRecord | None:
+        if not self.enabled:
+            return None
+        key = f"context_activation_{session_id}_turn_{turn_number}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return self._context_activation_record(cast(dict[str, Any], value))
+
+    def get_context_activation_record_by_id(
+        self, activation_id: str
+    ) -> ContextActivationRecord | None:
+        if not self.enabled:
+            return None
+        key = f"context_activation_id_{activation_id}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return self._context_activation_record(cast(dict[str, Any], value))
+
+    def list_context_activation_records(
+        self, session_id: str | None = None
+    ) -> list[ContextActivationRecord]:
+        if not self.enabled or self.cache is None:
+            return []
+        records: list[ContextActivationRecord] = []
+        try:
+            if self.backend == "disk":
+                iterable: Iterable[Any] = self.cache.iterkeys()
+            elif self.backend == "redis":
+                iterable = self.cache.scan_iter(match="context_activation_id_*")
+            else:
+                iterable = []
+
+            for raw_key in iterable:
+                key = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+                if not isinstance(key, str) or not key.startswith(
+                    "context_activation_id_"
+                ):
+                    continue
+                value = self.get(key)
+                if not isinstance(value, dict):
+                    continue
+                record = self._context_activation_record(cast(dict[str, Any], value))
+                if session_id is None or record.session_id == session_id:
+                    records.append(record)
+            records.sort(key=lambda record: record.created_at, reverse=True)
+            return records
+        except Exception as e:
+            self.logger.error(f"Failed to list context activation records: {e}")
+            return []
+
     def _update_session_index(
         self, session_id: str, turn_number: int, multi_turn: bool | None = None
     ) -> bool:
@@ -932,6 +1300,9 @@ class CacheManager:
                 self.delete(key)
                 self.delete(f"turn_journal_{session_id}_turn_{turn_num}")
                 self.delete(f"working_memory_{session_id}_turn_{turn_num}")
+                self.delete(f"context_bundle_{session_id}_turn_{turn_num}")
+                self.delete(f"context_distillation_{session_id}_turn_{turn_num}")
+                self.delete(f"context_activation_{session_id}_turn_{turn_num}")
 
             # Delete session index
             index_key = f"dialogue_session_{session_id}_index"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
@@ -14,8 +15,10 @@ from fastcode.ir.types import IRSnapshot
 from fastcode.main import FastCode
 from fastcode.query.handler import QueryPipeline
 from fastcode.query.processor import ProcessedQuery
+from fastcode.retrieval.core.agent_context import DistillationRecord, EvidenceRef
 from fastcode.retrieval.hybrid import HybridRetriever
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
+from fastcode.store.records import ContextDistillationRecord
 
 
 def _processed_query(
@@ -63,9 +66,10 @@ def _query_pipeline(
     retriever = MagicMock()
     retriever.enable_agency_mode = False
     retriever.iterative_agent = None
-    retriever.retrieve.side_effect = retrieve_side_effect or [
-        [{"element": {"relative_path": "a.py"}}]
-    ]
+    if retrieve_side_effect is None:
+        retriever.retrieve.return_value = [{"element": {"relative_path": "a.py"}}]
+    else:
+        retriever.retrieve.side_effect = retrieve_side_effect
     answer_generator = MagicMock()
     answer_generator.generate.return_value = {"answer": "ok", "sources": []}
     query_processor = MagicMock()
@@ -75,8 +79,12 @@ def _query_pipeline(
     cache_manager.get_session_index_record.return_value = None
     cache_manager._get_session_index.return_value = None
     cache_manager.get_latest_working_memory_record.return_value = None
+    cache_manager.find_reusable_context_distillation_record.return_value = None
     cache_manager.save_working_memory_record.return_value = True
     cache_manager.save_turn_journal_record.return_value = True
+    cache_manager.save_context_bundle_record.return_value = True
+    cache_manager.save_context_distillation_record.return_value = True
+    cache_manager.save_context_activation_record.return_value = True
     cache_manager.save_dialogue_turn.return_value = True
     return QueryPipeline(
         config={"generation": {"enable_multi_turn": False}},
@@ -356,8 +364,139 @@ def test_query_pipeline_compiles_context_and_persists_typed_records() -> None:
     assert "<fcx:turn>" in generate_kwargs["compiled_context"]
     assert pipeline.cache_manager.save_working_memory_record.call_count == 1
     assert pipeline.cache_manager.save_turn_journal_record.call_count == 1
+    assert pipeline.cache_manager.save_context_bundle_record.call_count == 1
+    assert pipeline.cache_manager.save_context_distillation_record.call_count == 1
+    assert pipeline.cache_manager.save_context_activation_record.call_count == 1
+    bundle_record = pipeline.cache_manager.save_context_bundle_record.call_args.args[0]
+    distillation_record = (
+        pipeline.cache_manager.save_context_distillation_record.call_args.args[0]
+    )
+    activation_record = (
+        pipeline.cache_manager.save_context_activation_record.call_args.args[0]
+    )
+    bundle_payload = json.loads(bundle_record.payload_json)
+    distillation_payload = json.loads(distillation_record.payload_json)
+    activation_payload = json.loads(activation_record.payload_json)
+    assert bundle_record.invalidation_key.startswith("ctxinv_")
+    assert bundle_payload["distillation"]["source_refs"][0]["path"] == "src/auth.py"
+    assert distillation_record.source_ref_ids == ("e1",)
+    assert distillation_payload["source_refs"][0]["lines"] == "10-80"
+    assert activation_payload["active_ref_ids"] == ["e1"]
+    assert activation_record.bundle_id == bundle_record.bundle_id
     assert pipeline.cache_manager.save_dialogue_turn.call_args.kwargs["summary"]
     assert result["turn_number"] == 1
+
+
+def test_query_pipeline_reuses_context_distillation_when_sources_match() -> None:
+    processed_query = _processed_query(
+        question="Where is auth handled?",
+        filters={"snapshot_id": "snap:1", "artifact_key": "art:1"},
+    )
+    pipeline = _query_pipeline()
+    pipeline.query_processor.process.return_value = processed_query
+    pipeline.retriever.retrieve.return_value = [
+        {
+            "element": {
+                "relative_path": "src/auth.py",
+                "repo_name": "repo",
+                "type": "file",
+                "name": "auth.py",
+                "start_line": 10,
+                "end_line": 80,
+            },
+            "total_score": 1.4,
+        }
+    ]
+    prior_distillation = DistillationRecord(
+        distillation_id="dist_previous",
+        session_id="sess-1",
+        turn_number=1,
+        snapshot_id="snap:1",
+        compiler_fingerprint="fcx-v1",
+        summary="Prior auth distillation",
+        source_refs=(
+            EvidenceRef(
+                ref_id="e1",
+                kind="range",
+                repo_name="repo",
+                snapshot_id="snap:1",
+                path="src/auth.py",
+                lines="10-80",
+                label="auth.py",
+                source="retrieval",
+                fresh="ok",
+            ),
+        ),
+        accepted_facts=(),
+        reused_from_distillation_id=None,
+        invalidation_key="placeholder",
+        created_at=100.0,
+    )
+
+    def _find_reusable(
+        session_id: str,
+        *,
+        invalidation_key: str,
+        compiler_fingerprint: str,
+    ) -> ContextDistillationRecord:
+        reused = DistillationRecord(
+            distillation_id=prior_distillation.distillation_id,
+            session_id=prior_distillation.session_id,
+            turn_number=prior_distillation.turn_number,
+            snapshot_id=prior_distillation.snapshot_id,
+            compiler_fingerprint=compiler_fingerprint,
+            summary=prior_distillation.summary,
+            source_refs=prior_distillation.source_refs,
+            accepted_facts=prior_distillation.accepted_facts,
+            reused_from_distillation_id=None,
+            invalidation_key=invalidation_key,
+            created_at=prior_distillation.created_at,
+        )
+        return ContextDistillationRecord(
+            distillation_id=reused.distillation_id,
+            session_id=session_id,
+            turn_number=1,
+            snapshot_id=reused.snapshot_id,
+            compiler_fingerprint=reused.compiler_fingerprint,
+            summary=reused.summary,
+            payload_json=json.dumps(
+                reused.to_dict(), separators=(",", ":"), sort_keys=True
+            ),
+            invalidation_key=invalidation_key,
+            source_ref_ids=("e1",),
+            reused_from_distillation_id=None,
+            created_at=reused.created_at,
+        )
+
+    pipeline.cache_manager.find_reusable_context_distillation_record.side_effect = (
+        _find_reusable
+    )
+    pipeline.answer_generator.generate.return_value = {
+        "answer": "Auth is handled in src/auth.py",
+        "sources": [
+            {
+                "file": "src/auth.py",
+                "repo": "repo",
+                "type": "file",
+                "name": "auth.py",
+                "start_line": 10,
+                "end_line": 80,
+            }
+        ],
+    }
+
+    pipeline.query(
+        "Where is auth handled?",
+        filters={"snapshot_id": "snap:1", "artifact_key": "art:1"},
+        session_id="sess-1",
+    )
+
+    saved = pipeline.cache_manager.save_context_distillation_record.call_args.args[0]
+    payload = json.loads(saved.payload_json)
+    assert saved.distillation_id == "dist_previous"
+    assert saved.reused_from_distillation_id == "dist_previous"
+    assert saved.source_ref_ids == ("e1",)
+    assert payload["source_refs"][0]["path"] == "src/auth.py"
 
 
 def test_fastcode_query_semantic_escalation_updates_ir_graphs() -> None:

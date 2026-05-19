@@ -12,6 +12,9 @@ from fastcode.store.cache import (
     CacheManager,
 )
 from fastcode.store.records import (
+    ContextActivationRecord,
+    ContextBundleRecord,
+    ContextDistillationRecord,
     DialogueSessionRecord,
     DialogueTurnRecord,
     HandoffArtifactRecord,
@@ -269,6 +272,21 @@ def test_agent_context_records_roundtrip_and_delete_with_session(
             "cache manager must not call HandoffArtifactRecord.to_dict()"
         )
 
+    def _boom_bundle(_: ContextBundleRecord) -> dict[str, object]:
+        raise AssertionError(
+            "cache manager must not call ContextBundleRecord.to_dict()"
+        )
+
+    def _boom_distillation(_: ContextDistillationRecord) -> dict[str, object]:
+        raise AssertionError(
+            "cache manager must not call ContextDistillationRecord.to_dict()"
+        )
+
+    def _boom_activation(_: ContextActivationRecord) -> dict[str, object]:
+        raise AssertionError(
+            "cache manager must not call ContextActivationRecord.to_dict()"
+        )
+
     def _boom_from_dict(cls: type[object], _payload: dict[str, Any]) -> object:
         raise AssertionError(f"cache manager must not call {cls.__name__}.from_dict()")
 
@@ -279,6 +297,16 @@ def test_agent_context_records_roundtrip_and_delete_with_session(
     monkeypatch.setattr(TurnJournalRecord, "from_dict", classmethod(_boom_from_dict))
     monkeypatch.setattr(
         HandoffArtifactRecord, "from_dict", classmethod(_boom_from_dict)
+    )
+    monkeypatch.setattr(ContextBundleRecord, "to_dict", _boom_bundle)
+    monkeypatch.setattr(ContextDistillationRecord, "to_dict", _boom_distillation)
+    monkeypatch.setattr(ContextActivationRecord, "to_dict", _boom_activation)
+    monkeypatch.setattr(ContextBundleRecord, "from_dict", classmethod(_boom_from_dict))
+    monkeypatch.setattr(
+        ContextDistillationRecord, "from_dict", classmethod(_boom_from_dict)
+    )
+    monkeypatch.setattr(
+        ContextActivationRecord, "from_dict", classmethod(_boom_from_dict)
     )
 
     try:
@@ -325,14 +353,70 @@ def test_agent_context_records_roundtrip_and_delete_with_session(
             full_fcx="full-fcx",
             created_at=1234.5,
         )
+        bundle_record = ContextBundleRecord(
+            bundle_id="ctxb_123",
+            session_id="session-agent",
+            turn_number=1,
+            snapshot_id="snap:1",
+            artifact_key="art:1",
+            compiler_fingerprint="fcx-v1",
+            payload_json='{"bundle_id":"ctxb_123","session_id":"session-agent"}',
+            invalidation_key="ctxinv_auth",
+            created_at=1234.5,
+        )
+        distillation_record = ContextDistillationRecord(
+            distillation_id="dist_123",
+            session_id="session-agent",
+            turn_number=1,
+            snapshot_id="snap:1",
+            compiler_fingerprint="fcx-v1",
+            summary="Auth is grounded in src/auth.py",
+            payload_json='{"distillation_id":"dist_123","session_id":"session-agent"}',
+            invalidation_key="ctxinv_auth",
+            source_ref_ids=("e1",),
+            reused_from_distillation_id=None,
+            created_at=1234.5,
+        )
+        activation_record = ContextActivationRecord(
+            activation_id="act_123",
+            bundle_id="ctxb_123",
+            session_id="session-agent",
+            turn_number=1,
+            snapshot_id="snap:1",
+            compiler_fingerprint="fcx-v1",
+            active_ref_ids=("e1",),
+            active_fact_ids=("f1",),
+            active_hypothesis_ids=("h1",),
+            reason="compiled_context",
+            payload_json='{"activation_id":"act_123","bundle_id":"ctxb_123"}',
+            created_at=1234.5,
+        )
 
         assert manager.save_working_memory_record(working_memory_record)
         assert manager.save_turn_journal_record(turn_journal_record)
         assert manager.save_handoff_artifact_record(handoff_record)
+        assert manager.save_context_bundle_record(bundle_record)
+        assert manager.save_context_distillation_record(distillation_record)
+        assert manager.save_context_activation_record(activation_record)
 
         restored_working_memory = manager.get_working_memory_record("session-agent", 1)
         restored_journal = manager.get_turn_journal_record("session-agent", 1)
         restored_handoff = manager.get_handoff_artifact_record("hf_123")
+        restored_bundle = manager.get_context_bundle_record("session-agent", 1)
+        restored_distillation = manager.get_context_distillation_record(
+            "session-agent", 1
+        )
+        reusable_distillation = manager.find_reusable_context_distillation_record(
+            "session-agent",
+            invalidation_key="ctxinv_auth",
+            compiler_fingerprint="fcx-v1",
+        )
+        stale_distillation = manager.find_reusable_context_distillation_record(
+            "session-agent",
+            invalidation_key="ctxinv_stale",
+            compiler_fingerprint="fcx-v1",
+        )
+        restored_activation = manager.get_context_activation_record("session-agent", 1)
         handoffs = manager.list_handoff_artifact_records("session-agent")
 
         assert restored_working_memory is not None
@@ -343,10 +427,21 @@ def test_agent_context_records_roundtrip_and_delete_with_session(
         assert restored_handoff is not None
         assert restored_handoff.mode == "delegate"
         assert [record.artifact_id for record in handoffs] == ["hf_123"]
+        assert restored_bundle is not None
+        assert restored_bundle.invalidation_key == "ctxinv_auth"
+        assert restored_distillation is not None
+        assert restored_distillation.source_ref_ids == ("e1",)
+        assert reusable_distillation == restored_distillation
+        assert stale_distillation is None
+        assert restored_activation is not None
+        assert restored_activation.active_hypothesis_ids == ("h1",)
 
         assert manager.delete_session("session-agent") is True
         assert manager.get_working_memory_record("session-agent", 1) is None
         assert manager.get_turn_journal_record("session-agent", 1) is None
         assert manager.get_handoff_artifact_record("hf_123") is None
+        assert manager.get_context_bundle_record("session-agent", 1) is None
+        assert manager.get_context_distillation_record("session-agent", 1) is None
+        assert manager.get_context_activation_record("session-agent", 1) is None
     finally:
         manager.cache.close()

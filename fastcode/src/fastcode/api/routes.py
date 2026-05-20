@@ -39,6 +39,7 @@ from fastcode.schemas.api import (
     AgentContextHandoffRequest,
     ContextActivationRequest,
     DeleteReposRequest,
+    DiagnosticBundleResponse,
     ExpandContextBundleRefRequest,
     ExpandContextRefRequest,
     IndexMultipleRequest,
@@ -423,6 +424,18 @@ async def get_status(full_scan: bool = False):
         available_repositories=available_repos,
         loaded_repositories=loaded_repos,
     )
+
+
+@app.get("/diagnostics", response_model=DiagnosticBundleResponse)
+async def get_diagnostics():
+    """Return a support-safe diagnostic bundle for operators."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        bundle = await asyncio.to_thread(fastcode.build_diagnostic_bundle)
+        return DiagnosticBundleResponse(status="success", bundle=bundle)
+    except Exception as e:
+        logger.error(f"Failed to build diagnostic bundle: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/repositories")

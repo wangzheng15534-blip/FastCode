@@ -53,6 +53,49 @@ def test_get_run_record_returns_typed_record(tmp_path: Path) -> None:
     assert record.snapshot_id == "snap1"
 
 
+def test_get_latest_run_record_returns_newest_typed_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = _make_store(tmp_path)
+    first_run_id = store.create_run(
+        repo_name="repo",
+        snapshot_id="snap:first",
+        branch="main",
+        commit_id="abc123",
+    )
+    latest_run_id = store.create_run(
+        repo_name="repo",
+        snapshot_id="snap:latest",
+        branch="main",
+        commit_id="def456",
+    )
+    with store.db_runtime.connect() as conn:
+        conn.execute(
+            "UPDATE index_runs SET created_at=? WHERE run_id=?",
+            ("2026-05-20T00:00:00+00:00", first_run_id),
+        )
+        conn.execute(
+            "UPDATE index_runs SET created_at=? WHERE run_id=?",
+            ("2026-05-20T00:00:01+00:00", latest_run_id),
+        )
+        conn.commit()
+
+    def _boom(_: object) -> dict[str, object]:
+        raise AssertionError("latest run lookup must not call row_to_dict()")
+
+    monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom)
+
+    record = store.get_latest_run_record()
+    payload = store.get_latest_run()
+
+    assert isinstance(record, IndexRunRecord)
+    assert record.run_id == latest_run_id
+    assert record.snapshot_id == "snap:latest"
+    assert payload is not None
+    assert payload["run_id"] == latest_run_id
+    assert payload["snapshot_id"] == "snap:latest"
+
+
 def test_claim_next_publish_task_returns_running_payload_after_claim(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

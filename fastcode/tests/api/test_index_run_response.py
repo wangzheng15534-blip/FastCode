@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from fastcode.api import routes as api
-from fastcode.schemas.api import IndexRunResponse
+from fastcode.schemas.api import DiagnosticBundleResponse, IndexRunResponse
 
 
 class _FakeFastCode:
@@ -49,6 +49,15 @@ class _FakeFastCode:
             },
         }
 
+    def build_diagnostic_bundle(self) -> dict[str, Any]:
+        return {
+            "schema_version": "fastcode.diagnostic_bundle.v1",
+            "config_summary": {"storage": {"backend": "sqlite"}},
+            "storage": {"backend": "sqlite"},
+            "dependencies": {"python": [], "external_tools": []},
+            "latest_index_run": {"run_id": "run_1"},
+        }
+
 
 def test_index_run_response_defaults_are_independent() -> None:
     first = IndexRunResponse(status="success")
@@ -59,6 +68,15 @@ def test_index_run_response_defaults_are_independent() -> None:
 
     assert second.warnings == []
     assert second.pipeline_metrics == {}
+
+
+def test_diagnostic_bundle_response_defaults_are_independent() -> None:
+    first = DiagnosticBundleResponse(status="success")
+    second = DiagnosticBundleResponse(status="success")
+
+    first.bundle["schema_version"] = "fastcode.diagnostic_bundle.v1"
+
+    assert second.bundle == {}
 
 
 def test_index_run_promotes_pipeline_and_resolver_diagnostics(
@@ -120,3 +138,23 @@ def test_index_run_promotes_pipeline_and_resolver_diagnostics(
         "scip_artifact_path": None,
         "enable_scip": False,
     }
+
+
+def test_diagnostics_endpoint_returns_support_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeFastCode()
+
+    async def _run_inline(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(api.asyncio, "to_thread", _run_inline)
+    monkeypatch.setattr(api, "_ensure_fastcode_initialized", lambda: fake)
+
+    body = asyncio.run(api.get_diagnostics())
+
+    assert body.status == "success"
+    assert body.bundle["schema_version"] == "fastcode.diagnostic_bundle.v1"
+    assert body.bundle["config_summary"]["storage"]["backend"] == "sqlite"
+    assert body.bundle["storage"]["backend"] == "sqlite"
+    assert body.bundle["latest_index_run"]["run_id"] == "run_1"

@@ -52,6 +52,7 @@ from fastcode.schemas.core_types import (
 if TYPE_CHECKING:
     from fastcode.schemas.api import (
         DeleteReposRequest,
+        DiagnosticBundleResponse,
         IndexMultipleRequest,
         IndexRunRequest,
         IndexRunResponse,
@@ -67,6 +68,7 @@ if TYPE_CHECKING:
 
 _API_NAMES = {
     "DeleteReposRequest",
+    "DiagnosticBundleResponse",
     "IndexMultipleRequest",
     "IndexRunRequest",
     "IndexRunResponse",
@@ -95,6 +97,7 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "CacheConfig",
     "DeleteReposRequest",
+    "DiagnosticBundleResponse",
     "ElementFilter",
     "EmbeddingConfig",
     "EvaluationConfig",

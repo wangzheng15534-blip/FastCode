@@ -36,8 +36,10 @@ from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.store.records import (
     ContextActivationRecord,
     ContextBundleRecord,
+    IndexRunRecord,
     ManifestRecord,
     SCIPArtifactRecord,
+    SnapshotRecord,
     SnapshotRefRecord,
     TurnJournalRecord,
     WorkingMemoryRecord,
@@ -188,6 +190,176 @@ def test_api_facade_scip_artifacts_use_explicit_record_payloads(
         "/tmp/go.scip",
     ]
     assert artifacts[1]["metadata"] == {}
+
+
+def test_diagnostic_bundle_reports_support_safe_runtime_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fc = FastCode.__new__(FastCode)
+    fc.config = {
+        "storage": {
+            "backend": "postgres",
+            "postgres_dsn": "postgresql://user:secret@db/fastcode",
+            "pool_min": 1,
+            "pool_max": 4,
+        },
+        "repository": {
+            "ignore_patterns": ["node_modules", ".git"],
+            "supported_extensions": [".py", ".ts"],
+            "exclude_site_packages": True,
+            "max_file_size_mb": 7,
+        },
+        "embedding": {
+            "provider": "ollama",
+            "model": "all-minilm",
+            "ollama_url": "http://127.0.0.1:11434",
+        },
+        "retrieval": {"backend": "pg_hybrid", "graph_backend": "ir"},
+        "generation": {
+            "provider": "openai",
+            "model": "gpt-test",
+            "api_key": "should-not-leak",
+        },
+        "cache": {"enabled": True, "backend": "disk"},
+        "terminus": {"endpoint": "https://terminus.example", "api_key": "secret"},
+        "projection": {"postgres_dsn": "postgresql://projection"},
+        "repo_root": "/repo",
+        "vector_store": {"persist_directory": "/tmp/vector?api_key=vector-secret"},
+    }
+    fc.repo_loaded = True
+    fc.repo_indexed = True
+    fc.multi_repo_mode = False
+    fc.repo_info = {
+        "name": "repo",
+        "url": "https://oauth2:repo-secret@example.test/org/repo.git",
+        "file_count": 3,
+        "total_size_mb": 0.01,
+    }
+    fc.loaded_repositories = {"repo": fc.repo_info}
+    latest_run = IndexRunRecord(
+        run_id="run_1",
+        repo_name="repo",
+        snapshot_id="snap:repo:1",
+        branch="main",
+        commit_id="abc123",
+        idempotency_key="idem",
+        status="succeeded",
+        error_message="publish failed Authorization: Bearer run-secret",
+        warnings_json='["terminus_not_configured", "api_key=warning-secret"]',
+        created_at="2026-05-20T00:00:00+00:00",
+        started_at="2026-05-20T00:00:01+00:00",
+        completed_at="2026-05-20T00:00:02+00:00",
+    )
+    snapshot_record = SnapshotRecord(
+        snapshot_id="snap:repo:1",
+        repo_name="repo",
+        branch="main",
+        commit_id="abc123",
+        tree_id="tree123",
+        artifact_key="snap_repo_1",
+        ir_path="/tmp/ir.json",
+        ir_graphs_path="/tmp/graphs",
+        created_at="2026-05-20T00:00:00+00:00",
+        metadata_json=json.dumps(
+            {
+                "warnings": ["terminus_not_configured"],
+                "pipeline_layers": [
+                    {
+                        "name": "plain_ast_embedding",
+                        "status": "succeeded",
+                        "api_key": "layer-secret",
+                    }
+                ],
+                "pipeline_metrics": {
+                    "cache_update": {
+                        "parse_cache": {
+                            "hit_count": 2,
+                            "detail": "token=metric-secret",
+                        }
+                    }
+                },
+            }
+        ),
+    )
+    fc.index_run_store = SimpleNamespace(get_latest_run_record=lambda: latest_run)
+    fc.snapshot_store = SimpleNamespace(
+        db_runtime=SimpleNamespace(
+            backend="postgres",
+            sqlite_path=None,
+            postgres_dsn="postgresql://user:secret@db/fastcode",
+            pool_min=1,
+            pool_max=4,
+            pool=object(),
+        ),
+        get_snapshot_record=lambda _snapshot_id: snapshot_record,
+    )
+    fc.vector_store = SimpleNamespace(persist_dir="/var/lib/fastcode/vector")
+    fc.cache_manager = SimpleNamespace()
+    fc.projection_store = SimpleNamespace(enabled=True)
+    fc.loader = SimpleNamespace(repo_path="/repo")
+
+    monkeypatch.setattr(
+        FastCode,
+        "_dependency_available",
+        staticmethod(lambda import_name: import_name in {"numpy", "git"}),
+    )
+    monkeypatch.setattr(
+        "fastcode.main.fastcode.shutil.which",
+        lambda executable: f"/usr/bin/{executable}" if executable == "git" else None,
+    )
+
+    bundle = fc.build_diagnostic_bundle()
+
+    assert bundle["schema_version"] == "fastcode.diagnostic_bundle.v1"
+    assert bundle["runtime"]["repo_loaded"] is True
+    assert bundle["runtime"]["loaded_repository_count"] == 1
+    assert bundle["config_summary"]["storage"] == {
+        "backend": "postgres",
+        "postgres_dsn_configured": True,
+        "pool_min": 1,
+        "pool_max": 4,
+    }
+    serialized_bundle = json.dumps(bundle)
+    assert "postgresql://user:secret" not in serialized_bundle
+    assert "should-not-leak" not in serialized_bundle
+    assert "repo-secret" not in serialized_bundle
+    assert "run-secret" not in serialized_bundle
+    assert "warning-secret" not in serialized_bundle
+    assert "layer-secret" not in serialized_bundle
+    assert "metric-secret" not in serialized_bundle
+    assert "vector-secret" not in serialized_bundle
+    assert bundle["runtime"]["repo_info"]["url"] == (
+        "https://[redacted]@example.test/org/repo.git"
+    )
+    assert bundle["storage"]["backend"] == "postgres"
+    assert bundle["storage"]["postgres_dsn_configured"] is True
+    assert bundle["storage"]["pool_configured"] is True
+    python_deps = {
+        item["name"]: item["available"] for item in bundle["dependencies"]["python"]
+    }
+    assert python_deps["numpy"] is True
+    assert python_deps["openai"] is False
+    tool_deps = {
+        item["name"]: item["available"]
+        for item in bundle["dependencies"]["external_tools"]
+    }
+    assert tool_deps["git"] is True
+    assert bundle["latest_index_run"]["run_id"] == "run_1"
+    assert bundle["latest_index_run"]["error_message"] == (
+        "publish failed Authorization: Bearer [redacted]"
+    )
+    assert bundle["latest_index_run"]["warnings"] == [
+        "terminus_not_configured",
+        "api_key=[redacted]",
+    ]
+    assert bundle["latest_index_run"]["snapshot"]["artifact_key"] == "snap_repo_1"
+    assert (
+        bundle["latest_index_run"]["snapshot"]["pipeline_layers"][0]["api_key"]
+        == "[redacted]"
+    )
+    assert bundle["latest_index_run"]["snapshot"]["pipeline_metrics"][
+        "cache_update"
+    ] == {"parse_cache": {"hit_count": 2, "detail": "token=[redacted]"}}
 
 
 def _make_working_memory_record(

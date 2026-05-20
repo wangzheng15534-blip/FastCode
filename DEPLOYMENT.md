@@ -94,3 +94,19 @@ ratios.
 Operators should still enforce proxy-level upload body limits and monitor failed
 upload/index attempts. A failed upload may leave no indexed repository, but logs
 under `./logs/` should be retained for diagnosis.
+
+## Diagnostic Collection
+
+The REST API exposes `GET /diagnostics` for support-safe runtime diagnostics.
+The bundle includes:
+
+- a redacted config summary with secret-bearing values reported only as
+  configured/not configured
+- storage backend and artifact/cache locations
+- Python package and external tool availability
+- latest index-run metadata, warnings, pipeline layers, and pipeline metrics
+
+Collect this endpoint output together with relevant logs under `./logs/` when
+triaging indexing, cache reuse, dependency, or storage-backend issues. The
+endpoint does not probe external services or execute tool commands; it reports
+local availability only.

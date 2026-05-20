@@ -207,3 +207,8 @@ class StatusResponse(BaseModel):
     loaded_repositories: list[dict[str, Any]] = Field(
         default_factory=_empty_repo_records
     )
+
+
+class DiagnosticBundleResponse(BaseModel):
+    status: str
+    bundle: dict[str, Any] = Field(default_factory=_empty_payload)

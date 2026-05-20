@@ -1447,7 +1447,7 @@ This item should be treated as the implementation slice of the broader P0.6a sch
   - embedding cache hit/miss
   - artifact-handle cache hit/miss
   - incremental planner changed-file counts
-- Add a documented diagnostic bundle for support: config summary, storage backend, dependency availability, latest run metadata.
+- `GET /diagnostics` now returns a documented support bundle with redacted config summary, storage backend, dependency availability, and latest run metadata.
 
 ### P1.7 Release-fixture and benchmark realism
 

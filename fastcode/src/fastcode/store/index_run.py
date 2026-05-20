@@ -323,6 +323,22 @@ class IndexRunStore:
         record = self.get_run_record(run_id)
         return self._run_payload(record) if record is not None else None
 
+    def get_latest_run_record(self) -> IndexRunRecord | None:
+        with self.db_runtime.connect() as conn:
+            row = self.db_runtime.execute(
+                conn,
+                """
+                SELECT * FROM index_runs
+                ORDER BY created_at DESC, run_id DESC
+                LIMIT 1
+                """,
+            ).fetchone()
+        return self._row_to_run_record(row)
+
+    def get_latest_run(self) -> dict[str, Any] | None:
+        record = self.get_latest_run_record()
+        return self._run_payload(record) if record is not None else None
+
     _ALLOWED_RUN_FIELDS = frozenset(
         {
             "status",

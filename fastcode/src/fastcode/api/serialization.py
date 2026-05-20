@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
+from fastcode.schemas.core_types import QuerySourceRecord
+
 
 def _field_get(record: Any, field_name: str) -> Any:
     if isinstance(record, Mapping):
@@ -68,28 +70,48 @@ def _line_bounds(source: Any) -> tuple[int, int, str]:
     return start_line, end_line, normalized_lines
 
 
-def serialize_query_source(source: Any) -> dict[str, Any]:
+def serialize_query_source_record(source: Any) -> QuerySourceRecord:
     repo_name = _string_or_empty(
         _field_get(source, "repository")
         or _field_get(source, "repo")
         or _field_get(source, "repo_name")
     )
     start_line, end_line, lines = _line_bounds(source)
-    return {
-        "repository": repo_name,
-        "repo": repo_name,
-        "file": _string_or_empty(
+    return QuerySourceRecord(
+        repository=repo_name,
+        file=_string_or_empty(
             _field_get(source, "file")
             or _field_get(source, "relative_path")
             or _field_get(source, "path")
         ),
-        "name": _string_or_empty(_field_get(source, "name")),
-        "type": _string_or_empty(_field_get(source, "type")),
-        "lines": lines,
-        "start_line": start_line,
-        "end_line": end_line,
-        "score": _float_or_default(_field_get(source, "score")),
+        name=_string_or_empty(_field_get(source, "name")),
+        source_type=_string_or_empty(_field_get(source, "type")),
+        lines=lines,
+        start_line=start_line,
+        end_line=end_line,
+        score=_float_or_default(_field_get(source, "score")),
+    )
+
+
+def serialize_query_source_record_payload(
+    source: QuerySourceRecord,
+) -> dict[str, Any]:
+    """Materialize the stable API source payload field-by-field."""
+    return {
+        "repository": source.repository,
+        "repo": source.repository,
+        "file": source.file,
+        "name": source.name,
+        "type": source.source_type,
+        "lines": source.lines,
+        "start_line": source.start_line,
+        "end_line": source.end_line,
+        "score": source.score,
     }
+
+
+def serialize_query_source(source: Any) -> dict[str, Any]:
+    return serialize_query_source_record_payload(serialize_query_source_record(source))
 
 
 def serialize_query_sources(sources: Sequence[Any] | None) -> list[dict[str, Any]]:

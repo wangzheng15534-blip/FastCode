@@ -128,6 +128,20 @@ class Hit:
         }
 
 
+@dataclass(frozen=True)
+class QuerySourceRecord:
+    """Typed source citation record used at API/query response boundaries."""
+
+    repository: str
+    file: str
+    name: str
+    source_type: str
+    lines: str
+    start_line: int
+    end_line: int
+    score: float
+
+
 # ---------------------------------------------------------------------------
 # FusionConfig -- adaptive fusion parameters
 # ---------------------------------------------------------------------------

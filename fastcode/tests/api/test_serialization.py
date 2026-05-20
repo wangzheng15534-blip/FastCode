@@ -3,7 +3,10 @@ from __future__ import annotations
 from fastcode.api.serialization import (
     serialize_dialogue_history,
     serialize_query_source,
+    serialize_query_source_record,
+    serialize_query_source_record_payload,
 )
+from fastcode.schemas import QuerySourceRecord
 
 
 class _NoDictPathSource:
@@ -43,6 +46,32 @@ def test_serialize_query_source_supports_path_only_and_single_line_lines() -> No
     result = serialize_query_source(_NoDictPathSource())
 
     assert result == {
+        "repository": "repo",
+        "repo": "repo",
+        "file": "src/only_path.py",
+        "name": "load_config",
+        "type": "function",
+        "lines": "11-11",
+        "start_line": 11,
+        "end_line": 11,
+        "score": 0.75,
+    }
+
+
+def test_serialize_query_source_builds_typed_record_before_payload() -> None:
+    record = serialize_query_source_record(_NoDictPathSource())
+
+    assert record == QuerySourceRecord(
+        repository="repo",
+        file="src/only_path.py",
+        name="load_config",
+        source_type="function",
+        lines="11-11",
+        start_line=11,
+        end_line=11,
+        score=0.75,
+    )
+    assert serialize_query_source_record_payload(record) == {
         "repository": "repo",
         "repo": "repo",
         "file": "src/only_path.py",

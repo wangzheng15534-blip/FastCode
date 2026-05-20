@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+from ..ir.element import CodeElementMeta
+
 
 def _string_list_payload(value: Any) -> list[str]:
     if isinstance(value, list):
@@ -378,6 +380,35 @@ class RepositoryOverviewRecord:
                 if isinstance(raw_fingerprint, dict)
                 else None
             ),
+        )
+
+
+@dataclass(frozen=True)
+class VectorSearchResultRecord:
+    metadata: CodeElementMeta
+    score: float
+    index: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "metadata": dict(self.metadata),
+            "score": self.score,
+            "index": self.index,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> VectorSearchResultRecord:
+        raw_metadata = data.get("metadata")
+        metadata = (
+            {str(key): item for key, item in cast(dict[Any, Any], raw_metadata).items()}
+            if isinstance(raw_metadata, dict)
+            else {}
+        )
+        raw_index = data.get("index")
+        return cls(
+            metadata=cast(CodeElementMeta, metadata),
+            score=float(data.get("score") or 0.0),
+            index=_optional_int_payload(raw_index),
         )
 
 

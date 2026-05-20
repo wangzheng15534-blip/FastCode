@@ -22,6 +22,7 @@ from fastcode.store.records import (
     SCIPArtifactRecord,
     SnapshotRecord,
     SnapshotRefRecord,
+    VectorSearchResultRecord,
 )
 
 # --- SnapshotRecord ---
@@ -312,6 +313,34 @@ def test_repository_overview_record_roundtrip():
     )
 
     restored = RepositoryOverviewRecord.from_dict(record.to_dict())
+
+    assert restored == record
+
+
+def test_vector_search_result_record_roundtrip():
+    record = VectorSearchResultRecord(
+        metadata={
+            "id": "elem:1",
+            "type": "function",
+            "name": "f",
+            "file_path": "/repo/pkg/a.py",
+            "relative_path": "pkg/a.py",
+            "language": "python",
+            "start_line": 1,
+            "end_line": 2,
+            "code": "return 1",
+            "signature": None,
+            "docstring": None,
+            "summary": None,
+            "metadata": {},
+            "repo_name": "repo",
+            "repo_url": None,
+        },
+        score=0.75,
+        index=3,
+    )
+
+    restored = VectorSearchResultRecord.from_dict(record.to_dict())
 
     assert restored == record
 

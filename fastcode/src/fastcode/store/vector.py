@@ -28,7 +28,7 @@ from ..utils.materialization import (
     BOUNDARY_VECTOR_LIST_CONVERSION,
     increment_materialization_boundary,
 )
-from .records import RepositoryOverviewRecord
+from .records import RepositoryOverviewRecord, VectorSearchResultRecord
 
 _METADATA_SHARD_STORAGE_VERSION = 1
 _VECTOR_SHARD_STORAGE_VERSION = 1
@@ -249,6 +249,12 @@ class VectorStore:
             f"Added {len(vectors)} vectors to store (total: {len(self.metadata)})"
         )
 
+    @staticmethod
+    def _vector_search_payloads_from_records(
+        records: Sequence[VectorSearchResultRecord],
+    ) -> list[tuple[CodeElementMeta, float]]:
+        return [(record.metadata, record.score) for record in records]
+
     def search(
         self,
         query_vector: np.ndarray,
@@ -271,12 +277,33 @@ class VectorStore:
         Returns:
             List of (metadata, score) tuples
         """
+        return self._vector_search_payloads_from_records(
+            self.search_records(
+                query_vector=query_vector,
+                k=k,
+                min_score=min_score,
+                repo_filter=repo_filter,
+                element_type_filter=element_type_filter,
+                query_embedding_fingerprint=query_embedding_fingerprint,
+            )
+        )
+
+    def search_records(
+        self,
+        query_vector: np.ndarray,
+        k: int = 10,
+        min_score: float | None = None,
+        repo_filter: list[str] | None = None,
+        element_type_filter: str | None = None,
+        query_embedding_fingerprint: Mapping[str, Any] | None = None,
+    ) -> list[VectorSearchResultRecord]:
+        """Search for similar vectors and return typed result records."""
         if len(self.metadata) == 0:
             return []
 
         vector_rows = self._vector_rows_for_search()
         if vector_rows is not None:
-            return self._search_with_vector_rows(
+            return self._search_records_with_vector_rows(
                 vector_rows=vector_rows,
                 query_vector=query_vector,
                 k=k,
@@ -286,7 +313,7 @@ class VectorStore:
                 query_embedding_fingerprint=query_embedding_fingerprint,
             )
         if self._vector_shard_handles is not None:
-            return self._search_with_vector_shard_handles(
+            return self._search_records_with_vector_shard_handles(
                 query_vector=query_vector,
                 k=k,
                 min_score=min_score,
@@ -323,7 +350,7 @@ class VectorStore:
         distances, indices = self.index.search(query_vector, search_k)
 
         # Prepare results
-        results: list[tuple[CodeElementMeta, float]] = []
+        results: list[VectorSearchResultRecord] = []
         for dist, idx in zip(distances[0], indices[0], strict=True):
             if idx == -1:  # FAISS returns -1 for empty slots
                 continue
@@ -355,7 +382,14 @@ class VectorStore:
             if min_score is not None and score < min_score:
                 continue
 
-            results.append((cast(CodeElementMeta, self.metadata[idx]), score))
+            index = int(idx)
+            results.append(
+                VectorSearchResultRecord(
+                    metadata=self.metadata[index],
+                    score=score,
+                    index=index,
+                )
+            )
 
             # Stop if we have enough results
             if len(results) >= k:
@@ -618,12 +652,25 @@ class VectorStore:
         Returns:
             List of result lists (one per query)
         """
+        return [
+            self._vector_search_payloads_from_records(records)
+            for records in self.search_batch_records(
+                query_vectors=query_vectors,
+                k=k,
+                min_score=min_score,
+            )
+        ]
+
+    def search_batch_records(
+        self, query_vectors: np.ndarray, k: int = 10, min_score: float | None = None
+    ) -> list[list[VectorSearchResultRecord]]:
+        """Search for multiple queries and return typed result records."""
         if len(self.metadata) == 0:
             return [[] for _ in range(len(query_vectors))]
 
         vector_rows = self._vector_rows_for_search()
         if vector_rows is not None:
-            return self._search_batch_with_vector_rows(
+            return self._search_batch_records_with_vector_rows(
                 vector_rows=vector_rows,
                 query_vectors=query_vectors,
                 k=k,
@@ -651,12 +698,13 @@ class VectorStore:
         distances, indices = self.index.search(query_vectors, k)
 
         # Prepare results for each query
-        all_results: list[list[tuple[CodeElementMeta, float]]] = []
+        all_results: list[list[VectorSearchResultRecord]] = []
         for query_distances, query_indices in zip(distances, indices, strict=True):
-            results: list[tuple[CodeElementMeta, float]] = []
+            results: list[VectorSearchResultRecord] = []
             for dist, idx in zip(query_distances, query_indices, strict=True):
                 if idx == -1:
                     continue
+                index = int(idx)
 
                 # Convert distance to score
                 if self.distance_metric == "cosine":
@@ -667,7 +715,13 @@ class VectorStore:
                 if min_score is not None and score < min_score:
                     continue
 
-                results.append((cast(CodeElementMeta, self.metadata[idx]), score))
+                results.append(
+                    VectorSearchResultRecord(
+                        metadata=self.metadata[index],
+                        score=score,
+                        index=index,
+                    )
+                )
 
             all_results.append(results)
 
@@ -1351,6 +1405,29 @@ class VectorStore:
         element_type_filter: str | None,
         query_embedding_fingerprint: Mapping[str, Any] | None,
     ) -> list[tuple[CodeElementMeta, float]]:
+        return self._vector_search_payloads_from_records(
+            self._search_records_with_vector_rows(
+                vector_rows=vector_rows,
+                query_vector=query_vector,
+                k=k,
+                min_score=min_score,
+                repo_filter=repo_filter,
+                element_type_filter=element_type_filter,
+                query_embedding_fingerprint=query_embedding_fingerprint,
+            )
+        )
+
+    def _search_records_with_vector_rows(
+        self,
+        *,
+        vector_rows: np.ndarray,
+        query_vector: np.ndarray,
+        k: int,
+        min_score: float | None,
+        repo_filter: list[str] | None,
+        element_type_filter: str | None,
+        query_embedding_fingerprint: Mapping[str, Any] | None,
+    ) -> list[VectorSearchResultRecord]:
         if k <= 0 or vector_rows.ndim != 2 or vector_rows.shape[0] == 0:
             return []
 
@@ -1398,13 +1475,19 @@ class VectorStore:
             return []
 
         ranked_indexes = candidate_indexes[np.argsort(scores[candidate_indexes])[::-1]]
-        results: list[tuple[CodeElementMeta, float]] = []
+        results: list[VectorSearchResultRecord] = []
         for raw_index in ranked_indexes:
             index = int(raw_index)
             score = float(scores[index])
             if min_score is not None and score < min_score:
                 continue
-            results.append((self.metadata[index], score))
+            results.append(
+                VectorSearchResultRecord(
+                    metadata=self.metadata[index],
+                    score=score,
+                    index=index,
+                )
+            )
             if len(results) >= k:
                 break
         return results
@@ -1419,6 +1502,27 @@ class VectorStore:
         element_type_filter: str | None,
         query_embedding_fingerprint: Mapping[str, Any] | None,
     ) -> list[tuple[CodeElementMeta, float]]:
+        return self._vector_search_payloads_from_records(
+            self._search_records_with_vector_shard_handles(
+                query_vector=query_vector,
+                k=k,
+                min_score=min_score,
+                repo_filter=repo_filter,
+                element_type_filter=element_type_filter,
+                query_embedding_fingerprint=query_embedding_fingerprint,
+            )
+        )
+
+    def _search_records_with_vector_shard_handles(
+        self,
+        *,
+        query_vector: np.ndarray,
+        k: int,
+        min_score: float | None,
+        repo_filter: list[str] | None,
+        element_type_filter: str | None,
+        query_embedding_fingerprint: Mapping[str, Any] | None,
+    ) -> list[VectorSearchResultRecord]:
         if k <= 0 or self.dimension is None:
             return []
         if not self._vector_shard_handles or not self._vector_shard_dir:
@@ -1470,7 +1574,14 @@ class VectorStore:
                     continue
                 results.append((metadata_index, score))
         results.sort(key=lambda item: (-item[1], item[0]))
-        return [(self.metadata[index], score) for index, score in results[:k]]
+        return [
+            VectorSearchResultRecord(
+                metadata=self.metadata[index],
+                score=score,
+                index=index,
+            )
+            for index, score in results[:k]
+        ]
 
     def _search_batch_with_vector_rows(
         self,
@@ -1480,6 +1591,24 @@ class VectorStore:
         k: int,
         min_score: float | None,
     ) -> list[list[tuple[CodeElementMeta, float]]]:
+        return [
+            self._vector_search_payloads_from_records(records)
+            for records in self._search_batch_records_with_vector_rows(
+                vector_rows=vector_rows,
+                query_vectors=query_vectors,
+                k=k,
+                min_score=min_score,
+            )
+        ]
+
+    def _search_batch_records_with_vector_rows(
+        self,
+        *,
+        vector_rows: np.ndarray,
+        query_vectors: np.ndarray,
+        k: int,
+        min_score: float | None,
+    ) -> list[list[VectorSearchResultRecord]]:
         try:
             query_count = len(query_vectors)
         except TypeError:
@@ -1501,16 +1630,22 @@ class VectorStore:
             distances = np.linalg.norm(diff, axis=2)
             score_matrix = 1.0 / (1.0 + distances)
 
-        all_results: list[list[tuple[CodeElementMeta, float]]] = []
+        all_results: list[list[VectorSearchResultRecord]] = []
         for row_scores in score_matrix:
             ranked_indexes = np.argsort(row_scores)[::-1]
-            results: list[tuple[CodeElementMeta, float]] = []
+            results: list[VectorSearchResultRecord] = []
             for raw_index in ranked_indexes:
                 index = int(raw_index)
                 score = float(row_scores[index])
                 if min_score is not None and score < min_score:
                     continue
-                results.append((self.metadata[index], score))
+                results.append(
+                    VectorSearchResultRecord(
+                        metadata=self.metadata[index],
+                        score=score,
+                        index=index,
+                    )
+                )
                 if len(results) >= k:
                     break
             all_results.append(results)

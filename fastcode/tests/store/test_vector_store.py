@@ -9,7 +9,7 @@ import faiss
 import numpy as np
 import pytest
 
-from fastcode.store.records import RepositoryOverviewRecord
+from fastcode.store.records import RepositoryOverviewRecord, VectorSearchResultRecord
 from fastcode.store.vector import VectorStore
 
 pytestmark = [pytest.mark.test_double]
@@ -118,6 +118,71 @@ def test_search_filters_same_dimension_stale_embedding_fingerprint_double() -> N
     )
 
     assert [metadata["id"] for metadata, _score in results] == ["current"]
+
+
+def test_search_records_return_typed_vector_results_double() -> None:
+    store = _store()
+    store.initialize(2)
+    store.add_vectors(
+        np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+        [_meta("a", "a.py"), _meta("b", "b.py")],
+    )
+
+    results = store.search_records(np.asarray([1.0, 0.0], dtype=np.float32), k=1)
+
+    assert len(results) == 1
+    assert isinstance(results[0], VectorSearchResultRecord)
+    assert results[0].metadata["id"] == "a"
+    assert results[0].index == 0
+    assert results[0].score == pytest.approx(1.0)
+
+
+def test_vector_search_compatibility_serializes_records_explicitly_double(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store()
+    store.initialize(2)
+    store.add_vectors(
+        np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+        [_meta("a", "a.py"), _meta("b", "b.py")],
+    )
+
+    def _boom(_: VectorSearchResultRecord) -> dict[str, Any]:
+        raise AssertionError("vector search compatibility must not call to_dict()")
+
+    monkeypatch.setattr(VectorSearchResultRecord, "to_dict", _boom)
+
+    results = store.search(np.asarray([1.0, 0.0], dtype=np.float32), k=1)
+    batch_results = store.search_batch(
+        np.asarray([[1.0, 0.0]], dtype=np.float32),
+        k=1,
+    )
+
+    assert results[0][0]["id"] == "a"
+    assert results[0][1] == pytest.approx(1.0)
+    assert batch_results[0][0][0]["id"] == "a"
+    assert batch_results[0][0][1] == pytest.approx(1.0)
+
+
+def test_search_batch_records_return_typed_vector_results_double() -> None:
+    store = _store()
+    store.initialize(2)
+    store.add_vectors(
+        np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+        [_meta("a", "a.py"), _meta("b", "b.py")],
+    )
+
+    results = store.search_batch_records(
+        np.asarray([[0.0, 1.0]], dtype=np.float32),
+        k=1,
+    )
+
+    assert len(results) == 1
+    assert len(results[0]) == 1
+    assert isinstance(results[0][0], VectorSearchResultRecord)
+    assert results[0][0].metadata["id"] == "b"
+    assert results[0][0].index == 1
+    assert results[0][0].score == pytest.approx(1.0)
 
 
 def test_repository_overview_search_only_materializes_returned_metadata_double() -> (

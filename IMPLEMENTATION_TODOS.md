@@ -1070,6 +1070,7 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - `store/vector.py` now persists repository overview metadata as an explicit JSON manifest plus NumPy embedding archive and lets metadata-only overview callers avoid loading embedding payloads
   - `store/vector.py` now exposes typed `RepositoryOverviewRecord` load/search APIs for repository overviews, with legacy dict-returning load/search methods kept as explicit compatibility serializers that do not call `RepositoryOverviewRecord.to_dict()`
   - `indexing/pipeline.py` now stages embedded elements as a single `np.ndarray[np.float32]` matrix instead of a Python list of arrays before vector-store insertion, and vector-store search/repository-overview ranking uses explicit float32 boundary helpers
+  - `store/vector.py` now exposes typed vector search and batch-search result records, with legacy tuple-returning search methods kept as explicit compatibility serializers that do not call record `to_dict()`
   - `DBRuntime` registers the pgvector Psycopg adapter when available, and `store/pg_retrieval.py` now passes native float32 vectors at the active PG boundary instead of duplicating new rows into `list[float]` array payloads; SQL vector literals remain only as an adapter-missing fallback
   - `store/pg_retrieval.py` still keeps legacy `embedding_arr` read fallback support, but ranks fallback candidates as a NumPy matrix before metadata inflation
   - `store/pg_retrieval.py` now exposes typed pg retrieval result records for semantic and keyword reads, with legacy tuple/dict return methods kept as explicit compatibility serializers that do not call record `to_dict()`
@@ -1147,6 +1148,7 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - the active insert/search path passes native float32 arrays through the pgvector Psycopg adapter; vector literals are retained only for the degraded case where the Python adapter is unavailable
 - vector retrieval path:
   - `store/vector.py` keeps shard-backed vector rows hot after load, rebuilds FAISS lazily only when a compatibility operation needs it, persists repository overviews as an explicit JSON manifest plus NumPy embedding archive, and vectorizes repository-overview ranking before result metadata assembly
+  - vector search and batch-search paths now materialize `VectorSearchResultRecord` values before the legacy `(metadata, score)` compatibility boundary
   - `utils/vectors.py` gives vector hot paths explicit view/contiguous/mutable ownership policies and avoids mutating caller-owned arrays during non-finite sanitization
   - full repository-overview consumers still decode JSON metadata into Python dicts because selector/BM25 flows currently operate on Python text/metadata payloads
 - PostgreSQL retrieval result path:
@@ -1423,14 +1425,13 @@ These currently emit useful structured facts, but they are still narrower than f
 
 Typed records now exist for manifests, snapshot refs, snapshot records, index
 runs, publish tasks, SCIP artifact refs, unit artifacts, repository overviews,
-pg-retrieval result rows, redo tasks, outbox events, dialogue turns, dialogue
-sessions, and active projection build/dirty-scope rows.
+vector search results, pg-retrieval result rows, redo tasks, outbox events,
+dialogue turns, dialogue sessions, and active projection build/dirty-scope rows.
 
 Still raw-dict-heavy at boundaries:
 - API-facing manifest / artifact payload adapters
 - snapshot-store and projection-store compatibility payload adapters
 - cache/query result payloads
-- vector-store search payloads and compatibility repo-overview payload adapters
 
 This item should be treated as the implementation slice of the broader P0.6a schema-flow requirement above, not as isolated cleanup.
 

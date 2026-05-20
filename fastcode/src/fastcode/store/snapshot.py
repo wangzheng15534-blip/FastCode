@@ -3004,7 +3004,9 @@ class SnapshotStore:
             self._scip_artifact_entry_payload(record) for record in normalized_artifacts
         ]
 
-    def get_scip_artifact_ref(self, snapshot_id: str) -> dict[str, Any] | None:
+    def get_scip_artifact_ref_record(
+        self, snapshot_id: str
+    ) -> SCIPArtifactRecord | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -3013,11 +3015,19 @@ class SnapshotStore:
             ).fetchone()
         primary_record = self._row_to_scip_artifact_record(row)
         if primary_record is not None:
-            return self._scip_artifact_payload(primary_record)
-        artifacts = self.list_scip_artifact_refs(snapshot_id)
-        return artifacts[0] if artifacts else None
+            return primary_record
+        records = self.list_scip_artifact_ref_records(snapshot_id)
+        return records[0] if records else None
 
-    def list_scip_artifact_refs(self, snapshot_id: str) -> list[dict[str, Any]]:
+    def get_scip_artifact_ref(self, snapshot_id: str) -> dict[str, Any] | None:
+        record = self.get_scip_artifact_ref_record(snapshot_id)
+        return (
+            self._scip_artifact_record_payload(record) if record is not None else None
+        )
+
+    def list_scip_artifact_ref_records(
+        self, snapshot_id: str
+    ) -> list[SCIPArtifactRecord]:
         with self.db_runtime.connect() as conn:
             self._ensure_scip_artifact_entries_table(conn)
             rows = self.db_runtime.execute(
@@ -3035,9 +3045,7 @@ class SnapshotStore:
             if (record := self._row_to_scip_artifact_entry_record(row)) is not None
         ]
         if artifact_records:
-            return [
-                self._scip_artifact_entry_payload(record) for record in artifact_records
-            ]
+            return artifact_records
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -3045,7 +3053,13 @@ class SnapshotStore:
                 (snapshot_id,),
             ).fetchone()
         primary_record = self._row_to_scip_artifact_record(row)
-        return [self._scip_artifact_payload(primary_record)] if primary_record else []
+        return [primary_record] if primary_record else []
+
+    def list_scip_artifact_refs(self, snapshot_id: str) -> list[dict[str, Any]]:
+        return [
+            self._scip_artifact_record_payload(record)
+            for record in self.list_scip_artifact_ref_records(snapshot_id)
+        ]
 
     @classmethod
     def _scip_metadata_mapping(cls, artifact: dict[str, Any]) -> dict[str, Any]:
@@ -3163,6 +3177,19 @@ class SnapshotStore:
             }
         )
         return payload
+
+    @classmethod
+    def _scip_artifact_record_payload(
+        cls, record: SCIPArtifactRecord
+    ) -> dict[str, Any]:
+        if (
+            record.artifact_id is not None
+            or record.sequence_no is not None
+            or record.role is not None
+            or record.metadata_json is not None
+        ):
+            return cls._scip_artifact_entry_payload(record)
+        return cls._scip_artifact_payload(record)
 
     def _row_to_snapshot_record(self, row: Any) -> SnapshotRecord | None:
         snapshot_id = self._row_value(row, 0, "snapshot_id")

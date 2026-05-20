@@ -26,7 +26,7 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.scip.models import SCIPArtifactRef
-from fastcode.store.records import SnapshotRecord, SnapshotRefRecord
+from fastcode.store.records import SCIPArtifactRecord, SnapshotRecord, SnapshotRefRecord
 from fastcode.store.snapshot import SnapshotStore
 
 # --- Strategies ---
@@ -1388,7 +1388,11 @@ class TestScipArtifactRefProperties:
         assert result["created_at"] is not None
 
         loaded = store.get_scip_artifact_ref(snapshot_id)
+        loaded_record = store.get_scip_artifact_ref_record(snapshot_id)
         assert loaded is not None
+        assert loaded_record is not None
+        assert loaded_record.snapshot_id == snapshot_id
+        assert loaded_record.indexer_name == indexer_name
         assert loaded["snapshot_id"] == snapshot_id
         assert loaded["indexer_name"] == indexer_name
 
@@ -1400,7 +1404,9 @@ class TestScipArtifactRefProperties:
     ):
         """EDGE: get_scip_artifact_ref returns None when not saved."""
         store = _make_store()
+        assert store.get_scip_artifact_ref_record(snapshot_id) is None
         assert store.get_scip_artifact_ref(snapshot_id) is None
+        assert store.list_scip_artifact_ref_records(snapshot_id) == []
 
     @given(snapshot_id=identifier)
     @settings(max_examples=15)
@@ -1452,6 +1458,10 @@ class TestScipArtifactRefProperties:
             store.get_scip_artifact_ref("snap:repo:multi")["artifact_path"]
             == "/tmp/ts.scip"
         )
+        records = store.list_scip_artifact_ref_records("snap:repo:multi")
+        assert len(records) == 2
+        assert records[0].role == "primary"
+        assert records[1].metadata_json is not None
         assert len(store.list_scip_artifact_refs("snap:repo:multi")) == 2
 
     def test_scip_artifact_paths_use_explicit_serializers(
@@ -1470,8 +1480,14 @@ class TestScipArtifactRefProperties:
                 "snapshot store must not call SCIPArtifactRef.to_dict()"
             )
 
+        def _boom_record_to_dict(_: SCIPArtifactRecord) -> dict[str, Any]:
+            raise AssertionError(
+                "snapshot store must not call SCIPArtifactRecord.to_dict()"
+            )
+
         monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row)
         monkeypatch.setattr(SCIPArtifactRef, "to_dict", _boom_to_dict)
+        monkeypatch.setattr(SCIPArtifactRecord, "to_dict", _boom_record_to_dict)
 
         saved = store.save_scip_artifact_refs(
             "snap:repo:typed",
@@ -1490,10 +1506,15 @@ class TestScipArtifactRefProperties:
                 },
             ],
         )
+        loaded_record = store.get_scip_artifact_ref_record("snap:repo:typed")
+        listed_records = store.list_scip_artifact_ref_records("snap:repo:typed")
         loaded = store.get_scip_artifact_ref("snap:repo:typed")
         listed = store.list_scip_artifact_refs("snap:repo:typed")
 
         assert saved[0]["artifact_id"] == "snap:repo:typed:scip:0"
+        assert loaded_record is not None
+        assert loaded_record.artifact_path == "/tmp/ts.scip"
+        assert listed_records[0].metadata_json is not None
         assert loaded is not None
         assert loaded["artifact_path"] == "/tmp/ts.scip"
         assert listed[0]["metadata"]["opaque"].startswith("<")

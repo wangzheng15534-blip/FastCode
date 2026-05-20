@@ -209,6 +209,9 @@ What already works:
 
 - unchanged files can bypass repeated parse and embedding work via manifest-first
   planning in the active path
+- incremental prefilter output is now normalized through a typed
+  `PlanChanges` artifact and emitted/persisted as `plan_changes` metadata, with
+  legacy top-level prefilter fields retained as compatibility adapters
 - manifest-first incremental planning now refuses reuse when prior or current
   file entries lack content fingerprints instead of trusting size/mtime fallback
 - a single loader inventory can be shared across snapshot identity,
@@ -244,9 +247,10 @@ What is still missing before stable-release claims:
   copy mode still needs content-addressed reuse before incremental planning
 - truly incremental SCIP/tool-backed extraction in widened and unsupported cases
 - one shared inventory/fingerprint planner across snapshot identity, incremental
-  planning, SCIP scope, file-artifact reuse, and publication; loader inventory
-  sharing exists for the active AST path, but not yet as a canonical planner
-  object across every stage
+  planning, SCIP scope, file-artifact reuse, and publication; a typed
+  `PlanChanges` artifact now captures the incremental diff result, but loader
+  inventory sharing exists only for the active AST path and is not yet the
+  single canonical planner input for every downstream stage
 - deterministic cache invalidation across schema, model, and tool changes
 - provider timing and benchmark visibility; compatibility and all-cache-hit
   fingerprint checks no longer force provider startup merely to discover an

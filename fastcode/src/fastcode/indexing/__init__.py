@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from .doc_ingester import KeyDocIngester
     from .embedder import CodeEmbedder, EmbeddingService
     from .global_builder import GlobalIndexBuilder
-    from .incremental import apply_incremental_update, diff_changed_files
+    from .incremental import PlanChanges, apply_incremental_update, diff_changed_files
     from .indexer import CodeIndexer
     from .loader import RepositoryLoader
     from .overview import RepositoryOverviewGenerator
@@ -42,6 +42,7 @@ _EXPORTS = {
         "RepositoryOverviewGenerator",
     ),
     "TerminusPublisher": ("fastcode.indexing.terminus", "TerminusPublisher"),
+    "PlanChanges": ("fastcode.indexing.incremental", "PlanChanges"),
     "apply_incremental_update": (
         "fastcode.indexing.incremental",
         "apply_incremental_update",
@@ -67,6 +68,7 @@ __all__ = [
     "GlobalIndexBuilder",
     "IndexPipeline",
     "KeyDocIngester",
+    "PlanChanges",
     "ProjectionService",
     "ProjectionTransformer",
     "PublishingService",

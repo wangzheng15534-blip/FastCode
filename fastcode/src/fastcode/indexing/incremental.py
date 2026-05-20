@@ -10,8 +10,10 @@ and embeddings while replacing changed-file content with fresh extraction.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from dataclasses import replace as dc_replace
+from typing import Any
 
 from ..ir.types import (
     IRCodeUnit,
@@ -30,6 +32,119 @@ class FileChangeSet:
     removed: list[str] = field(default_factory=list)
     modified: list[str] = field(default_factory=list)
     unchanged: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PlanChanges:
+    """Canonical incremental change plan for one snapshot index run.
+
+    `to_prefilter_payload()` is the compatibility adapter for older pipeline
+    code that still reads top-level incremental prefilter fields.
+    """
+
+    previous_snapshot_id: str
+    previous_artifact_key: str
+    added_paths: tuple[str, ...] = ()
+    modified_paths: tuple[str, ...] = ()
+    removed_paths: tuple[str, ...] = ()
+    unchanged_paths: tuple[str, ...] = ()
+    reused_elements: int = 0
+    reindexed_elements: int = 0
+    reused_changed_embeddings: int = 0
+    semantic_frontier_widened: bool = False
+    api_frontier_changed_paths: tuple[str, ...] = ()
+    package_scope_roots: tuple[str, ...] = ()
+    change_kinds: tuple[str, ...] = ()
+    interface_digest_changed_paths: tuple[str, ...] = ()
+    interface_digests: Mapping[str, str] = field(default_factory=dict)
+    dependency_frontier: Mapping[str, Any] = field(default_factory=dict)
+    degraded_reasons: tuple[str, ...] = ()
+
+    @property
+    def changed_paths(self) -> tuple[str, ...]:
+        return tuple(sorted({*self.added_paths, *self.modified_paths}))
+
+    @property
+    def degraded(self) -> bool:
+        return bool(self.degraded_reasons)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": "fastcode.plan_changes.v1",
+            "previous_snapshot_id": self.previous_snapshot_id,
+            "previous_artifact_key": self.previous_artifact_key,
+            "artifact_delta_mode": True,
+            "counts": {
+                "added": len(self.added_paths),
+                "modified": len(self.modified_paths),
+                "removed": len(self.removed_paths),
+                "unchanged": len(self.unchanged_paths),
+                "changed": len(self.changed_paths) + len(self.removed_paths),
+            },
+            "paths": {
+                "added": list(self.added_paths),
+                "modified": list(self.modified_paths),
+                "removed": list(self.removed_paths),
+                "unchanged": list(self.unchanged_paths),
+                "changed": list(self.changed_paths),
+            },
+            "reuse": {
+                "reused_elements": self.reused_elements,
+                "reindexed_elements": self.reindexed_elements,
+                "reused_changed_embeddings": self.reused_changed_embeddings,
+            },
+            "frontier": {
+                "semantic_frontier_widened": self.semantic_frontier_widened,
+                "api_frontier_changed": bool(self.api_frontier_changed_paths),
+                "api_frontier_changed_paths": list(self.api_frontier_changed_paths),
+                "package_scope_roots": list(self.package_scope_roots),
+                "change_kinds": list(self.change_kinds),
+                "interface_digest_changed_paths": list(
+                    self.interface_digest_changed_paths
+                ),
+                "interface_digests": dict(self.interface_digests),
+                "dependency_frontier": dict(self.dependency_frontier),
+                "degraded": self.degraded,
+                "degraded_reasons": list(self.degraded_reasons),
+            },
+        }
+
+    def to_prefilter_payload(self) -> dict[str, Any]:
+        payload = self.to_payload()
+        counts = payload["counts"]
+        paths = payload["paths"]
+        reuse = payload["reuse"]
+        frontier = payload["frontier"]
+        return {
+            "previous_snapshot_id": self.previous_snapshot_id,
+            "previous_artifact_key": self.previous_artifact_key,
+            "artifact_delta_mode": True,
+            "added": counts["added"],
+            "modified": counts["modified"],
+            "removed": counts["removed"],
+            "unchanged": counts["unchanged"],
+            "added_paths": paths["added"],
+            "modified_paths": paths["modified"],
+            "removed_paths": paths["removed"],
+            "unchanged_paths": paths["unchanged"],
+            "changed_paths": paths["changed"],
+            "reused_elements": reuse["reused_elements"],
+            "reindexed_elements": reuse["reindexed_elements"],
+            "reused_changed_embeddings": reuse["reused_changed_embeddings"],
+            "semantic_frontier_widened": int(frontier["semantic_frontier_widened"]),
+            "api_frontier_changed": int(frontier["api_frontier_changed"]),
+            "api_frontier_changed_paths": frontier["api_frontier_changed_paths"],
+            "package_scope_roots": frontier["package_scope_roots"],
+            "change_kinds": frontier["change_kinds"],
+            "interface_digest_changed_paths": frontier[
+                "interface_digest_changed_paths"
+            ],
+            "interface_digests": frontier["interface_digests"],
+            "dependency_frontier": frontier["dependency_frontier"],
+            "degraded": frontier["degraded"],
+            "degraded_reasons": frontier["degraded_reasons"],
+            "plan_changes": payload,
+        }
 
 
 def diff_changed_files(

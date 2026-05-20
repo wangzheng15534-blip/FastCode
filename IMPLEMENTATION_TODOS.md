@@ -139,6 +139,9 @@ release evidence, not just implementation code.
 - Incremental artifact publication now has concrete vector, BM25, legacy graph,
   snapshot shard, relational fact, and IR graph delta paths, with fallback
   reasons recorded in metrics.
+- Incremental prefilter output now flows through a typed `PlanChanges` artifact
+  and is emitted/persisted as `plan_changes` metadata; legacy
+  `incremental_prefilter` fields remain compatibility adapters.
 - Snapshot persistence is manifest/shard based for units, supports, relations,
   embeddings, and embedding vectors; lazy readers cover metadata, path/unit
   subsets, relations, supports, and embeddings.
@@ -780,7 +783,10 @@ The template philosophy remains correct for Python: use one importable package w
 **Why this is core-level:** This is the largest remaining architecture gap between a hardened prototype and a stable release. On medium and large repos, important parts of “incremental” behavior can still scale like full reindex even when parse and embedding reuse are working.
 
 **Current failure modes:**
-- repository inventory and file hashing are still not represented by one canonical planner object across snapshot identity, incremental planning, SCIP language detection, file-artifact reuse, and publication.
+- incremental diff output is represented by a typed `PlanChanges` artifact, but
+  repository inventory and file hashing are still not one canonical planner
+  object across snapshot identity, incremental planning, SCIP language
+  detection, file-artifact reuse, and publication.
 - `run_index_pipeline()` still rehydrates unchanged metadata into one full `elements` list and builds temporary whole-snapshot vector/BM25/legacy graph objects before persistence.
 - persisted vector/BM25 path shards reuse compatible previous artifact files
   for unchanged paths, and legacy graph shard reuse is intentionally
@@ -795,7 +801,8 @@ The template philosophy remains correct for Python: use one importable package w
   artifact-build step.
 
 **Required work:**
-- Promote the existing manifest-first prefilter into the canonical `plan_changes` stage:
+- Finish promoting the existing manifest-first prefilter into the canonical `plan_changes` stage:
+  - keep the typed `PlanChanges` artifact as the stable planner output
   - inventory repository once
   - compute file fingerprints once
   - diff against prior snapshot before parse/embed/SCIP/helper execution

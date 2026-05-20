@@ -71,7 +71,12 @@ from .doc_ingester import KeyDocIngester
 from .embedder import CodeEmbedder
 from .file_inventory import FileInventory
 from .global_builder import GlobalIndexBuilder
-from .incremental import FileChangeSet, apply_incremental_update, diff_changed_files
+from .incremental import (
+    FileChangeSet,
+    PlanChanges,
+    apply_incremental_update,
+    diff_changed_files,
+)
 from .indexer import CodeIndexer
 from .loader import RepositoryLoader
 from .terminus import TerminusPublisher
@@ -2899,38 +2904,30 @@ class IndexPipeline:
             change_kinds=sorted(change_kinds),
             degraded_reasons=degraded_reasons,
         )
-        summary = {
-            "previous_snapshot_id": previous_snapshot_id,
-            "previous_artifact_key": previous_artifact_key,
-            "artifact_delta_mode": True,
-            "added": len(added),
-            "modified": len(modified),
-            "removed": len(deleted),
-            "unchanged": len(unchanged),
-            "added_paths": sorted(added),
-            "modified_paths": sorted(modified),
-            "removed_paths": sorted(deleted),
-            "unchanged_paths": sorted(unchanged),
-            "changed_paths": changed_paths,
-            "reused_elements": len(expected_unchanged_ids),
-            "reindexed_elements": len(new_elements),
-            "reused_changed_embeddings": reused_changed_embeddings,
-            "semantic_frontier_widened": int(semantic_frontier_widened),
-            "api_frontier_changed": int(bool(api_frontier_changed_paths)),
-            "api_frontier_changed_paths": api_frontier_changed_paths,
-            "package_scope_roots": package_scope_roots,
-            "change_kinds": sorted(change_kinds),
-            "interface_digest_changed_paths": interface_changed_paths,
-            "interface_digests": {
+        plan_changes = PlanChanges(
+            previous_snapshot_id=str(previous_snapshot_id),
+            previous_artifact_key=previous_artifact_key,
+            added_paths=tuple(sorted(added)),
+            modified_paths=tuple(sorted(modified)),
+            removed_paths=tuple(sorted(deleted)),
+            unchanged_paths=tuple(sorted(unchanged)),
+            reused_elements=len(expected_unchanged_ids),
+            reindexed_elements=len(new_elements),
+            reused_changed_embeddings=reused_changed_embeddings,
+            semantic_frontier_widened=semantic_frontier_widened,
+            api_frontier_changed_paths=tuple(api_frontier_changed_paths),
+            package_scope_roots=tuple(package_scope_roots),
+            change_kinds=tuple(sorted(change_kinds)),
+            interface_digest_changed_paths=tuple(interface_changed_paths),
+            interface_digests={
                 path: current_interface_digests[path]
                 for path in sorted(current_interface_digests)
                 if path in set(changed_paths)
             },
-            "dependency_frontier": dependency_frontier,
-            "degraded": bool(degraded_reasons),
-            "degraded_reasons": degraded_reasons,
-        }
-        return new_elements, summary
+            dependency_frontier=dependency_frontier,
+            degraded_reasons=tuple(degraded_reasons),
+        )
+        return new_elements, plan_changes.to_prefilter_payload()
 
     @staticmethod
     def _preservable_incremental_sources(
@@ -5086,21 +5083,27 @@ class IndexPipeline:
             )
             self._attach_pipeline_profile(pipeline_metrics, pipeline_profile)
             merged_snapshot.metadata["pipeline_metrics"] = pipeline_metrics
-            self.snapshot_store.update_snapshot_metadata(
-                snapshot_id,
-                {
-                    "run_id": run_id,
-                    "artifact_key": artifact_key,
-                    "warnings": warnings,
-                    "scip_artifact_ref": scip_artifact_ref,
-                    "scip_artifact_refs": scip_artifact_refs,
-                    "pipeline_layers": pipeline_layers,
-                    "pipeline_metrics": merged_snapshot.metadata.get(
-                        "pipeline_metrics", {}
-                    ),
-                    "fencing_token": lock_token,
-                },
+            plan_changes_payload = (
+                incremental_plan.get("plan_changes")
+                if incremental_plan is not None
+                else None
             )
+            snapshot_metadata = {
+                "run_id": run_id,
+                "artifact_key": artifact_key,
+                "warnings": warnings,
+                "scip_artifact_ref": scip_artifact_ref,
+                "scip_artifact_refs": scip_artifact_refs,
+                "pipeline_layers": pipeline_layers,
+                "pipeline_metrics": merged_snapshot.metadata.get(
+                    "pipeline_metrics", {}
+                ),
+                "fencing_token": lock_token,
+            }
+            if isinstance(plan_changes_payload, dict):
+                merged_snapshot.metadata["plan_changes"] = dict(plan_changes_payload)
+                snapshot_metadata["plan_changes"] = dict(plan_changes_payload)
+            self.snapshot_store.update_snapshot_metadata(snapshot_id, snapshot_metadata)
             self.index_run_store.mark_completed(
                 run_id, status=status, warnings=warnings
             )
@@ -5135,6 +5138,8 @@ class IndexPipeline:
                     incremental_plan["artifact_shard_reuse"] = dict(
                         artifact_reuse_stats
                     )
+                if isinstance(plan_changes_payload, dict):
+                    result["plan_changes"] = dict(plan_changes_payload)
                 result["incremental_prefilter"] = dict(incremental_plan)
                 preserved_sources = self._preservable_incremental_sources(
                     incremental_plan

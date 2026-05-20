@@ -10,6 +10,7 @@ import pytest
 
 from fastcode.indexing.incremental import (
     FileChangeSet,
+    PlanChanges,
     apply_incremental_update,
     diff_changed_files,
 )
@@ -139,6 +140,65 @@ def _build_simple_snapshot(
 # ---------------------------------------------------------------------------
 # Tests: diff_changed_files
 # ---------------------------------------------------------------------------
+
+
+class TestPlanChanges:
+    def test_payload_and_legacy_prefilter_adapter_share_one_plan(self) -> None:
+        plan = PlanChanges(
+            previous_snapshot_id="snap:repo:prev",
+            previous_artifact_key="snap_repo_prev",
+            added_paths=("new.py",),
+            modified_paths=("changed.py",),
+            removed_paths=("deleted.py",),
+            unchanged_paths=("same.py",),
+            reused_elements=3,
+            reindexed_elements=2,
+            reused_changed_embeddings=1,
+            semantic_frontier_widened=True,
+            api_frontier_changed_paths=("changed.py",),
+            package_scope_roots=(".",),
+            change_kinds=("api_surface_hash", "embedding_text_hash"),
+            interface_digest_changed_paths=("changed.py",),
+            interface_digests={"changed.py": "iface:abc"},
+            dependency_frontier={
+                "radius": "dependent_neighborhood",
+                "strategy": "package",
+            },
+            degraded_reasons=("semantic_frontier_widened",),
+        )
+
+        payload = plan.to_payload()
+        legacy = plan.to_prefilter_payload()
+
+        assert payload["schema_version"] == "fastcode.plan_changes.v1"
+        assert payload["counts"] == {
+            "added": 1,
+            "modified": 1,
+            "removed": 1,
+            "unchanged": 1,
+            "changed": 3,
+        }
+        assert payload["paths"] == {
+            "added": ["new.py"],
+            "modified": ["changed.py"],
+            "removed": ["deleted.py"],
+            "unchanged": ["same.py"],
+            "changed": ["changed.py", "new.py"],
+        }
+        assert payload["reuse"] == {
+            "reused_elements": 3,
+            "reindexed_elements": 2,
+            "reused_changed_embeddings": 1,
+        }
+        assert payload["frontier"]["degraded"] is True
+        assert legacy["plan_changes"] == payload
+        assert legacy["added"] == payload["counts"]["added"]
+        assert legacy["modified"] == payload["counts"]["modified"]
+        assert legacy["removed"] == payload["counts"]["removed"]
+        assert legacy["unchanged"] == payload["counts"]["unchanged"]
+        assert legacy["changed_paths"] == payload["paths"]["changed"]
+        assert legacy["semantic_frontier_widened"] == 1
+        assert legacy["api_frontier_changed"] == 1
 
 
 class TestDiffChangedFiles:

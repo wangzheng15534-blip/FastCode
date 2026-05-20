@@ -1320,6 +1320,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
         index_files_mock = Mock(return_value=[changed_element])
         pipeline.indexer.extract_elements = extract_mock
         pipeline.indexer.index_files = index_files_mock
+        update_snapshot_metadata = Mock(return_value=None)
 
         seen_ast_element_ids: list[str] = []
 
@@ -1402,7 +1403,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
                 patch.object(
                     pipeline.snapshot_store,
                     "update_snapshot_metadata",
-                    return_value=None,
+                    update_snapshot_metadata,
                 )
             )
             stack.enter_context(
@@ -1477,6 +1478,38 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
         }
         for key, value in expected_prefilter.items():
             assert prefilter[key] == value
+        plan_changes = result["plan_changes"]
+        assert prefilter["plan_changes"] == plan_changes
+        assert plan_changes["schema_version"] == "fastcode.plan_changes.v1"
+        assert plan_changes["counts"] == {
+            "added": 0,
+            "modified": 1,
+            "removed": 0,
+            "unchanged": 1,
+            "changed": 1,
+        }
+        assert plan_changes["paths"] == {
+            "added": [],
+            "modified": ["b.py"],
+            "removed": [],
+            "unchanged": ["a.py"],
+            "changed": ["b.py"],
+        }
+        assert plan_changes["reuse"] == {
+            "reused_elements": 1,
+            "reindexed_elements": 1,
+            "reused_changed_embeddings": 0,
+        }
+        assert plan_changes["frontier"]["semantic_frontier_widened"] is True
+        assert plan_changes["frontier"]["api_frontier_changed"] is True
+        assert plan_changes["frontier"]["api_frontier_changed_paths"] == ["b.py"]
+        assert plan_changes["frontier"]["package_scope_roots"] == ["."]
+        assert plan_changes["frontier"]["change_kinds"] == [
+            "api_surface_hash",
+            "edge_surface_hash",
+            "embedding_text_hash",
+            "signature_hash",
+        ]
         assert prefilter["artifact_shard_reuse"] == {
             "vector_shards_reused": 1,
             "bm25_shards_reused": 1,
@@ -1508,6 +1541,10 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "semantic_frontier_widened",
             "stable_unit_id_missing",
         ]
+        update_snapshot_metadata.assert_called_once()
+        assert update_snapshot_metadata.call_args.args[0] == "snap:repo:current"
+        persisted_metadata = update_snapshot_metadata.call_args.args[1]
+        assert persisted_metadata["plan_changes"] == plan_changes
         assert result["repair_queue"]["pending"] == 1
         assert result["repair_queue"]["task_type"] == "semantic_repair_frontier"
         assert result["repair_queue"]["scope_kind"] == "package"

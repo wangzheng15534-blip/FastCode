@@ -9,6 +9,7 @@ import faiss
 import numpy as np
 import pytest
 
+from fastcode.store.records import RepositoryOverviewRecord
 from fastcode.store.vector import VectorStore
 
 pytestmark = [pytest.mark.test_double]
@@ -264,6 +265,94 @@ def test_repository_overview_persists_as_explicit_manifest_and_embedding_archive
         loaded["repo"]["embedding"],
         np.asarray([3.0, 4.0], dtype=np.float32),
     )
+
+    records = store.load_repo_overview_records()
+    assert set(records) == {"repo"}
+    assert records["repo"].repo_name == "repo"
+    assert records["repo"].content == "content"
+    assert records["repo"].metadata_json == repo_entry["metadata_json"]
+    assert records["repo"].embedding_fingerprint == fingerprint
+    assert isinstance(records["repo"].embedding, np.ndarray)
+    assert records["repo"].embedding.dtype == np.float32
+
+
+def test_repository_overview_legacy_load_avoids_record_to_dict_double(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _disk_store(tmp_path)
+    store.save_repo_overview(
+        "repo",
+        "content",
+        np.asarray([1.0, 2.0], dtype=np.float32),
+        {"summary": "stored overview"},
+    )
+
+    def _boom(_: RepositoryOverviewRecord) -> dict[str, Any]:
+        raise AssertionError("repo overview compatibility load must be explicit")
+
+    monkeypatch.setattr(RepositoryOverviewRecord, "to_dict", _boom)
+
+    loaded = store.load_repo_overviews()
+
+    assert loaded["repo"]["metadata"] == {"summary": "stored overview"}
+    assert loaded["repo"]["embedding"].dtype == np.float32
+
+
+def test_repository_overview_search_records_return_typed_records_double() -> None:
+    store = _store()
+    store.save_repo_overview(
+        "repo",
+        "content",
+        np.asarray([1.0, 0.0], dtype=np.float32),
+        {"summary": "stored overview"},
+    )
+
+    results = store.search_repository_overview_records(
+        np.asarray([1.0, 0.0], dtype=np.float32),
+        k=1,
+    )
+
+    assert len(results) == 1
+    record, score = results[0]
+    assert record.repo_name == "repo"
+    assert record.content == "content"
+    assert json.loads(record.metadata_json) == {"summary": "stored overview"}
+    assert isinstance(record.embedding, np.ndarray)
+    assert score == 1.0
+
+
+def test_repository_overview_legacy_search_avoids_record_to_dict_double(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store()
+    store.save_repo_overview(
+        "repo",
+        "content",
+        np.asarray([1.0, 0.0], dtype=np.float32),
+        {"summary": "stored overview"},
+    )
+
+    def _boom(_: RepositoryOverviewRecord) -> dict[str, Any]:
+        raise AssertionError("repo overview compatibility search must be explicit")
+
+    monkeypatch.setattr(RepositoryOverviewRecord, "to_dict", _boom)
+
+    results = store.search_repository_overviews(
+        np.asarray([1.0, 0.0], dtype=np.float32),
+        k=1,
+    )
+
+    assert results == [
+        (
+            {
+                "repo_name": "repo",
+                "type": "repository_overview",
+                "summary": "stored overview",
+            },
+            1.0,
+        )
+    ]
 
 
 def test_save_incremental_reuses_unchanged_vector_shards_double(
@@ -528,6 +617,7 @@ def test_repository_overview_metadata_load_skips_embedding_archive_double(
     embeddings_path.write_text("corrupt archive", encoding="utf-8")
 
     loaded = store.load_repo_overviews(include_embeddings=False)
+    records = store.load_repo_overview_records(include_embeddings=False)
 
     assert loaded == {
         "repo": {
@@ -536,6 +626,8 @@ def test_repository_overview_metadata_load_skips_embedding_archive_double(
             "metadata": {"summary": "stored overview"},
         }
     }
+    assert records["repo"].embedding is None
+    assert records["repo"].metadata_json == '{"summary": "stored overview"}'
 
 
 def _metadata_row(path: str, *, element_id: str, summary: str) -> dict[str, Any]:

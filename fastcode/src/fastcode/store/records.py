@@ -332,6 +332,43 @@ class UnitArtifactRecord:
 
 
 @dataclass(frozen=True)
+class RepositoryOverviewRecord:
+    repo_name: str
+    content: str
+    metadata_json: str
+    embedding: Any | None = None
+    embedding_fingerprint: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "repo_name": self.repo_name,
+            "content": self.content,
+            "metadata_json": self.metadata_json,
+            "embedding": self.embedding,
+            "embedding_fingerprint": (
+                dict(self.embedding_fingerprint)
+                if self.embedding_fingerprint is not None
+                else None
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RepositoryOverviewRecord:
+        raw_fingerprint = data.get("embedding_fingerprint")
+        return cls(
+            repo_name=str(data.get("repo_name") or ""),
+            content=str(data.get("content") or ""),
+            metadata_json=str(data.get("metadata_json") or "{}"),
+            embedding=data.get("embedding"),
+            embedding_fingerprint=(
+                _string_key_mapping_payload(raw_fingerprint)
+                if isinstance(raw_fingerprint, dict)
+                else None
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class RedoTaskRecord:
     task_id: str
     task_type: str

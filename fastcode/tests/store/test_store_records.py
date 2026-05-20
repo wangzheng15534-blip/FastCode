@@ -16,6 +16,7 @@ from fastcode.store.records import (
     ProjectionDirtyScopeRecord,
     PublishTaskRecord,
     RedoTaskRecord,
+    RepositoryOverviewRecord,
     SCIPArtifactRecord,
     SnapshotRecord,
     SnapshotRefRecord,
@@ -296,6 +297,20 @@ def test_publish_task_record_roundtrip():
         updated_at="2026-01-01T00:00:05",
     )
     restored = PublishTaskRecord.from_dict(record.to_dict())
+    assert restored == record
+
+
+def test_repository_overview_record_roundtrip():
+    record = RepositoryOverviewRecord(
+        repo_name="repo",
+        content="overview",
+        metadata_json='{"summary":"stored"}',
+        embedding=(1.0, 2.0),
+        embedding_fingerprint={"provider": "test", "model": "m1"},
+    )
+
+    restored = RepositoryOverviewRecord.from_dict(record.to_dict())
+
     assert restored == record
 
 

@@ -1068,6 +1068,7 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - `indexing/embedder.py` now stores cached embeddings as native `float32` byte buffers
   - `store/cache.py` now writes typed dialogue/session/query payloads as explicit JSON envelopes and embedding payloads as length-prefixed buffer envelopes; generic `get()/set()` remains for legacy or untyped callers
   - `store/vector.py` now persists repository overview metadata as an explicit JSON manifest plus NumPy embedding archive and lets metadata-only overview callers avoid loading embedding payloads
+  - `store/vector.py` now exposes typed `RepositoryOverviewRecord` load/search APIs for repository overviews, with legacy dict-returning load/search methods kept as explicit compatibility serializers that do not call `RepositoryOverviewRecord.to_dict()`
   - `indexing/pipeline.py` now stages embedded elements as a single `np.ndarray[np.float32]` matrix instead of a Python list of arrays before vector-store insertion, and vector-store search/repository-overview ranking uses explicit float32 boundary helpers
   - `DBRuntime` registers the pgvector Psycopg adapter when available, and `store/pg_retrieval.py` now passes native float32 vectors at the active PG boundary instead of duplicating new rows into `list[float]` array payloads; SQL vector literals remain only as an adapter-missing fallback
   - `store/pg_retrieval.py` still keeps legacy `embedding_arr` read fallback support, but ranks fallback candidates as a NumPy matrix before metadata inflation
@@ -1420,15 +1421,15 @@ These currently emit useful structured facts, but they are still narrower than f
 ### P1.5 Continue store-boundary typing
 
 Typed records now exist for manifests, snapshot refs, snapshot records, index
-runs, publish tasks, SCIP artifact refs, unit artifacts, redo tasks, outbox
-events, dialogue turns, dialogue sessions, and active projection
-build/dirty-scope rows.
+runs, publish tasks, SCIP artifact refs, unit artifacts, repository overviews,
+redo tasks, outbox events, dialogue turns, dialogue sessions, and active
+projection build/dirty-scope rows.
 
 Still raw-dict-heavy at boundaries:
 - API-facing manifest / artifact payload adapters
 - snapshot-store and projection-store compatibility payload adapters
 - cache/query result payloads
-- vector-store search/repo-overview payloads
+- vector-store search payloads and compatibility repo-overview payload adapters
 - pg-retrieval row/result payloads
 
 This item should be treated as the implementation slice of the broader P0.6a schema-flow requirement above, not as isolated cleanup.

@@ -28,6 +28,7 @@ from ..utils.materialization import (
     BOUNDARY_VECTOR_LIST_CONVERSION,
     increment_materialization_boundary,
 )
+from .records import RepositoryOverviewRecord
 
 _METADATA_SHARD_STORAGE_VERSION = 1
 _VECTOR_SHARD_STORAGE_VERSION = 1
@@ -472,13 +473,31 @@ class VectorStore:
         Returns:
             Dictionary mapping repo_name to overview data
         """
-        return cast(
-            dict[str, dict[str, Any]],
-            self._load_repo_overview_entries(
-                include_embeddings=include_embeddings,
-                decode_metadata=True,
-            ),
+        return {
+            repo_name: self._repo_overview_payload_from_record(record)
+            for repo_name, record in self.load_repo_overview_records(
+                include_embeddings=include_embeddings
+            ).items()
+        }
+
+    def load_repo_overview_records(
+        self, include_embeddings: bool = True
+    ) -> dict[str, RepositoryOverviewRecord]:
+        """Load repository overview storage rows as typed records."""
+        entries = self._load_repo_overview_entries(
+            include_embeddings=include_embeddings,
+            decode_metadata=False,
         )
+        records: dict[str, RepositoryOverviewRecord] = {}
+        for repo_name, entry in entries.items():
+            record = self._repo_overview_record_from_entry(
+                repo_name,
+                entry,
+                materialize_metadata=True,
+            )
+            if record is not None:
+                records[repo_name] = record
+        return records
 
     def search_repository_overviews(
         self,
@@ -498,6 +517,24 @@ class VectorStore:
         Returns:
             List of (metadata, score) tuples for repository overviews only
         """
+        return [
+            (self._repo_overview_result_metadata_from_record(record), score)
+            for record, score in self.search_repository_overview_records(
+                query_vector=query_vector,
+                k=k,
+                min_score=min_score,
+                query_embedding_fingerprint=query_embedding_fingerprint,
+            )
+        ]
+
+    def search_repository_overview_records(
+        self,
+        query_vector: np.ndarray,
+        k: int = 5,
+        min_score: float | None = None,
+        query_embedding_fingerprint: Mapping[str, Any] | None = None,
+    ) -> list[tuple[RepositoryOverviewRecord, float]]:
+        """Search repository overviews and return typed records."""
         overviews = self._load_repo_overview_entries(
             include_embeddings=True,
             decode_metadata=False,
@@ -549,19 +586,20 @@ class VectorStore:
             scores = 1.0 / (1.0 + distances)
 
         ranked_indexes = np.argsort(scores)[::-1]
-        results: list[tuple[dict[str, Any], float]] = []
+        results: list[tuple[RepositoryOverviewRecord, float]] = []
         for raw_index in ranked_indexes:
             index = int(raw_index)
             score = float(scores[index])
             if min_score is not None and score < min_score:
                 continue
-            metadata = self._result_metadata_from_overview(overview_payloads[index])
-            result_metadata = {
-                "repo_name": repo_names[index],
-                "type": "repository_overview",
-                **metadata,
-            }
-            results.append((result_metadata, score))
+            record = self._repo_overview_record_from_entry(
+                repo_names[index],
+                overview_payloads[index],
+                materialize_metadata=True,
+            )
+            if record is None:
+                continue
+            results.append((record, score))
             if len(results) >= k:
                 break
         return results
@@ -3228,6 +3266,70 @@ class VectorStore:
                 embeddings_by_repo[repo_name] = embedding
 
         return embeddings_by_repo
+
+    def _repo_overview_record_from_entry(
+        self,
+        repo_name: str,
+        entry: _RepoOverviewStoredEntry,
+        *,
+        materialize_metadata: bool,
+    ) -> RepositoryOverviewRecord | None:
+        embedding: np.ndarray | None = None
+        if "embedding" in entry:
+            embedding = self._normalize_repo_overview_embedding(entry.get("embedding"))
+            if embedding is None:
+                return None
+
+        metadata_json = entry.get("metadata_json")
+        if not isinstance(metadata_json, str):
+            if materialize_metadata:
+                metadata_json = self._serialize_repo_overview_metadata(
+                    self._result_metadata_from_overview(entry)
+                )
+            else:
+                metadata_json = "{}"
+
+        fingerprint = self._repo_overview_embedding_fingerprint(
+            entry,
+            metadata_json=metadata_json,
+            include_metadata=materialize_metadata,
+        )
+        return RepositoryOverviewRecord(
+            repo_name=repo_name,
+            content=str(entry.get("content", "")),
+            metadata_json=metadata_json,
+            embedding=embedding,
+            embedding_fingerprint=fingerprint,
+        )
+
+    def _repo_overview_payload_from_record(
+        self,
+        record: RepositoryOverviewRecord,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "repo_name": record.repo_name,
+            "content": record.content,
+            "metadata": self._deserialize_repo_overview_metadata(record.metadata_json),
+        }
+        if record.embedding is not None:
+            payload["embedding"] = record.embedding
+        if record.embedding_fingerprint is not None:
+            payload["embedding_fingerprint"] = dict(record.embedding_fingerprint)
+            payload["metadata"].setdefault(
+                "embedding_fingerprint",
+                record.embedding_fingerprint,
+            )
+        return payload
+
+    def _repo_overview_result_metadata_from_record(
+        self,
+        record: RepositoryOverviewRecord,
+    ) -> dict[str, Any]:
+        return {
+            "repo_name": record.repo_name,
+            "type": "repository_overview",
+            **self._deserialize_repo_overview_metadata(record.metadata_json),
+        }
 
     def _result_metadata_from_overview(
         self, overview: _RepoOverviewStoredEntry

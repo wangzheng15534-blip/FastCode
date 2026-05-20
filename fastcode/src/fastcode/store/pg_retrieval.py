@@ -13,6 +13,7 @@ import numpy as np
 
 from ..db_runtime import DBRuntime, pgvector_adapter_available
 from ..utils import as_float32_matrix, as_float32_vector
+from .records import PgRetrievalElementRecord, PgRetrievalResultRecord
 
 
 class PgRetrievalStore:
@@ -174,36 +175,203 @@ class PgRetrievalStore:
 
     @staticmethod
     def _decode_metadata(raw_metadata: Any) -> dict[str, Any] | None:
-        if isinstance(raw_metadata, dict):
-            return cast(dict[str, Any], raw_metadata)
+        if isinstance(raw_metadata, Mapping):
+            return {
+                str(key): value
+                for key, value in cast(Mapping[Any, Any], raw_metadata).items()
+            }
         if not raw_metadata:
             return None
         try:
             parsed = json.loads(str(raw_metadata))
         except (json.JSONDecodeError, TypeError):
             return None
-        return cast(dict[str, Any], parsed) if isinstance(parsed, dict) else None
+        if not isinstance(parsed, Mapping):
+            return None
+        return {
+            str(key): value for key, value in cast(Mapping[Any, Any], parsed).items()
+        }
 
     @staticmethod
-    def _embedding_fingerprint_matches(
-        metadata: Mapping[str, Any],
+    def _optional_str(value: Any) -> str | None:
+        return str(value) if value is not None else None
+
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _mapping_payload(value: Any) -> dict[str, Any]:
+        if not isinstance(value, Mapping):
+            return {}
+        return {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
+
+    @classmethod
+    def _element_record_from_payload(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> PgRetrievalElementRecord | None:
+        source = cls._mapping_payload(payload)
+        raw_metadata = source.get("metadata")
+        metadata = cls._mapping_payload(raw_metadata)
+        raw_type = source.get("type")
+        if raw_type is None:
+            raw_type = source.get("element_type")
+        if raw_type is None:
+            raw_type = metadata.get("type") or metadata.get("element_type")
+        raw_fingerprint = source.get("embedding_fingerprint")
+        if not isinstance(raw_fingerprint, Mapping):
+            raw_fingerprint = metadata.get("embedding_fingerprint")
+        fingerprint = (
+            cls._mapping_payload(raw_fingerprint)
+            if isinstance(raw_fingerprint, Mapping)
+            else None
+        )
+        present_fields = tuple(
+            field_name
+            for field_name in ("metadata", "element_type", *cls._ELEMENT_JSON_FIELDS)
+            if field_name in source
+        )
+        return PgRetrievalElementRecord(
+            id=str(source.get("id") or ""),
+            element_type=cls._optional_str(raw_type),
+            name=cls._optional_str(source.get("name")),
+            file_path=cls._optional_str(source.get("file_path")),
+            relative_path=cls._optional_str(source.get("relative_path")),
+            language=cls._optional_str(source.get("language")),
+            start_line=cls._optional_int(source.get("start_line")),
+            end_line=cls._optional_int(source.get("end_line")),
+            code=cls._optional_str(source.get("code")),
+            signature=cls._optional_str(source.get("signature")),
+            docstring=cls._optional_str(source.get("docstring")),
+            summary=cls._optional_str(source.get("summary")),
+            repo_name=cls._optional_str(source.get("repo_name")),
+            repo_url=cls._optional_str(source.get("repo_url")),
+            snapshot_id=cls._optional_str(source.get("snapshot_id")),
+            source_priority=source.get("source_priority"),
+            embedding_text=cls._optional_str(source.get("embedding_text")),
+            embedding_artifact_ref=cls._optional_str(
+                source.get("embedding_artifact_ref")
+            ),
+            embedding_fingerprint=fingerprint,
+            ir_symbol_id=cls._optional_str(source.get("ir_symbol_id")),
+            stable_unit_id=cls._optional_str(source.get("stable_unit_id")),
+            content_hash=cls._optional_str(source.get("content_hash")),
+            syntax_hash=cls._optional_str(source.get("syntax_hash")),
+            signature_hash=cls._optional_str(source.get("signature_hash")),
+            edge_surface_hash=cls._optional_str(source.get("edge_surface_hash")),
+            embedding_text_hash=cls._optional_str(source.get("embedding_text_hash")),
+            api_surface_hash=cls._optional_str(source.get("api_surface_hash")),
+            metadata=metadata,
+            present_fields=present_fields,
+        )
+
+    @classmethod
+    def _result_record_from_raw_metadata(
+        cls,
+        raw_metadata: Any,
+        raw_score: Any,
+        *,
+        query_embedding_fingerprint: Mapping[str, Any] | None = None,
+    ) -> PgRetrievalResultRecord | None:
+        payload = cls._decode_metadata(raw_metadata)
+        if payload is None:
+            return None
+        element = cls._element_record_from_payload(payload)
+        if element is None:
+            return None
+        if not cls._element_record_embedding_fingerprint_matches(
+            element,
+            query_embedding_fingerprint,
+        ):
+            return None
+        return PgRetrievalResultRecord(
+            element=element,
+            score=float(raw_score or 0.0),
+        )
+
+    @classmethod
+    def _element_record_embedding_fingerprint_matches(
+        cls,
+        element: PgRetrievalElementRecord,
         expected: Mapping[str, Any] | None,
     ) -> bool:
         if expected is None:
             return True
-        fingerprint = metadata.get("embedding_fingerprint")
+        fingerprint: Mapping[str, Any] | None = element.embedding_fingerprint
         if not isinstance(fingerprint, Mapping):
-            nested = metadata.get("metadata")
+            nested = element.metadata.get("embedding_fingerprint")
             if isinstance(nested, Mapping):
-                nested_metadata = cast(Mapping[str, Any], nested)
-                fingerprint = nested_metadata.get("embedding_fingerprint")
+                fingerprint = cast(Mapping[str, Any], nested)
         if not isinstance(fingerprint, Mapping):
             return False
-        stored = cast(Mapping[str, Any], fingerprint)
         for field_name, expected_value in expected.items():
-            if stored.get(field_name) != expected_value:
+            if fingerprint.get(field_name) != expected_value:
                 return False
         return True
+
+    @classmethod
+    def _element_payload_from_record(
+        cls,
+        record: PgRetrievalElementRecord,
+    ) -> dict[str, Any]:
+        present_fields = set(record.present_fields)
+        payload: dict[str, Any] = {}
+        if "metadata" in present_fields:
+            payload["metadata"] = dict(record.metadata)
+        field_values: dict[str, Any] = {
+            "id": record.id,
+            "type": record.element_type,
+            "element_type": record.element_type,
+            "name": record.name,
+            "file_path": record.file_path,
+            "relative_path": record.relative_path,
+            "language": record.language,
+            "start_line": record.start_line,
+            "end_line": record.end_line,
+            "code": record.code,
+            "signature": record.signature,
+            "docstring": record.docstring,
+            "summary": record.summary,
+            "repo_name": record.repo_name,
+            "repo_url": record.repo_url,
+            "snapshot_id": record.snapshot_id,
+            "source_priority": record.source_priority,
+            "embedding_text": record.embedding_text,
+            "embedding_artifact_ref": record.embedding_artifact_ref,
+            "embedding_fingerprint": (
+                dict(record.embedding_fingerprint)
+                if record.embedding_fingerprint is not None
+                else None
+            ),
+            "ir_symbol_id": record.ir_symbol_id,
+            "stable_unit_id": record.stable_unit_id,
+            "content_hash": record.content_hash,
+            "syntax_hash": record.syntax_hash,
+            "signature_hash": record.signature_hash,
+            "edge_surface_hash": record.edge_surface_hash,
+            "embedding_text_hash": record.embedding_text_hash,
+            "api_surface_hash": record.api_surface_hash,
+        }
+        for field_name in ("element_type", *cls._ELEMENT_JSON_FIELDS):
+            if field_name in present_fields:
+                payload[field_name] = field_values[field_name]
+        return payload
+
+    @classmethod
+    def _result_payloads_from_records(
+        cls,
+        records: Sequence[PgRetrievalResultRecord],
+    ) -> list[tuple[dict[str, Any], float]]:
+        return [
+            (cls._element_payload_from_record(record.element), record.score)
+            for record in records
+        ]
 
     @staticmethod
     def _embedding_fingerprint_sql_filter(
@@ -220,24 +388,23 @@ class PgRetrievalStore:
         return (fingerprint_json, fingerprint_json, fingerprint_json)
 
     @classmethod
-    def _metadata_score_rows(
+    def _metadata_score_records(
         cls,
         rows: Any,
         *,
         query_embedding_fingerprint: Mapping[str, Any] | None = None,
-    ) -> list[tuple[dict[str, Any], float]]:
-        out: list[tuple[dict[str, Any], float]] = []
+    ) -> list[PgRetrievalResultRecord]:
+        out: list[PgRetrievalResultRecord] = []
         for row in rows:
             raw_metadata = cls._row_value(row, 0, "metadata_json")
-            metadata = cls._decode_metadata(raw_metadata)
-            if metadata is None:
-                continue
-            if not cls._embedding_fingerprint_matches(
-                metadata, query_embedding_fingerprint
-            ):
-                continue
             raw_score = cls._row_value(row, 1, "score")
-            out.append((metadata, float(raw_score or 0.0)))
+            record = cls._result_record_from_raw_metadata(
+                raw_metadata,
+                raw_score,
+                query_embedding_fingerprint=query_embedding_fingerprint,
+            )
+            if record is not None:
+                out.append(record)
         return out
 
     @classmethod
@@ -588,6 +755,27 @@ class PgRetrievalStore:
         top_k: int = 20,
         query_embedding_fingerprint: Mapping[str, Any] | None = None,
     ) -> list[tuple[dict[str, Any], float]]:
+        return self._result_payloads_from_records(
+            self.semantic_search_records(
+                snapshot_id,
+                query_embedding,
+                repo_filter=repo_filter,
+                element_types=element_types,
+                top_k=top_k,
+                query_embedding_fingerprint=query_embedding_fingerprint,
+            )
+        )
+
+    def semantic_search_records(
+        self,
+        snapshot_id: str,
+        query_embedding: Sequence[float],
+        *,
+        repo_filter: list[str] | None = None,
+        element_types: list[str] | None = None,
+        top_k: int = 20,
+        query_embedding_fingerprint: Mapping[str, Any] | None = None,
+    ) -> list[PgRetrievalResultRecord]:
         query_vector = self._vector_array(query_embedding)
         if not self.enabled or query_vector is None or top_k <= 0:
             return []
@@ -696,7 +884,7 @@ class PgRetrievalStore:
                             fetch_limit,
                         ),
                     )
-                return self._metadata_score_rows(
+                return self._metadata_score_records(
                     cur.fetchall(),
                     query_embedding_fingerprint=query_embedding_fingerprint,
                 )[:top_k]
@@ -704,7 +892,7 @@ class PgRetrievalStore:
                 self.logger.debug(
                     "pgvector query failed, falling back to client-side cosine: %s", exc
                 )
-                return self._semantic_search_fallback(
+                return self._semantic_search_fallback_records(
                     cur,
                     snapshot_id,
                     query_vector,
@@ -725,6 +913,29 @@ class PgRetrievalStore:
         top_k: int = 20,
         query_embedding_fingerprint: Mapping[str, Any] | None = None,
     ) -> list[tuple[dict[str, Any], float]]:
+        return self._result_payloads_from_records(
+            self._semantic_search_fallback_records(
+                cur,
+                snapshot_id,
+                query_vector,
+                repo_filter=repo_filter,
+                element_types=element_types,
+                top_k=top_k,
+                query_embedding_fingerprint=query_embedding_fingerprint,
+            )
+        )
+
+    def _semantic_search_fallback_records(
+        self,
+        cur: Any,
+        snapshot_id: str,
+        query_vector: np.ndarray,
+        *,
+        repo_filter: list[str] | None = None,
+        element_types: list[str] | None = None,
+        top_k: int = 20,
+        query_embedding_fingerprint: Mapping[str, Any] | None = None,
+    ) -> list[PgRetrievalResultRecord]:
         # Fallback: compute cosine with embedding_arr client-side. Keep metadata
         # raw until ranking picks the rows that must cross the Python boundary.
         limit = max(top_k, 1) * 8
@@ -801,10 +1012,12 @@ class PgRetrievalStore:
             if embedding is None or embedding.size != query_vector.size:
                 continue
             if query_embedding_fingerprint is not None:
-                metadata = self._decode_metadata(raw_metadata)
-                if metadata is None or not self._embedding_fingerprint_matches(
-                    metadata, query_embedding_fingerprint
-                ):
+                candidate = self._result_record_from_raw_metadata(
+                    raw_metadata,
+                    0.0,
+                    query_embedding_fingerprint=query_embedding_fingerprint,
+                )
+                if candidate is None:
                     continue
             raw_metadata_by_index.append(raw_metadata)
             vectors.append(embedding)
@@ -823,25 +1036,26 @@ class PgRetrievalStore:
             where=denominators > 0.0,
         )
 
-        out: list[tuple[dict[str, Any], float]] = []
+        out: list[PgRetrievalResultRecord] = []
         for raw_index in np.argsort(scores)[::-1]:
             index = int(raw_index)
-            metadata = self._decode_metadata(raw_metadata_by_index[index])
-            if metadata is None:
+            result = self._result_record_from_raw_metadata(
+                raw_metadata_by_index[index],
+                float(scores[index]),
+                query_embedding_fingerprint=query_embedding_fingerprint,
+            )
+            if result is None:
                 continue
+            element = result.element
             if allowed_types:
-                meta_type = metadata.get("type") or metadata.get("element_type")
-                if meta_type not in allowed_types:
+                element_type = element.element_type
+                if element_type not in allowed_types:
                     continue
             if allowed_repos:
-                meta_repo = metadata.get("repo_name")
-                if meta_repo not in allowed_repos:
+                repo_name = element.repo_name
+                if repo_name not in allowed_repos:
                     continue
-            if not self._embedding_fingerprint_matches(
-                metadata, query_embedding_fingerprint
-            ):
-                continue
-            out.append((metadata, float(scores[index])))
+            out.append(result)
             if len(out) >= top_k:
                 break
         return out
@@ -855,10 +1069,29 @@ class PgRetrievalStore:
         element_types: list[str] | None = None,
         top_k: int = 20,
     ) -> list[tuple[dict[str, Any], float]]:
+        return self._result_payloads_from_records(
+            self.keyword_search_records(
+                snapshot_id,
+                query,
+                repo_filter=repo_filter,
+                element_types=element_types,
+                top_k=top_k,
+            )
+        )
+
+    def keyword_search_records(
+        self,
+        snapshot_id: str,
+        query: str,
+        *,
+        repo_filter: list[str] | None = None,
+        element_types: list[str] | None = None,
+        top_k: int = 20,
+    ) -> list[PgRetrievalResultRecord]:
         if not self.enabled or not query.strip():
             return []
         try:
-            return self._keyword_search_inner(
+            return self._keyword_search_records_inner(
                 snapshot_id,
                 query,
                 repo_filter=repo_filter,
@@ -878,6 +1111,25 @@ class PgRetrievalStore:
         element_types: list[str] | None = None,
         top_k: int = 20,
     ) -> list[tuple[dict[str, Any], float]]:
+        return self._result_payloads_from_records(
+            self._keyword_search_records_inner(
+                snapshot_id,
+                query,
+                repo_filter=repo_filter,
+                element_types=element_types,
+                top_k=top_k,
+            )
+        )
+
+    def _keyword_search_records_inner(
+        self,
+        snapshot_id: str,
+        query: str,
+        *,
+        repo_filter: list[str] | None = None,
+        element_types: list[str] | None = None,
+        top_k: int = 20,
+    ) -> list[PgRetrievalResultRecord]:
         with self.db_runtime.connect() as conn:
             cur = conn.cursor()
             if repo_filter and element_types:
@@ -932,4 +1184,4 @@ class PgRetrievalStore:
                     """,
                     (query, snapshot_id, query, top_k),
                 )
-            return self._metadata_score_rows(cur.fetchall())
+            return self._metadata_score_records(cur.fetchall())

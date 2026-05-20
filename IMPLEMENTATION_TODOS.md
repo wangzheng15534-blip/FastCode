@@ -1072,6 +1072,7 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - `indexing/pipeline.py` now stages embedded elements as a single `np.ndarray[np.float32]` matrix instead of a Python list of arrays before vector-store insertion, and vector-store search/repository-overview ranking uses explicit float32 boundary helpers
   - `DBRuntime` registers the pgvector Psycopg adapter when available, and `store/pg_retrieval.py` now passes native float32 vectors at the active PG boundary instead of duplicating new rows into `list[float]` array payloads; SQL vector literals remain only as an adapter-missing fallback
   - `store/pg_retrieval.py` still keeps legacy `embedding_arr` read fallback support, but ranks fallback candidates as a NumPy matrix before metadata inflation
+  - `store/pg_retrieval.py` now exposes typed pg retrieval result records for semantic and keyword reads, with legacy tuple/dict return methods kept as explicit compatibility serializers that do not call record `to_dict()`
 - unit artifact persistence is narrower:
   - `store/unit_artifacts.py` no longer uses generic row normalization on
     list/load paths and now serializes only the metadata subtree explicitly
@@ -1150,7 +1151,7 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - full repository-overview consumers still decode JSON metadata into Python dicts because selector/BM25 flows currently operate on Python text/metadata payloads
 - PostgreSQL retrieval result path:
   - semantic fallback now delays JSON metadata inflation until after vectorized NumPy ranking
-  - direct pgvector/keyword result rows still materialize JSON payloads at the retrieval boundary
+  - direct pgvector/keyword result rows now materialize through typed pg retrieval result records before the legacy dict compatibility boundary
 - graph path:
   - IR graph expansion now uses compact `IRGraphView` reachability on the active retrieval path when compact graph payloads are available
   - main composition-root callees/callers/dependencies now use compact bounded graph traversal when graph artifacts are available
@@ -1422,15 +1423,14 @@ These currently emit useful structured facts, but they are still narrower than f
 
 Typed records now exist for manifests, snapshot refs, snapshot records, index
 runs, publish tasks, SCIP artifact refs, unit artifacts, repository overviews,
-redo tasks, outbox events, dialogue turns, dialogue sessions, and active
-projection build/dirty-scope rows.
+pg-retrieval result rows, redo tasks, outbox events, dialogue turns, dialogue
+sessions, and active projection build/dirty-scope rows.
 
 Still raw-dict-heavy at boundaries:
 - API-facing manifest / artifact payload adapters
 - snapshot-store and projection-store compatibility payload adapters
 - cache/query result payloads
 - vector-store search payloads and compatibility repo-overview payload adapters
-- pg-retrieval row/result payloads
 
 This item should be treated as the implementation slice of the broader P0.6a schema-flow requirement above, not as isolated cleanup.
 

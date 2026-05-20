@@ -12,6 +12,8 @@ from fastcode.store.records import (
     IndexRunRecord,
     ManifestRecord,
     OutboxEventRecord,
+    PgRetrievalElementRecord,
+    PgRetrievalResultRecord,
     ProjectionBuildRecord,
     ProjectionDirtyScopeRecord,
     PublishTaskRecord,
@@ -310,6 +312,26 @@ def test_repository_overview_record_roundtrip():
     )
 
     restored = RepositoryOverviewRecord.from_dict(record.to_dict())
+
+    assert restored == record
+
+
+def test_pg_retrieval_result_record_roundtrip():
+    element = PgRetrievalElementRecord(
+        id="elem:1",
+        element_type="function",
+        name="f",
+        relative_path="pkg/a.py",
+        repo_name="repo",
+        start_line=10,
+        end_line=12,
+        embedding_fingerprint={"provider": "test", "model": "m1"},
+        metadata={"embedding_text_hash": "hash"},
+        present_fields=("id", "type", "name", "relative_path", "repo_name", "metadata"),
+    )
+    record = PgRetrievalResultRecord(element=element, score=0.75)
+
+    restored = PgRetrievalResultRecord.from_dict(record.to_dict())
 
     assert restored == record
 

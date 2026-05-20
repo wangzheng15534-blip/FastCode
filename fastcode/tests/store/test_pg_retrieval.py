@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from fastcode.store.pg_retrieval import PgRetrievalStore
+from fastcode.store.records import PgRetrievalElementRecord, PgRetrievalResultRecord
 
 pytestmark = [pytest.mark.test_double]
 
@@ -190,6 +191,98 @@ def test_semantic_search_filters_same_dimension_stale_embedding_fingerprint_doub
     assert [metadata["id"] for metadata, _score in out] == ["current"]
 
 
+def test_semantic_search_records_return_typed_pg_results_double():
+    cursor = _StaticCursor(
+        [
+            (
+                json.dumps(
+                    {
+                        "id": "elem:typed",
+                        "type": "function",
+                        "repo_name": "repoA",
+                        "relative_path": "pkg/a.py",
+                        "metadata": {"embedding_text_hash": "hash"},
+                    }
+                ),
+                0.75,
+            ),
+        ]
+    )
+    store = PgRetrievalStore.__new__(PgRetrievalStore)
+    store.enabled = True
+    store.logger = logging.getLogger(__name__)
+    store.db_runtime = _FakeDBRuntime(_FakeConn(cursor))
+
+    out = store.semantic_search_records(
+        snapshot_id="snap:1",
+        query_embedding=np.asarray([1.0, 0.0], dtype=np.float32),
+        top_k=1,
+    )
+
+    assert len(out) == 1
+    assert isinstance(out[0], PgRetrievalResultRecord)
+    assert out[0].score == pytest.approx(0.75)
+    assert out[0].element.id == "elem:typed"
+    assert out[0].element.element_type == "function"
+    assert out[0].element.repo_name == "repoA"
+    assert out[0].element.metadata["embedding_text_hash"] == "hash"
+
+
+def test_semantic_search_compatibility_serializes_records_explicitly_double(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cursor = _StaticCursor(
+        [
+            (
+                json.dumps(
+                    {
+                        "id": "elem:compat",
+                        "type": "function",
+                        "repo_name": "repoA",
+                        "metadata": {"embedding_text_hash": "hash"},
+                    }
+                ),
+                0.5,
+            ),
+        ]
+    )
+    store = PgRetrievalStore.__new__(PgRetrievalStore)
+    store.enabled = True
+    store.logger = logging.getLogger(__name__)
+    store.db_runtime = _FakeDBRuntime(_FakeConn(cursor))
+
+    def _boom_element(_: PgRetrievalElementRecord) -> dict[str, Any]:
+        raise AssertionError(
+            "pg retrieval compatibility must not call element.to_dict()"
+        )
+
+    def _boom_result(_: PgRetrievalResultRecord) -> dict[str, Any]:
+        raise AssertionError(
+            "pg retrieval compatibility must not call result.to_dict()"
+        )
+
+    monkeypatch.setattr(PgRetrievalElementRecord, "to_dict", _boom_element)
+    monkeypatch.setattr(PgRetrievalResultRecord, "to_dict", _boom_result)
+
+    out = store.semantic_search(
+        snapshot_id="snap:1",
+        query_embedding=np.asarray([1.0, 0.0], dtype=np.float32),
+        top_k=1,
+    )
+
+    assert out == [
+        (
+            {
+                "id": "elem:compat",
+                "type": "function",
+                "repo_name": "repoA",
+                "metadata": {"embedding_text_hash": "hash"},
+            },
+            0.5,
+        )
+    ]
+
+
 def test_semantic_fallback_filters_stale_embedding_fingerprint_double():
     stale_fingerprint = {
         "version": 2,
@@ -244,6 +337,91 @@ def test_semantic_fallback_filters_stale_embedding_fingerprint_double():
     )
 
     assert [metadata["id"] for metadata, _score in out] == ["current"]
+
+
+def test_semantic_fallback_records_keep_ranked_payloads_typed_double():
+    rows = [
+        (
+            json.dumps({"id": "best", "type": "function", "repo_name": "repoA"}),
+            None,
+            [1.0, 0.0],
+            "repoA",
+            "function",
+        ),
+        (_ExplodingMetadata(), None, [0.0, 1.0], "repoA", "function"),
+    ]
+    store = PgRetrievalStore.__new__(PgRetrievalStore)
+    store.enabled = True
+    store.logger = logging.getLogger(__name__)
+    store.db_runtime = _FakeDBRuntime(_FakeConn(_FakeCursor(rows)))
+
+    out = store.semantic_search_records(
+        snapshot_id="snap:1",
+        query_embedding=np.asarray([1.0, 0.0], dtype=np.float32),
+        repo_filter=["repoA"],
+        element_types=["function"],
+        top_k=1,
+    )
+
+    assert len(out) == 1
+    assert isinstance(out[0], PgRetrievalResultRecord)
+    assert out[0].element.id == "best"
+    assert out[0].score == pytest.approx(1.0)
+
+
+def test_keyword_search_compatibility_serializes_records_explicitly_double(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cursor = _StaticCursor(
+        [
+            (
+                json.dumps(
+                    {
+                        "id": "elem:keyword",
+                        "type": "function",
+                        "repo_name": "repoA",
+                        "metadata": {"embedding_text_hash": "hash"},
+                    }
+                ),
+                0.25,
+            ),
+        ]
+    )
+    store = PgRetrievalStore.__new__(PgRetrievalStore)
+    store.enabled = True
+    store.logger = logging.getLogger(__name__)
+    store.db_runtime = _FakeDBRuntime(_FakeConn(cursor))
+
+    def _boom_element(_: PgRetrievalElementRecord) -> dict[str, Any]:
+        raise AssertionError(
+            "pg retrieval compatibility must not call element.to_dict()"
+        )
+
+    def _boom_result(_: PgRetrievalResultRecord) -> dict[str, Any]:
+        raise AssertionError(
+            "pg retrieval compatibility must not call result.to_dict()"
+        )
+
+    monkeypatch.setattr(PgRetrievalElementRecord, "to_dict", _boom_element)
+    monkeypatch.setattr(PgRetrievalResultRecord, "to_dict", _boom_result)
+
+    out = store.keyword_search(
+        snapshot_id="snap:1",
+        query="keyword",
+        top_k=1,
+    )
+
+    assert out == [
+        (
+            {
+                "id": "elem:keyword",
+                "type": "function",
+                "repo_name": "repoA",
+                "metadata": {"embedding_text_hash": "hash"},
+            },
+            0.25,
+        )
+    ]
 
 
 def test_upsert_elements_keeps_embedding_out_of_metadata_json_double():

@@ -1430,8 +1430,10 @@ vector search results, pg-retrieval result rows, redo tasks, outbox events,
 dialogue turns, dialogue sessions, query result cache records, and active
 projection build/dirty-scope rows.
 
-Still raw-dict-heavy at boundaries:
-- snapshot-store and projection-store compatibility payload adapters
+The previously listed compatibility payload adapters are now covered by
+explicit field serializers and regressions that make generic `row_to_dict()` or
+record `to_dict()` paths fail for active snapshot-store and projection-store
+dict-return helpers.
 
 This item should be treated as the implementation slice of the broader P0.6a schema-flow requirement above, not as isolated cleanup.
 

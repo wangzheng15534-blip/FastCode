@@ -26,7 +26,13 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.scip.models import SCIPArtifactRef
-from fastcode.store.records import SCIPArtifactRecord, SnapshotRecord, SnapshotRefRecord
+from fastcode.store.records import (
+    OutboxEventRecord,
+    RedoTaskRecord,
+    SCIPArtifactRecord,
+    SnapshotRecord,
+    SnapshotRefRecord,
+)
 from fastcode.store.snapshot import SnapshotStore
 
 # --- Strategies ---
@@ -2096,10 +2102,16 @@ class TestSnapshotStoreRedoProperties:
         def _boom(_: object) -> dict[str, Any]:
             raise AssertionError("snapshot store must not call row_to_dict()")
 
+        def _boom_task(_: RedoTaskRecord) -> dict[str, Any]:
+            raise AssertionError(
+                "snapshot store must not call RedoTaskRecord.to_dict()"
+            )
+
         monkeypatch.setattr(
             snapshot_module, "utc_now", lambda: "2026-05-05T00:00:05+00:00"
         )
         monkeypatch.setattr(runtime, "row_to_dict", _boom)
+        monkeypatch.setattr(RedoTaskRecord, "to_dict", _boom_task)
 
         task = store.claim_redo_task()
 
@@ -2180,10 +2192,16 @@ class TestSnapshotStoreOutboxPostgresProperties:
         def _boom(_: object) -> dict[str, Any]:
             raise AssertionError("snapshot store must not call row_to_dict()")
 
+        def _boom_event(_: OutboxEventRecord) -> dict[str, Any]:
+            raise AssertionError(
+                "snapshot store must not call OutboxEventRecord.to_dict()"
+            )
+
         monkeypatch.setattr(
             snapshot_module, "utc_now", lambda: "2026-05-05T00:00:06+00:00"
         )
         monkeypatch.setattr(runtime, "row_to_dict", _boom)
+        monkeypatch.setattr(OutboxEventRecord, "to_dict", _boom_event)
 
         events = store.claim_outbox_event(limit=10)
 

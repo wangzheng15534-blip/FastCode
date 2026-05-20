@@ -1190,7 +1190,11 @@ class TestSnapshotStoreQueries:
         """HAPPY: find_by_artifact_key returns record after save."""
         store = _make_store()
         result = store.save_snapshot(snap)
+        found_record = store.find_by_artifact_key_record(result.artifact_key)
         found = store.find_by_artifact_key(result.artifact_key)
+        assert found_record is not None
+        assert found_record.snapshot_id == snap.snapshot_id
+        assert found_record.artifact_key == result.artifact_key
         assert found is not None
         assert found["snapshot_id"] == snap.snapshot_id
 
@@ -1200,6 +1204,7 @@ class TestSnapshotStoreQueries:
     def test_find_by_artifact_key_missing_returns_none_property(self, key: str):
         """EDGE: find_by_artifact_key returns None for unknown key."""
         store = _make_store()
+        assert store.find_by_artifact_key_record(key) is None
         assert store.find_by_artifact_key(key) is None
 
     def test_get_snapshot_record_avoids_generic_row_to_dict(
@@ -1256,10 +1261,13 @@ class TestSnapshotStoreQueries:
         monkeypatch.setattr(SnapshotRecord, "to_dict", _boom_snapshot)
         monkeypatch.setattr(SnapshotRefRecord, "to_dict", _boom_ref)
 
+        by_artifact_record = store.find_by_artifact_key_record(saved.artifact_key)
         by_artifact = store.find_by_artifact_key(saved.artifact_key)
         by_commit = store.find_by_repo_commit("repo", "abc999")
         by_ref = store.resolve_snapshot_for_ref("repo", "main")
 
+        assert by_artifact_record is not None
+        assert by_artifact_record.snapshot_id == snap.snapshot_id
         assert by_artifact is not None
         assert by_artifact["snapshot_id"] == snap.snapshot_id
         assert by_commit is not None

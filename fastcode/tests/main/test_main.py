@@ -1358,6 +1358,27 @@ def test_snapshot_artifact_handle_loader_caches_by_artifact_key(
     assert loads["ir_graph"] == ["snap:1"]
 
 
+def test_snapshot_artifact_handle_loader_prefers_typed_artifact_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline, loads = _snapshot_artifact_handle_pipeline(monkeypatch)
+    pipeline.snapshot_store.find_by_artifact_key_record = lambda _artifact_key: (
+        SimpleNamespace(snapshot_id="snap:typed")
+    )
+    pipeline.snapshot_store.find_by_artifact_key = lambda _artifact_key: (
+        _ for _ in ()
+    ).throw(AssertionError("artifact loader should prefer typed snapshot records"))
+
+    handle = pipeline.load_snapshot_artifacts_handle("snap_typed")
+
+    assert handle is not None
+    assert handle.snapshot_id == "snap:typed"
+    assert handle.retriever.snapshot_id == "snap:typed"
+    assert loads["vector"] == ["snap_typed"]
+    assert loads["bm25"] == ["snap_typed"]
+    assert loads["graph"] == ["snap_typed"]
+
+
 def test_snapshot_artifact_handle_cache_is_bounded_lru(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

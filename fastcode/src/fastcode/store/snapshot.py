@@ -2812,7 +2812,7 @@ class SnapshotStore:
         record = self._row_to_snapshot_record(row)
         return self._snapshot_payload(record) if record is not None else None
 
-    def find_by_artifact_key(self, artifact_key: str) -> dict[str, Any] | None:
+    def find_by_artifact_key_record(self, artifact_key: str) -> SnapshotRecord | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -2824,7 +2824,10 @@ class SnapshotStore:
                 """,
                 (artifact_key,),
             ).fetchone()
-        record = self._row_to_snapshot_record(row)
+        return self._row_to_snapshot_record(row)
+
+    def find_by_artifact_key(self, artifact_key: str) -> dict[str, Any] | None:
+        record = self.find_by_artifact_key_record(artifact_key)
         return self._snapshot_payload(record) if record is not None else None
 
     def resolve_snapshot_for_ref(

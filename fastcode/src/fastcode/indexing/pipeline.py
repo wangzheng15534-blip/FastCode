@@ -405,11 +405,7 @@ class IndexPipeline:
 
         resolved_snapshot_id = snapshot_id
         if resolved_snapshot_id is None and artifact_key.startswith("snap_"):
-            record = self.snapshot_store.find_by_artifact_key(artifact_key)
-            if isinstance(record, Mapping):
-                candidate = record.get("snapshot_id")
-                if isinstance(candidate, str) and candidate:
-                    resolved_snapshot_id = candidate
+            resolved_snapshot_id = self._snapshot_id_for_artifact_key(artifact_key)
 
         vector_store = VectorStore(self.config)
         if not vector_store.load(artifact_key):
@@ -461,8 +457,7 @@ class IndexPipeline:
         bm25_loaded = self.retriever.load_bm25(artifact_key)
         graph_loaded = self.graph_builder.load(artifact_key)
         if artifact_key.startswith("snap_"):
-            record = self.snapshot_store.find_by_artifact_key(artifact_key)
-            snapshot_id = record["snapshot_id"] if record else None
+            snapshot_id = self._snapshot_id_for_artifact_key(artifact_key)
             self._configure_retriever_ir_graph_backend(
                 self.retriever,
                 snapshot_id=snapshot_id,
@@ -482,6 +477,20 @@ class IndexPipeline:
         self._set_repo_indexed(True)
         self._set_repo_loaded(True)
         return True
+
+    def _snapshot_id_for_artifact_key(self, artifact_key: str) -> str | None:
+        find_record = getattr(self.snapshot_store, "find_by_artifact_key_record", None)
+        if callable(find_record):
+            record = find_record(artifact_key)
+            candidate = getattr(record, "snapshot_id", None)
+            if isinstance(candidate, str) and candidate:
+                return candidate
+
+        record = self.snapshot_store.find_by_artifact_key(artifact_key)
+        if not isinstance(record, Mapping):
+            return None
+        candidate = record.get("snapshot_id")
+        return candidate if isinstance(candidate, str) and candidate else None
 
     @staticmethod
     def _reconstruct_elements_from_metadata_view(

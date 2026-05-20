@@ -519,6 +519,18 @@ def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
 def test_reused_snapshot_result_reports_materialization_metrics() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_reused_metrics_") as tmp:
         pipeline = _make_minimal_pipeline(tmp)
+        file_path = os.path.join(tmp, "a.py")
+        with open(file_path, "w", encoding="utf-8") as handle:
+            handle.write("print('a')\n")
+        file_stat = os.stat(file_path)
+        pipeline.loader.scan_files = lambda: [
+            {
+                "path": file_path,
+                "relative_path": "a.py",
+                "size": file_stat.st_size,
+                "extension": ".py",
+            }
+        ]
         snapshot_id = "snap:repo:reused"
         snapshot = IRSnapshot(repo_name="repo", snapshot_id=snapshot_id)
         layers = pipeline._default_pipeline_layers(enable_scip=False)
@@ -569,6 +581,90 @@ def test_reused_snapshot_result_reports_materialization_metrics() -> None:
         assert counts["snapshot_full_load"] == 1
         assert counts["json_decode"] >= 1
         assert counts.get("json_encode") is None
+        cache_update = result["pipeline_metrics"]["cache_update"]
+        assert set(cache_update) == {
+            "repository_inventory",
+            "parse_cache",
+            "embedding_cache",
+            "artifact_handle_cache",
+            "incremental_planner",
+        }
+        assert cache_update["repository_inventory"] == {
+            "hit_count": 0,
+            "miss_count": 1,
+            "reused": False,
+            "source": "repo_scan",
+            "legacy_scan": True,
+        }
+        assert cache_update["parse_cache"] == {
+            "hit_count": 1,
+            "miss_count": 0,
+            "reused_files": 1,
+        }
+        assert cache_update["embedding_cache"] == {
+            "hit_count": 0,
+            "miss_count": 0,
+            "write_count": 0,
+            "reuse_index_hit_count": 0,
+        }
+        assert cache_update["artifact_handle_cache"]["hit_count"] == 0
+        assert cache_update["artifact_handle_cache"]["miss_count"] == 0
+        assert cache_update["incremental_planner"] == {
+            "planned": False,
+            "added": 0,
+            "modified": 0,
+            "removed": 0,
+            "unchanged": 0,
+            "changed": 0,
+            "reused_elements": 0,
+            "reindexed_elements": 0,
+        }
+
+
+def test_snapshot_artifact_handle_cache_metrics_track_hits_and_misses() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_handle_cache_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        artifact_key = pipeline.snapshot_store.artifact_key_for_snapshot(
+            "snap:repo:handle"
+        )
+        vector_store = SimpleNamespace(load=lambda key: True, metadata=[])
+        graph_builder = SimpleNamespace(load=lambda key: True)
+        retriever = SimpleNamespace(
+            set_pg_retrieval_store=lambda store: None,
+            load_bm25=lambda key: True,
+            set_ir_graph_loader=lambda loader, snapshot_id: None,
+            build_repo_overview_bm25=lambda: None,
+        )
+
+        with (
+            patch("fastcode.indexing.pipeline.VectorStore", return_value=vector_store),
+            patch(
+                "fastcode.indexing.pipeline.CodeGraphBuilder",
+                return_value=graph_builder,
+            ),
+            patch(
+                "fastcode.indexing.pipeline.HybridRetriever",
+                return_value=retriever,
+            ),
+        ):
+            first = pipeline.load_snapshot_artifacts_handle(
+                artifact_key,
+                snapshot_id="snap:repo:handle",
+            )
+            second = pipeline.load_snapshot_artifacts_handle(
+                artifact_key,
+                snapshot_id="snap:repo:handle",
+            )
+
+        assert first is not None
+        assert second is first
+        cache_update = pipeline._attach_cache_update_metrics({})["cache_update"]
+        assert cache_update["artifact_handle_cache"] == {
+            "hit_count": 1,
+            "miss_count": 1,
+            "size": 1,
+            "limit": 4,
+        }
 
 
 def test_pipeline_layer_helpers_report_semantic_gap_metrics() -> None:
@@ -980,6 +1076,13 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
 def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_incremental_") as tmp:
         pipeline = _make_minimal_pipeline(tmp)
+        pipeline.embedder.embedding_metrics = lambda: {
+            "cache_hit_count": 2,
+            "cache_miss_count": 1,
+            "cache_write_count": 1,
+            "reuse_index_hit_count": 1,
+        }
+        pipeline.embedder.reset_embedding_metrics = lambda: None
 
         unchanged_path = os.path.join(tmp, "a.py")
         changed_path = os.path.join(tmp, "b.py")
@@ -1409,6 +1512,38 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
         assert result["repair_queue"]["task_type"] == "semantic_repair_frontier"
         assert result["repair_queue"]["scope_kind"] == "package"
         assert result["repair_queue"]["scope_roots"] == ["."]
+        cache_update = result["pipeline_metrics"]["cache_update"]
+        assert cache_update["repository_inventory"] == {
+            "hit_count": 0,
+            "miss_count": 1,
+            "reused": False,
+            "source": "repo_scan",
+            "legacy_scan": True,
+        }
+        assert cache_update["parse_cache"] == {
+            "hit_count": 1,
+            "miss_count": 1,
+            "reused_files": 1,
+            "rebuilt_elements": 1,
+        }
+        assert cache_update["embedding_cache"] == {
+            "hit_count": 3,
+            "miss_count": 1,
+            "write_count": 1,
+            "reuse_index_hit_count": 1,
+        }
+        assert cache_update["incremental_planner"] == {
+            "planned": True,
+            "added": 0,
+            "modified": 1,
+            "removed": 0,
+            "unchanged": 1,
+            "changed": 1,
+            "reused_elements": 1,
+            "reindexed_elements": 1,
+        }
+        assert cache_update["artifact_handle_cache"]["hit_count"] == 0
+        assert cache_update["artifact_handle_cache"]["miss_count"] == 0
 
 
 def test_incremental_diff_reuses_inventory_fingerprints(

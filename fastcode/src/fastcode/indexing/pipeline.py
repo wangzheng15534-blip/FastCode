@@ -172,7 +172,10 @@ class IndexPipeline:
         self._artifact_handle_cache: OrderedDict[str, LoadedSnapshotArtifacts] = (
             OrderedDict()
         )
+        self._artifact_handle_cache_hits = 0
+        self._artifact_handle_cache_misses = 0
         self._last_file_inventory_metrics: dict[str, Any] = {}
+        self._last_repository_inventory_metrics: dict[str, Any] = {}
         self._active_pipeline_profile: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------
@@ -435,8 +438,10 @@ class IndexPipeline:
     ) -> LoadedSnapshotArtifacts | None:
         cached = self._artifact_handle_cache.get(artifact_key)
         if cached is not None:
+            self._increment_artifact_handle_cache_hit()
             self._artifact_handle_cache.move_to_end(artifact_key)
             return cached
+        self._increment_artifact_handle_cache_miss()
 
         resolved_snapshot_id = snapshot_id
         if resolved_snapshot_id is None and artifact_key.startswith("snap_"):
@@ -1248,6 +1253,17 @@ class IndexPipeline:
         )
 
     def _scan_files_for_pipeline(self) -> list[dict[str, Any]]:
+        preloaded_inventory = getattr(self.loader, "_preloaded_file_inventory", None)
+        preloaded_repo_path = getattr(
+            self.loader, "_preloaded_file_inventory_repo_path", None
+        )
+        repo_path = getattr(self.loader, "repo_path", None)
+        source_inventory_reused = (
+            preloaded_inventory is not None
+            and isinstance(preloaded_repo_path, str)
+            and isinstance(repo_path, str)
+            and os.path.abspath(repo_path) == os.path.abspath(preloaded_repo_path)
+        )
         scan_inventory = getattr(self.loader, "scan_file_inventory", None)
         if callable(scan_inventory):
             try:
@@ -1257,7 +1273,14 @@ class IndexPipeline:
                     raise
             else:
                 if isinstance(inventory, FileInventory):
-                    self._last_file_inventory_metrics = inventory.metrics()
+                    metrics = inventory.metrics()
+                    self._last_file_inventory_metrics = metrics
+                    self._last_repository_inventory_metrics = (
+                        self._repository_inventory_cache_metrics(
+                            metrics,
+                            reused_source_inventory=source_inventory_reused,
+                        )
+                    )
                     return inventory.to_file_info_list()
                 metrics = getattr(inventory, "metrics", None)
                 to_file_info_list = getattr(inventory, "to_file_info_list", None)
@@ -1267,6 +1290,12 @@ class IndexPipeline:
                         dict(metrics_payload)
                         if isinstance(metrics_payload, Mapping)
                         else {}
+                    )
+                    self._last_repository_inventory_metrics = (
+                        self._repository_inventory_cache_metrics(
+                            self._last_file_inventory_metrics,
+                            reused_source_inventory=source_inventory_reused,
+                        )
                     )
                     return cast(list[dict[str, Any]], to_file_info_list())
         try:
@@ -1279,6 +1308,12 @@ class IndexPipeline:
             # fingerprints at use sites in that compatibility path.
             files = self.loader.scan_files()
         self._last_file_inventory_metrics = self._derive_file_inventory_metrics(files)
+        self._last_repository_inventory_metrics = (
+            self._repository_inventory_cache_metrics(
+                self._last_file_inventory_metrics,
+                from_legacy_scan=True,
+            )
+        )
         return files
 
     def _repository_info_for_pipeline(
@@ -1321,6 +1356,154 @@ class IndexPipeline:
         if metrics:
             return metrics
         return self._derive_file_inventory_metrics(current_files)
+
+    @staticmethod
+    def _repository_inventory_cache_metrics(
+        inventory_metrics: Mapping[str, Any],
+        *,
+        from_legacy_scan: bool = False,
+        reused_source_inventory: bool = False,
+    ) -> dict[str, Any]:
+        copied_from_source = bool(reused_source_inventory)
+        return {
+            "hit_count": int(copied_from_source),
+            "miss_count": 0 if copied_from_source else 1,
+            "reused": copied_from_source,
+            "source": "source_inventory" if copied_from_source else "repo_scan",
+            "legacy_scan": bool(from_legacy_scan),
+        }
+
+    @staticmethod
+    def _int_metric(payload: Mapping[str, Any], key: str) -> int:
+        try:
+            return int(payload.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _artifact_handle_cache_metrics(self) -> dict[str, Any]:
+        return {
+            "hit_count": int(getattr(self, "_artifact_handle_cache_hits", 0) or 0),
+            "miss_count": int(getattr(self, "_artifact_handle_cache_misses", 0) or 0),
+            "size": len(getattr(self, "_artifact_handle_cache", {}) or {}),
+            "limit": self._artifact_handle_cache_limit(),
+        }
+
+    def _increment_artifact_handle_cache_hit(self) -> None:
+        self._artifact_handle_cache_hits = (
+            int(getattr(self, "_artifact_handle_cache_hits", 0) or 0) + 1
+        )
+
+    def _increment_artifact_handle_cache_miss(self) -> None:
+        self._artifact_handle_cache_misses = (
+            int(getattr(self, "_artifact_handle_cache_misses", 0) or 0) + 1
+        )
+
+    def _parse_cache_metrics_payload(
+        self,
+        incremental_plan: Mapping[str, Any] | None,
+        *,
+        current_files: Sequence[Mapping[str, Any]] | None = None,
+        reused_existing_snapshot: bool = False,
+    ) -> dict[str, Any]:
+        current_file_count = len(list(current_files or []))
+        if incremental_plan is None:
+            return {
+                "hit_count": current_file_count if reused_existing_snapshot else 0,
+                "miss_count": 0 if reused_existing_snapshot else current_file_count,
+                "reused_files": current_file_count if reused_existing_snapshot else 0,
+            }
+        reused_files = self._int_metric(incremental_plan, "ast_ir_reused_files")
+        rebuilt_elements = self._int_metric(incremental_plan, "ast_ir_rebuilt_elements")
+        changed_file_count = len(
+            [path for path in incremental_plan.get("changed_paths", []) if path]
+        )
+        return {
+            "hit_count": reused_files,
+            "miss_count": changed_file_count,
+            "reused_files": reused_files,
+            "rebuilt_elements": rebuilt_elements,
+        }
+
+    @classmethod
+    def _embedding_cache_metrics_payload(
+        cls,
+        embedding_metrics: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "hit_count": cls._int_metric(embedding_metrics, "cache_hit_count")
+            + cls._int_metric(embedding_metrics, "reuse_index_hit_count"),
+            "miss_count": cls._int_metric(embedding_metrics, "cache_miss_count"),
+            "write_count": cls._int_metric(embedding_metrics, "cache_write_count"),
+            "reuse_index_hit_count": cls._int_metric(
+                embedding_metrics, "reuse_index_hit_count"
+            ),
+        }
+
+    @classmethod
+    def _incremental_update_metrics_payload(
+        cls,
+        incremental_plan: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        if incremental_plan is None:
+            return {
+                "planned": False,
+                "added": 0,
+                "modified": 0,
+                "removed": 0,
+                "unchanged": 0,
+                "changed": 0,
+                "reused_elements": 0,
+                "reindexed_elements": 0,
+            }
+        added = cls._int_metric(incremental_plan, "added")
+        modified = cls._int_metric(incremental_plan, "modified")
+        removed = cls._int_metric(incremental_plan, "removed")
+        return {
+            "planned": True,
+            "added": added,
+            "modified": modified,
+            "removed": removed,
+            "unchanged": cls._int_metric(incremental_plan, "unchanged"),
+            "changed": added + modified + removed,
+            "reused_elements": cls._int_metric(incremental_plan, "reused_elements"),
+            "reindexed_elements": cls._int_metric(
+                incremental_plan, "reindexed_elements"
+            ),
+        }
+
+    def _attach_cache_update_metrics(
+        self,
+        metrics: dict[str, Any],
+        *,
+        embedding_metrics: Mapping[str, Any] | None = None,
+        incremental_plan: Mapping[str, Any] | None = None,
+        current_files: Sequence[Mapping[str, Any]] | None = None,
+        reused_existing_snapshot: bool = False,
+    ) -> dict[str, Any]:
+        embedding_payload = (
+            dict(embedding_metrics)
+            if isinstance(embedding_metrics, Mapping)
+            else self._embedding_metrics_payload()
+        )
+        metrics["cache_update"] = {
+            "repository_inventory": dict(
+                getattr(self, "_last_repository_inventory_metrics", {})
+                or self._repository_inventory_cache_metrics(
+                    self._file_inventory_metrics_payload(None)
+                )
+            ),
+            "parse_cache": self._parse_cache_metrics_payload(
+                incremental_plan,
+                current_files=current_files,
+                reused_existing_snapshot=reused_existing_snapshot,
+            ),
+            "embedding_cache": self._embedding_cache_metrics_payload(embedding_payload),
+            "artifact_handle_cache": self._artifact_handle_cache_metrics(),
+            "incremental_planner": self._incremental_update_metrics_payload(
+                incremental_plan
+            ),
+        }
+        return metrics
 
     def _pipeline_profiling_enabled(self) -> bool:
         indexing_config = self.config.get("indexing", {})
@@ -3672,6 +3855,11 @@ class IndexPipeline:
                     cast(dict[str, Any], result.get("pipeline_metrics", {})),
                     materialization_counters,
                 )
+                self._attach_cache_update_metrics(
+                    result["pipeline_metrics"],
+                    current_files=current_files,
+                    reused_existing_snapshot=True,
+                )
                 self._attach_pipeline_profile(
                     result["pipeline_metrics"],
                     pipeline_profile,
@@ -3738,6 +3926,11 @@ class IndexPipeline:
                     result["pipeline_metrics"] = self._with_materialization_metrics(
                         cast(dict[str, Any], result.get("pipeline_metrics", {})),
                         materialization_counters,
+                    )
+                    self._attach_cache_update_metrics(
+                        result["pipeline_metrics"],
+                        current_files=current_files,
+                        reused_existing_snapshot=True,
                     )
                     return result
                 finally:
@@ -4885,6 +5078,12 @@ class IndexPipeline:
             embedding_metrics = self._embedding_metrics_payload()
             if embedding_metrics:
                 pipeline_metrics["embedding_provider"] = embedding_metrics
+            self._attach_cache_update_metrics(
+                pipeline_metrics,
+                embedding_metrics=embedding_metrics,
+                incremental_plan=incremental_plan,
+                current_files=current_files,
+            )
             self._attach_pipeline_profile(pipeline_metrics, pipeline_profile)
             merged_snapshot.metadata["pipeline_metrics"] = pipeline_metrics
             self.snapshot_store.update_snapshot_metadata(

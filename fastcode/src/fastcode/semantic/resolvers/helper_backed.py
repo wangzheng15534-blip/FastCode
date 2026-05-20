@@ -15,6 +15,7 @@ Helpers emit relative repo paths so snapshots remain portable across machines.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import posixpath
 import shutil
@@ -37,6 +38,8 @@ from .base import (
     ToolDiagnostic,
 )
 from .graph_backed import GraphBackedSemanticResolver
+
+logger = logging.getLogger(__name__)
 
 
 def _unit_simple_name(unit: IRCodeUnit) -> str:
@@ -184,6 +187,7 @@ class HelperBackedSemanticResolver(SemanticResolver):
                 helper_files, patch, repo_root=repo_root
             )
         if self._helper_failed(patch):
+            self._log_resolver_fallback(patch)
             return self._merge_with_fallback(
                 primary_patch=patch,
                 snapshot=snapshot,
@@ -203,6 +207,27 @@ class HelperBackedSemanticResolver(SemanticResolver):
             diagnostic.code
             in {"tool_invocation_failed", "helper_nonzero_exit", "invalid_helper_json"}
             for diagnostic in patch.diagnostics
+        )
+
+    def _log_resolver_fallback(self, patch: ResolutionPatch) -> None:
+        failure_codes = [
+            diagnostic.code
+            for diagnostic in patch.diagnostics
+            if diagnostic.code
+            in {"tool_invocation_failed", "helper_nonzero_exit", "invalid_helper_json"}
+        ]
+        logger.warning(
+            "Semantic resolver fell back to structural resolution",
+            extra={
+                "fc_event": "resolver_fallback",
+                "resolver_source": self.source_name,
+                "language": self.language,
+                "frontend_kind": self.frontend_kind,
+                "resolution_tier": ResolutionTier.STRUCTURAL_FALLBACK,
+                "helper_filename": self.helper_filename,
+                "helper_failure_codes": failure_codes,
+                "helper_exit_code": patch.stats.get("helper_exit_code"),
+            },
         )
 
     def _merge_with_fallback(

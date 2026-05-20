@@ -5,6 +5,7 @@ Main FastCode Class - Orchestrate all components
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 import json
+import logging
 import os
 import pickle
 import threading
@@ -90,6 +91,8 @@ from ..utils import (
     setup_logging,
 )
 
+_STATE_LOCK_LOGGER = logging.getLogger(f"{__name__}.state_lock")
+
 
 class _ReadWriteStateLock:
     """Reentrant writer lock with shared read sections for immutable queries."""
@@ -126,15 +129,35 @@ class _ReadWriteStateLock:
 
     def _acquire_read(self) -> None:
         ident = threading.get_ident()
+        _STATE_LOCK_LOGGER.debug(
+            "Acquiring service state read lock",
+            extra={"fc_event": "service_lock_acquire", "lock_mode": "read"},
+        )
         with self._condition:
             if self._writer == ident:
                 self._readers += 1
                 self._reader_depths[ident] = self._reader_depths.get(ident, 0) + 1
+                _STATE_LOCK_LOGGER.debug(
+                    "Acquired service state read lock",
+                    extra={
+                        "fc_event": "service_lock_acquired",
+                        "lock_mode": "read",
+                        "reader_count": self._readers,
+                    },
+                )
                 return
             while self._writer is not None:
                 self._condition.wait()
             self._readers += 1
             self._reader_depths[ident] = self._reader_depths.get(ident, 0) + 1
+            _STATE_LOCK_LOGGER.debug(
+                "Acquired service state read lock",
+                extra={
+                    "fc_event": "service_lock_acquired",
+                    "lock_mode": "read",
+                    "reader_count": self._readers,
+                },
+            )
 
     def _release_read(self) -> None:
         ident = threading.get_ident()
@@ -145,20 +168,48 @@ class _ReadWriteStateLock:
             else:
                 self._reader_depths[ident] = depth - 1
             self._readers -= 1
+            _STATE_LOCK_LOGGER.debug(
+                "Released service state read lock",
+                extra={
+                    "fc_event": "service_lock_released",
+                    "lock_mode": "read",
+                    "reader_count": self._readers,
+                },
+            )
             if self._readers == 0:
                 self._condition.notify_all()
 
     def _acquire_write(self) -> None:
         ident = threading.get_ident()
+        _STATE_LOCK_LOGGER.debug(
+            "Acquiring service state write lock",
+            extra={"fc_event": "service_lock_acquire", "lock_mode": "write"},
+        )
         with self._condition:
             if self._writer == ident:
                 self._write_depth += 1
+                _STATE_LOCK_LOGGER.debug(
+                    "Acquired service state write lock",
+                    extra={
+                        "fc_event": "service_lock_acquired",
+                        "lock_mode": "write",
+                        "write_depth": self._write_depth,
+                    },
+                )
                 return
             own_read_depth = self._reader_depths.get(ident, 0)
             while self._writer is not None or self._readers > own_read_depth:
                 self._condition.wait()
             self._writer = ident
             self._write_depth = 1
+            _STATE_LOCK_LOGGER.debug(
+                "Acquired service state write lock",
+                extra={
+                    "fc_event": "service_lock_acquired",
+                    "lock_mode": "write",
+                    "write_depth": self._write_depth,
+                },
+            )
 
     def _release_write(self) -> None:
         ident = threading.get_ident()
@@ -168,6 +219,14 @@ class _ReadWriteStateLock:
                     "cannot release state write lock not owned by thread"
                 )
             self._write_depth -= 1
+            _STATE_LOCK_LOGGER.debug(
+                "Released service state write lock",
+                extra={
+                    "fc_event": "service_lock_released",
+                    "lock_mode": "write",
+                    "write_depth": self._write_depth,
+                },
+            )
             if self._write_depth == 0:
                 self._writer = None
                 self._condition.notify_all()
@@ -1390,8 +1449,22 @@ class FastCode:
         semantic_runs = list(
             (upgraded_snapshot.metadata or {}).get("semantic_resolver_runs", [])
         )
+        status = "degraded" if warnings else "applied"
+        logger = getattr(self, "logger", logging.getLogger(__name__))
+        logger.info(
+            "Query semantic escalation completed",
+            extra={
+                "fc_event": "semantic_escalation",
+                "snapshot_id": snapshot_id,
+                "semantic_budget": budget,
+                "semantic_status": status,
+                "target_path_count": len(target_paths),
+                "resolver_runs": len(semantic_runs),
+                "warning_count": len(warnings),
+            },
+        )
         return {
-            "status": "degraded" if warnings else "applied",
+            "status": status,
             "budget": budget,
             "target_path_count": len(target_paths),
             "target_paths": sorted(target_paths),

@@ -9,6 +9,7 @@ extraction, IR merge, semantic resolution, and artifact persistence.
 
 import hashlib
 import json
+import logging
 import os
 import pickle
 import re
@@ -74,6 +75,8 @@ from .incremental import FileChangeSet, apply_incremental_update, diff_changed_f
 from .indexer import CodeIndexer
 from .loader import RepositoryLoader
 from .terminus import TerminusPublisher
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -349,7 +352,18 @@ class IndexPipeline:
     def _load_artifacts_by_key(self, artifact_key: str) -> bool:
         """Load vector/BM25/graph artifacts for a snapshot artifact key."""
         with self._artifact_lock:
-            return self._load_artifacts_by_key_locked(artifact_key)
+            loaded = self._load_artifacts_by_key_locked(artifact_key)
+        log = getattr(self, "logger", logger)
+        log.info(
+            "Loaded mutable artifact handles",
+            extra={
+                "fc_event": "artifact_handle_swap",
+                "artifact_key": artifact_key,
+                "artifact_handle_kind": "mutable",
+                "artifact_loaded": loaded,
+            },
+        )
+        return loaded
 
     def _artifact_handle_cache_limit(self) -> int:
         configured = self.config.get("query", {}).get("snapshot_handle_cache_size", 4)
@@ -359,7 +373,16 @@ class IndexPipeline:
             return 4
 
     def _invalidate_loaded_artifact_handle(self, artifact_key: str) -> None:
-        self._artifact_handle_cache.pop(artifact_key, None)
+        removed = self._artifact_handle_cache.pop(artifact_key, None) is not None
+        log = getattr(self, "logger", logger)
+        log.info(
+            "Invalidated cached artifact handle",
+            extra={
+                "fc_event": "artifact_handle_invalidate",
+                "artifact_key": artifact_key,
+                "artifact_handle_removed": removed,
+            },
+        )
 
     def _configure_retriever_ir_graph_backend(
         self,
@@ -387,10 +410,22 @@ class IndexPipeline:
         snapshot_id: str | None = None,
     ) -> LoadedSnapshotArtifacts | None:
         with self._artifact_lock:
-            return self._load_snapshot_artifacts_handle_locked(
+            handle = self._load_snapshot_artifacts_handle_locked(
                 artifact_key,
                 snapshot_id=snapshot_id,
             )
+        log = getattr(self, "logger", logger)
+        log.info(
+            "Loaded snapshot artifact handle",
+            extra={
+                "fc_event": "artifact_handle_swap",
+                "artifact_key": artifact_key,
+                "snapshot_id": snapshot_id,
+                "artifact_handle_kind": "snapshot",
+                "artifact_loaded": handle is not None,
+            },
+        )
+        return handle
 
     def _load_snapshot_artifacts_handle_locked(
         self,

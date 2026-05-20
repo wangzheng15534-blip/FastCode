@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -2295,6 +2296,7 @@ def test_helper_backed_resolver_records_helper_json_failure() -> None:
 
 def test_helper_backed_resolver_falls_back_on_helper_nonzero_exit(
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     source_path = tmp_path / "a.py"
     source_path.write_text("print('hi')\n", encoding="utf-8")
@@ -2315,6 +2317,10 @@ def test_helper_backed_resolver_falls_back_on_helper_nonzero_exit(
     )
 
     with (
+        caplog.at_level(
+            logging.WARNING,
+            logger="fastcode.semantic.resolvers.helper_backed",
+        ),
         patch.object(resolver, "_has_tools", return_value=True),
         patch(
             "fastcode.semantic.resolvers.helper_backed.os.getcwd",
@@ -2342,6 +2348,17 @@ def test_helper_backed_resolver_falls_back_on_helper_nonzero_exit(
     assert resolver_run["fallback"] is True
     assert any(d.code == "helper_nonzero_exit" for d in patch_result.diagnostics)
     assert any("helper_error" in warning for warning in patch_result.warnings)
+    log_record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "fc_event", None) == "resolver_fallback"
+    )
+    assert log_record.resolver_source == "dummy_resolver"
+    assert log_record.language == "python"
+    assert log_record.resolution_tier == "structural_fallback"
+    assert log_record.helper_filename == "dummy.py"
+    assert log_record.helper_exit_code == 7
+    assert log_record.helper_failure_codes == ["helper_nonzero_exit"]
 
 
 def test_helper_backed_resolver_falls_back_on_helper_timeout(tmp_path: Path) -> None:

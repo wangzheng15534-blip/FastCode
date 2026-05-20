@@ -1440,7 +1440,7 @@ This item should be treated as the implementation slice of the broader P0.6a sch
 ### P1.6 Observability and debuggability
 
 - `/index/run` now promotes run status, warnings, pipeline layer metrics, and resolver diagnostics into stable API response fields.
-- Add structured logs for artifact swaps, semantic escalation, resolver fallback, and lock acquisition/release.
+- Structured logs now cover artifact handle swaps/invalidations, query-time semantic escalation, resolver fallback, and service lock acquisition/release.
 - Add stable cache/update metrics:
   - repository inventory reuse hit/miss
   - parse cache hit/miss

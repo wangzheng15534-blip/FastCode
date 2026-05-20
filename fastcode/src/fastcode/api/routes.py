@@ -20,7 +20,7 @@ import shutil
 import tempfile
 import uuid
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -43,6 +43,7 @@ from fastcode.schemas.api import (
     ExpandContextRefRequest,
     IndexMultipleRequest,
     IndexRunRequest,
+    IndexRunResponse,
     LoadRepositoriesRequest,
     LoadRepositoryRequest,
     NewSessionResponse,
@@ -139,6 +140,87 @@ def _call_with_service_lock(
         with cast(AbstractContextManager[Any], lock_fn()):
             return callback(*args, **kwargs)
     return callback(*args, **kwargs)
+
+
+def _mapping_payload(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): item for key, item in value.items()}
+
+
+def _dict_list_payload(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    payload: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, Mapping):
+            payload.append(_mapping_payload(item))
+    return payload
+
+
+def _string_list_payload(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return []
+    return [str(item) for item in value if item is not None]
+
+
+def _resolver_diagnostics_payload(
+    pipeline_layers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    diagnostics: list[dict[str, Any]] = []
+    for layer in pipeline_layers:
+        name = str(layer.get("name") or "")
+        source = str(layer.get("source") or "")
+        description = str(layer.get("description") or "")
+        searchable = f"{name} {source} {description}".lower()
+        if "resolver" not in searchable and "semantic" not in searchable:
+            continue
+        diagnostics.append(
+            {
+                "name": name,
+                "source": source,
+                "status": str(layer.get("status") or ""),
+                "reason": layer.get("reason"),
+                "warnings": _string_list_payload(layer.get("warnings")),
+                "metrics": _mapping_payload(layer.get("metrics")),
+            }
+        )
+    return diagnostics
+
+
+def _index_run_response_payload(result: Any) -> dict[str, Any]:
+    result_payload = _mapping_payload(result)
+    pipeline_layers = _dict_list_payload(result_payload.get("pipeline_layers"))
+    pipeline_metrics = _mapping_payload(result_payload.get("pipeline_metrics"))
+    return {
+        "status": "success",
+        "result": result_payload,
+        "index_status": (
+            str(result_payload["status"]) if result_payload.get("status") else None
+        ),
+        "run_id": str(result_payload["run_id"])
+        if result_payload.get("run_id")
+        else None,
+        "repo_name": (
+            str(result_payload["repo_name"])
+            if result_payload.get("repo_name")
+            else None
+        ),
+        "snapshot_id": (
+            str(result_payload["snapshot_id"])
+            if result_payload.get("snapshot_id")
+            else None
+        ),
+        "artifact_key": (
+            str(result_payload["artifact_key"])
+            if result_payload.get("artifact_key")
+            else None
+        ),
+        "warnings": _string_list_payload(result_payload.get("warnings")),
+        "pipeline_layers": pipeline_layers,
+        "pipeline_metrics": pipeline_metrics,
+        "resolver_diagnostics": _resolver_diagnostics_payload(pipeline_layers),
+    }
 
 
 def _refresh_index_cache_sync(fastcode: FastCode) -> list[dict[str, Any]]:
@@ -422,7 +504,7 @@ async def index_repository(force: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/index/run")
+@app.post("/index/run", response_model=IndexRunResponse)
 async def run_index_pipeline(request: IndexRunRequest):
     """Run snapshot-based indexing pipeline."""
     fastcode = _ensure_fastcode_initialized()
@@ -443,7 +525,7 @@ async def run_index_pipeline(request: IndexRunRequest):
             fastcode,
             fastcode.vector_store.invalidate_scan_cache,
         )
-        return {"status": "success", "result": result}
+        return _index_run_response_payload(result)
     except Exception as e:
         logger.error(f"Index run failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

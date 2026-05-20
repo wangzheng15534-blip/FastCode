@@ -11,6 +11,14 @@ def _empty_repo_records() -> list[dict[str, Any]]:
     return []
 
 
+def _empty_dict_records() -> list[dict[str, Any]]:
+    return []
+
+
+def _empty_payload() -> dict[str, Any]:
+    return {}
+
+
 class LoadRepositoryRequest(BaseModel):
     source: str = Field(..., description="Repository URL or local path")
     is_url: bool | None = Field(
@@ -31,6 +39,22 @@ class IndexRunRequest(BaseModel):
     enable_scip: bool = Field(True, description="Enable SCIP extraction path")
     scip_artifact_path: str | None = Field(
         None, description="Optional pre-built SCIP artifact path"
+    )
+
+
+class IndexRunResponse(BaseModel):
+    status: str
+    result: dict[str, Any] = Field(default_factory=_empty_payload)
+    index_status: str | None = None
+    run_id: str | None = None
+    repo_name: str | None = None
+    snapshot_id: str | None = None
+    artifact_key: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    pipeline_layers: list[dict[str, Any]] = Field(default_factory=_empty_dict_records)
+    pipeline_metrics: dict[str, Any] = Field(default_factory=_empty_payload)
+    resolver_diagnostics: list[dict[str, Any]] = Field(
+        default_factory=_empty_dict_records
     )
 
 

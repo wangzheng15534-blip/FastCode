@@ -1071,9 +1071,13 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - `indexing/pipeline.py` now stages embedded elements as a single `np.ndarray[np.float32]` matrix instead of a Python list of arrays before vector-store insertion, and vector-store search/repository-overview ranking uses explicit float32 boundary helpers
   - `DBRuntime` registers the pgvector Psycopg adapter when available, and `store/pg_retrieval.py` now passes native float32 vectors at the active PG boundary instead of duplicating new rows into `list[float]` array payloads; SQL vector literals remain only as an adapter-missing fallback
   - `store/pg_retrieval.py` still keeps legacy `embedding_arr` read fallback support, but ranks fallback candidates as a NumPy matrix before metadata inflation
-- unit artifact persistence is narrower, but still dict-shaped:
-  - `store/unit_artifacts.py` no longer uses generic row normalization on list/load paths and now serializes only the metadata subtree explicitly
-  - it still persists unit metadata as JSON text plus a dict-shaped compatibility payload for callers
+- unit artifact persistence is narrower:
+  - `store/unit_artifacts.py` no longer uses generic row normalization on
+    list/load paths and now serializes only the metadata subtree explicitly
+  - active reads and incremental delta-copy now materialize
+    `UnitArtifactRecord` values, with the legacy dict-returning
+    `list_snapshot_units()` path kept as an explicit compatibility serializer
+    that does not call `UnitArtifactRecord.to_dict()`
 - publishing/integration edges are partially hardened:
   - Terminus lineage publishing now accepts typed `IRSnapshot` objects and avoids full snapshot `to_dict()` expansion in `PublishingService` and the active index pipeline
   - `PublishingService` now also returns compatibility manifest payloads through an explicit field serializer instead of `manifest.to_dict()`
@@ -1413,7 +1417,10 @@ These currently emit useful structured facts, but they are still narrower than f
 
 ### P1.5 Continue store-boundary typing
 
-Typed records now exist for manifests, snapshot refs, snapshot records, index runs, publish tasks, SCIP artifact refs, redo tasks, outbox events, dialogue turns, dialogue sessions, and active projection build/dirty-scope rows.
+Typed records now exist for manifests, snapshot refs, snapshot records, index
+runs, publish tasks, SCIP artifact refs, unit artifacts, redo tasks, outbox
+events, dialogue turns, dialogue sessions, and active projection
+build/dirty-scope rows.
 
 Still raw-dict-heavy at boundaries:
 - API-facing manifest / artifact payload adapters

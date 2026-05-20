@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from fastcode.store.records import UnitArtifactRecord
 from fastcode.store.unit_artifacts import UnitArtifactStore
 
 
@@ -163,6 +164,141 @@ def test_unit_artifact_store_list_avoids_generic_row_to_dict(
 
         assert rows[0]["stable_unit_id"] == "unit:function:a"
         assert rows[0]["metadata"]["signature_hash"] == "sig-a"
+
+
+def test_unit_artifact_store_exposes_typed_records() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_record_") as tmp:
+        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store.replace_snapshot_units(
+            "snap:1",
+            elements=[
+                {
+                    "type": "function",
+                    "relative_path": "pkg/a.py",
+                    "metadata": {
+                        "stable_unit_id": "unit:function:a",
+                        "content_hash": "content-a",
+                        "signature_hash": "sig-a",
+                        "embedding_artifact_ref": "embedding:a",
+                    },
+                }
+            ],
+        )
+
+        records = store.list_snapshot_unit_records("snap:1")
+
+        assert records == [
+            UnitArtifactRecord(
+                snapshot_id="snap:1",
+                stable_unit_id="unit:function:a",
+                relative_path="pkg/a.py",
+                unit_type="function",
+                content_hash="content-a",
+                syntax_hash=None,
+                signature_hash="sig-a",
+                edge_surface_hash=None,
+                embedding_text_hash=None,
+                api_surface_hash=None,
+                embedding_artifact_ref="embedding:a",
+                scoped_tool_ref=None,
+                package_root=None,
+                repair_frontier_summary=None,
+                metadata_json=(
+                    '{"content_hash": "content-a", '
+                    '"embedding_artifact_ref": "embedding:a", '
+                    '"signature_hash": "sig-a", '
+                    '"stable_unit_id": "unit:function:a"}'
+                ),
+                created_at=records[0].created_at,
+            )
+        ]
+
+
+def test_unit_artifact_legacy_payload_avoids_record_to_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_compat_") as tmp:
+        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store.replace_snapshot_units(
+            "snap:1",
+            elements=[
+                {
+                    "type": "function",
+                    "relative_path": "pkg/a.py",
+                    "metadata": {
+                        "stable_unit_id": "unit:function:a",
+                        "signature_hash": "sig-a",
+                    },
+                }
+            ],
+        )
+
+        def _boom(_: UnitArtifactRecord) -> dict[str, Any]:
+            raise AssertionError("unit artifact compatibility shim must be explicit")
+
+        monkeypatch.setattr(UnitArtifactRecord, "to_dict", _boom)
+
+        rows = store.list_snapshot_units("snap:1")
+
+        assert rows[0]["stable_unit_id"] == "unit:function:a"
+        assert rows[0]["metadata"]["signature_hash"] == "sig-a"
+
+
+def test_unit_artifact_delta_copies_previous_records_without_legacy_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_delta_") as tmp:
+        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store.replace_snapshot_units(
+            "snap:old",
+            elements=[
+                {
+                    "type": "function",
+                    "relative_path": "pkg/a.py",
+                    "metadata": {
+                        "stable_unit_id": "unit:function:a",
+                        "signature_hash": "sig-a",
+                        "embedding_artifact_ref": "embedding:a",
+                    },
+                },
+                {
+                    "type": "function",
+                    "relative_path": "pkg/b.py",
+                    "metadata": {
+                        "stable_unit_id": "unit:function:b",
+                        "signature_hash": "sig-b-old",
+                    },
+                },
+            ],
+        )
+
+        def _boom(_: str) -> list[dict[str, Any]]:
+            raise AssertionError("delta copy must use typed unit artifact records")
+
+        monkeypatch.setattr(store, "list_snapshot_units", _boom)
+
+        summary = store.publish_snapshot_units_delta(
+            "snap:new",
+            previous_snapshot_id="snap:old",
+            changed_paths=["pkg/b.py"],
+            removed_paths=[],
+            elements=[
+                {
+                    "type": "function",
+                    "relative_path": "pkg/b.py",
+                    "metadata": {
+                        "stable_unit_id": "unit:function:b",
+                        "signature_hash": "sig-b-new",
+                    },
+                }
+            ],
+        )
+
+        records = store.list_snapshot_unit_records("snap:new")
+        records_by_path = {record.relative_path: record for record in records}
+        assert summary["copied_rows"] == 1
+        assert records_by_path["pkg/a.py"].embedding_artifact_ref == "embedding:a"
+        assert records_by_path["pkg/b.py"].signature_hash == "sig-b-new"
 
 
 def test_unit_artifact_store_serializes_opaque_metadata_values() -> None:

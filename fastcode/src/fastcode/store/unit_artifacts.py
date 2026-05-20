@@ -8,6 +8,7 @@ from typing import Any, ClassVar, cast
 
 from ..db_runtime import DBRuntime
 from ..utils import utc_now
+from .records import UnitArtifactRecord
 
 
 class UnitArtifactStore:
@@ -191,29 +192,67 @@ class UnitArtifactStore:
             return {}
         return cast(dict[str, Any], metadata) if isinstance(metadata, dict) else {}
 
-    def _insert_unit(
-        self,
-        conn: Any,
+    @classmethod
+    def _unit_record_from_element(
+        cls,
         snapshot_id: str,
         elem: dict[str, Any],
-    ) -> None:
-        metadata = self._metadata_mapping(elem)
+    ) -> UnitArtifactRecord | None:
+        metadata = cls._metadata_mapping(elem)
         stable_unit_id = str(metadata.get("stable_unit_id") or "")
         if not stable_unit_id:
-            return
-        embedding_artifact_ref = self._text_ref(
+            return None
+        embedding_artifact_ref = cls._text_ref(
             elem.get("embedding_artifact_ref") or metadata.get("embedding_artifact_ref")
         )
-        scoped_tool_ref = self._text_ref(
+        scoped_tool_ref = cls._text_ref(
             elem.get("scoped_tool_ref") or metadata.get("scoped_tool_ref")
         )
-        package_root = self._text_ref(
+        package_root = cls._text_ref(
             elem.get("package_root") or metadata.get("package_root")
         )
-        repair_frontier_summary = self._text_ref(
+        repair_frontier_summary = cls._text_ref(
             elem.get("repair_frontier_summary")
             or metadata.get("repair_frontier_summary")
         )
+        return UnitArtifactRecord(
+            snapshot_id=snapshot_id,
+            stable_unit_id=stable_unit_id,
+            relative_path=str(elem.get("relative_path") or elem.get("file_path") or ""),
+            unit_type=str(elem.get("type") or ""),
+            content_hash=cls._optional_text(
+                metadata.get("content_hash") or elem.get("content_hash")
+            ),
+            syntax_hash=cls._optional_text(
+                metadata.get("syntax_hash") or elem.get("syntax_hash")
+            ),
+            signature_hash=cls._optional_text(
+                metadata.get("signature_hash") or elem.get("signature_hash")
+            ),
+            edge_surface_hash=cls._optional_text(
+                metadata.get("edge_surface_hash") or elem.get("edge_surface_hash")
+            ),
+            embedding_text_hash=cls._optional_text(
+                metadata.get("embedding_text_hash") or elem.get("embedding_text_hash")
+            ),
+            api_surface_hash=cls._optional_text(
+                metadata.get("api_surface_hash") or elem.get("api_surface_hash")
+            ),
+            embedding_artifact_ref=embedding_artifact_ref,
+            scoped_tool_ref=scoped_tool_ref,
+            package_root=package_root,
+            repair_frontier_summary=repair_frontier_summary,
+            metadata_json=cls._serialize_metadata_json(metadata),
+            created_at=utc_now(),
+        )
+
+    @staticmethod
+    def _optional_text(value: Any) -> str | None:
+        if value is None:
+            return None
+        return str(value)
+
+    def _insert_unit_record(self, conn: Any, record: UnitArtifactRecord) -> None:
         self.db_runtime.execute(
             conn,
             """
@@ -241,24 +280,35 @@ class UnitArtifactStore:
                 created_at=excluded.created_at
             """,
             (
-                snapshot_id,
-                stable_unit_id,
-                str(elem.get("relative_path") or elem.get("file_path") or ""),
-                str(elem.get("type") or ""),
-                metadata.get("content_hash") or elem.get("content_hash"),
-                metadata.get("syntax_hash") or elem.get("syntax_hash"),
-                metadata.get("signature_hash") or elem.get("signature_hash"),
-                metadata.get("edge_surface_hash") or elem.get("edge_surface_hash"),
-                metadata.get("embedding_text_hash") or elem.get("embedding_text_hash"),
-                metadata.get("api_surface_hash") or elem.get("api_surface_hash"),
-                embedding_artifact_ref,
-                scoped_tool_ref,
-                package_root,
-                repair_frontier_summary,
-                self._serialize_metadata_json(metadata),
-                utc_now(),
+                record.snapshot_id,
+                record.stable_unit_id,
+                record.relative_path,
+                record.unit_type,
+                record.content_hash,
+                record.syntax_hash,
+                record.signature_hash,
+                record.edge_surface_hash,
+                record.embedding_text_hash,
+                record.api_surface_hash,
+                record.embedding_artifact_ref,
+                record.scoped_tool_ref,
+                record.package_root,
+                record.repair_frontier_summary,
+                record.metadata_json,
+                record.created_at,
             ),
         )
+
+    def _insert_unit(
+        self,
+        conn: Any,
+        snapshot_id: str,
+        elem: dict[str, Any],
+    ) -> None:
+        record = self._unit_record_from_element(snapshot_id, elem)
+        if record is None:
+            return
+        self._insert_unit_record(conn, record)
 
     def replace_snapshot_units(
         self,
@@ -287,15 +337,35 @@ class UnitArtifactStore:
     ) -> dict[str, int | str]:
         excluded_paths = sorted({str(path) for path in changed_paths + removed_paths})
         excluded_path_set = set(excluded_paths)
-        previous_rows = [
-            row
-            for row in self.list_snapshot_units(previous_snapshot_id)
-            if str(row.get("relative_path") or "") not in excluded_path_set
+        previous_records = [
+            record
+            for record in self.list_snapshot_unit_records(previous_snapshot_id)
+            if record.relative_path not in excluded_path_set
         ]
         copied = 0
         with self.db_runtime.connect() as conn:
-            for row in previous_rows:
-                self._insert_unit(conn, snapshot_id, row)
+            for record in previous_records:
+                self._insert_unit_record(
+                    conn,
+                    UnitArtifactRecord(
+                        snapshot_id=snapshot_id,
+                        stable_unit_id=record.stable_unit_id,
+                        relative_path=record.relative_path,
+                        unit_type=record.unit_type,
+                        content_hash=record.content_hash,
+                        syntax_hash=record.syntax_hash,
+                        signature_hash=record.signature_hash,
+                        edge_surface_hash=record.edge_surface_hash,
+                        embedding_text_hash=record.embedding_text_hash,
+                        api_surface_hash=record.api_surface_hash,
+                        embedding_artifact_ref=record.embedding_artifact_ref,
+                        scoped_tool_ref=record.scoped_tool_ref,
+                        package_root=record.package_root,
+                        repair_frontier_summary=record.repair_frontier_summary,
+                        metadata_json=record.metadata_json,
+                        created_at=utc_now(),
+                    ),
+                )
                 copied += 1
             for elem in elements:
                 self._insert_unit(conn, snapshot_id, elem)
@@ -337,7 +407,7 @@ class UnitArtifactStore:
                     self._insert_unit(conn, snapshot_id, elem)
             conn.commit()
 
-    def list_snapshot_units(self, snapshot_id: str) -> list[dict[str, Any]]:
+    def list_snapshot_unit_records(self, snapshot_id: str) -> list[UnitArtifactRecord]:
         with self.db_runtime.connect() as conn:
             rows = self.db_runtime.execute(
                 conn,
@@ -349,20 +419,73 @@ class UnitArtifactStore:
                 (snapshot_id,),
             ).fetchall()
         return [
-            payload
+            record
             for row in rows
-            if (payload := self._unit_payload_from_row(row)) is not None
+            if (record := self._unit_record_from_row(row)) is not None
         ]
 
     @classmethod
-    def _unit_payload_from_row(cls, row: Any) -> dict[str, Any] | None:
+    def _unit_record_from_row(cls, row: Any) -> UnitArtifactRecord | None:
         stable_unit_id = cls._row_value(row, 1, "stable_unit_id")
         if stable_unit_id is None:
             return None
-        payload = {
-            field_name: cls._row_value(row, index, field_name)
-            for index, field_name in enumerate(cls._UNIT_ARTIFACT_FIELDS)
+        return UnitArtifactRecord(
+            snapshot_id=str(cls._row_value(row, 0, "snapshot_id") or ""),
+            stable_unit_id=str(stable_unit_id),
+            relative_path=str(cls._row_value(row, 2, "relative_path") or ""),
+            unit_type=str(cls._row_value(row, 3, "unit_type") or ""),
+            content_hash=cls._optional_text(cls._row_value(row, 4, "content_hash")),
+            syntax_hash=cls._optional_text(cls._row_value(row, 5, "syntax_hash")),
+            signature_hash=cls._optional_text(cls._row_value(row, 6, "signature_hash")),
+            edge_surface_hash=cls._optional_text(
+                cls._row_value(row, 7, "edge_surface_hash")
+            ),
+            embedding_text_hash=cls._optional_text(
+                cls._row_value(row, 8, "embedding_text_hash")
+            ),
+            api_surface_hash=cls._optional_text(
+                cls._row_value(row, 9, "api_surface_hash")
+            ),
+            embedding_artifact_ref=cls._optional_text(
+                cls._row_value(row, 10, "embedding_artifact_ref")
+            ),
+            scoped_tool_ref=cls._optional_text(
+                cls._row_value(row, 11, "scoped_tool_ref")
+            ),
+            package_root=cls._optional_text(cls._row_value(row, 12, "package_root")),
+            repair_frontier_summary=cls._optional_text(
+                cls._row_value(row, 13, "repair_frontier_summary")
+            ),
+            metadata_json=cls._optional_text(cls._row_value(row, 14, "metadata_json")),
+            created_at=str(cls._row_value(row, 15, "created_at") or ""),
+        )
+
+    @classmethod
+    def _unit_payload_from_record(
+        cls,
+        record: UnitArtifactRecord,
+    ) -> dict[str, Any]:
+        return {
+            "snapshot_id": record.snapshot_id,
+            "stable_unit_id": record.stable_unit_id,
+            "relative_path": record.relative_path,
+            "unit_type": record.unit_type,
+            "content_hash": record.content_hash,
+            "syntax_hash": record.syntax_hash,
+            "signature_hash": record.signature_hash,
+            "edge_surface_hash": record.edge_surface_hash,
+            "embedding_text_hash": record.embedding_text_hash,
+            "api_surface_hash": record.api_surface_hash,
+            "embedding_artifact_ref": record.embedding_artifact_ref,
+            "scoped_tool_ref": record.scoped_tool_ref,
+            "package_root": record.package_root,
+            "repair_frontier_summary": record.repair_frontier_summary,
+            "created_at": record.created_at,
+            "metadata": cls._deserialize_metadata_json(record.metadata_json),
         }
-        metadata_json = payload.pop("metadata_json", None)
-        payload["metadata"] = cls._deserialize_metadata_json(metadata_json)
-        return payload
+
+    def list_snapshot_units(self, snapshot_id: str) -> list[dict[str, Any]]:
+        return [
+            self._unit_payload_from_record(record)
+            for record in self.list_snapshot_unit_records(snapshot_id)
+        ]

@@ -956,9 +956,9 @@ by edit class.
 
 ### P0.4 Snapshot artifact handle caching for query serving
 
-**Status:** partially implemented. `LoadedSnapshotArtifacts` handles and an artifact-key LRU now exist in `IndexPipeline`, and `QueryPipeline.query_snapshot()` can consume request-local retriever/graph handles without swapping singleton query state. Public `FastCode` query entrypoints now share a read lock instead of serializing independent reads behind the mutation lock. Snapshot-scoped `FastCode.query_stream()` now captures immutable snapshot handles under the read lock and releases that lock before streaming generation, while non-snapshot streams keep the singleton-state fence. `LoadedSnapshotArtifacts` now documents the read-only serving-handle contract, and the `/query` API endpoint has a concurrency regression proving two snapshot-scoped requests can overlap after `asyncio.to_thread` offload.
+**Status:** partially implemented. `LoadedSnapshotArtifacts` handles and an artifact-key LRU now exist in `IndexPipeline`, and `QueryPipeline.query_snapshot()` can consume request-local retriever/graph handles without swapping singleton query state. Public `FastCode` query entrypoints now share a read lock instead of serializing independent reads behind the mutation lock. Snapshot-scoped `FastCode.query_stream()` now captures immutable snapshot handles under the read lock and releases that lock before streaming generation, while non-snapshot streams keep the singleton-state fence. `LoadedSnapshotArtifacts` now documents the read-only serving-handle contract, the `/query` API endpoint has a concurrency regression proving two snapshot-scoped requests can overlap after `asyncio.to_thread` offload, and `bench_concurrent_queries.py` now benchmarks public snapshot endpoint reads with and without contending background write-lock mutations.
 
-**Remaining gap:** this is not yet a full serving isolation/read-scalability closure. Non-snapshot streaming queries still hold a read lock for the generator duration to fence singleton state, and endpoint/operator benchmarks are still needed.
+**Remaining gap:** this is not yet a full serving isolation/read-scalability closure. Non-snapshot streaming queries still hold a read lock for the generator duration to fence singleton state, and operator/release-run benchmark evidence is still needed.
 
 **Required work:**
 - [x] Narrow the public `FastCode` service lock so immutable snapshot queries can run concurrently while mutations remain serialized.
@@ -1227,11 +1227,13 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 - Regression coverage verifies the combined helpers use one critical section.
 - Regression coverage verifies query serving does not overlap load, index, delete, refresh, or cleanup/unload-style mutations.
 - Lower-level snapshot query serving can use request-local `LoadedSnapshotArtifacts` handles without `QueryPipeline._snapshot_query_lock`.
+- Benchmark coverage now exercises the public `/query` snapshot endpoint with
+  concurrent snapshot reads both with and without contending background
+  write-lock mutations.
 
 **Remaining follow-up:**
 - Add endpoint-level concurrency tests for upload vs query with real ASGI request scheduling.
-- Add benchmark evidence for concurrent snapshot queries with and without
-  background mutations.
+- Add operator/release-run benchmark evidence for concurrent snapshot queries.
 
 **Exit criteria:**
 - Concurrent mutation/query behavior is either serialized by design or explicitly rejected with clear errors.

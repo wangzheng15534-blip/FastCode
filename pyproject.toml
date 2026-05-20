@@ -127,6 +127,7 @@ markers = [
     "integration: tests requiring real database or external service",
     "e2e: end-to-end user flow",
     "regression: guards against previously-identified bugs",
+    "perf: performance benchmark tests",
     "property: property-based or fuzz-style test coverage",
     "hypothesis: hypothesis property-based tests",
     "parametrize: pytest parametrized tests",

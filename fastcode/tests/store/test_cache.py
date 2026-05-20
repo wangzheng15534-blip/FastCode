@@ -18,6 +18,7 @@ from fastcode.store.records import (
     DialogueSessionRecord,
     DialogueTurnRecord,
     HandoffArtifactRecord,
+    QueryResultCacheRecord,
     TurnJournalRecord,
     WorkingMemoryRecord,
 )
@@ -150,8 +151,81 @@ def test_query_result_cache_uses_json_cache_envelope(tmp_path: Path) -> None:
         raw_value = manager.cache.get(cache_key)
         assert isinstance(raw_value, bytes)
         assert raw_value.startswith(_CACHE_RECORD_MAGIC + _CACHE_JSON_KIND)
+        query_record = manager.get_query_result_record(
+            "Where is config loaded?", "repo-hash"
+        )
+        assert query_record is not None
+        assert query_record.query == "Where is config loaded?"
+        assert query_record.repo_hash == "repo-hash"
+        assert query_record.result == result
+        assert isinstance(query_record.created_at, float)
         assert (
             manager.get_query_result("Where is config loaded?", "repo-hash") == result
+        )
+    finally:
+        manager.cache.close()
+
+
+def test_query_result_record_accessors_use_explicit_serializers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manager = CacheManager(_cache_config(tmp_path, cache_queries=True))
+
+    def _boom_to_dict(_: QueryResultCacheRecord) -> dict[str, object]:
+        raise AssertionError(
+            "cache manager must not call QueryResultCacheRecord.to_dict()"
+        )
+
+    def _boom_from_dict(cls: type[object], _payload: dict[str, Any]) -> object:
+        raise AssertionError(f"cache manager must not call {cls.__name__}.from_dict()")
+
+    monkeypatch.setattr(QueryResultCacheRecord, "to_dict", _boom_to_dict)
+    monkeypatch.setattr(
+        QueryResultCacheRecord, "from_dict", classmethod(_boom_from_dict)
+    )
+
+    try:
+        assert manager.set_query_result(
+            "Where is config loaded?",
+            "repo-hash",
+            {"answer": "Use src/config.py"},
+        )
+
+        record = manager.get_query_result_record("Where is config loaded?", "repo-hash")
+        result = manager.get_query_result("Where is config loaded?", "repo-hash")
+
+        assert record is not None
+        assert record.query == "Where is config loaded?"
+        assert record.repo_hash == "repo-hash"
+        assert record.result == {"answer": "Use src/config.py"}
+        assert isinstance(record.created_at, float)
+        assert result == {"answer": "Use src/config.py"}
+    finally:
+        manager.cache.close()
+
+
+def test_query_result_cache_legacy_raw_payload_is_preserved(
+    tmp_path: Path,
+) -> None:
+    manager = CacheManager(_cache_config(tmp_path, cache_queries=True))
+
+    try:
+        legacy_result = {
+            "answer": "Use src/config.py",
+            "sources": [{"file": "src/config.py", "type": "file"}],
+        }
+        cache_key = manager._generate_key(
+            "query", "Where is config loaded?", "repo-hash"
+        )
+        assert manager.cache.set(cache_key, manager._json_cache_payload(legacy_result))
+
+        assert (
+            manager.get_query_result("Where is config loaded?", "repo-hash")
+            == legacy_result
+        )
+        assert (
+            manager.get_query_result_record("Where is config loaded?", "repo-hash")
+            is None
         )
     finally:
         manager.cache.close()

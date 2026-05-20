@@ -17,6 +17,7 @@ from fastcode.store.records import (
     ProjectionBuildRecord,
     ProjectionDirtyScopeRecord,
     PublishTaskRecord,
+    QueryResultCacheRecord,
     RedoTaskRecord,
     RepositoryOverviewRecord,
     SCIPArtifactRecord,
@@ -313,6 +314,19 @@ def test_repository_overview_record_roundtrip():
     )
 
     restored = RepositoryOverviewRecord.from_dict(record.to_dict())
+
+    assert restored == record
+
+
+def test_query_result_cache_record_roundtrip():
+    record = QueryResultCacheRecord(
+        query="Where is config loaded?",
+        repo_hash="repo-hash",
+        result={"answer": "Use src/config.py"},
+        created_at=1234.5,
+    )
+
+    restored = QueryResultCacheRecord.from_dict(record.to_dict())
 
     assert restored == record
 

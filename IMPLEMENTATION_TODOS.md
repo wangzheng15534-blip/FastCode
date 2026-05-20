@@ -1062,7 +1062,7 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 - active `store/snapshot.py` SCIP artifact, redo-task, and publish-outbox paths now materialize rows through explicit typed record adapters instead of `row_to_dict()`
 - `store/projection.py` now reconstructs active dirty-scope/build rows through typed record adapters and explicit compatibility serializers
 - `store/index_run.py` now exposes typed run/publish-task records and active publishing/indexing callers prefer those record APIs, but compatibility dict-return helpers still remain
-- `store/cache.py` now reconstructs active dialogue/session cache payloads through typed records and explicit compatibility serializers instead of mutating ad hoc dict payloads in place
+- `store/cache.py` now reconstructs active dialogue/session/query-result cache payloads through typed records and explicit compatibility serializers instead of mutating ad hoc dict payloads in place
 - `store/pg_retrieval.py` now emits explicit typed element payloads for `metadata_json`, and `store/manifest.py` now uses explicit row-field serializers on active paths, but compatibility dict-return APIs still expose dict-shaped boundaries in places
 - vector/cache paths copy embeddings through Python containers:
   - `indexing/embedder.py` now stores cached embeddings as native `float32` byte buffers
@@ -1426,12 +1426,12 @@ These currently emit useful structured facts, but they are still narrower than f
 Typed records now exist for manifests, snapshot refs, snapshot records, index
 runs, publish tasks, SCIP artifact refs, unit artifacts, repository overviews,
 vector search results, pg-retrieval result rows, redo tasks, outbox events,
-dialogue turns, dialogue sessions, and active projection build/dirty-scope rows.
+dialogue turns, dialogue sessions, query result cache records, and active
+projection build/dirty-scope rows.
 
 Still raw-dict-heavy at boundaries:
 - API-facing manifest / artifact payload adapters
 - snapshot-store and projection-store compatibility payload adapters
-- cache/query result payloads
 
 This item should be treated as the implementation slice of the broader P0.6a schema-flow requirement above, not as isolated cleanup.
 

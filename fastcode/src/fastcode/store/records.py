@@ -413,6 +413,34 @@ class VectorSearchResultRecord:
 
 
 @dataclass(frozen=True)
+class QueryResultCacheRecord:
+    query: str
+    repo_hash: str
+    result: Any
+    created_at: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "query": self.query,
+            "repo_hash": self.repo_hash,
+            "result": self.result,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> QueryResultCacheRecord:
+        created_at = data.get("created_at")
+        return cls(
+            query=str(data.get("query") or ""),
+            repo_hash=str(data.get("repo_hash") or ""),
+            result=data.get("result"),
+            created_at=(
+                float(created_at) if isinstance(created_at, (int, float)) else 0.0
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class PgRetrievalElementRecord:
     id: str = ""
     element_type: str | None = None

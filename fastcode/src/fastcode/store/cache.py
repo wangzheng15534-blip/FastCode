@@ -20,6 +20,7 @@ from .records import (
     DialogueSessionRecord,
     DialogueTurnRecord,
     HandoffArtifactRecord,
+    QueryResultCacheRecord,
     TurnJournalRecord,
     WorkingMemoryRecord,
 )
@@ -27,6 +28,7 @@ from .records import (
 _CACHE_RECORD_MAGIC = b"fastcode-cache:v1:"
 _CACHE_JSON_KIND = b"json:"
 _CACHE_EMBEDDING_KIND = b"embedding:"
+_CACHE_QUERY_RESULT_KIND = "query_result:v1"
 _CACHE_NOT_MARSHALLED = object()
 
 
@@ -477,6 +479,29 @@ class CacheManager:
         )
 
     @staticmethod
+    def _query_result_payload(record: QueryResultCacheRecord) -> dict[str, Any]:
+        return {
+            "record_type": _CACHE_QUERY_RESULT_KIND,
+            "query": record.query,
+            "repo_hash": record.repo_hash,
+            "result": record.result,
+            "created_at": record.created_at,
+        }
+
+    @staticmethod
+    def _query_result_record(
+        payload: dict[str, Any],
+    ) -> QueryResultCacheRecord | None:
+        if payload.get("record_type") != _CACHE_QUERY_RESULT_KIND:
+            return None
+        return QueryResultCacheRecord(
+            query=str(payload.get("query") or ""),
+            repo_hash=str(payload.get("repo_hash") or ""),
+            result=payload.get("result"),
+            created_at=CacheManager._float_payload(payload.get("created_at")),
+        )
+
+    @staticmethod
     def _decode_marshaled_value(value: Any) -> Any:
         if not isinstance(value, (bytes, bytearray, memoryview)):
             return _CACHE_NOT_MARSHALLED
@@ -632,26 +657,57 @@ class CacheManager:
             self.logger.warning(f"Embedding cache set error: {e}")
             return False
 
+    def get_query_result_record(
+        self, query: str, repo_hash: str
+    ) -> QueryResultCacheRecord | None:
+        if not self.cache_queries:
+            return None
+        key = self._generate_key("query", query, repo_hash)
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        record = self._query_result_record(cast(dict[str, Any], value))
+        if record is None or record.query != query or record.repo_hash != repo_hash:
+            return None
+        return record
+
     def get_query_result(self, query: str, repo_hash: str) -> Any | None:
         """Get cached query result"""
         if not self.cache_queries:
             return None
+        record = self.get_query_result_record(query, repo_hash)
+        if record is not None:
+            return record.result
         key = self._generate_key("query", query, repo_hash)
         return self.get(key)
 
-    def set_query_result(self, query: str, repo_hash: str, result: Any) -> bool:
-        """Cache query result"""
+    def set_query_result_record(self, record: QueryResultCacheRecord) -> bool:
         if not self.cache_queries:
             return False
-        key = self._generate_key("query", query, repo_hash)
+        key = self._generate_key("query", record.query, record.repo_hash)
         if not self.enabled or self.cache is None:
             return False
         try:
-            ttl = self.ttl
-            return self._cache_set_raw(key, self._json_cache_payload(result), ttl)
+            ttl = int(self.ttl)
+            return self._cache_set_raw(
+                key,
+                self._json_cache_payload(self._query_result_payload(record)),
+                ttl,
+            )
         except Exception as e:
             self.logger.warning(f"Query cache set error: {e}")
             return False
+
+    def set_query_result(self, query: str, repo_hash: str, result: Any) -> bool:
+        """Cache query result"""
+        return self.set_query_result_record(
+            QueryResultCacheRecord(
+                query=query,
+                repo_hash=repo_hash,
+                result=result,
+                created_at=time.time(),
+            )
+        )
 
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics"""

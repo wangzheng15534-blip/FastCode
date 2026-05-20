@@ -1064,6 +1064,7 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 - `store/index_run.py` now exposes typed run/publish-task records and active publishing/indexing callers prefer those record APIs, but compatibility dict-return helpers still remain
 - `store/cache.py` now reconstructs active dialogue/session/query-result cache payloads through typed records and explicit compatibility serializers instead of mutating ad hoc dict payloads in place
 - `store/pg_retrieval.py` now emits explicit typed element payloads for `metadata_json`, and `store/manifest.py` now uses explicit row-field serializers on active paths, but compatibility dict-return APIs still expose dict-shaped boundaries in places
+- `main/fastcode.py` now materializes API-facing repo-ref, manifest, and SCIP artifact payloads from typed store records through explicit field adapters instead of record `to_dict()` or store compatibility dict helpers
 - vector/cache paths copy embeddings through Python containers:
   - `indexing/embedder.py` now stores cached embeddings as native `float32` byte buffers
   - `store/cache.py` now writes typed dialogue/session/query payloads as explicit JSON envelopes and embedding payloads as length-prefixed buffer envelopes; generic `get()/set()` remains for legacy or untyped callers
@@ -1430,7 +1431,6 @@ dialogue turns, dialogue sessions, query result cache records, and active
 projection build/dirty-scope rows.
 
 Still raw-dict-heavy at boundaries:
-- API-facing manifest / artifact payload adapters
 - snapshot-store and projection-store compatibility payload adapters
 
 This item should be treated as the implementation slice of the broader P0.6a schema-flow requirement above, not as isolated cleanup.

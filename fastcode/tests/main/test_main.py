@@ -36,6 +36,9 @@ from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.store.records import (
     ContextActivationRecord,
     ContextBundleRecord,
+    ManifestRecord,
+    SCIPArtifactRecord,
+    SnapshotRefRecord,
     TurnJournalRecord,
     WorkingMemoryRecord,
 )
@@ -61,6 +64,130 @@ def _make_fastcode(
         enabled=graph_enabled, sync_docs=lambda **_: sync_result
     )
     return fc
+
+
+def test_api_facade_refs_and_manifests_use_explicit_record_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fc = FastCode.__new__(FastCode)
+    ref_record = SnapshotRefRecord(
+        ref_id=1,
+        repo_name="repo",
+        branch="main",
+        commit_id="abc123",
+        tree_id="tree123",
+        snapshot_id="snap:repo:abc123",
+        created_at="2026-05-05T00:00:00+00:00",
+    )
+    manifest_record = ManifestRecord(
+        manifest_id="manifest_1",
+        repo_name="repo",
+        ref_name="main",
+        snapshot_id="snap:repo:abc123",
+        index_run_id="run_1",
+        published_at="2026-05-05T00:00:01+00:00",
+        previous_manifest_id=None,
+        status="published",
+    )
+
+    def _boom_to_dict(_: object) -> dict[str, Any]:
+        raise AssertionError("FastCode API facade must not call record.to_dict()")
+
+    def _boom_store_dict(*_: object, **__: object) -> dict[str, Any]:
+        raise AssertionError("FastCode API facade must prefer typed record APIs")
+
+    monkeypatch.setattr(SnapshotRefRecord, "to_dict", _boom_to_dict)
+    monkeypatch.setattr(ManifestRecord, "to_dict", _boom_to_dict)
+
+    fc.snapshot_store = SimpleNamespace(
+        list_repo_ref_records=lambda _repo_name: [ref_record]
+    )
+    fc.manifest_store = SimpleNamespace(
+        get_branch_manifest_record=lambda _repo_name, _ref_name: manifest_record,
+        get_snapshot_manifest_record=lambda _snapshot_id: manifest_record,
+        get_branch_manifest=_boom_store_dict,
+        get_snapshot_manifest=_boom_store_dict,
+    )
+
+    refs = fc.list_repo_refs("repo")
+    branch_manifest = fc.get_branch_manifest("repo", "main")
+    snapshot_manifest = fc.get_snapshot_manifest("snap:repo:abc123")
+
+    assert refs == [
+        {
+            "ref_id": 1,
+            "repo_name": "repo",
+            "branch": "main",
+            "commit_id": "abc123",
+            "tree_id": "tree123",
+            "snapshot_id": "snap:repo:abc123",
+            "created_at": "2026-05-05T00:00:00+00:00",
+        }
+    ]
+    assert branch_manifest is not None
+    assert branch_manifest["manifest_id"] == "manifest_1"
+    assert branch_manifest["snapshot_id"] == "snap:repo:abc123"
+    assert snapshot_manifest == branch_manifest
+
+
+def test_api_facade_scip_artifacts_use_explicit_record_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fc = FastCode.__new__(FastCode)
+    primary_record = SCIPArtifactRecord(
+        artifact_id="snap:repo:abc123:scip:0",
+        snapshot_id="snap:repo:abc123",
+        sequence_no=0,
+        role="primary",
+        indexer_name="scip-python",
+        indexer_version="1.0",
+        artifact_path="/tmp/python.scip",
+        checksum="abc123",
+        created_at="2026-05-05T00:00:00+00:00",
+        metadata_json='{"language":"python"}',
+    )
+    secondary_record = SCIPArtifactRecord(
+        artifact_id="snap:repo:abc123:scip:1",
+        snapshot_id="snap:repo:abc123",
+        sequence_no=1,
+        role="secondary",
+        indexer_name="scip-go",
+        indexer_version=None,
+        artifact_path="/tmp/go.scip",
+        checksum="def456",
+        created_at="2026-05-05T00:00:00+00:00",
+        metadata_json=None,
+    )
+
+    def _boom_to_dict(_: object) -> dict[str, Any]:
+        raise AssertionError("FastCode API facade must not call record.to_dict()")
+
+    def _boom_store_dict(*_: object, **__: object) -> dict[str, Any]:
+        raise AssertionError("FastCode API facade must prefer typed record APIs")
+
+    monkeypatch.setattr(SCIPArtifactRecord, "to_dict", _boom_to_dict)
+
+    fc.snapshot_store = SimpleNamespace(
+        get_scip_artifact_ref_record=lambda _snapshot_id: primary_record,
+        list_scip_artifact_ref_records=lambda _snapshot_id: [
+            primary_record,
+            secondary_record,
+        ],
+        get_scip_artifact_ref=_boom_store_dict,
+        list_scip_artifact_refs=_boom_store_dict,
+    )
+
+    artifact = fc.get_scip_artifact_ref("snap:repo:abc123")
+    artifacts = fc.list_scip_artifact_refs("snap:repo:abc123")
+
+    assert artifact is not None
+    assert artifact["artifact_id"] == "snap:repo:abc123:scip:0"
+    assert artifact["metadata"] == {"language": "python"}
+    assert [item["artifact_path"] for item in artifacts] == [
+        "/tmp/python.scip",
+        "/tmp/go.scip",
+    ]
+    assert artifacts[1]["metadata"] == {}
 
 
 def _make_working_memory_record(

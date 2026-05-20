@@ -73,6 +73,9 @@ from ..store.projection import ProjectionStore
 from ..store.records import (
     ContextActivationRecord,
     HandoffArtifactRecord,
+    ManifestRecord,
+    SCIPArtifactRecord,
+    SnapshotRefRecord,
 )
 from ..store.snapshot import SnapshotStore
 from ..store.unit_artifacts import UnitArtifactStore
@@ -974,9 +977,74 @@ class FastCode:
     def process_redo_tasks(self, limit: int = 10) -> dict[str, Any]:
         return self.publishing_service.process_redo_tasks(limit)
 
+    @staticmethod
+    def _snapshot_ref_payload(record: SnapshotRefRecord) -> dict[str, Any]:
+        return {
+            "ref_id": record.ref_id,
+            "repo_name": record.repo_name,
+            "branch": record.branch,
+            "commit_id": record.commit_id,
+            "tree_id": record.tree_id,
+            "snapshot_id": record.snapshot_id,
+            "created_at": record.created_at,
+        }
+
+    @staticmethod
+    def _manifest_payload(record: ManifestRecord) -> dict[str, Any]:
+        return {
+            "manifest_id": record.manifest_id,
+            "repo_name": record.repo_name,
+            "ref_name": record.ref_name,
+            "snapshot_id": record.snapshot_id,
+            "index_run_id": record.index_run_id,
+            "published_at": record.published_at,
+            "previous_manifest_id": record.previous_manifest_id,
+            "status": record.status,
+        }
+
+    @staticmethod
+    def _scip_artifact_metadata_payload(raw_metadata: str | None) -> dict[str, Any]:
+        if raw_metadata is None:
+            return {}
+        try:
+            metadata = json.loads(raw_metadata)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        if not isinstance(metadata, Mapping):
+            return {}
+        return {str(key): item for key, item in metadata.items()}
+
+    @classmethod
+    def _scip_artifact_payload(cls, record: SCIPArtifactRecord) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "snapshot_id": record.snapshot_id,
+            "indexer_name": record.indexer_name,
+            "indexer_version": record.indexer_version,
+            "artifact_path": record.artifact_path,
+            "checksum": record.checksum,
+            "created_at": record.created_at,
+        }
+        has_entry_fields = (
+            record.artifact_id is not None
+            or record.sequence_no is not None
+            or record.role is not None
+            or record.metadata_json is not None
+        )
+        if not has_entry_fields:
+            return payload
+        payload.update(
+            {
+                "artifact_id": record.artifact_id,
+                "sequence_no": record.sequence_no,
+                "role": record.role,
+                "metadata": cls._scip_artifact_metadata_payload(record.metadata_json),
+            }
+        )
+        return payload
+
     def list_repo_refs(self, repo_name: str) -> list[dict[str, Any]]:
         return [
-            record.to_dict()
+            self._snapshot_ref_payload(record)
             for record in self.snapshot_store.list_repo_ref_records(repo_name)
         ]
 
@@ -1104,16 +1172,24 @@ class FastCode:
     def get_branch_manifest(
         self, repo_name: str, ref_name: str
     ) -> dict[str, Any] | None:
-        return self.manifest_store.get_branch_manifest(repo_name, ref_name)
+        record = self.manifest_store.get_branch_manifest_record(repo_name, ref_name)
+        return self._manifest_payload(record) if record is not None else None
 
     def get_snapshot_manifest(self, snapshot_id: str) -> dict[str, Any] | None:
-        return self.manifest_store.get_snapshot_manifest(snapshot_id)
+        record = self.manifest_store.get_snapshot_manifest_record(snapshot_id)
+        return self._manifest_payload(record) if record is not None else None
 
     def get_scip_artifact_ref(self, snapshot_id: str) -> dict[str, Any] | None:
-        return self.snapshot_store.get_scip_artifact_ref(snapshot_id)
+        record = self.snapshot_store.get_scip_artifact_ref_record(snapshot_id)
+        return self._scip_artifact_payload(record) if record is not None else None
 
     def list_scip_artifact_refs(self, snapshot_id: str) -> list[dict[str, Any]]:
-        return self.snapshot_store.list_scip_artifact_refs(snapshot_id)
+        return [
+            self._scip_artifact_payload(record)
+            for record in self.snapshot_store.list_scip_artifact_ref_records(
+                snapshot_id
+            )
+        ]
 
     def resolve_snapshot_symbol(
         self,

@@ -904,11 +904,16 @@ class SnapshotStore:
         changed_keys = self._snapshot_changed_path_keys(changed_paths) | (
             self._snapshot_changed_path_keys(removed_paths)
         )
+        removed_keys = self._snapshot_changed_path_keys(removed_paths)
+        relation_rewrite_all = bool(removed_keys)
+        relation_rewrite_keys = set(changed_keys)
         units_by_path: dict[str, list[dict[str, Any]]] = {}
         unit_path_by_id: dict[str, str] = {}
         for sequence_no, unit in enumerate(snapshot.units):
             path_key = self._snapshot_path_key(unit.path, unit.unit_id)
             unit_path_by_id[unit.unit_id] = path_key
+            if path_key not in changed_keys:
+                continue
             units_by_path.setdefault(path_key, []).append(
                 self._payload_with_sequence(
                     self._code_unit_payload(unit),
@@ -922,6 +927,8 @@ class SnapshotStore:
                 support.path or unit_path_by_id.get(support.unit_id),
                 support.support_id,
             )
+            if path_key not in changed_keys:
+                continue
             supports_by_path.setdefault(path_key, []).append(
                 self._payload_with_sequence(
                     self._unit_support_payload(support),
@@ -931,11 +938,21 @@ class SnapshotStore:
 
         relations_by_path: dict[str, list[dict[str, Any]]] = {}
         for sequence_no, relation in enumerate(snapshot.relations):
+            src_path = unit_path_by_id.get(relation.src_unit_id)
+            dst_path = unit_path_by_id.get(relation.dst_unit_id)
             path_key = self._snapshot_path_key(
-                unit_path_by_id.get(relation.src_unit_id)
-                or unit_path_by_id.get(relation.dst_unit_id),
+                src_path or dst_path,
                 relation.relation_id,
             )
+            rewrite_relation = (
+                relation_rewrite_all
+                or path_key in changed_keys
+                or src_path in changed_keys
+                or dst_path in changed_keys
+            )
+            if not rewrite_relation:
+                continue
+            relation_rewrite_keys.add(path_key)
             relations_by_path.setdefault(path_key, []).append(
                 self._payload_with_sequence(
                     self._relation_payload(relation),
@@ -950,8 +967,10 @@ class SnapshotStore:
                 unit_path_by_id.get(embedding.unit_id),
                 embedding.embedding_id,
             )
+            if path_key not in changed_keys:
+                continue
             vector_ref = None
-            if embedding.vector is not None and path_key in changed_keys:
+            if embedding.vector is not None:
                 vector_file = self._snapshot_embedding_vector_filename(path_key)
                 vector_path = os.path.join(vector_dir, vector_file)
                 tmp_vector_path = f"{vector_path}.tmp"
@@ -1002,10 +1021,38 @@ class SnapshotStore:
             directory: str,
             previous_directory: str,
             rows_by_path: dict[str, list[dict[str, Any]]],
+            rewrite_keys: set[str],
         ) -> list[dict[str, Any]]:
             nonlocal reused, written
             entries: list[dict[str, Any]] = []
+            copied_previous_keys: set[str] = set()
+            for path_key, previous_entry in sorted(previous_entries[section].items()):
+                if path_key in rewrite_keys:
+                    continue
+                shard_file = str(previous_entry.get("shard_file") or "")
+                if not shard_file:
+                    continue
+                if not self._copy_snapshot_shard(
+                    previous_dir=previous_directory,
+                    current_dir=directory,
+                    shard_file=shard_file,
+                ):
+                    continue
+                active_by_dir[directory].add(shard_file)
+                entries.append(dict(previous_entry))
+                copied_previous_keys.add(path_key)
+                reused += 1
+                if section == "embeddings":
+                    vector_file = self._snapshot_embedding_vector_filename(path_key)
+                    if self._copy_snapshot_shard(
+                        previous_dir=previous_vector_dir,
+                        current_dir=vector_dir,
+                        shard_file=vector_file,
+                    ):
+                        active_by_dir[vector_dir].add(vector_file)
             for path_key, rows in sorted(rows_by_path.items()):
+                if path_key in removed_keys:
+                    continue
                 previous_entry = previous_entries[section].get(path_key)
                 shard_file = (
                     str(previous_entry.get("shard_file") or "")
@@ -1013,7 +1060,8 @@ class SnapshotStore:
                     else ""
                 )
                 if (
-                    path_key not in changed_keys
+                    path_key not in rewrite_keys
+                    and path_key not in copied_previous_keys
                     and previous_entry
                     and shard_file
                     and self._copy_snapshot_shard(
@@ -1047,24 +1095,28 @@ class SnapshotStore:
             directory=units_dir,
             previous_directory=previous_units_dir,
             rows_by_path=units_by_path,
+            rewrite_keys=changed_keys,
         )
         support_shards = write_or_reuse(
             section="supports",
             directory=supports_dir,
             previous_directory=previous_supports_dir,
             rows_by_path=supports_by_path,
+            rewrite_keys=changed_keys,
         )
         relation_shards = write_or_reuse(
             section="relations",
             directory=relations_dir,
             previous_directory=previous_relations_dir,
             rows_by_path=relations_by_path,
+            rewrite_keys=relation_rewrite_keys,
         )
         embedding_shards = write_or_reuse(
             section="embeddings",
             directory=embeddings_dir,
             previous_directory=previous_embeddings_dir,
             rows_by_path=embeddings_by_path,
+            rewrite_keys=changed_keys,
         )
         deleted = 0
         for directory, active_files in active_by_dir.items():

@@ -10,10 +10,10 @@ and embeddings while replacing changed-file content with fresh extraction.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from dataclasses import replace as dc_replace
-from typing import Any
+from typing import Any, Generic, SupportsIndex, TypeVar, overload
 
 from ..ir.types import (
     IRCodeUnit,
@@ -22,6 +22,82 @@ from ..ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
+
+_T = TypeVar("_T")
+
+
+class _LazyIRSequence(list[_T], Generic[_T]):
+    """Read-through sequence for incremental IR slices.
+
+    Incremental updates can pass unchanged and changed component streams through
+    the pipeline without allocating a merged list immediately. Random access
+    still materializes a list because sequence indexing has no streaming form.
+    """
+
+    def __init__(
+        self,
+        iter_factory: Callable[[], Iterable[_T]],
+        *,
+        len_factory: Callable[[], int] | None = None,
+    ) -> None:
+        super().__init__()
+        self._iter_factory = iter_factory
+        self._len_factory = len_factory
+        self._materialized: list[_T] | None = None
+
+    def __iter__(self) -> Iterator[_T]:
+        materialized = self._materialized
+        if materialized is not None:
+            return iter(materialized)
+        return iter(self._iter_factory())
+
+    def __len__(self) -> int:
+        materialized = self._materialized
+        if materialized is not None:
+            return len(materialized)
+        if self._len_factory is not None:
+            return self._len_factory()
+        return sum(1 for _item in self._iter_factory())
+
+    @overload
+    def __getitem__(self, index: SupportsIndex) -> _T: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[_T]: ...
+
+    def __getitem__(self, index: SupportsIndex | slice) -> _T | list[_T]:
+        materialized = self._materialized
+        if materialized is None:
+            materialized = list(self._iter_factory())
+            self._materialized = materialized
+        return materialized[index]
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Sequence):
+            return False
+        return list(self) == list(other)
+
+    __hash__ = None  # type: ignore[assignment]
+
+    def __contains__(self, item: object) -> bool:
+        return item in list(self)
+
+    def count(self, value: _T) -> int:
+        return list(self).count(value)
+
+    def index(
+        self,
+        value: _T,
+        start: SupportsIndex = 0,
+        stop: SupportsIndex = 9223372036854775807,
+    ) -> int:
+        return list(self).index(value, start, stop)
+
+    def __repr__(self) -> str:
+        materialized = self._materialized
+        if materialized is not None:
+            return repr(list(materialized))
+        return f"{type(self).__name__}(len={len(self)})"
 
 
 @dataclass
@@ -250,43 +326,42 @@ def _support_key(
     )
 
 
-def _merge_units(
+def _iter_merged_units(
     change_set: FileChangeSet,
     old_units_by_path: dict[str, list[IRCodeUnit]],
     new_units_by_path: dict[str, list[IRCodeUnit]],
-) -> tuple[list[IRCodeUnit], set[str]]:
-    """Merge units: keep unchanged old, add fresh from changed/added paths.
-
-    Returns (merged_units, merged_unit_ids).
-    """
-    merged: list[IRCodeUnit] = []
-    merged_ids: set[str] = set()
-
+) -> Iterator[IRCodeUnit]:
     for path in change_set.unchanged:
-        for unit in old_units_by_path.get(path, []):
-            merged.append(unit)
-            merged_ids.add(unit.unit_id)
-
+        yield from old_units_by_path.get(path, [])
     for path in change_set.added + change_set.modified:
-        for unit in new_units_by_path.get(path, []):
-            merged.append(unit)
-            merged_ids.add(unit.unit_id)
-
-    return merged, merged_ids
+        yield from new_units_by_path.get(path, [])
 
 
-def _merge_supports(
-    old_supports: list[IRUnitSupport],
-    new_supports: list[IRUnitSupport],
+def _merged_units_len(
+    change_set: FileChangeSet,
+    old_units_by_path: dict[str, list[IRCodeUnit]],
+    new_units_by_path: dict[str, list[IRCodeUnit]],
+) -> int:
+    return sum(
+        len(old_units_by_path.get(path, [])) for path in change_set.unchanged
+    ) + sum(
+        len(new_units_by_path.get(path, []))
+        for path in change_set.added + change_set.modified
+    )
+
+
+def _iter_merged_supports(
+    old_supports: Sequence[IRUnitSupport],
+    new_supports: Sequence[IRUnitSupport],
     tombstoned_ids: set[str],
     replacement_map: dict[str, str],
     preserve_sources_for_modified_paths: set[str] | None = None,
-) -> list[IRUnitSupport]:
-    """Merge supports, optionally relinking preserved source-owned supports."""
-    merged: list[IRUnitSupport] = []
+) -> Iterator[IRUnitSupport]:
+    seen: set[tuple[str, str, str, str | None, str | None]] = set()
     for support in old_supports:
         if support.unit_id not in tombstoned_ids:
-            merged.append(support)
+            seen.add(_support_key(support))
+            yield support
             continue
         replacement_id = replacement_map.get(support.unit_id)
         if not replacement_id or not _preserve_source(
@@ -296,22 +371,21 @@ def _merge_supports(
         metadata = dict(support.metadata or {})
         metadata["relinked_from_unit_id"] = support.unit_id
         metadata["relink_reason"] = "source_owned_incremental_preserve"
-        merged.append(
-            dc_replace(
-                support,
-                unit_id=replacement_id,
-                support_id=f"relink:{support.support_id}",
-                metadata=metadata,
-            )
+        relinked = dc_replace(
+            support,
+            unit_id=replacement_id,
+            support_id=f"relink:{support.support_id}",
+            metadata=metadata,
         )
+        seen.add(_support_key(relinked))
+        yield relinked
 
-    seen = {_support_key(support) for support in merged}
     for support in new_supports:
         key = _support_key(support)
-        if key not in seen:
-            merged.append(support)
-            seen.add(key)
-    return merged
+        if key in seen:
+            continue
+        seen.add(key)
+        yield support
 
 
 def _relinked_relation(
@@ -347,24 +421,23 @@ def _relinked_relation(
     )
 
 
-def _merge_relations(
-    old_relations: list[IRRelation],
-    new_relations: list[IRRelation],
+def _iter_merged_relations(
+    old_relations: Sequence[IRRelation],
+    new_relations: Sequence[IRRelation],
     tombstoned_ids: set[str],
     new_unit_ids: set[str],
     replacement_map: dict[str, str],
     preserve_sources_for_modified_paths: set[str] | None = None,
-) -> list[IRRelation]:
-    """Merge relations with source ownership and stable-destination relinking.
+) -> Iterator[IRRelation]:
+    seen: set[tuple[str, str, str]] = set()
 
-    Rules:
-    - relations owned by changed sources are dropped and must come from fresh extraction
-    - relations from unchanged sources are preserved
-    - if an unchanged-source relation points at a changed destination that was
-      re-extracted as the same logical unit, rewrite it to the replacement target
-    - new relations from changed sources are added back from fresh extraction
-    """
-    merged: list[IRRelation] = []
+    def unique(relation: IRRelation) -> IRRelation | None:
+        key = (relation.src_unit_id, relation.dst_unit_id, relation.relation_type)
+        if key in seen:
+            return None
+        seen.add(key)
+        return relation
+
     for relation in old_relations:
         src_tombstoned = relation.src_unit_id in tombstoned_ids
         dst_tombstoned = relation.dst_unit_id in tombstoned_ids
@@ -382,30 +455,31 @@ def _merge_relations(
                     else relation.dst_unit_id
                 )
                 if replacement_dst:
-                    merged.append(
-                        _relinked_relation(
-                            relation,
-                            src_unit_id=replacement_src,
-                            dst_unit_id=replacement_dst,
-                            relink_reason="source_owned_incremental_preserve",
-                        )
+                    relinked = _relinked_relation(
+                        relation,
+                        src_unit_id=replacement_src,
+                        dst_unit_id=replacement_dst,
+                        relink_reason="source_owned_incremental_preserve",
                     )
+                    if (unique_relation := unique(relinked)) is not None:
+                        yield unique_relation
             continue
         if dst_tombstoned:
             replacement_dst = replacement_map.get(relation.dst_unit_id)
             if replacement_dst is None:
                 continue
             if replacement_dst != relation.dst_unit_id:
-                merged.append(
-                    _relinked_relation(
-                        relation,
-                        src_unit_id=relation.src_unit_id,
-                        dst_unit_id=replacement_dst,
-                        relink_reason="stable_destination_incremental_relink",
-                    )
+                relinked = _relinked_relation(
+                    relation,
+                    src_unit_id=relation.src_unit_id,
+                    dst_unit_id=replacement_dst,
+                    relink_reason="stable_destination_incremental_relink",
                 )
+                if (unique_relation := unique(relinked)) is not None:
+                    yield unique_relation
                 continue
-        merged.append(relation)
+        if (unique_relation := unique(relation)) is not None:
+            yield unique_relation
 
     for relation in new_relations:
         src_is_new = (
@@ -420,40 +494,27 @@ def _merge_relations(
         )
         if dst_tombstoned_unreplaced:
             continue
-        merged.append(relation)
-
-    # Deduplicate by (src, dst, type).
-    seen: set[tuple[str, str, str]] = set()
-    deduped: list[IRRelation] = []
-    for relation in merged:
-        key = (relation.src_unit_id, relation.dst_unit_id, relation.relation_type)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(relation)
-    return deduped
+        if (unique_relation := unique(relation)) is not None:
+            yield unique_relation
 
 
-def _merge_embeddings(
-    old_embeddings: list[IRUnitEmbedding],
-    new_embeddings: list[IRUnitEmbedding],
+def _iter_merged_embeddings(
+    old_embeddings: Sequence[IRUnitEmbedding],
+    new_embeddings: Sequence[IRUnitEmbedding],
     tombstoned_ids: set[str],
-) -> list[IRUnitEmbedding]:
-    """Merge embeddings: preserve unchanged, add new for changed files."""
-    merged: list[IRUnitEmbedding] = []
+) -> Iterator[IRUnitEmbedding]:
     seen_ids: set[str] = set()
 
     for embedding in old_embeddings:
         if embedding.unit_id not in tombstoned_ids:
-            merged.append(embedding)
             seen_ids.add(embedding.unit_id)
+            yield embedding
 
     for embedding in new_embeddings:
-        if embedding.unit_id not in seen_ids:
-            merged.append(embedding)
-            seen_ids.add(embedding.unit_id)
-
-    return merged
+        if embedding.unit_id in seen_ids:
+            continue
+        seen_ids.add(embedding.unit_id)
+        yield embedding
 
 
 def apply_incremental_update(
@@ -488,11 +549,6 @@ def apply_incremental_update(
     old_units_by_path, old_ids_by_path = _index_units_by_path(old_snapshot.units)
     new_units_by_path, _ = _index_units_by_path(new_extraction.units)
 
-    # Units: keep unchanged, replace changed.
-    merged_units, _merged_unit_ids = _merge_units(
-        change_set, old_units_by_path, new_units_by_path
-    )
-
     # Tombstoned IDs: old units from changed paths.
     tombstoned_ids: set[str] = set()
     for path in changed_paths:
@@ -506,34 +562,42 @@ def apply_incremental_update(
 
     # Merge each component.
     replacements = _replacement_map(change_set, old_units_by_path, new_units_by_path)
-    merged_supports = _merge_supports(
-        old_snapshot.supports,
-        new_extraction.supports,
-        tombstoned_ids,
-        replacements,
-        preserve_sources_for_modified_paths,
-    )
-    merged_relations = _merge_relations(
-        old_snapshot.relations,
-        new_extraction.relations,
-        tombstoned_ids,
-        new_unit_ids,
-        replacements,
-        preserve_sources_for_modified_paths,
-    )
-    merged_embeddings = _merge_embeddings(
-        old_snapshot.embeddings, new_extraction.embeddings, tombstoned_ids
-    )
-
-    return IRSnapshot(
+    snapshot = IRSnapshot(
         repo_name=new_extraction.repo_name,
         snapshot_id=new_extraction.snapshot_id,
         branch=new_extraction.branch,
         commit_id=new_extraction.commit_id,
         tree_id=new_extraction.tree_id,
-        units=merged_units,
-        supports=merged_supports,
-        relations=merged_relations,
-        embeddings=merged_embeddings,
         metadata=new_extraction.metadata,
     )
+    snapshot.units = _LazyIRSequence(
+        lambda: _iter_merged_units(change_set, old_units_by_path, new_units_by_path),
+        len_factory=lambda: _merged_units_len(
+            change_set, old_units_by_path, new_units_by_path
+        ),
+    )
+    snapshot.supports = _LazyIRSequence(
+        lambda: _iter_merged_supports(
+            old_snapshot.supports,
+            new_extraction.supports,
+            tombstoned_ids,
+            replacements,
+            preserve_sources_for_modified_paths,
+        )
+    )
+    snapshot.relations = _LazyIRSequence(
+        lambda: _iter_merged_relations(
+            old_snapshot.relations,
+            new_extraction.relations,
+            tombstoned_ids,
+            new_unit_ids,
+            replacements,
+            preserve_sources_for_modified_paths,
+        )
+    )
+    snapshot.embeddings = _LazyIRSequence(
+        lambda: _iter_merged_embeddings(
+            old_snapshot.embeddings, new_extraction.embeddings, tombstoned_ids
+        )
+    )
+    return snapshot

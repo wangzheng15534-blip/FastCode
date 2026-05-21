@@ -1015,6 +1015,174 @@ class TestSnapshotSaveLoadProperties:
         assert loaded is not None
         assert [unit.display_name for unit in loaded.units] == ["a", "b2"]
 
+    def test_save_snapshot_delta_does_not_serialize_unchanged_unit_rows(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = _make_store()
+        previous = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:delta-no-regroup-prev",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:a",
+                    kind="function",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a",
+                ),
+                IRCodeUnit(
+                    unit_id="unit:b",
+                    kind="function",
+                    path="pkg/b.py",
+                    language="python",
+                    display_name="b",
+                ),
+            ],
+        )
+        current = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:delta-no-regroup-current",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:a",
+                    kind="function",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a",
+                ),
+                IRCodeUnit(
+                    unit_id="unit:b",
+                    kind="function",
+                    path="pkg/b.py",
+                    language="python",
+                    display_name="b2",
+                ),
+            ],
+        )
+        store.save_snapshot(previous)
+        original_payload = SnapshotStore._code_unit_payload
+
+        def _guarded_payload(
+            cls: type[SnapshotStore], unit: IRCodeUnit
+        ) -> dict[str, Any]:
+            del cls
+            if unit.path == "pkg/a.py":
+                raise AssertionError("unchanged units should reuse previous shards")
+            return original_payload(unit)
+
+        monkeypatch.setattr(
+            SnapshotStore,
+            "_code_unit_payload",
+            classmethod(_guarded_payload),
+        )
+
+        current_record = store.save_snapshot_delta(
+            current,
+            previous_snapshot_id=previous.snapshot_id,
+            changed_paths=["pkg/b.py"],
+            removed_paths=[],
+        )
+
+        with open(current_record.ir_path, encoding="utf-8") as handle:
+            current_manifest = json.load(handle)
+        current_units = {
+            entry["path_key"]: entry for entry in current_manifest["units"]
+        }
+        assert set(current_units) == {"pkg/a.py", "pkg/b.py"}
+        assert current_manifest["delta"]["reused_shards"] >= 1
+
+    def test_save_snapshot_delta_rewrites_relations_touching_changed_destination(
+        self,
+    ) -> None:
+        store = _make_store()
+        previous = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:delta-rel-prev",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:a",
+                    kind="function",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a",
+                ),
+                IRCodeUnit(
+                    unit_id="unit:b-old",
+                    kind="function",
+                    path="pkg/b.py",
+                    language="python",
+                    display_name="b",
+                ),
+            ],
+            relations=[
+                IRRelation(
+                    relation_id="rel:a:b",
+                    src_unit_id="unit:a",
+                    dst_unit_id="unit:b-old",
+                    relation_type="call",
+                    resolution_state="structural",
+                )
+            ],
+        )
+        current = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:delta-rel-current",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:a",
+                    kind="function",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a",
+                ),
+                IRCodeUnit(
+                    unit_id="unit:b-new",
+                    kind="function",
+                    path="pkg/b.py",
+                    language="python",
+                    display_name="b2",
+                ),
+            ],
+            relations=[
+                IRRelation(
+                    relation_id="rel:a:b",
+                    src_unit_id="unit:a",
+                    dst_unit_id="unit:b-new",
+                    relation_type="call",
+                    resolution_state="structural",
+                )
+            ],
+        )
+
+        previous_record = store.save_snapshot(previous)
+        current_record = store.save_snapshot_delta(
+            current,
+            previous_snapshot_id=previous.snapshot_id,
+            changed_paths=["pkg/b.py"],
+            removed_paths=[],
+        )
+
+        with open(previous_record.ir_path, encoding="utf-8") as handle:
+            previous_manifest = json.load(handle)
+        with open(current_record.ir_path, encoding="utf-8") as handle:
+            current_manifest = json.load(handle)
+        previous_relations = {
+            entry["path_key"]: entry for entry in previous_manifest["relations"]
+        }
+        current_relations = {
+            entry["path_key"]: entry for entry in current_manifest["relations"]
+        }
+        assert (
+            current_relations["pkg/a.py"]["digest"]
+            != previous_relations["pkg/a.py"]["digest"]
+        )
+        loaded_relations = store.load_snapshot_relations_for_paths(
+            current.snapshot_id,
+            {"pkg/a.py"},
+        )
+        assert [relation.dst_unit_id for relation in loaded_relations] == ["unit:b-new"]
+
     def test_save_snapshot_writes_compact_symbol_index_payload(self) -> None:
         store = _make_store()
         snap = IRSnapshot(

@@ -336,6 +336,39 @@ class TestDiffChangedFiles:
 
 
 class TestApplyIncrementalUpdate:
+    def test_apply_defers_merged_component_materialization(
+        self,
+    ) -> None:
+        class _ExplodingList(list[object]):
+            def __iter__(self) -> object:
+                raise AssertionError("component stream should stay lazy until access")
+
+        old = _build_simple_snapshot(
+            {"a.py": "h1", "b.py": "h2"},
+            extra_units=[_make_symbol_unit("a.py", "old_a")],
+        )
+        new = _build_simple_snapshot(
+            {"a.py": "h1", "b.py": "h2_new"},
+            extra_units=[_make_symbol_unit("b.py", "new_b")],
+            snapshot_id="snap:test:new",
+            commit_id="new123",
+        )
+        old.supports = _ExplodingList()
+        old.relations = _ExplodingList()
+        old.embeddings = _ExplodingList()
+        new.supports = _ExplodingList()
+        new.relations = _ExplodingList()
+        new.embeddings = _ExplodingList()
+
+        result = apply_incremental_update(
+            old,
+            new,
+            FileChangeSet(modified=["b.py"], unchanged=["a.py"]),
+        )
+
+        assert result.snapshot_id == "snap:test:new"
+        assert [unit.path for unit in result.units] == ["a.py", "a.py", "b.py", "b.py"]
+
     def test_no_changes_preserves_everything(self) -> None:
         old = _build_simple_snapshot(
             {"a.py": "h1"},

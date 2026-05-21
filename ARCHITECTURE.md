@@ -67,8 +67,8 @@ Rule: dependencies flow downward, cross-layer cycles are forbidden, and
 
 ## Architecture contract
 
-The repo currently enforces these rules in code, tests, and module-local
-`ruff.toml` files:
+The repo currently enforces these rules in code, architecture tests, and
+repo-wide lint rules:
 
 1. Pydantic stops at the boundary.
    - `schemas/` owns Pydantic validation and settings parsing.
@@ -903,7 +903,7 @@ release-gap list and acceptance criteria.
 
 Use this order of trust:
 
-1. architecture tests and module-local lint rules
+1. architecture tests and repo-wide lint rules
 2. current code under `fastcode/src/fastcode/`
 3. [IMPLEMENTATION_TODOS.md](./IMPLEMENTATION_TODOS.md)
 4. this document

@@ -22,6 +22,7 @@ select = [
     "RSE",      # flake8-raise: raise statement best practices
     "PL",       # Pylint: code quality and complexity limits
     "RUF",      # Ruff-specific: ambiguous unicode, unused noqa, etc.
+    "TID251",   # flake8-tidy-imports: repo-wide banned compatibility imports
 ]
 
 ignore = [
@@ -87,6 +88,25 @@ reportUnusedClass = "none"
 fixture-parentheses = false
 mark-parentheses = false
 parametrize-names-type = "tuple"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"fastcode.db_runtime".msg = "Deleted compatibility module; import the owning split package instead."
+"fastcode.graph_runtime".msg = "Deleted compatibility module; import the owning split package instead."
+"fastcode.llm_utils".msg = "Deleted compatibility module; import the owning split package instead."
+"fastcode.module_resolver".msg = "Deleted compatibility module; import the owning split package instead."
+"fastcode.path_utils".msg = "Deleted compatibility module; import the owning split package instead."
+"fastcode.indexing.call_extractor".msg = "Deleted compatibility module; import fastcode.graph.call_extractor instead."
+"fastcode.indexing.global_builder".msg = "Deleted compatibility module; import fastcode.scip.global_builder instead."
+"fastcode.indexing.tree_sitter".msg = "Deleted compatibility module; import fastcode.graph.tree_sitter instead."
+"fastcode.retrieval.agent_tools".msg = "Deleted compatibility module; import fastcode.query.agent_tools instead."
+"fastcode.retrieval.core".msg = "Deleted compatibility package; import concrete retrieval modules instead."
+"fastcode.retrieval.hybrid".msg = "Deleted compatibility module; import fastcode.query.retriever instead."
+"fastcode.retrieval.iterative".msg = "Deleted compatibility module; import fastcode.query.iterative_agent instead."
+"fastcode.schemas.api".msg = "Deleted compatibility module; import concrete API schemas instead."
+"fastcode.schemas.core_types".msg = "Deleted compatibility module; import canonical IR types instead."
+"fastcode.utils._compat".msg = "Deleted compatibility module; import fastcode.main.config instead."
+"fastcode.utils.core".msg = "Deleted compatibility module; import concrete utility modules instead."
+"fastcode.utils.vectors".msg = "Deleted compatibility module; import store vector helpers instead."
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [

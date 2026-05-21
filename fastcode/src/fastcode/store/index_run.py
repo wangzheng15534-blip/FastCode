@@ -8,8 +8,8 @@ import json
 import uuid
 from typing import Any, cast
 
-from ..db_runtime import DBRuntime
-from ..utils import utc_now
+from ..utils.clock import utc_now
+from .infrastructure.runtime import DBRuntime
 from .records import IndexRunRecord, PublishTaskRecord
 
 

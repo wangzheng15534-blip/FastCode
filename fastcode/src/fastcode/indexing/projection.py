@@ -16,7 +16,9 @@ if TYPE_CHECKING:
     from ..store.snapshot import SnapshotStore
     from .projection_transform import ProjectionTransformer
 
-from ..utils import ensure_dir, projection_params_hash, projection_scope_key
+from ..utils.filesystem import ensure_dir
+from ..utils.hashing import projection_params_hash
+from ..utils.paths import projection_scope_key
 
 
 class ProjectionService:

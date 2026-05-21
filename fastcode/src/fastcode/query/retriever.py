@@ -23,6 +23,11 @@ import networkx as nx
 import numpy as np
 from rank_bm25 import BM25Okapi
 
+import fastcode.retrieval.combination as _combination
+import fastcode.retrieval.filtering as _filtering
+import fastcode.retrieval.fusion as _fusion
+import fastcode.retrieval.scoring as _scoring
+
 from ..graph.build import CodeGraphBuilder
 from ..indexing.embedder import CodeEmbedder
 from ..ir.element import (
@@ -34,15 +39,11 @@ from ..ir.element import (
 from ..ir.graph import IRGraphs, IRGraphView
 from ..query.processor import ProcessedQuery
 from ..query.selector import RepositorySelector
-from ..schemas.core_types import FusionConfig
+from ..retrieval.contracts import FusionConfig
 from ..store.pg_retrieval import PgRetrievalStore
 from ..store.vector import VectorStore
-from ..utils import ensure_dir
-from .core import combination as _combination
-from .core import filtering as _filtering
-from .core import fusion as _fusion
-from .core import scoring as _scoring
-from .iterative import IterativeAgent
+from ..utils.filesystem import ensure_dir
+from .iterative_agent import IterativeAgent
 
 _BM25_SHARD_STORAGE_VERSION = 1
 

@@ -219,10 +219,10 @@ packages = ["src/fastcode"]                                               # pack
     "S608",    # design: SQL in test assertions uses string literals, not user input
     "B017",    # design: pytest.raises(Exception) is intentional for error-path tests
 ]
-"src/fastcode/retrieval/hybrid.py" = [
+"src/fastcode/query/retriever.py" = [
     "ANN201",  # complexity: retrieve() and index_for_bm25 need return types (track: annotate all public methods)
     "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
-    "PLC0415", # design: lazy imports avoid circular deps with core/ subpackage
+    "PLC0415", # design: lazy imports avoid circular deps with retrieval package
     "PLR0912", # complexity: retrieve() has 31 branches for fusion path selection (track: extract fusion strategy pattern)
     "PLR0913", # complexity: retrieve() takes 6 params (track: bundle query params into QueryRequest dataclass)
     "PLR0915", # complexity: retrieve() has 97 statements (track: same fusion strategy refactor)
@@ -230,25 +230,10 @@ packages = ["src/fastcode"]                                               # pack
     "PLR2004", # design: fusion thresholds (0.5, 0.7) are tuning knobs, not domain constants
     "S301",    # design: pickle for BM25 index serialization, not deserializing untrusted input
 ]
-"src/fastcode/retrieval/core/scip_transform.py" = [
+"src/fastcode/retrieval/scip_transform.py" = [
     "PLC0415", # external-dep: protobuf may not be installed; lazy import guards import error
 ]
-"src/fastcode/scip/loader.py" = [
-    "PLC0415", # design: lazy import of SCIP loader internals to avoid circular dep with main.py
-    "S603",    # design: subprocess for SCIP binary invocation; shell=False is already used
-    "B904",    # design: raise without from in subprocess error handler; original exception is re-wrapped with context
-    "ANN001",  # complexity: _run_scip_command args need types (track: annotate all public methods)
-]
-"src/fastcode/retrieval/core/iteration.py" = [
-    "PLR2004", # design: threshold constants (0.85, 3) from original HKUDS iterative refinement logic
-    "PLR0913", # complexity: should_continue_iteration takes 7 params (track: bundle into IterationState dataclass)
-    "PLR0911", # complexity: 6 early returns for stopping conditions — each is a distinct termination check
-    "PLR0912", # complexity: should_continue_iteration branching on 6 stopping conditions (track: extract to Strategy)
-]
-"src/fastcode/retrieval/core/prompts.py" = [
-    "PLR0912", # complexity: prompt template selection by query type (track: extract prompt registry)
-]
-"src/fastcode/retrieval/iterative.py" = [
+"src/fastcode/query/iterative_agent.py" = [
     "ANN001",  # complexity: all function args need types (track: annotate all public methods)
     "ANN201",  # complexity: all public function return types (track: annotate all public methods)
     "ANN202",  # complexity: all private function return types (track: annotate all public methods)
@@ -261,6 +246,21 @@ packages = ["src/fastcode"]                                               # pack
     "RUF059",  # design: unpacked variable kept for positional clarity in dict construction
     "S110",    # design: try-except-pass in directory tree builder — individual failures should not halt traversal
     "SIM108",  # design: if-else preferred over ternary for readability of multi-element tuple fallback
+]
+"src/fastcode/indexing/scip_runner.py" = [
+    "S603",    # design: subprocess for SCIP indexer binary invocation; shell=False is already used
+]
+"src/fastcode/indexing/semantic_helper_runner.py" = [
+    "S603",    # design: subprocess for external semantic helper command; shell=False is already used
+]
+"src/fastcode/retrieval/iteration.py" = [
+    "PLR2004", # design: threshold constants (0.85, 3) from original HKUDS iterative refinement logic
+    "PLR0913", # complexity: should_continue_iteration takes 7 params (track: bundle into IterationState dataclass)
+    "PLR0911", # complexity: 6 early returns for stopping conditions — each is a distinct termination check
+    "PLR0912", # complexity: should_continue_iteration branching on 6 stopping conditions (track: extract to Strategy)
+]
+"src/fastcode/retrieval/prompts.py" = [
+    "PLR0912", # complexity: prompt template selection by query type (track: extract prompt registry)
 ]
 "src/fastcode/query/answer.py" = [
     "ANN201",  # complexity: generate_stream needs return type (track: annotate all public methods)
@@ -288,11 +288,11 @@ packages = ["src/fastcode"]                                               # pack
     "RUF013",  # design: implicit Optional in default arg for backward-compatible API
     "F821",    # external-dep: forward reference to type not yet defined at class scope
 ]
-"src/fastcode/retrieval/core/combination.py" = [
+"src/fastcode/retrieval/combination.py" = [
     "PLR0913", # complexity: combine_results takes 7 params (track: bundle into CombinationRequest dataclass)
     "PLR0912", # complexity: merge logic branches for 3 result types (track: extract merge strategies)
 ]
-"src/fastcode/retrieval/core/repo_analysis.py" = [
+"src/fastcode/retrieval/repo_analysis.py" = [
     "PLR0911", # complexity: infer_project_type if-chain with 6 project types — each branch is distinct
 ]
 "src/fastcode/indexing/overview.py" = [
@@ -301,14 +301,6 @@ packages = ["src/fastcode"]                                               # pack
     "PLR2004", # design: 8000 char truncation threshold for READMEs is a UI limit, not domain constant
     "RET504",  # design: overview dict assigned for readability before return in generate_overview
     "SIM102",  # design: nested if clarifies two independent conditions (directory depth + file membership)
-]
-"src/fastcode/utils/_compat.py" = [
-    "S324",    # security-context: MD5 for file dedup hashing — not cryptographic
-    "PLC0415", # external-dep: pathspec may not be installed; lazy import guards import error
-    "ANN001",  # complexity: function args need types (track: annotate all public methods)
-    "ANN002",  # complexity: *args need types (track: annotate all public methods)
-    "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
-    "PLR0911", # complexity: extract_repo_name has 6 early returns for URL/SSH/HTTPS patterns
 ]
 "src/fastcode/schemas/ir.py" = [
     "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
@@ -378,9 +370,6 @@ packages = ["src/fastcode"]                                               # pack
     "SIM102",  # design: nested if clarifies two independent conditions
 ]
 # --- Security per-file ignores (scoped from global; each has specific justification) ---
-"src/fastcode/retrieval/agent_tools.py" = [
-    "E722",    # design: bare-except in file size fallback — missing file returns 0, not crash
-]
 "src/fastcode/graph/build.py" = [
     "E722",    # design: bare-except in degree calculation — missing data returns 0, not crash
     "S301",    # design: pickle for graph serialization to disk, not deserializing untrusted input
@@ -421,11 +410,8 @@ packages = ["src/fastcode"]                                               # pack
     "S110",    # design: try-except-pass in JSON repair — individual repair failures should not abort
     "S112",    # design: try-except-continue in JSON array/object parsing — skip malformed elements
 ]
-"src/fastcode/graph_runtime.py" = [
+"src/fastcode/store/infrastructure/graph_runtime.py" = [
     "S110",    # design: try-except-pass in doc graph operations — individual doc failures are non-fatal
-]
-"src/fastcode/scip/indexers.py" = [
-    "S603",    # design: subprocess for SCIP indexer binary invocation; shell=False is already used
 ]
 "src/fastcode/semantic/resolvers/*.py" = [
     "S603",    # design: subprocess for language tooling (go vet, tsc, dotnet, etc.); shell=False is already used

@@ -14,11 +14,8 @@ from typing import Any
 
 from git import GitCommandError, Repo
 
-from ..utils import (
-    ensure_dir,
-    get_repo_name_from_url,
-)
 from ..utils.archive import safe_extract_zip
+from ..utils.filesystem import ensure_dir, get_repo_name_from_url
 from .file_inventory import FileFingerprint, FileInventory, build_file_inventory
 
 

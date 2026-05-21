@@ -347,6 +347,109 @@ class UnitArtifactRecord:
 
 
 @dataclass(frozen=True)
+class FileIRShardRecord:
+    snapshot_id: str
+    relative_path: str
+    schema_version: str
+    payload_json: str
+    unit_count: int
+    support_count: int
+    relation_count: int
+    embedding_count: int
+    content_hash: str | None
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "snapshot_id": self.snapshot_id,
+            "relative_path": self.relative_path,
+            "schema_version": self.schema_version,
+            "payload_json": self.payload_json,
+            "unit_count": self.unit_count,
+            "support_count": self.support_count,
+            "relation_count": self.relation_count,
+            "embedding_count": self.embedding_count,
+            "content_hash": self.content_hash,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FileIRShardRecord:
+        return cls(
+            snapshot_id=str(data.get("snapshot_id") or ""),
+            relative_path=str(data.get("relative_path") or ""),
+            schema_version=str(data.get("schema_version") or ""),
+            payload_json=str(data.get("payload_json") or "{}"),
+            unit_count=int(data.get("unit_count") or 0),
+            support_count=int(data.get("support_count") or 0),
+            relation_count=int(data.get("relation_count") or 0),
+            embedding_count=int(data.get("embedding_count") or 0),
+            content_hash=(
+                str(data["content_hash"])
+                if data.get("content_hash") is not None
+                else None
+            ),
+            created_at=str(data.get("created_at") or ""),
+        )
+
+
+@dataclass(frozen=True)
+class FileArtifactRecord:
+    repo_name: str
+    relative_path: str
+    identity_kind: str
+    identity_value: str
+    artifact_type: str
+    schema_version: str
+    payload_json: str
+    unit_count: int
+    support_count: int
+    relation_count: int
+    embedding_count: int
+    metadata_json: str | None
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "repo_name": self.repo_name,
+            "relative_path": self.relative_path,
+            "identity_kind": self.identity_kind,
+            "identity_value": self.identity_value,
+            "artifact_type": self.artifact_type,
+            "schema_version": self.schema_version,
+            "payload_json": self.payload_json,
+            "unit_count": self.unit_count,
+            "support_count": self.support_count,
+            "relation_count": self.relation_count,
+            "embedding_count": self.embedding_count,
+            "metadata_json": self.metadata_json,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FileArtifactRecord:
+        return cls(
+            repo_name=str(data.get("repo_name") or ""),
+            relative_path=str(data.get("relative_path") or ""),
+            identity_kind=str(data.get("identity_kind") or ""),
+            identity_value=str(data.get("identity_value") or ""),
+            artifact_type=str(data.get("artifact_type") or ""),
+            schema_version=str(data.get("schema_version") or ""),
+            payload_json=str(data.get("payload_json") or "{}"),
+            unit_count=int(data.get("unit_count") or 0),
+            support_count=int(data.get("support_count") or 0),
+            relation_count=int(data.get("relation_count") or 0),
+            embedding_count=int(data.get("embedding_count") or 0),
+            metadata_json=(
+                str(data["metadata_json"])
+                if data.get("metadata_json") is not None
+                else None
+            ),
+            created_at=str(data.get("created_at") or ""),
+        )
+
+
+@dataclass(frozen=True)
 class RepositoryOverviewRecord:
     repo_name: str
     content: str
@@ -473,143 +576,137 @@ class PgRetrievalElementRecord:
     present_fields: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "element_type": self.element_type,
-            "name": self.name,
-            "file_path": self.file_path,
-            "relative_path": self.relative_path,
-            "language": self.language,
-            "start_line": self.start_line,
-            "end_line": self.end_line,
-            "code": self.code,
-            "signature": self.signature,
-            "docstring": self.docstring,
-            "summary": self.summary,
-            "repo_name": self.repo_name,
-            "repo_url": self.repo_url,
-            "snapshot_id": self.snapshot_id,
-            "source_priority": self.source_priority,
-            "embedding_text": self.embedding_text,
-            "embedding_artifact_ref": self.embedding_artifact_ref,
-            "embedding_fingerprint": (
-                dict(self.embedding_fingerprint)
-                if self.embedding_fingerprint is not None
-                else None
-            ),
-            "ir_symbol_id": self.ir_symbol_id,
-            "stable_unit_id": self.stable_unit_id,
-            "content_hash": self.content_hash,
-            "syntax_hash": self.syntax_hash,
-            "signature_hash": self.signature_hash,
-            "edge_surface_hash": self.edge_surface_hash,
-            "embedding_text_hash": self.embedding_text_hash,
-            "api_surface_hash": self.api_surface_hash,
-            "metadata": dict(self.metadata),
-            "present_fields": list(self.present_fields),
-        }
+        return _pg_retrieval_element_record_to_payload(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PgRetrievalElementRecord:
-        raw_type = data.get("element_type")
-        if raw_type is None:
-            raw_type = data.get("type")
-        raw_fingerprint = data.get("embedding_fingerprint")
-        return cls(
-            id=str(data.get("id") or ""),
-            element_type=str(raw_type) if raw_type is not None else None,
-            name=str(data["name"]) if data.get("name") is not None else None,
-            file_path=(
-                str(data["file_path"]) if data.get("file_path") is not None else None
-            ),
-            relative_path=(
-                str(data["relative_path"])
-                if data.get("relative_path") is not None
-                else None
-            ),
-            language=(
-                str(data["language"]) if data.get("language") is not None else None
-            ),
-            start_line=_optional_int_payload(data.get("start_line")),
-            end_line=_optional_int_payload(data.get("end_line")),
-            code=str(data["code"]) if data.get("code") is not None else None,
-            signature=(
-                str(data["signature"]) if data.get("signature") is not None else None
-            ),
-            docstring=(
-                str(data["docstring"]) if data.get("docstring") is not None else None
-            ),
-            summary=str(data["summary"]) if data.get("summary") is not None else None,
-            repo_name=(
-                str(data["repo_name"]) if data.get("repo_name") is not None else None
-            ),
-            repo_url=(
-                str(data["repo_url"]) if data.get("repo_url") is not None else None
-            ),
-            snapshot_id=(
-                str(data["snapshot_id"])
-                if data.get("snapshot_id") is not None
-                else None
-            ),
-            source_priority=data.get("source_priority"),
-            embedding_text=(
-                str(data["embedding_text"])
-                if data.get("embedding_text") is not None
-                else None
-            ),
-            embedding_artifact_ref=(
-                str(data["embedding_artifact_ref"])
-                if data.get("embedding_artifact_ref") is not None
-                else None
-            ),
-            embedding_fingerprint=(
-                _string_key_mapping_payload(raw_fingerprint)
-                if isinstance(raw_fingerprint, dict)
-                else None
-            ),
-            ir_symbol_id=(
-                str(data["ir_symbol_id"])
-                if data.get("ir_symbol_id") is not None
-                else None
-            ),
-            stable_unit_id=(
-                str(data["stable_unit_id"])
-                if data.get("stable_unit_id") is not None
-                else None
-            ),
-            content_hash=(
-                str(data["content_hash"])
-                if data.get("content_hash") is not None
-                else None
-            ),
-            syntax_hash=(
-                str(data["syntax_hash"])
-                if data.get("syntax_hash") is not None
-                else None
-            ),
-            signature_hash=(
-                str(data["signature_hash"])
-                if data.get("signature_hash") is not None
-                else None
-            ),
-            edge_surface_hash=(
-                str(data["edge_surface_hash"])
-                if data.get("edge_surface_hash") is not None
-                else None
-            ),
-            embedding_text_hash=(
-                str(data["embedding_text_hash"])
-                if data.get("embedding_text_hash") is not None
-                else None
-            ),
-            api_surface_hash=(
-                str(data["api_surface_hash"])
-                if data.get("api_surface_hash") is not None
-                else None
-            ),
-            metadata=_string_key_mapping_payload(data.get("metadata")),
-            present_fields=tuple(_string_list_payload(data.get("present_fields"))),
-        )
+        return _pg_retrieval_element_record_from_payload(data)
+
+
+def _pg_retrieval_element_record_to_payload(
+    record: PgRetrievalElementRecord,
+) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "element_type": record.element_type,
+        "name": record.name,
+        "file_path": record.file_path,
+        "relative_path": record.relative_path,
+        "language": record.language,
+        "start_line": record.start_line,
+        "end_line": record.end_line,
+        "code": record.code,
+        "signature": record.signature,
+        "docstring": record.docstring,
+        "summary": record.summary,
+        "repo_name": record.repo_name,
+        "repo_url": record.repo_url,
+        "snapshot_id": record.snapshot_id,
+        "source_priority": record.source_priority,
+        "embedding_text": record.embedding_text,
+        "embedding_artifact_ref": record.embedding_artifact_ref,
+        "embedding_fingerprint": (
+            dict(record.embedding_fingerprint)
+            if record.embedding_fingerprint is not None
+            else None
+        ),
+        "ir_symbol_id": record.ir_symbol_id,
+        "stable_unit_id": record.stable_unit_id,
+        "content_hash": record.content_hash,
+        "syntax_hash": record.syntax_hash,
+        "signature_hash": record.signature_hash,
+        "edge_surface_hash": record.edge_surface_hash,
+        "embedding_text_hash": record.embedding_text_hash,
+        "api_surface_hash": record.api_surface_hash,
+        "metadata": dict(record.metadata),
+        "present_fields": list(record.present_fields),
+    }
+
+
+def _pg_retrieval_element_record_from_payload(
+    data: dict[str, Any],
+) -> PgRetrievalElementRecord:
+    raw_type = data.get("element_type")
+    if raw_type is None:
+        raw_type = data.get("type")
+    raw_fingerprint = data.get("embedding_fingerprint")
+    return PgRetrievalElementRecord(
+        id=str(data.get("id") or ""),
+        element_type=str(raw_type) if raw_type is not None else None,
+        name=str(data["name"]) if data.get("name") is not None else None,
+        file_path=(
+            str(data["file_path"]) if data.get("file_path") is not None else None
+        ),
+        relative_path=(
+            str(data["relative_path"])
+            if data.get("relative_path") is not None
+            else None
+        ),
+        language=str(data["language"]) if data.get("language") is not None else None,
+        start_line=_optional_int_payload(data.get("start_line")),
+        end_line=_optional_int_payload(data.get("end_line")),
+        code=str(data["code"]) if data.get("code") is not None else None,
+        signature=str(data["signature"]) if data.get("signature") is not None else None,
+        docstring=str(data["docstring"]) if data.get("docstring") is not None else None,
+        summary=str(data["summary"]) if data.get("summary") is not None else None,
+        repo_name=str(data["repo_name"]) if data.get("repo_name") is not None else None,
+        repo_url=str(data["repo_url"]) if data.get("repo_url") is not None else None,
+        snapshot_id=(
+            str(data["snapshot_id"]) if data.get("snapshot_id") is not None else None
+        ),
+        source_priority=data.get("source_priority"),
+        embedding_text=(
+            str(data["embedding_text"])
+            if data.get("embedding_text") is not None
+            else None
+        ),
+        embedding_artifact_ref=(
+            str(data["embedding_artifact_ref"])
+            if data.get("embedding_artifact_ref") is not None
+            else None
+        ),
+        embedding_fingerprint=(
+            _string_key_mapping_payload(raw_fingerprint)
+            if isinstance(raw_fingerprint, dict)
+            else None
+        ),
+        ir_symbol_id=(
+            str(data["ir_symbol_id"]) if data.get("ir_symbol_id") is not None else None
+        ),
+        stable_unit_id=(
+            str(data["stable_unit_id"])
+            if data.get("stable_unit_id") is not None
+            else None
+        ),
+        content_hash=(
+            str(data["content_hash"]) if data.get("content_hash") is not None else None
+        ),
+        syntax_hash=(
+            str(data["syntax_hash"]) if data.get("syntax_hash") is not None else None
+        ),
+        signature_hash=(
+            str(data["signature_hash"])
+            if data.get("signature_hash") is not None
+            else None
+        ),
+        edge_surface_hash=(
+            str(data["edge_surface_hash"])
+            if data.get("edge_surface_hash") is not None
+            else None
+        ),
+        embedding_text_hash=(
+            str(data["embedding_text_hash"])
+            if data.get("embedding_text_hash") is not None
+            else None
+        ),
+        api_surface_hash=(
+            str(data["api_surface_hash"])
+            if data.get("api_surface_hash") is not None
+            else None
+        ),
+        metadata=_string_key_mapping_payload(data.get("metadata")),
+        present_fields=tuple(_string_list_payload(data.get("present_fields"))),
+    )
 
 
 @dataclass(frozen=True)
@@ -619,7 +716,7 @@ class PgRetrievalResultRecord:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "element": self.element.to_dict(),
+            "element": _pg_retrieval_element_record_to_payload(self.element),
             "score": self.score,
         }
 
@@ -630,7 +727,7 @@ class PgRetrievalResultRecord:
             cast(dict[str, Any], raw_element) if isinstance(raw_element, dict) else {}
         )
         return cls(
-            element=PgRetrievalElementRecord.from_dict(element_payload),
+            element=_pg_retrieval_element_record_from_payload(element_payload),
             score=float(data.get("score") or 0.0),
         )
 

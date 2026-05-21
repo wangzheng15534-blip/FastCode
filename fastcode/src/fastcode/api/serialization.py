@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
-from fastcode.schemas.core_types import QuerySourceRecord
+from fastcode.api.contracts import QuerySourceRecord
 
 
 def _field_get(record: Any, field_name: str) -> Any:

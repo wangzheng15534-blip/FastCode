@@ -1,0 +1,23 @@
+extend = "../../../pyproject.toml"
+
+[lint]
+extend-select = ["TID"]
+
+[lint.flake8-tidy-imports.banned-api]
+"pydantic".msg = "retrieval must stay Pydantic-free."
+"sqlite3".msg = "retrieval must stay independent of database I/O."
+"subprocess".msg = "retrieval must stay independent of process execution."
+"urllib".msg = "retrieval must stay independent of network I/O."
+"fastcode.api".msg = "retrieval must not depend on entrypoint shells."
+"fastcode.graph".msg = "retrieval should consume IR-level data, not graph orchestration."
+"fastcode.indexing".msg = "retrieval must stay independent of indexing orchestration."
+"fastcode.main".msg = "retrieval must not depend on the composition root."
+"fastcode.mcp".msg = "retrieval must not depend on transport shells."
+"fastcode.query".msg = "retrieval must stay independent of query orchestration."
+"fastcode.query.agent_tools".msg = "retrieval must stay independent of tool orchestration."
+"fastcode.query.retriever".msg = "retrieval must stay independent of retrieval orchestration."
+"fastcode.query.iterative_agent".msg = "retrieval must stay independent of agent orchestration."
+"fastcode.schemas".msg = "retrieval must not depend on Pydantic interface schemas."
+"fastcode.scip".msg = "retrieval must stay independent of SCIP loading and adapters."
+"fastcode.semantic".msg = "retrieval must stay independent of semantic adapters."
+"fastcode.store".msg = "retrieval must stay independent of storage orchestration."

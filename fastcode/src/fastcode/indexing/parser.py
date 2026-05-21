@@ -8,10 +8,8 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from ..utils import (
-    clean_docstring,
-    infer_language_from_file_context,
-)
+from ..utils.paths import infer_language_from_file_context
+from ..utils.text import clean_docstring
 
 
 @dataclass
@@ -513,7 +511,7 @@ class CodeParser:
     ) -> FileParseResult | None:
         """Parse JavaScript/TypeScript file using tree-sitter"""
 
-        from .tree_sitter import TSParser
+        from ..graph.tree_sitter import TSParser
 
         # Strip markdown code fences if present
         content = self._strip_markdown_code_fences(content)
@@ -894,7 +892,7 @@ class CodeParser:
         self, file_path: str, content: str, language: str
     ) -> FileParseResult | None:
         """Parse TypeScript file using tree-sitter"""
-        from .tree_sitter import TSParser
+        from ..graph.tree_sitter import TSParser
 
         # Strip markdown code fences if present
         content = self._strip_markdown_code_fences(content)
@@ -1069,7 +1067,7 @@ class CodeParser:
         self, file_path: str, content: str, language: str
     ) -> FileParseResult | None:
         """Parse C/C++ file using tree-sitter"""
-        from .tree_sitter import TSParser
+        from ..graph.tree_sitter import TSParser
 
         # Strip markdown code fences if present
         content = self._strip_markdown_code_fences(content)
@@ -1367,7 +1365,7 @@ class CodeParser:
 
     def _parse_rust(self, file_path: str, content: str) -> FileParseResult | None:
         """Parse Rust file using tree-sitter"""
-        from .tree_sitter import TSParser
+        from ..graph.tree_sitter import TSParser
 
         # Strip markdown code fences if present
         content = self._strip_markdown_code_fences(content)
@@ -1649,7 +1647,7 @@ class CodeParser:
 
     def _parse_csharp(self, file_path: str, content: str) -> FileParseResult | None:
         """Parse C# file using tree-sitter"""
-        from .tree_sitter import TSParser
+        from ..graph.tree_sitter import TSParser
 
         # Strip markdown code fences if present
         content = self._strip_markdown_code_fences(content)

@@ -19,7 +19,6 @@ import logging
 import os
 import posixpath
 import shutil
-import subprocess
 import sys
 import tempfile
 from collections import defaultdict
@@ -59,9 +58,14 @@ class HelperBackedSemanticResolver(SemanticResolver):
     helper_timeout_seconds: int = 90
     file_extensions: tuple[str, ...] = ()
     extractor_name: str
+    _command_runner: Any | None = None
 
     def __init__(self, fallback: GraphBackedSemanticResolver | None = None) -> None:
         self._fallback = fallback
+
+    def set_command_runner(self, command_runner: Any | None) -> None:
+        """Inject the shell-side process runner used for helper execution."""
+        self._command_runner = command_runner
 
     def resolve(
         self,
@@ -315,12 +319,8 @@ class HelperBackedSemanticResolver(SemanticResolver):
                 return str(binary_path)
             binary_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = binary_path.with_suffix(binary_path.suffix + ".tmp")
-            result = subprocess.run(
+            result = self._run_command(
                 [go_path, "build", "-o", str(tmp_path), str(helper_path)],
-                capture_output=True,
-                text=True,
-                timeout=self.helper_timeout_seconds,
-                check=False,
                 cwd=str(helper_path.parent),
             )
             if result.returncode != 0:
@@ -328,7 +328,7 @@ class HelperBackedSemanticResolver(SemanticResolver):
             os.replace(tmp_path, binary_path)
             binary_path.chmod(0o755)
             return str(binary_path)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, RuntimeError, TimeoutError):
             return None
 
     @staticmethod
@@ -495,15 +495,11 @@ class HelperBackedSemanticResolver(SemanticResolver):
         command = self._helper_command(helper_files)
         patch.stats["helper_command"] = command
         try:
-            result = subprocess.run(
+            result = self._run_command(
                 command,
-                capture_output=True,
-                text=True,
-                timeout=self.helper_timeout_seconds,
-                check=False,
                 cwd=repo_root,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        except (TimeoutError, FileNotFoundError, OSError, RuntimeError) as exc:
             patch.warnings.append(f"{self.source_name}_helper_failed: {exc}")
             patch.diagnostics.append(
                 ToolDiagnostic(
@@ -546,6 +542,15 @@ class HelperBackedSemanticResolver(SemanticResolver):
                 )
             )
             return {}
+
+    def _run_command(self, command: list[str], *, cwd: str) -> Any:
+        if self._command_runner is None:
+            raise RuntimeError("semantic helper command runner is not configured")
+        return self._command_runner(
+            command,
+            cwd=cwd,
+            timeout=self.helper_timeout_seconds,
+        )
 
     def _apply_semantic_facts(
         self,

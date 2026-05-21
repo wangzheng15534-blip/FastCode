@@ -73,7 +73,7 @@ def _get_fastcode():
 
 def _repo_name_from_source(source: str, is_url: bool) -> str:
     """Derive a canonical repo name from a URL or local path."""
-    from fastcode.utils import get_repo_name_from_url
+    from fastcode.utils.filesystem import get_repo_name_from_url
 
     if is_url:
         return get_repo_name_from_url(source)

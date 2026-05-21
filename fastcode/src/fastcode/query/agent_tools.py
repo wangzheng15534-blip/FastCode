@@ -8,7 +8,7 @@ import os
 import re
 from typing import Any
 
-from ..path_utils import PathUtils
+from ..utils.path_utils import PathUtils
 
 
 class AgentTools:
@@ -106,7 +106,7 @@ class AgentTools:
                 if not is_dir:
                     try:
                         item_info["size"] = os.path.getsize(item_path)
-                    except:
+                    except OSError:
                         item_info["size"] = 0
 
                 result["contents"].append(item_info)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -17,6 +18,20 @@ def _empty_dict_records() -> list[dict[str, Any]]:
 
 def _empty_payload() -> dict[str, Any]:
     return {}
+
+
+@dataclass(frozen=True)
+class QuerySourceRecord:
+    """Typed source citation record used at API/query response boundaries."""
+
+    repository: str
+    file: str
+    name: str
+    source_type: str
+    lines: str
+    start_line: int
+    end_line: int
+    score: float
 
 
 class LoadRepositoryRequest(BaseModel):

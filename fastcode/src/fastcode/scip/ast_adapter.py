@@ -18,7 +18,8 @@ from ..ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from ..utils import compute_file_hash, normalize_path, safe_jsonable
+from ..utils.filesystem import compute_file_hash, normalize_path
+from ..utils.json import safe_jsonable
 
 STRUCTURE_SOURCE = "fc_structure"
 STRUCTURE_PRIORITY = 50

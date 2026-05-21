@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from ..ir.element import CodeElement, CodeElementMeta
 from ..store.vector import VectorStore
-from ..utils import normalize_path
+from ..utils.filesystem import normalize_path
 from .embedder import EmbeddingService
 from .loader import RepositoryLoader
 from .overview import RepositoryOverviewGenerator

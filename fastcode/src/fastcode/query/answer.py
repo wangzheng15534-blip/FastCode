@@ -10,10 +10,11 @@ from typing import Any, cast
 from anthropic import Anthropic
 from openai import OpenAI
 
-from ..llm_utils import openai_chat_completion
-from ..retrieval.core import context as _context
-from ..retrieval.core import summary as _summary
-from ..utils import count_tokens, truncate_to_tokens
+import fastcode.retrieval.context as _context
+import fastcode.retrieval.summary as _summary
+
+from .llm import openai_chat_completion
+from .tokens import count_tokens, truncate_to_tokens
 
 
 class AnswerGenerator:

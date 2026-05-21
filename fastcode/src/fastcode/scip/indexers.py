@@ -1,21 +1,16 @@
 """
-Multi-language SCIP indexer runner.
+Multi-language SCIP indexer profiles and language detection helpers.
 
-Runs the appropriate SCIP indexer (scip-java, scip-go, scip-python, etc.)
-based on the target language. Each indexer produces a binary .scip artifact.
+This module maps languages to SCIP toolchain profiles and detects candidate
+languages from repository file extensions.
 """
 
 from __future__ import annotations
 
-import logging
 import os
-import shutil
-import subprocess
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-
-from .models import SCIPIndex
-
-logger = logging.getLogger(__name__)
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -77,59 +72,6 @@ def get_scip_indexer_profile(language: str) -> SCIPIndexerProfile | None:
     )
 
 
-def run_scip_indexer(
-    language: str,
-    repo_path: str,
-    output_path: str,
-) -> str:
-    """
-    Run the SCIP indexer for the given language.
-
-    Returns the output artifact path on success.
-    Raises RuntimeError if indexer is not installed or fails.
-    """
-    cmd = get_indexer_command(language, output_path)
-    if cmd is None:
-        raise RuntimeError(f"No SCIP indexer available for language: {language}")
-
-    binary_name = cmd[0]
-    binary_path = shutil.which(binary_name)
-    if not binary_path:
-        raise RuntimeError(
-            f"SCIP indexer '{binary_name}' not found in PATH. "
-            f"Install it to enable {language} support via SCIP."
-        )
-
-    cmd[0] = binary_path
-    logger.info("Running SCIP indexer: %s", " ".join(cmd))
-
-    proc = subprocess.run(
-        cmd,
-        cwd=repo_path,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"{binary_name} failed ({proc.returncode}): "
-            f"{proc.stderr.strip() or proc.stdout.strip()}"
-        )
-    return output_path
-
-
-def is_scip_available(language: str) -> bool:
-    """Check if SCIP indexing is available for a given language.
-
-    Returns True if both the language is supported AND the required binary
-    is present in PATH.
-    """
-    profile = get_scip_indexer_profile(language)
-    if profile is None:
-        return False
-    return shutil.which(profile.binary_name) is not None
-
-
 # Languages whose SCIP tooling is experimental / unstable.
 _EXPERIMENTAL_SCIP_LANGUAGES = frozenset({"zig", "fortran", "julia"})
 
@@ -181,25 +123,24 @@ def detect_scip_languages(repo_path: str) -> list[str]:
     return sorted(seen)
 
 
-def run_scip_for_language(
-    language: str,
-    repo_path: str,
-    output_dir: str,
-) -> SCIPIndex | None:
-    """
-    Run the SCIP indexer for one language and load the result.
-
-    Returns SCIPIndex on success, None if indexer not available.
-    """
-    from .loader import load_scip_artifact
-
-    output_path = os.path.join(output_dir, f"{language}.scip")
-    try:
-        artifact_path = run_scip_indexer(language, repo_path, output_path)
-        return load_scip_artifact(artifact_path)
-    except (RuntimeError, FileNotFoundError, ValueError) as exc:
-        logger.warning("SCIP indexer for %s unavailable: %s", language, exc)
-        return None
+def detect_scip_languages_from_file_infos(
+    file_infos: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """Detect SCIP languages from a precomputed repository file inventory."""
+    seen: set[str] = set()
+    for file_info in file_infos:
+        language = file_info.get("language")
+        if isinstance(language, str) and language in SUPPORTED_LANGUAGES:
+            seen.add(language)
+            continue
+        extension = file_info.get("extension")
+        if not isinstance(extension, str) or not extension:
+            path = file_info.get("relative_path") or file_info.get("path")
+            _, extension = os.path.splitext(str(path or ""))
+        lang = _EXTENSION_MAP.get(extension)
+        if lang:
+            seen.add(lang)
+    return sorted(seen)
 
 
 def detect_scip_languages_in_paths(
@@ -207,11 +148,37 @@ def detect_scip_languages_in_paths(
     relative_paths: list[str],
 ) -> list[str]:
     seen: set[str] = set()
-    for rel_path in relative_paths:
+    repo_root = os.path.abspath(repo_path)
+    scan_roots: set[str] = set()
+    for raw_path in relative_paths:
+        rel_path = os.path.normpath(str(raw_path or ""))
+        if not rel_path:
+            continue
+        candidate_path = (
+            os.path.abspath(rel_path)
+            if os.path.isabs(rel_path)
+            else os.path.abspath(os.path.join(repo_root, rel_path))
+        )
+        if not (
+            candidate_path == repo_root
+            or candidate_path.startswith(f"{repo_root}{os.sep}")
+        ):
+            continue
+
         _, ext = os.path.splitext(rel_path)
         lang = _EXTENSION_MAP.get(ext)
         if lang:
             seen.add(lang)
-    if not seen:
-        return detect_scip_languages(repo_path)
+            continue
+        if os.path.isdir(candidate_path):
+            scan_roots.add(candidate_path)
+
+    for scan_root in sorted(scan_roots):
+        for _, dirs, files in os.walk(scan_root):
+            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+            for fname in files:
+                _, ext = os.path.splitext(fname)
+                lang = _EXTENSION_MAP.get(ext)
+                if lang:
+                    seen.add(lang)
     return sorted(seen)

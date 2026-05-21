@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..ir.projection import ProjectionBuildResult, ProjectionScope
-from ..utils import utc_now
+from ..utils.clock import utc_now
 from .records import ProjectionBuildRecord, ProjectionDirtyScopeRecord
 
 try:

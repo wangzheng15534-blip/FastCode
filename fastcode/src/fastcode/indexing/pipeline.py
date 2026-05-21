@@ -31,33 +31,41 @@ import numpy as np
 from git import GitCommandError, Repo
 
 from ..graph.build import CodeGraphBuilder
-from ..ir.element import CodeElement, CodeElementMeta, serialize_code_element
+from ..ir.element import (
+    CodeElement,
+    CodeElementMeta,
+    deserialize_code_element,
+    serialize_code_element,
+)
 from ..ir.graph import IRGraphBuilder, IRGraphs
 from ..ir.merge import merge_ir
 from ..ir.types import IRRelation, IRSnapshot, IRUnitSupport
 from ..ir.validate import validate_snapshot
-from ..module_resolver import ModuleResolver
-from ..retrieval.hybrid import HybridRetriever
+from ..query.retriever import HybridRetriever
 from ..scip.ast_adapter import build_ir_from_ast
+from ..scip.global_builder import GlobalIndexBuilder
 from ..scip.indexers import (
-    detect_scip_languages,
+    detect_scip_languages_from_file_infos,
     detect_scip_languages_in_paths,
     get_scip_indexer_profile,
-    run_scip_for_language,
 )
-from ..scip.loader import load_scip_artifact, run_scip_python_index
+from ..scip.loader import load_scip_artifact
 from ..scip.models import SCIPIndex
+from ..scip.module_resolver import ModuleResolver
 from ..scip.scip_adapter import build_ir_from_scip
 from ..scip.symbol_resolver import SymbolResolver
-from ..semantic import apply_resolution_patch, build_default_semantic_resolver_registry
+from ..semantic.resolvers.patching import apply_resolution_patch
+from ..semantic.resolvers.registry import build_default_semantic_resolver_registry
 from ..semantic.symbol_index import SnapshotSymbolIndex
+from ..store.file_artifacts import FileArtifactStore
 from ..store.index_run import IndexRunStore
 from ..store.manifest import ManifestStore
 from ..store.pg_retrieval import PgRetrievalStore
 from ..store.snapshot import SnapshotStore
 from ..store.unit_artifacts import UnitArtifactStore
 from ..store.vector import VectorStore
-from ..utils import as_float32_matrix, compute_file_hash, ensure_dir, normalize_path
+from ..store.vector_math import as_float32_matrix, as_float32_vector
+from ..utils.filesystem import compute_file_hash, ensure_dir, normalize_path
 from ..utils.materialization import (
     BOUNDARY_JSON_DECODE,
     BOUNDARY_JSON_ENCODE,
@@ -70,7 +78,6 @@ from ..utils.materialization import (
 from .doc_ingester import KeyDocIngester
 from .embedder import CodeEmbedder
 from .file_inventory import FileInventory
-from .global_builder import GlobalIndexBuilder
 from .incremental import (
     FileChangeSet,
     PlanChanges,
@@ -79,6 +86,8 @@ from .incremental import (
 )
 from .indexer import CodeIndexer
 from .loader import RepositoryLoader
+from .scip_runner import run_scip_for_language, run_scip_python_index
+from .semantic_helper_runner import run_helper_command
 from .terminus import TerminusPublisher
 
 logger = logging.getLogger(__name__)
@@ -151,6 +160,7 @@ class IndexPipeline:
         set_repo_indexed: Callable[[bool], None],
         set_repo_loaded: Callable[[bool], None],
         set_repo_info: Callable[[dict[str, Any]], None],
+        file_artifact_store: FileArtifactStore | None = None,
     ) -> None:
         self.config = config
         self.logger = logger
@@ -159,6 +169,11 @@ class IndexPipeline:
         self.manifest_store = manifest_store
         self.index_run_store = index_run_store
         self.unit_artifact_store = unit_artifact_store
+        if file_artifact_store is None:
+            artifact_runtime = getattr(unit_artifact_store, "db_runtime", None)
+            if artifact_runtime is not None:
+                file_artifact_store = FileArtifactStore(artifact_runtime)
+        self.file_artifact_store = file_artifact_store
         self.snapshot_symbol_index = snapshot_symbol_index
         self.vector_store = vector_store
         self.embedder = embedder
@@ -1202,7 +1217,7 @@ class IndexPipeline:
         registry = getattr(
             self,
             "semantic_resolver_registry",
-            build_default_semantic_resolver_registry(),
+            build_default_semantic_resolver_registry(command_runner=run_helper_command),
         )
 
         # Collect pending capabilities from unresolved relations so we can
@@ -1422,9 +1437,20 @@ class IndexPipeline:
         changed_file_count = len(
             [path for path in incremental_plan.get("changed_paths", []) if path]
         )
+        parsed_reuse = incremental_plan.get("parsed_artifact_reuse")
+        parsed_artifact_hits = (
+            self._int_metric(parsed_reuse, "reused_files")
+            if isinstance(parsed_reuse, Mapping)
+            else 0
+        )
+        parsed_artifact_misses = (
+            self._int_metric(parsed_reuse, "missed_files")
+            if isinstance(parsed_reuse, Mapping)
+            else changed_file_count
+        )
         return {
-            "hit_count": reused_files,
-            "miss_count": changed_file_count,
+            "hit_count": reused_files + parsed_artifact_hits,
+            "miss_count": parsed_artifact_misses,
             "reused_files": reused_files,
             "rebuilt_elements": rebuilt_elements,
         }
@@ -1983,6 +2009,215 @@ class IndexPipeline:
             if elem is not None:
                 unchanged_elements.append(elem)
         return unchanged_elements + list(changed_elements)
+
+    def _reuse_file_ir_content_artifacts(
+        self,
+        *,
+        repo_name: str,
+        snapshot_id: str,
+        current_files: Sequence[Mapping[str, Any]],
+        incremental_plan: Mapping[str, Any],
+        excluded_paths: Sequence[str],
+    ) -> tuple[list[dict[str, Any]], dict[str, int | str]]:
+        store = self.file_artifact_store
+        if store is None:
+            return [], {"mode": "unavailable", "reused_shards": 0}
+        excluded_path_set = {
+            normalize_path(str(path)) for path in excluded_paths if path
+        }
+        reusable_paths = sorted(
+            {
+                normalize_path(str(path))
+                for path in incremental_plan.get("unchanged_paths", [])
+                if path and normalize_path(str(path)) not in excluded_path_set
+            }
+        )
+        if not reusable_paths:
+            return [], {"mode": "content_addressed", "requested_shards": 0}
+        records = store.list_file_ir_records_for_file_infos(
+            repo_name=repo_name,
+            file_infos=current_files,
+            paths=reusable_paths,
+        )
+        return (
+            [
+                store.file_ir_payload_from_record(record, snapshot_id=snapshot_id)
+                for record in records
+            ],
+            {
+                "mode": "content_addressed",
+                "requested_shards": len(reusable_paths),
+                "reused_shards": len(records),
+            },
+        )
+
+    def _reuse_parsed_element_content_artifacts(
+        self,
+        *,
+        repo_name: str,
+        current_files: Sequence[Mapping[str, Any]],
+        paths: Sequence[str],
+    ) -> tuple[list[CodeElement], set[str], dict[str, int | str]]:
+        requested_paths = sorted({normalize_path(str(path)) for path in paths if path})
+        if not requested_paths:
+            return (
+                [],
+                set(),
+                {
+                    "mode": "content_addressed",
+                    "requested_files": 0,
+                    "reused_files": 0,
+                    "missed_files": 0,
+                    "reused_elements": 0,
+                },
+            )
+        store = self.file_artifact_store
+        if store is None:
+            return (
+                [],
+                set(),
+                {
+                    "mode": "unavailable",
+                    "requested_files": len(requested_paths),
+                    "reused_files": 0,
+                    "missed_files": len(requested_paths),
+                    "reused_elements": 0,
+                },
+            )
+        records = store.list_parsed_element_records_for_file_infos(
+            repo_name=repo_name,
+            file_infos=current_files,
+            paths=requested_paths,
+        )
+        elements: list[CodeElement] = []
+        reused_paths: set[str] = set()
+        for record in records:
+            payload = store.parsed_elements_payload_from_record(record)
+            raw_elements = payload.get("elements")
+            if not isinstance(raw_elements, list):
+                continue
+            decoded_for_path = 0
+            for raw_element in raw_elements:
+                try:
+                    elements.append(deserialize_code_element(raw_element))
+                except (TypeError, ValueError):
+                    continue
+                decoded_for_path += 1
+            if decoded_for_path:
+                reused_paths.add(record.relative_path)
+        return (
+            elements,
+            reused_paths,
+            {
+                "mode": "content_addressed",
+                "requested_files": len(requested_paths),
+                "reused_files": len(reused_paths),
+                "missed_files": len(set(requested_paths) - reused_paths),
+                "reused_elements": len(elements),
+            },
+        )
+
+    def _publish_parsed_element_content_artifacts(
+        self,
+        *,
+        repo_name: str,
+        elements: Sequence[CodeElement],
+        current_files: Sequence[Mapping[str, Any]],
+        paths: Sequence[str] | None = None,
+    ) -> dict[str, int | str]:
+        store = self.file_artifact_store
+        if store is None:
+            return {"mode": "unavailable", "written_records": 0}
+        path_filter = (
+            {normalize_path(str(path)) for path in paths if path}
+            if paths is not None
+            else None
+        )
+        payloads = [
+            self._code_element_like_payload(element)
+            for element in elements
+            if path_filter is None
+            or normalize_path(element.relative_path or element.file_path) in path_filter
+        ]
+        summary, _records = store.upsert_parsed_elements(
+            repo_name=repo_name,
+            elements=payloads,
+            file_infos=current_files,
+            paths=paths,
+        )
+        summary["candidate_elements"] = len(payloads)
+        return summary
+
+    def _publish_file_ir_content_artifacts(
+        self,
+        *,
+        repo_name: str,
+        shards: Sequence[Mapping[str, Any]],
+        current_files: Sequence[Mapping[str, Any]],
+        paths: Sequence[str] | None = None,
+    ) -> dict[str, int | str]:
+        store = self.file_artifact_store
+        if store is None:
+            return {"mode": "unavailable", "written_records": 0}
+        path_filter = (
+            {normalize_path(str(path)) for path in paths if path}
+            if paths is not None
+            else None
+        )
+        publish_shards = [
+            shard
+            for shard in shards
+            if path_filter is None
+            or normalize_path(
+                str(shard.get("relative_path") or shard.get("path") or "")
+            )
+            in path_filter
+        ]
+        summary, _records = store.upsert_file_ir_shards(
+            repo_name=repo_name,
+            shards=publish_shards,
+            file_infos=current_files,
+        )
+        summary["candidate_shards"] = len(publish_shards)
+        return summary
+
+    def _publish_embedding_ref_content_artifacts(
+        self,
+        *,
+        repo_name: str,
+        rows: Sequence[Mapping[str, Any]],
+        current_files: Sequence[Mapping[str, Any]],
+        paths: Sequence[str] | None = None,
+    ) -> dict[str, int | str]:
+        store = self.file_artifact_store
+        if store is None:
+            return {"mode": "unavailable", "written_records": 0}
+        summary, _records = store.upsert_embedding_refs(
+            repo_name=repo_name,
+            rows=rows,
+            file_infos=current_files,
+            paths=paths,
+        )
+        return summary
+
+    def _publish_semantic_fact_content_artifacts(
+        self,
+        *,
+        repo_name: str,
+        shards: Sequence[Mapping[str, Any]],
+        current_files: Sequence[Mapping[str, Any]],
+        paths: Sequence[str] | None = None,
+    ) -> dict[str, int | str]:
+        store = self.file_artifact_store
+        if store is None:
+            return {"mode": "unavailable", "written_records": 0}
+        summary, _records = store.upsert_semantic_fact_shards(
+            repo_name=repo_name,
+            shards=shards,
+            file_infos=current_files,
+            paths=paths,
+        )
+        return summary
 
     def _save_file_manifest(self, artifact_key: str, manifest: dict[str, Any]) -> None:
         with open(
@@ -2767,6 +3002,67 @@ class IndexPipeline:
             all_payloads,
         )
 
+    def _embedding_is_usable(self, embedding: Any) -> bool:
+        vector = as_float32_vector(embedding, copy_policy="view")
+        if vector is None:
+            return False
+        expected_dim = int(getattr(self.embedder, "embedding_dim", 0) or 0)
+        return expected_dim <= 0 or int(vector.shape[0]) == expected_dim
+
+    def _embed_missing_indexed_element_embeddings(
+        self,
+        elements: Sequence[CodeElement],
+    ) -> int:
+        missing: list[tuple[CodeElement, CodeElementMeta]] = []
+        for element in elements:
+            if self._embedding_is_usable((element.metadata or {}).get("embedding")):
+                continue
+            payload = serialize_code_element(element)
+            payload_metadata = dict(payload.get("metadata", {}) or {})
+            payload_metadata.pop("embedding", None)
+            payload["metadata"] = payload_metadata
+            missing.append((element, payload))
+
+        if not missing:
+            return 0
+
+        embed_elements = getattr(self.embedder, "embed_elements", None)
+        if not callable(embed_elements):
+            return 0
+
+        embedded_payloads = cast(
+            list[CodeElementMeta],
+            embed_elements([payload for _element, payload in missing]),
+        )
+        embedded_count = 0
+        for (element, _payload), embedded_payload in zip(
+            missing,
+            embedded_payloads,
+            strict=True,
+        ):
+            vector = as_float32_vector(
+                embedded_payload.get("embedding"),
+                copy_policy="contiguous",
+            )
+            if vector is None:
+                continue
+            element.metadata["embedding"] = vector
+            embedding_text = embedded_payload.get("embedding_text")
+            if isinstance(embedding_text, str):
+                element.metadata["embedding_text"] = embedding_text
+            artifact_ref = embedded_payload.get("embedding_artifact_ref")
+            if isinstance(artifact_ref, str):
+                element.metadata["embedding_artifact_ref"] = artifact_ref
+            embedded_metadata = embedded_payload.get("metadata", {})
+            for field_name in (
+                "embedding_text_hash",
+                "embedding_fingerprint",
+            ):
+                if field_name in embedded_metadata:
+                    element.metadata[field_name] = embedded_metadata[field_name]
+            embedded_count += 1
+        return embedded_count
+
     def _plan_incremental_elements(
         self,
         *,
@@ -2849,11 +3145,35 @@ class IndexPipeline:
             if isinstance(file_info, dict):
                 changed_file_infos.append(file_info)
 
-        new_elements = (
-            self.indexer.index_files(changed_file_infos, repo_name, repo_url)
-            if changed_file_infos
+        changed_paths = sorted(set(added + modified))
+        (
+            cached_changed_elements,
+            parsed_artifact_hit_paths,
+            parsed_artifact_reuse,
+        ) = self._reuse_parsed_element_content_artifacts(
+            repo_name=repo_name,
+            current_files=inventory,
+            paths=changed_paths,
+        )
+        uncached_changed_file_infos = [
+            file_info
+            for file_info in changed_file_infos
+            if normalize_path(str(file_info.get("relative_path") or ""))
+            not in parsed_artifact_hit_paths
+        ]
+        parsed_new_elements = (
+            self.indexer.index_files(uncached_changed_file_infos, repo_name, repo_url)
+            if uncached_changed_file_infos
             else []
         )
+        new_elements = cached_changed_elements + parsed_new_elements
+        parsed_artifact_publish = {
+            "mode": "content_addressed",
+            "artifact_type": FileArtifactStore.PARSED_ELEMENTS_ARTIFACT_TYPE,
+            "candidate_files": len(uncached_changed_file_infos),
+            "written_records": 0,
+            "candidate_elements": len(parsed_new_elements),
+        }
         reused_changed_embeddings = self._reuse_changed_unit_embeddings(
             new_elements=new_elements,
             existing_by_stable_unit_id=existing_by_stable_unit_id,
@@ -2875,7 +3195,6 @@ class IndexPipeline:
             existing_metadata,
         )
         current_interface_digests = self._interface_digests_for_elements(new_elements)
-        changed_paths = sorted(set(added + modified))
         interface_changed_paths = self._interface_digest_changed_paths(
             changed_paths=changed_paths,
             previous_digests=previous_interface_digests,
@@ -2927,7 +3246,10 @@ class IndexPipeline:
             dependency_frontier=dependency_frontier,
             degraded_reasons=tuple(degraded_reasons),
         )
-        return new_elements, plan_changes.to_prefilter_payload()
+        prefilter_payload = plan_changes.to_prefilter_payload()
+        prefilter_payload["parsed_artifact_reuse"] = dict(parsed_artifact_reuse)
+        prefilter_payload["parsed_artifact_publish"] = dict(parsed_artifact_publish)
+        return new_elements, prefilter_payload
 
     @staticmethod
     def _preservable_incremental_sources(
@@ -3969,6 +4291,13 @@ class IndexPipeline:
                 elements = planned_elements
                 if incremental_plan is None:
                     raise RuntimeError("incremental prefilter returned no plan")
+                embedded_from_plan_cache = (
+                    self._embed_missing_indexed_element_embeddings(elements)
+                )
+                if embedded_from_plan_cache:
+                    incremental_plan["recomputed_changed_embeddings"] = (
+                        embedded_from_plan_cache
+                    )
                 self.logger.info(
                     "incremental prefilter: +%d ~%d -%d =%d, reused=%d, reindexed=%d",
                     incremental_plan["added"],
@@ -4202,8 +4531,8 @@ class IndexPipeline:
                             out_dir = tempfile.mkdtemp(prefix="fastcode_scip_")
                             self._profile_record_temp_dir(out_dir)
                             scip_indexes = []
-                            detected_languages = detect_scip_languages(
-                                self.loader.repo_path or ""
+                            detected_languages = detect_scip_languages_from_file_infos(
+                                current_files
                             )
                             experimental_scip_languages = [
                                 language
@@ -4473,6 +4802,18 @@ class IndexPipeline:
                             self.logger.info(
                                 "incremental: no file changes detected vs %s",
                                 prev_snap_id,
+                            )
+                            merged_snapshot = IRSnapshot(
+                                repo_name=merged_snapshot.repo_name,
+                                snapshot_id=merged_snapshot.snapshot_id,
+                                branch=merged_snapshot.branch,
+                                commit_id=merged_snapshot.commit_id,
+                                tree_id=merged_snapshot.tree_id,
+                                units=list(prev_snapshot.units),
+                                supports=list(prev_snapshot.supports),
+                                relations=list(prev_snapshot.relations),
+                                embeddings=list(prev_snapshot.embeddings),
+                                metadata=merged_snapshot.metadata,
                             )
                         else:
                             self.logger.info(
@@ -4874,45 +5215,182 @@ class IndexPipeline:
                 pipeline_profile, "unit_artifact", snapshot_db_path
             ):
                 unit_artifact_rows = self._unit_artifact_rows(elements)
+                changed_artifact_paths = (
+                    [
+                        normalize_path(str(path))
+                        for path in (
+                            list(active_incremental_plan.get("added_paths", []) or [])
+                            + list(
+                                active_incremental_plan.get("modified_paths", []) or []
+                            )
+                        )
+                        if path
+                    ]
+                    if active_incremental_plan is not None
+                    else []
+                )
+                removed_artifact_paths = (
+                    [
+                        normalize_path(str(path))
+                        for path in (
+                            active_incremental_plan.get("removed_paths", []) or []
+                        )
+                        if path
+                    ]
+                    if active_incremental_plan is not None
+                    else []
+                )
+                file_ir_changed_paths = (
+                    SnapshotStore.file_ir_shard_paths_for_paths(
+                        merged_snapshot,
+                        changed_artifact_paths,
+                        removed_paths=removed_artifact_paths,
+                    )
+                    if active_incremental_plan is not None
+                    else []
+                )
+                file_ir_shards = SnapshotStore.file_ir_shard_payloads(
+                    merged_snapshot,
+                    paths=file_ir_changed_paths
+                    if active_incremental_plan is not None
+                    else None,
+                )
+                reused_file_ir_shards: list[dict[str, Any]] = []
+                file_ir_content_reuse: dict[str, int | str] = {
+                    "mode": "skipped",
+                    "reused_shards": 0,
+                }
+                file_ir_content_publish_paths: Sequence[str] | None = None
+                parsed_element_content_publish_paths: Sequence[str] | None = None
+                if active_incremental_plan is not None:
+                    reused_file_ir_shards, file_ir_content_reuse = (
+                        self._reuse_file_ir_content_artifacts(
+                            repo_name=str(repo_name),
+                            snapshot_id=str(snapshot_id),
+                            current_files=current_files,
+                            incremental_plan=active_incremental_plan,
+                            excluded_paths=[
+                                *file_ir_changed_paths,
+                                *removed_artifact_paths,
+                            ],
+                        )
+                    )
+                    file_ir_content_publish_paths = changed_artifact_paths
+                    parsed_element_content_publish_paths = changed_artifact_paths
+                parsed_element_content_publish = (
+                    self._publish_parsed_element_content_artifacts(
+                        repo_name=str(repo_name),
+                        elements=elements,
+                        current_files=current_files,
+                        paths=parsed_element_content_publish_paths,
+                    )
+                )
+                file_ir_content_publish = self._publish_file_ir_content_artifacts(
+                    repo_name=str(repo_name),
+                    shards=file_ir_shards,
+                    current_files=current_files,
+                    paths=file_ir_content_publish_paths,
+                )
+                embedding_ref_content_publish = (
+                    self._publish_embedding_ref_content_artifacts(
+                        repo_name=str(repo_name),
+                        rows=unit_artifact_rows,
+                        current_files=current_files,
+                        paths=file_ir_content_publish_paths,
+                    )
+                )
+                semantic_fact_content_publish = (
+                    self._publish_semantic_fact_content_artifacts(
+                        repo_name=str(repo_name),
+                        shards=file_ir_shards,
+                        current_files=current_files,
+                        paths=file_ir_content_publish_paths,
+                    )
+                )
                 publish_units_delta = getattr(
                     self.unit_artifact_store, "publish_snapshot_units_delta", None
+                )
+                publish_file_ir_delta = getattr(
+                    self.unit_artifact_store,
+                    "publish_snapshot_file_ir_shards_delta",
+                    None,
                 )
                 if (
                     callable(publish_units_delta)
                     and active_incremental_plan is not None
                     and active_incremental_plan.get("previous_snapshot_id")
                 ):
-                    unit_artifact_persistence = publish_units_delta(
-                        snapshot_id=snapshot_id,
-                        previous_snapshot_id=str(
-                            active_incremental_plan.get("previous_snapshot_id")
+                    unit_artifact_persistence = cast(
+                        dict[str, Any],
+                        publish_units_delta(
+                            snapshot_id=snapshot_id,
+                            previous_snapshot_id=str(
+                                active_incremental_plan.get("previous_snapshot_id")
+                            ),
+                            changed_paths=changed_artifact_paths,
+                            removed_paths=removed_artifact_paths,
+                            elements=unit_artifact_rows,
                         ),
-                        changed_paths=[
-                            normalize_path(str(path))
-                            for path in (
-                                list(
-                                    active_incremental_plan.get("added_paths", []) or []
-                                )
-                                + list(
-                                    active_incremental_plan.get("modified_paths", [])
-                                    or []
-                                )
-                            )
-                            if path
-                        ],
-                        removed_paths=[
-                            normalize_path(str(path))
-                            for path in active_incremental_plan.get("removed_paths", [])
-                            or []
-                            if path
-                        ],
-                        elements=unit_artifact_rows,
+                    )
+                    if callable(publish_file_ir_delta):
+                        unit_artifact_persistence["file_ir_shards"] = cast(
+                            dict[str, Any],
+                            publish_file_ir_delta(
+                                snapshot_id=snapshot_id,
+                                previous_snapshot_id=str(
+                                    active_incremental_plan.get("previous_snapshot_id")
+                                ),
+                                changed_paths=file_ir_changed_paths,
+                                removed_paths=removed_artifact_paths,
+                                shards=file_ir_shards,
+                                reused_shards=reused_file_ir_shards,
+                            ),
+                        )
+                        unit_artifact_persistence["file_ir_shards"][
+                            "content_artifact_reuse"
+                        ] = dict(file_ir_content_reuse)
+                        unit_artifact_persistence["file_ir_shards"][
+                            "content_artifact_publish"
+                        ] = dict(file_ir_content_publish)
+                    unit_artifact_persistence["embedding_ref_artifacts"] = dict(
+                        embedding_ref_content_publish
+                    )
+                    unit_artifact_persistence["semantic_fact_artifacts"] = dict(
+                        semantic_fact_content_publish
+                    )
+                    unit_artifact_persistence["parsed_element_artifacts"] = dict(
+                        parsed_element_content_publish
                     )
                 else:
-                    unit_artifact_persistence = {"mode": "full"}
+                    unit_artifact_persistence: dict[str, Any] = {"mode": "full"}
                     self.unit_artifact_store.replace_snapshot_units(
                         snapshot_id=snapshot_id,
                         elements=unit_artifact_rows,
+                    )
+                    replace_file_ir_shards = getattr(
+                        self.unit_artifact_store,
+                        "replace_snapshot_file_ir_shards",
+                        None,
+                    )
+                    if callable(replace_file_ir_shards):
+                        unit_artifact_persistence["file_ir_shards"] = cast(
+                            dict[str, Any],
+                            replace_file_ir_shards(
+                                snapshot_id=snapshot_id,
+                                shards=file_ir_shards,
+                            ),
+                        )
+                        unit_artifact_persistence["file_ir_shards"][
+                            "content_artifact_publish"
+                        ] = dict(file_ir_content_publish)
+                    unit_artifact_persistence["embedding_ref_artifacts"] = dict(
+                        embedding_ref_content_publish
+                    )
+                    unit_artifact_persistence["semantic_fact_artifacts"] = dict(
+                        semantic_fact_content_publish
+                    )
+                    unit_artifact_persistence["parsed_element_artifacts"] = dict(
+                        parsed_element_content_publish
                     )
             with self._profile_store_surface(
                 pipeline_profile, "relational_fact", snapshot_db_path

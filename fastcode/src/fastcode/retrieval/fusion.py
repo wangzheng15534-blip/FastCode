@@ -1,7 +1,7 @@
 """Pure fusion functions extracted from HybridRetriever.
 
 All functions are stateless and depend only on stdlib (math, re, collections)
-plus fastcode.retrieval.core.scoring and fastcode.schemas.core_types.
+plus fastcode.retrieval.scoring and fastcode.retrieval.contracts.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import math
 from typing import Any, cast
 
 from fastcode.ir.element import CodeElement, CodeElementMeta, serialize_code_element
-from fastcode.schemas.core_types import FusionConfig
+from fastcode.retrieval.contracts import FusionConfig
 
 from .scoring import (
     clone_result_row,

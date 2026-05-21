@@ -768,11 +768,21 @@ class CodeEmbedder:
             embedding_text = existing.get("embedding_text")
             if embedding is None or embedding_text != text:
                 continue
+            embedding_array = np.asarray(embedding, dtype=np.float32)
+            if embedding_array.ndim != 1:
+                continue
+            expected_dim = int(
+                getattr(self, "_configured_embedding_dim", 0)
+                or getattr(self, "_embedding_dim", 0)
+                or 0
+            )
+            if expected_dim and embedding_array.size != expected_dim:
+                continue
             artifact_ref = existing.get("embedding_artifact_ref")
             self._attach_embedding_to_element(
                 element,
                 text=text,
-                embedding=np.asarray(embedding, dtype=np.float32),
+                embedding=embedding_array,
                 fingerprint_payload=dict(cast(Mapping[str, Any], existing_fingerprint)),
                 artifact_ref=artifact_ref if isinstance(artifact_ref, str) else None,
             )

@@ -10,7 +10,7 @@ from typing import Any
 from anthropic import Anthropic
 from openai import OpenAI
 
-from ..llm_utils import openai_chat_completion
+from .llm import openai_chat_completion
 
 
 @dataclass

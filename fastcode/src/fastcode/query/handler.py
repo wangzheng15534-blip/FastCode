@@ -12,8 +12,10 @@ import traceback
 from collections.abc import Callable, Generator, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
-from ..retrieval.core import snapshot as _snapshot
-from ..retrieval.core.agent_context import (
+import fastcode.retrieval.snapshot as _snapshot
+
+from ..query.retriever import HybridRetriever
+from ..retrieval.agent_context import (
     DistillationRecord,
     ToolObservation,
     TurnIntent,
@@ -21,7 +23,7 @@ from ..retrieval.core.agent_context import (
     compute_risk_state,
     promote_observations,
 )
-from ..retrieval.core.context_compiler import (
+from ..retrieval.context_compiler import (
     COMPILER_FINGERPRINT,
     DEFAULT_BUDGET_FINGERPRINT,
     DEFAULT_DISTILLATION_PROMPT_FINGERPRINT,
@@ -35,7 +37,6 @@ from ..retrieval.core.context_compiler import (
     build_turn_plan,
     compile_working_memory,
 )
-from ..retrieval.hybrid import HybridRetriever
 from ..semantic.symbol_index import SnapshotSymbolIndex
 from ..store.cache import CacheManager
 from ..store.manifest import ManifestStore

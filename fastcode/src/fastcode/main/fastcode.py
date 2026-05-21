@@ -21,11 +21,11 @@ from urllib.parse import urlsplit, urlunsplit
 
 from rank_bm25 import BM25Okapi
 
+import fastcode.retrieval.snapshot as _snapshot
+
 from ..graph.build import CodeGraphBuilder
-from ..graph_runtime import LadybugGraphRuntime
 from ..indexing.doc_ingester import KeyDocIngester
 from ..indexing.embedder import CodeEmbedder
-from ..indexing.global_builder import GlobalIndexBuilder
 from ..indexing.indexer import CodeIndexer
 from ..indexing.loader import RepositoryLoader
 from ..indexing.parser import CodeParser
@@ -34,7 +34,9 @@ from ..indexing.projection import ProjectionService
 from ..indexing.projection_transform import ProjectionTransformer
 from ..indexing.publishing import PublishingService
 from ..indexing.redo_worker import RedoWorker
+from ..indexing.semantic_helper_runner import run_helper_command
 from ..indexing.terminus import TerminusPublisher
+from ..ir.code_status import build_code_status_pack
 from ..ir.element import (
     CodeElement,
     CodeElementMeta,
@@ -42,36 +44,38 @@ from ..ir.element import (
     serialize_code_element,
 )
 from ..ir.graph import IRGraphBuilder
-from ..ir.types import IRSnapshot
-from ..module_resolver import ModuleResolver
+from ..ir.types import IRSnapshot, IRSymbol
 from ..query.answer import AnswerGenerator
 from ..query.handler import QueryPipeline
 from ..query.processor import QueryProcessor
-from ..retrieval.core import snapshot as _snapshot
-from ..retrieval.core.agent_context import (
+from ..query.retriever import HybridRetriever
+from ..retrieval.agent_context import (
     ContextBundle,
     HandoffArtifact,
     TurnJournal,
     WorkingMemoryArtifact,
 )
-from ..retrieval.core.context_compiler import (
+from ..retrieval.context_compiler import (
     build_activation_record,
     build_handoff_from_working_memory,
     expand_bundle_source_ref,
 )
-from ..retrieval.core.context_compiler import (
+from ..retrieval.context_compiler import (
     build_context_bundle as build_context_bundle_artifact,
 )
-from ..retrieval.core.context_compiler import (
+from ..retrieval.context_compiler import (
     render_context_bundle as render_context_bundle_artifact,
 )
-from ..retrieval.hybrid import HybridRetriever
 from ..schemas.config import FastCodeConfig, config_from_mapping
+from ..scip.global_builder import GlobalIndexBuilder
+from ..scip.module_resolver import ModuleResolver
 from ..scip.symbol_resolver import SymbolResolver
-from ..semantic import build_default_semantic_resolver_registry
+from ..semantic.resolvers.registry import build_default_semantic_resolver_registry
 from ..semantic.symbol_index import SnapshotSymbolIndex
 from ..store.cache import CacheManager
+from ..store.file_artifacts import FileArtifactStore
 from ..store.index_run import IndexRunStore
+from ..store.infrastructure.graph_runtime import LadybugGraphRuntime
 from ..store.manifest import ManifestStore
 from ..store.pg_retrieval import PgRetrievalStore
 from ..store.projection import ProjectionStore
@@ -86,15 +90,15 @@ from ..store.records import (
 from ..store.snapshot import SnapshotStore
 from ..store.unit_artifacts import UnitArtifactStore
 from ..store.vector import VectorStore
-from ..utils import (
-    as_float32_matrix,
+from ..store.vector_math import as_float32_matrix
+from ..utils.clock import utc_now
+from ..utils.filesystem import ensure_dir, normalize_path
+from ..utils.json import safe_jsonable
+from .config import (
     config_to_legacy_dict,
-    ensure_dir,
     load_runtime_config,
-    normalize_path,
     prepare_runtime_config_mapping,
     setup_logging,
-    utc_now,
 )
 
 _STATE_LOCK_LOGGER = logging.getLogger(f"{__name__}.state_lock")
@@ -408,6 +412,7 @@ class FastCode:
         self.manifest_store = ManifestStore(self.snapshot_store.db_runtime)
         self.index_run_store = IndexRunStore(self.snapshot_store.db_runtime)
         self.unit_artifact_store = UnitArtifactStore(self.snapshot_store.db_runtime)
+        self.file_artifact_store = FileArtifactStore(self.snapshot_store.db_runtime)
         self.terminus_publisher = TerminusPublisher(self.config)
         self.projection_transformer = ProjectionTransformer(self.config)
         self.projection_store = ProjectionStore(self.config)
@@ -432,7 +437,9 @@ class FastCode:
             self._redo_worker = RedoWorker(self, poll_interval_seconds=poll_interval)
             self._redo_worker.start()
 
-        self.semantic_resolver_registry = build_default_semantic_resolver_registry()
+        self.semantic_resolver_registry = build_default_semantic_resolver_registry(
+            command_runner=run_helper_command
+        )
 
         # State (must exist before IndexPipeline wiring)
         self.repo_loaded: bool = False
@@ -448,6 +455,7 @@ class FastCode:
             manifest_store=self.manifest_store,
             index_run_store=self.index_run_store,
             unit_artifact_store=self.unit_artifact_store,
+            file_artifact_store=self.file_artifact_store,
             snapshot_symbol_index=self.snapshot_symbol_index,
             vector_store=self.vector_store,
             embedder=self.embedder,
@@ -1178,6 +1186,28 @@ class FastCode:
             for record in self.snapshot_store.list_repo_ref_records(repo_name)
         ]
 
+    @staticmethod
+    def _ir_symbol_payload(symbol: IRSymbol) -> dict[str, Any]:
+        return {
+            "symbol_id": symbol.symbol_id,
+            "external_symbol_id": symbol.external_symbol_id,
+            "path": symbol.path,
+            "display_name": symbol.display_name,
+            "kind": symbol.kind,
+            "language": symbol.language,
+            "qualified_name": symbol.qualified_name,
+            "signature": symbol.signature,
+            "start_line": symbol.start_line,
+            "start_col": symbol.start_col,
+            "end_line": symbol.end_line,
+            "end_col": symbol.end_col,
+            "source_priority": symbol.source_priority,
+            "source_set": sorted(value for value in symbol.source_set if value),
+            "metadata": safe_jsonable(
+                {str(key): item for key, item in symbol.metadata.items()}
+            ),
+        }
+
     def find_symbol(
         self,
         snapshot_id: str,
@@ -1195,14 +1225,14 @@ class FastCode:
         if callable(load_record):
             record = load_record(snapshot_id, resolved)
             if isinstance(record, Mapping):
-                return {str(key): value for key, value in record.items()}
+                return safe_jsonable({str(key): value for key, value in record.items()})
 
         snapshot = self.snapshot_store.load_snapshot(snapshot_id)
         if not snapshot:
             return None
         for symbol in snapshot.symbols:
             if symbol.symbol_id == resolved:
-                return symbol.to_dict()
+                return self._ir_symbol_payload(symbol)
         return None
 
     @staticmethod
@@ -1308,6 +1338,31 @@ class FastCode:
     def get_snapshot_manifest(self, snapshot_id: str) -> dict[str, Any] | None:
         record = self.manifest_store.get_snapshot_manifest_record(snapshot_id)
         return self._manifest_payload(record) if record is not None else None
+
+    def get_code_status_pack(
+        self,
+        snapshot_id: str,
+        *,
+        include_graph_facts: bool = True,
+    ) -> dict[str, Any]:
+        snapshot_record = self.snapshot_store.get_snapshot_record(snapshot_id)
+        if snapshot_record is None:
+            raise RuntimeError(f"snapshot not found: {snapshot_id}")
+        snapshot = self.snapshot_store.load_snapshot(snapshot_id)
+        if snapshot is None:
+            raise RuntimeError(f"snapshot payload not found: {snapshot_id}")
+        ir_graphs = (
+            self.snapshot_store.load_ir_graphs(snapshot_id)
+            if include_graph_facts
+            else None
+        )
+        return build_code_status_pack(
+            snapshot,
+            artifact_key=snapshot_record.artifact_key,
+            manifest=self.get_snapshot_manifest(snapshot_id),
+            ir_graphs=ir_graphs,
+            include_graph_facts=include_graph_facts,
+        )
 
     def get_scip_artifact_ref(self, snapshot_id: str) -> dict[str, Any] | None:
         record = self.snapshot_store.get_scip_artifact_ref_record(snapshot_id)

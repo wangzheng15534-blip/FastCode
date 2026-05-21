@@ -10,10 +10,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..module_resolver import ModuleResolver
+from .module_resolver import ModuleResolver
 
 if TYPE_CHECKING:
-    from ..indexing.global_builder import GlobalIndexBuilder
+    from .global_builder import GlobalIndexBuilder
 
 
 class SymbolResolver:

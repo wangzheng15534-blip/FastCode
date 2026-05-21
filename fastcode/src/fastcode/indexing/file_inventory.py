@@ -11,12 +11,9 @@ from typing import Any
 
 from git import InvalidGitRepositoryError, NoSuchPathError, Repo
 
-from ..utils import (
-    compute_file_hash,
-    get_language_from_extension,
-    normalize_path,
-    should_ignore_path,
-)
+from ..utils.filesystem import compute_file_hash, normalize_path
+from ..utils.paths import get_language_from_extension
+from .ignore import should_ignore_path
 
 _PACKAGE_SCOPE_MARKERS = (
     "pyproject.toml",

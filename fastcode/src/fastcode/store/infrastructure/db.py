@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastcode.schemas.core_types import SnapshotRecord
+from fastcode.store.contracts import SnapshotRecord
 
 
 def load_snapshot_record(

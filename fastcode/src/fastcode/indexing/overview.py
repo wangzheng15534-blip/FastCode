@@ -9,9 +9,10 @@ from typing import Any
 from anthropic import Anthropic
 from openai import OpenAI
 
-from ..llm_utils import openai_chat_completion
-from ..retrieval.core import repo_analysis as _repo_analysis
-from ..utils._compat import get_language_from_extension
+import fastcode.retrieval.repo_analysis as _repo_analysis
+
+from ..query.llm import openai_chat_completion
+from ..utils.paths import get_language_from_extension
 
 
 class RepositoryOverviewGenerator:

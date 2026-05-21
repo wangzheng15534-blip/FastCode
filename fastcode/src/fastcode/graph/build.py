@@ -17,15 +17,15 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import networkx as nx
 import tqdm
 
-from fastcode.indexing.call_extractor import CallExtractor
+from fastcode.graph.call_extractor import CallExtractor
 from fastcode.ir.element import (
     CodeElement,
     deserialize_code_element,
     serialize_code_element,
 )
-from fastcode.module_resolver import ModuleResolver
-from fastcode.path_utils import file_path_to_module_path
-from fastcode.utils import ensure_dir
+from fastcode.scip.module_resolver import ModuleResolver
+from fastcode.utils.filesystem import ensure_dir
+from fastcode.utils.path_utils import file_path_to_module_path
 
 if TYPE_CHECKING:
     from fastcode.scip.symbol_resolver import SymbolResolver

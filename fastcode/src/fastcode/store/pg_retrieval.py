@@ -11,9 +11,9 @@ from typing import Any, cast
 
 import numpy as np
 
-from ..db_runtime import DBRuntime, pgvector_adapter_available
-from ..utils import as_float32_matrix, as_float32_vector
+from .infrastructure.runtime import DBRuntime, pgvector_adapter_available
 from .records import PgRetrievalElementRecord, PgRetrievalResultRecord
+from .vector_math import as_float32_matrix, as_float32_vector
 
 
 class PgRetrievalStore:

@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from .materialization import (
+from ..utils.materialization import (
     BOUNDARY_VECTOR_LIST_CONVERSION,
     increment_materialization_boundary,
 )

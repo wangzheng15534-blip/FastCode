@@ -9,7 +9,7 @@ from typing import Any, NamedTuple
 
 import numpy as np
 
-from fastcode.schemas.core_types import IterationConfig
+from fastcode.retrieval.contracts import IterationConfig
 
 # ---------------------------------------------------------------------------
 # AdaptiveParams -- result of parameter initialization

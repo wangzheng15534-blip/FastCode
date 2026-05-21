@@ -11,8 +11,9 @@ import urllib.request
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
+import fastcode.retrieval.graph_build as _graph_build
+
 from ..ir.types import IRRelation, IRSnapshot
-from ..retrieval.core import graph_build as _graph_build
 from ..utils.hashing import deterministic_event_id
 
 

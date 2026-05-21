@@ -12,6 +12,6 @@ extend-select = ["TID"]
 "fastcode.mcp".msg = "store.infrastructure must stay independent of transport shells."
 "fastcode.query".msg = "store.infrastructure must stay independent of query orchestration."
 "fastcode.retrieval".msg = "store.infrastructure must stay independent of retrieval orchestration."
-"fastcode.schemas.api".msg = "store.infrastructure may use frozen schemas.core_types, not Pydantic API schemas."
+"fastcode.schemas".msg = "store.infrastructure must not depend on Pydantic interface schemas."
 "fastcode.scip".msg = "store.infrastructure must stay independent of SCIP adapters."
 "fastcode.semantic".msg = "store.infrastructure must stay independent of semantic adapters."

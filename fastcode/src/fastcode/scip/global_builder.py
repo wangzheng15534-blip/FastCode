@@ -11,7 +11,7 @@ import os
 from typing import Any
 
 from ..ir.element import CodeElement
-from ..path_utils import file_path_to_module_path, normalize_repo_root
+from ..utils.path_utils import file_path_to_module_path, normalize_repo_root
 
 
 class GlobalIndexBuilder:

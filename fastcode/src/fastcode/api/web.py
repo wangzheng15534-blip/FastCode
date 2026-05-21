@@ -33,13 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from fastcode.api.cors import cors_middleware_options
-from fastcode.api.serialization import (
-    serialize_dialogue_history,
-    serialize_query_sources,
-)
-from fastcode.main.fastcode import FastCode
-from fastcode.schemas.api import (
+from fastcode.api.contracts import (
     AgentContextHandoffRequest,
     ContextActivationRequest,
     DeleteReposRequest,
@@ -53,6 +47,12 @@ from fastcode.schemas.api import (
     QueryResponse,
     StatusResponse,
 )
+from fastcode.api.cors import cors_middleware_options
+from fastcode.api.serialization import (
+    serialize_dialogue_history,
+    serialize_query_sources,
+)
+from fastcode.main.fastcode import FastCode
 from fastcode.utils.archive import (
     UnsafeArchiveError,
     safe_extract_zip,

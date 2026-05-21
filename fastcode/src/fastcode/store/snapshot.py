@@ -17,7 +17,6 @@ from typing import Any, cast
 
 import numpy as np
 
-from ..db_runtime import DBRuntime
 from ..ir.types import (
     IRAttachment,
     IRCodeUnit,
@@ -30,7 +29,9 @@ from ..ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from ..utils import ensure_dir, normalize_path, safe_jsonable, utc_now
+from ..utils.clock import utc_now
+from ..utils.filesystem import ensure_dir, normalize_path
+from ..utils.json import safe_jsonable
 from ..utils.materialization import (
     BOUNDARY_GRAPH_FULL_LOAD,
     BOUNDARY_JSON_DECODE,
@@ -39,6 +40,7 @@ from ..utils.materialization import (
     BOUNDARY_SNAPSHOT_FULL_LOAD,
     increment_materialization_boundary,
 )
+from .infrastructure.runtime import DBRuntime
 from .records import (
     OutboxEventRecord,
     RedoTaskRecord,
@@ -482,6 +484,155 @@ class SnapshotStore:
             )
 
         return [row for _index, row in sorted(enumerate(rows), key=sequence_key)]
+
+    @classmethod
+    def file_ir_shard_payloads(
+        cls,
+        snapshot: IRSnapshot,
+        *,
+        paths: Sequence[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Build explicit per-file IR shard payloads for incremental stores."""
+        path_filter = (
+            {normalize_path(str(path)) for path in paths if str(path)}
+            if paths is not None
+            else None
+        )
+
+        def include_path(path_key: str) -> bool:
+            return path_filter is None or path_key in path_filter
+
+        units_by_path: dict[str, list[dict[str, Any]]] = {}
+        unit_path_by_id: dict[str, str] = {}
+        content_hash_by_path: dict[str, str] = {}
+        for sequence_no, unit in enumerate(snapshot.units):
+            path_key = normalize_path(cls._snapshot_path_key(unit.path, unit.unit_id))
+            unit_path_by_id[unit.unit_id] = path_key
+            if not include_path(path_key):
+                continue
+            unit_payload = cls._code_unit_payload(unit)
+            units_by_path.setdefault(path_key, []).append(
+                cls._payload_with_sequence(unit_payload, sequence_no)
+            )
+            metadata = cls._json_mapping_payload(unit.metadata)
+            content_hash = metadata.get("content_hash") or metadata.get("blob_oid")
+            if unit.kind == "file" and content_hash is not None:
+                content_hash_by_path[path_key] = str(content_hash)
+
+        supports_by_path: dict[str, list[dict[str, Any]]] = {}
+        for sequence_no, support in enumerate(snapshot.supports):
+            path_key = normalize_path(
+                cls._snapshot_path_key(
+                    support.path or unit_path_by_id.get(support.unit_id),
+                    support.support_id,
+                )
+            )
+            if not include_path(path_key):
+                continue
+            supports_by_path.setdefault(path_key, []).append(
+                cls._payload_with_sequence(
+                    cls._unit_support_payload(support),
+                    sequence_no,
+                )
+            )
+
+        relations_by_path: dict[str, list[dict[str, Any]]] = {}
+        for sequence_no, relation in enumerate(snapshot.relations):
+            path_key = normalize_path(
+                cls._snapshot_path_key(
+                    unit_path_by_id.get(relation.src_unit_id)
+                    or unit_path_by_id.get(relation.dst_unit_id),
+                    relation.relation_id,
+                )
+            )
+            if not include_path(path_key):
+                continue
+            relations_by_path.setdefault(path_key, []).append(
+                cls._payload_with_sequence(
+                    cls._relation_payload(relation),
+                    sequence_no,
+                )
+            )
+
+        embeddings_by_path: dict[str, list[dict[str, Any]]] = {}
+        for sequence_no, embedding in enumerate(snapshot.embeddings):
+            path_key = normalize_path(
+                cls._snapshot_path_key(
+                    unit_path_by_id.get(embedding.unit_id),
+                    embedding.embedding_id,
+                )
+            )
+            if not include_path(path_key):
+                continue
+            embeddings_by_path.setdefault(path_key, []).append(
+                cls._payload_with_sequence(
+                    cls._embedding_payload_without_vector(
+                        embedding,
+                        vector_ref=None,
+                    ),
+                    sequence_no,
+                )
+            )
+
+        path_keys = sorted(
+            set(units_by_path)
+            | set(supports_by_path)
+            | set(relations_by_path)
+            | set(embeddings_by_path)
+        )
+        return [
+            {
+                "schema_version": "fastcode.file_ir_shard.v1",
+                "snapshot_id": snapshot.snapshot_id,
+                "repo_name": snapshot.repo_name,
+                "relative_path": path_key,
+                "content_hash": content_hash_by_path.get(path_key),
+                "units": units_by_path.get(path_key, []),
+                "supports": supports_by_path.get(path_key, []),
+                "relations": relations_by_path.get(path_key, []),
+                "embeddings": embeddings_by_path.get(path_key, []),
+            }
+            for path_key in path_keys
+        ]
+
+    @classmethod
+    def file_ir_shard_paths_for_paths(
+        cls,
+        snapshot: IRSnapshot,
+        paths: Sequence[str],
+        *,
+        removed_paths: Sequence[str] | None = None,
+    ) -> list[str]:
+        """Return file IR shard paths that must be rewritten for changed paths."""
+        requested = {normalize_path(str(path)) for path in paths if str(path)}
+        removed = {
+            normalize_path(str(path)) for path in removed_paths or [] if str(path)
+        }
+        affected = requested | removed
+        if not affected:
+            return []
+        unit_path_by_id = {
+            unit.unit_id: normalize_path(
+                cls._snapshot_path_key(unit.path, unit.unit_id)
+            )
+            for unit in snapshot.units
+        }
+        if removed:
+            return sorted(set(unit_path_by_id.values()))
+        rewrite_paths = set(requested)
+        for relation in snapshot.relations:
+            src_path = unit_path_by_id.get(relation.src_unit_id)
+            dst_path = unit_path_by_id.get(relation.dst_unit_id)
+            if src_path not in affected and dst_path not in affected:
+                continue
+            owner_path = normalize_path(
+                cls._snapshot_path_key(
+                    src_path or dst_path,
+                    relation.relation_id,
+                )
+            )
+            rewrite_paths.add(owner_path)
+        return sorted(rewrite_paths)
 
     @classmethod
     def _cleanup_shard_dir(cls, directory: str, active_files: set[str]) -> None:
@@ -4097,7 +4248,7 @@ class SnapshotStore:
             results.append(entry)
         return results
 
-    def claim_redo_task(self) -> dict[str, Any] | None:
+    def claim_redo_task_record(self) -> RedoTaskRecord | None:
         if self.db_runtime.backend != "postgres":
             return None
         now = utc_now()
@@ -4131,11 +4282,21 @@ class SnapshotStore:
                 (now, task_record.task_id),
             )
             conn.commit()
-        task = self._redo_task_payload(task_record)
-        task["status"] = "running"
-        task["attempts"] = task_record.attempts + 1
-        task["updated_at"] = now
-        return task
+        return RedoTaskRecord(
+            task_id=task_record.task_id,
+            task_type=task_record.task_type,
+            payload_json=task_record.payload_json,
+            status="running",
+            attempts=task_record.attempts + 1,
+            last_error=task_record.last_error,
+            next_attempt_at=task_record.next_attempt_at,
+            created_at=task_record.created_at,
+            updated_at=now,
+        )
+
+    def claim_redo_task(self) -> dict[str, Any] | None:
+        record = self.claim_redo_task_record()
+        return self._redo_task_payload(record) if record is not None else None
 
     def mark_redo_task_done(self, task_id: str) -> None:
         if self.db_runtime.backend != "postgres":
@@ -4204,7 +4365,7 @@ class SnapshotStore:
         if self.db_runtime.backend != "postgres":
             return False
         with self.db_runtime.connect() as conn:
-            self.db_runtime.execute(
+            cursor = self.db_runtime.execute(
                 conn,
                 """
                 INSERT INTO publish_outbox (
@@ -4216,9 +4377,9 @@ class SnapshotStore:
                 (event_id, event_type, payload, snapshot_id, max_attempts, utc_now()),
             )
             conn.commit()
-        return True
+        return int(getattr(cursor, "rowcount", 0) or 0) > 0
 
-    def claim_outbox_event(self, limit: int = 10) -> list[dict[str, Any]]:
+    def claim_outbox_event_records(self, limit: int = 10) -> list[OutboxEventRecord]:
         """Claim pending or retryable failed events from the outbox."""
         if self.db_runtime.backend != "postgres":
             return []
@@ -4239,7 +4400,7 @@ class SnapshotStore:
             if not rows:
                 conn.commit()
                 return []
-            claimed: list[dict[str, Any]] = []
+            claimed: list[OutboxEventRecord] = []
             for row in rows:
                 event_record = self._row_to_outbox_event_record(row)
                 if event_record is None:
@@ -4253,12 +4414,29 @@ class SnapshotStore:
                     """,
                     (now, event_record.event_id),
                 )
-                event = self._outbox_event_payload(event_record)
-                event["status"] = "in_progress"
-                event["last_attempt_at"] = now
-                claimed.append(event)
+                claimed.append(
+                    OutboxEventRecord(
+                        event_id=event_record.event_id,
+                        event_type=event_record.event_type,
+                        payload=event_record.payload,
+                        snapshot_id=event_record.snapshot_id,
+                        status="in_progress",
+                        attempts=event_record.attempts,
+                        max_attempts=event_record.max_attempts,
+                        created_at=event_record.created_at,
+                        last_attempt_at=now,
+                        error_message=event_record.error_message,
+                    )
+                )
             conn.commit()
         return claimed
+
+    def claim_outbox_event(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Claim pending or retryable failed events from the outbox."""
+        return [
+            self._outbox_event_payload(record)
+            for record in self.claim_outbox_event_records(limit=limit)
+        ]
 
     def mark_outbox_event_done(self, event_id: str) -> None:
         """Mark an outbox event as published."""

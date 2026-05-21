@@ -29,13 +29,7 @@ import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from fastcode.api.cors import cors_middleware_options
-from fastcode.api.serialization import (
-    serialize_dialogue_history,
-    serialize_query_sources,
-)
-from fastcode.main.fastcode import FastCode
-from fastcode.schemas.api import (
+from fastcode.api.contracts import (
     AgentContextHandoffRequest,
     ContextActivationRequest,
     DeleteReposRequest,
@@ -54,13 +48,19 @@ from fastcode.schemas.api import (
     QuerySnapshotRequest,
     StatusResponse,
 )
+from fastcode.api.cors import cors_middleware_options
+from fastcode.api.serialization import (
+    serialize_dialogue_history,
+    serialize_query_sources,
+)
+from fastcode.main.fastcode import FastCode
 from fastcode.utils.archive import (
     UnsafeArchiveError,
     safe_extract_zip,
     safe_repo_name_from_archive,
 )
 
-# Shared request/response schemas live in fastcode.schemas.api.
+# Shared request/response contracts live in fastcode.api.contracts.
 
 # Initialize FastAPI app
 
@@ -893,6 +893,27 @@ async def get_snapshot_manifest(snapshot_id: str):
     if not manifest:
         raise HTTPException(status_code=404, detail="Manifest not found")
     return {"status": "success", "manifest": manifest}
+
+
+@app.get("/code-status/{snapshot_id}")
+async def get_code_status_pack(
+    snapshot_id: str,
+    include_graph_facts: bool = True,
+):
+    """Get a DocKG-facing code_status_pack.v0 artifact for a snapshot."""
+    fastcode = _ensure_fastcode_initialized()
+    try:
+        pack = await asyncio.to_thread(
+            fastcode.get_code_status_pack,
+            snapshot_id,
+            include_graph_facts=include_graph_facts,
+        )
+        return {"status": "success", "pack": pack}
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Code status pack export failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/scip/artifacts/{snapshot_id}")

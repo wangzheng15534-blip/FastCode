@@ -1,52 +1,13 @@
-"""Core frozen dataclasses for the FP refactoring.
-
-Three Golden Rules:
-1. Pydantic Stops at the Door -- no pydantic imports in core/
-2. Database Trusts Dataclasses -- all return types are frozen dataclasses
-3. Explicit Translation -- explicit field mapping, no **kwargs unpacking
-"""
-
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+"""Frozen retrieval contracts owned by the retrieval domain."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
-
-# ---------------------------------------------------------------------------
-# ScipKind / ScipRole -- string constants
-# ---------------------------------------------------------------------------
+from typing import Any, cast
 
 
-class ScipKind:
-    """SCIP symbol kind constants."""
-
-    FUNCTION = "Function"
-    METHOD = "Method"
-    CLASS = "Class"
-    MODULE = "Module"
-    INTERFACE = "Interface"
-    ENUM = "Enum"
-    VARIABLE = "Variable"
-    CONSTANT = "Constant"
-    PROPERTY = "Property"
-    TYPE = "Type"
-    UNKNOWN = "Unknown"
-
-
-class ScipRole:
-    """SCIP symbol occurrence role constants."""
-
-    DEFINITION = "Definition"
-    REFERENCE = "Reference"
-    IMPORT = "Import"
-    WRITE_ACCESS = "WriteAccess"
-    FORWARD_DEFINITION = "ForwardDefinition"
-
-
-# ---------------------------------------------------------------------------
-# Hit -- retrieval result with scores and provenance
-# ---------------------------------------------------------------------------
+def _empty_payload() -> dict[str, Any]:
+    return {}
 
 
 @dataclass(frozen=True)
@@ -63,31 +24,20 @@ class Hit:
     graph_score: float = 0.0
     total_score: float = 0.0
     source: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=_empty_payload)
     projected_only: bool = False
     llm_selected: bool = False
     agent_found: bool = False
 
-    # -- factory / converter -------------------------------------------------
-
     @classmethod
     def from_retrieval_row(cls, row: dict[str, Any]) -> Hit:
-        """Construct from the Dict[str, Any] format used by ``retriever.py``.
-
-        Expected row structure::
-
-            {
-                "element": {"id": ..., "type": ..., "name": ..., "metadata": {...}},
-                "semantic_score": ...,
-                "keyword_score": ...,
-                "total_score": ...,
-                "projected_only": ...,
-                "llm_file_selected": ...,
-                "agent_found": ...,
-            }
-        """
-        elem = (
-            (row.get("element") or {}) if isinstance(row.get("element"), dict) else {}
+        raw_elem = row.get("element")
+        elem = cast(dict[str, Any], raw_elem) if isinstance(raw_elem, dict) else {}
+        raw_metadata = elem.get("metadata")
+        metadata = (
+            dict(cast(dict[str, Any], raw_metadata))
+            if isinstance(raw_metadata, dict)
+            else {}
         )
         return cls(
             element_id=str(elem.get("id") or ""),
@@ -100,14 +50,13 @@ class Hit:
             graph_score=float(row.get("graph_score") or 0.0),
             total_score=float(row.get("total_score") or 0.0),
             source=str(row.get("source") or ""),
-            metadata=dict(elem.get("metadata") or {}),
+            metadata=metadata,
             projected_only=bool(row.get("projected_only")),
             llm_selected=bool(row.get("llm_file_selected")),
             agent_found=bool(row.get("agent_found")),
         )
 
     def to_retrieval_row(self) -> dict[str, Any]:
-        """Convert back to the dict format consumed by retriever.py."""
         return {
             "element": {
                 "id": self.element_id,
@@ -129,25 +78,6 @@ class Hit:
 
 
 @dataclass(frozen=True)
-class QuerySourceRecord:
-    """Typed source citation record used at API/query response boundaries."""
-
-    repository: str
-    file: str
-    name: str
-    source_type: str
-    lines: str
-    start_line: int
-    end_line: int
-    score: float
-
-
-# ---------------------------------------------------------------------------
-# FusionConfig -- adaptive fusion parameters
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
 class FusionConfig:
     """Adaptive fusion hyper-parameters."""
 
@@ -160,7 +90,6 @@ class FusionConfig:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> FusionConfig:
-        """Construct from a dict with explicit field mapping."""
         return cls(
             alpha_base=float(d["alpha_base"]) if "alpha_base" in d else cls.alpha_base,
             alpha_min=float(d["alpha_min"]) if "alpha_min" in d else cls.alpha_min,
@@ -171,14 +100,9 @@ class FusionConfig:
         )
 
 
-# ---------------------------------------------------------------------------
-# FusionWeights -- cross-collection weights
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class FusionWeights:
-    """Weights for cross-collection (code + doc) fusion."""
+    """Weights for cross-collection fusion."""
 
     code_weight: float = 0.7
     doc_weight: float = 0.3
@@ -188,25 +112,15 @@ class FusionWeights:
     rrf_k_doc: float = 60.0
 
 
-# ---------------------------------------------------------------------------
-# RetrievalChannelOutput -- output from one retrieval channel
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class RetrievalChannelOutput:
-    """Output from a single retrieval channel (code or docs)."""
+    """Output from a single retrieval channel."""
 
     collection: str
     semantic_results: tuple[dict[str, Any], ...]
     keyword_results: tuple[dict[str, Any], ...]
     pseudocode_results: tuple[dict[str, Any], ...] = ()
     ranked_results: tuple[dict[str, Any], ...] = ()
-
-
-# ---------------------------------------------------------------------------
-# ElementFilter -- filter criteria
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -217,11 +131,6 @@ class ElementFilter:
     element_type: str | None = None
     file_path: str | None = None
     snapshot_id: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# IterationConfig -- adaptive iteration parameters
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -241,11 +150,6 @@ class IterationConfig:
     max_tokens: int = 4096
 
 
-# ---------------------------------------------------------------------------
-# IterationHistoryEntry -- one round of iteration history
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class IterationHistoryEntry:
     """Metrics captured after a single iteration round."""
@@ -261,22 +165,12 @@ class IterationHistoryEntry:
     budget_usage_pct: float
 
 
-# ---------------------------------------------------------------------------
-# ToolCall -- tool call from LLM
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class ToolCall:
     """A tool invocation requested by the LLM."""
 
     tool: str
-    parameters: dict[str, Any] = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# RoundResult -- parsed LLM round result
-# ---------------------------------------------------------------------------
+    parameters: dict[str, Any] = field(default_factory=_empty_payload)
 
 
 @dataclass(frozen=True)
@@ -289,11 +183,6 @@ class RoundResult:
     reasoning: str
     query_complexity: int | None = None
     should_answer_directly: bool = False
-
-
-# ---------------------------------------------------------------------------
-# IterationMetrics -- final metrics
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -317,17 +206,9 @@ class IterationMetrics:
     efficiency_rating: str
 
 
-# ---------------------------------------------------------------------------
-# IterationState -- immutable state threaded through rounds
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class IterationState:
-    """Immutable state carried across iteration rounds.
-
-    Every mutator returns a *new* ``IterationState`` instance.
-    """
+    """Immutable state carried across iteration rounds."""
 
     round_num: int
     elements: tuple[Hit, ...]
@@ -339,7 +220,6 @@ class IterationState:
     dialogue_history: tuple[dict[str, Any], ...] = ()
 
     def with_elements(self, new_elements: tuple[Hit, ...]) -> IterationState:
-        """Return a new state with ``elements`` replaced."""
         return IterationState(
             round_num=self.round_num,
             elements=new_elements,
@@ -352,7 +232,6 @@ class IterationState:
         )
 
     def with_history_entry(self, entry: IterationHistoryEntry) -> IterationState:
-        """Return a new state with ``entry`` appended to ``history``."""
         return IterationState(
             round_num=self.round_num,
             elements=self.elements,
@@ -365,7 +244,6 @@ class IterationState:
         )
 
     def with_tool_calls(self, calls: tuple[ToolCall, ...]) -> IterationState:
-        """Return a new state with ``calls`` appended to ``tool_call_history``."""
         return IterationState(
             round_num=self.round_num,
             elements=self.elements,
@@ -378,7 +256,6 @@ class IterationState:
         )
 
     def next_round(self) -> IterationState:
-        """Return a new state with ``round_num`` incremented by 1."""
         return IterationState(
             round_num=self.round_num + 1,
             elements=self.elements,
@@ -389,11 +266,6 @@ class IterationState:
             confidence=self.confidence,
             dialogue_history=self.dialogue_history,
         )
-
-
-# ---------------------------------------------------------------------------
-# GenerationInput / GenerationResult
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -427,41 +299,3 @@ class GenerationResult:
     prompt_tokens: int
     summary: str | None = None
     error: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# FileAnalysis / RepoStructure
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class FileAnalysis:
-    """Repository file analysis."""
-
-    total_files: int
-    languages: dict[str, int] = field(default_factory=dict)
-    file_types: dict[str, int] = field(default_factory=dict)
-    key_files: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class SnapshotRecord:
-    """A snapshot metadata row from the database."""
-
-    snapshot_id: str
-    repo_name: str
-    branch: str | None = None
-    commit_id: str | None = None
-    tree_id: str | None = None
-
-
-@dataclass(frozen=True)
-class RepoStructure:
-    """Complete repository overview."""
-
-    repo_name: str
-    summary: str
-    analysis: FileAnalysis
-    has_readme: bool = False
-    readme_content: str | None = None
-    structure_text: str | None = None

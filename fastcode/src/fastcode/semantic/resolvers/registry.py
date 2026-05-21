@@ -92,13 +92,15 @@ class SemanticResolverRegistry:
         ]
 
 
-def build_default_semantic_resolver_registry() -> SemanticResolverRegistry:
+def build_default_semantic_resolver_registry(
+    command_runner: object | None = None,
+) -> SemanticResolverRegistry:
     """Build the default resolver registry.
 
     Each compiler-backed resolver wraps its graph-backed fallback so that
     when external tools are missing, structural evidence is still emitted.
     """
-    return SemanticResolverRegistry(
+    registry = SemanticResolverRegistry(
         [
             PythonSemanticResolver(),
             # JS/TS — compiler-backed with graph fallback
@@ -121,3 +123,9 @@ def build_default_semantic_resolver_registry() -> SemanticResolverRegistry:
             JuliaCompilerResolver(fallback=JuliaSemanticResolver()),
         ]
     )
+    if command_runner is not None:
+        for resolver in registry.all():
+            setter = getattr(resolver, "set_command_runner", None)
+            if callable(setter):
+                setter(command_runner)
+    return registry

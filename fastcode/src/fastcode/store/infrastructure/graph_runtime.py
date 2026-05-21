@@ -12,7 +12,7 @@ import logging
 import re
 from collections.abc import Iterable
 from typing import Any, cast
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,16 @@ class LadybugGraphRuntime:
             ladybug_cfg.get("db_path", "./data/ladybug/fastcode.lb")
         )
         self.postgres_attach_dsn: str = str(ladybug_cfg.get("postgres_attach_dsn", ""))
+        self.postgres_attached = False
+        self.postgres_attach_error: str | None = None
+        if self.postgres_attach_dsn:
+            self._doc_table = "fastcode_design_documents"
+            self._mention_table = "fastcode_mentions"
+            self._mention_rel_table = "fastcode_has_mention"
+        else:
+            self._doc_table = "design_documents"
+            self._mention_table = "mentions"
+            self._mention_rel_table = "has_mention"
         self._conn: Any = None
         if self.enabled:
             self._init()
@@ -68,13 +78,13 @@ class LadybugGraphRuntime:
         # Create one at a time; IF NOT EXISTS prevents errors on re-init.
         node_tables = [
             (
-                "CREATE NODE TABLE IF NOT EXISTS design_documents "
+                f"CREATE NODE TABLE IF NOT EXISTS {self._doc_table} "
                 "(chunk_id STRING, snapshot_id STRING, repo_name STRING, "
                 "path STRING, title STRING, heading STRING, doc_type STRING, "
                 "content STRING, PRIMARY KEY(chunk_id))"
             ),
             (
-                "CREATE NODE TABLE IF NOT EXISTS mentions "
+                f"CREATE NODE TABLE IF NOT EXISTS {self._mention_table} "
                 "(mention_id STRING, chunk_id STRING, symbol_id STRING, "
                 "confidence STRING, PRIMARY KEY(mention_id))"
             ),
@@ -88,11 +98,57 @@ class LadybugGraphRuntime:
         # Create rel table only after both node tables exist.
         try:
             self._conn.execute(
-                "CREATE REL TABLE IF NOT EXISTS has_mention "
-                "(FROM design_documents TO mentions)"
+                f"CREATE REL TABLE IF NOT EXISTS {self._mention_rel_table} "
+                f"(FROM {self._doc_table} TO {self._mention_table})"
             )
         except Exception as e:
             self.logger.warning(f"Ladybug rel table creation failed: {e}")
+
+    @staticmethod
+    def _libpq_conninfo_value(value: str) -> str:
+        if re.fullmatch(r"[A-Za-z0-9_./:@%+=,-]+", value):
+            return value
+        return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+    @classmethod
+    def _postgres_attach_conninfo(cls, dsn: str) -> str:
+        raw = (dsn or "").strip()
+        if "://" not in raw:
+            return raw
+        parsed = urlparse(raw)
+        if parsed.scheme not in {"postgres", "postgresql"}:
+            return raw
+
+        fields: dict[str, str] = {}
+        if parsed.hostname:
+            fields["host"] = unquote(parsed.hostname)
+        elif parsed.path and parsed.netloc.endswith("@"):
+            # libpq accepts Unix socket directories as host values. URLs like
+            # postgresql://user:pass@/var/run/postgresql?dbname=db encode the
+            # socket directory as the path and the database in the query.
+            fields["host"] = unquote(parsed.path)
+        if parsed.port is not None:
+            fields["port"] = str(parsed.port)
+        if parsed.username:
+            fields["user"] = unquote(parsed.username)
+        if parsed.password:
+            fields["password"] = unquote(parsed.password)
+        query = dict(parse_qsl(parsed.query))
+        query_dbname = query.pop("dbname", "") or query.pop("database", "")
+        if query_dbname:
+            fields["dbname"] = unquote(query_dbname)
+        elif parsed.path and not (
+            parsed.hostname is None and parsed.netloc.endswith("@")
+        ):
+            fields["dbname"] = unquote(parsed.path.lstrip("/"))
+        for key, value in query.items():
+            if key and value:
+                fields[key] = unquote(value)
+        return " ".join(
+            f"{key}={cls._libpq_conninfo_value(value)}"
+            for key, value in fields.items()
+            if value
+        )
 
     @staticmethod
     def _sanitize_attach_dsn(dsn: str) -> str:
@@ -112,13 +168,31 @@ class LadybugGraphRuntime:
         # Escape single quotes for SQL literal context.
         return raw.replace("'", "''")
 
+    def _load_postgres_extension(self) -> None:
+        if not self._conn:
+            return
+        try:
+            self._conn.execute("LOAD postgres")
+            return
+        except Exception as load_error:
+            if "has not been installed" not in str(load_error):
+                raise
+        self._conn.execute("INSTALL postgres")
+        self._conn.execute("LOAD postgres")
+
     def _attach_postgres(self, dsn: str) -> None:
         if not self._conn:
             return
         try:
-            safe_dsn = self._sanitize_attach_dsn(dsn)
+            self._load_postgres_extension()
+            attach_dsn = self._postgres_attach_conninfo(dsn)
+            safe_dsn = self._sanitize_attach_dsn(attach_dsn)
             self._conn.execute(f"ATTACH '{safe_dsn}' AS pg (dbtype postgres)")
+            self.postgres_attached = True
+            self.postgres_attach_error = None
         except Exception as e:
+            self.postgres_attached = False
+            self.postgres_attach_error = str(e)
             self.logger.warning(f"Ladybug ATTACH postgres failed: {e}")
 
     def sync_docs(
@@ -135,10 +209,11 @@ class LadybugGraphRuntime:
                 chunk_id: str = c.get("chunk_id", "")
                 # Upsert: delete old node then create new one
                 self._conn.execute(
-                    f"MATCH (d:design_documents {{chunk_id: {_esc(chunk_id)}}}) DELETE d"
+                    f"MATCH (d:{self._doc_table} "
+                    f"{{chunk_id: {_esc(chunk_id)}}}) DELETE d"
                 )
                 self._conn.execute(
-                    "CREATE (d:design_documents {"
+                    f"CREATE (d:{self._doc_table} {{"
                     f"chunk_id: {_esc(chunk_id)}, "
                     f"snapshot_id: {_esc(c.get('snapshot_id'))}, "
                     f"repo_name: {_esc(c.get('repo_name'))}, "
@@ -154,10 +229,11 @@ class LadybugGraphRuntime:
                 mention_id = f"{m.get('chunk_id', '')}:{m.get('symbol_id', '')}"
                 # Upsert: delete old then create new
                 self._conn.execute(
-                    f"MATCH (mt:mentions {{mention_id: {_esc(mention_id)}}}) DELETE mt"
+                    f"MATCH (mt:{self._mention_table} "
+                    f"{{mention_id: {_esc(mention_id)}}}) DELETE mt"
                 )
                 self._conn.execute(
-                    "CREATE (mt:mentions {"
+                    f"CREATE (mt:{self._mention_table} {{"
                     f"mention_id: {_esc(mention_id)}, "
                     f"chunk_id: {_esc(m.get('chunk_id'))}, "
                     f"symbol_id: {_esc(m.get('symbol_id'))}, "
@@ -175,7 +251,8 @@ class LadybugGraphRuntime:
             return []
         try:
             result = self._conn.execute(
-                f"MATCH (d:design_documents {{snapshot_id: {_esc(snapshot_id)}}}) "
+                f"MATCH (d:{self._doc_table} "
+                f"{{snapshot_id: {_esc(snapshot_id)}}}) "
                 "RETURN d.chunk_id, d.heading, d.doc_type, d.content"
             )
             rows: list[dict[str, Any]] = []

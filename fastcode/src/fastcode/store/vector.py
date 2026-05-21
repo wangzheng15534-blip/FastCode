@@ -19,7 +19,7 @@ import faiss
 import numpy as np
 
 from ..ir.element import CodeElementMeta
-from ..utils import as_float32_matrix, as_float32_vector, ensure_dir
+from ..utils.filesystem import ensure_dir
 from ..utils.materialization import (
     BOUNDARY_JSON_DECODE,
     BOUNDARY_JSON_ENCODE,
@@ -29,6 +29,7 @@ from ..utils.materialization import (
     increment_materialization_boundary,
 )
 from .records import RepositoryOverviewRecord, VectorSearchResultRecord
+from .vector_math import as_float32_matrix, as_float32_vector
 
 _METADATA_SHARD_STORAGE_VERSION = 1
 _VECTOR_SHARD_STORAGE_VERSION = 1

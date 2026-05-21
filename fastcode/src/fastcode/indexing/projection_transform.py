@@ -16,7 +16,7 @@ from typing import Any, cast
 from ..ir.graph import IRGraphs
 from ..ir.projection import ProjectionBuildResult, ProjectionScope
 from ..ir.types import IRSnapshot
-from ..utils import utc_now
+from ..utils.clock import utc_now
 
 try:
     import igraph as ig  # type: ignore[import-untyped]

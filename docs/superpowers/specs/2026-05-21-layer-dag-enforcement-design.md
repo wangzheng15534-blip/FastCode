@@ -4,7 +4,7 @@ Date: 2026-05-21
 
 ## Goal
 
-Enforce a 7-tier dependency DAG in FastCode using `pytest-archon` deny rules,
+Enforce a 7-tier dependency DAG in FastCode with repo-local architecture tests,
 following the pattern proven in the ETL project:
 
 ```
@@ -14,6 +14,11 @@ Facade → Shell → Events → Interface → Domain → Common → Base
 Dependencies flow downward. Domain modules stay pure. Interface defines
 Pydantic boundary models. Shell stages call downward through Interface
 translations into Domain logic.
+
+Implementation refinement: the current gate uses AST-based tests in
+`fastcode/tests/architecture/test_layer_dag.py` instead of adding
+`pytest-archon`. This keeps the same deny-rule semantics while also enforcing
+that every runtime module is classified.
 
 ## Layer Model
 
@@ -43,7 +48,7 @@ Base (0)        utils (zero-dep stdlib helpers)
 | `indexing` | Shell (5) | Pipeline orchestration, I/O stages |
 | `query` | Shell (5) | Query orchestration |
 | `store` | Shell (5) | Persistence I/O |
-| (events) | Events (4) | Pipeline lifecycle, agent context events (extraction TBD) |
+| `events` | Events (4) | Pipeline lifecycle and agent context events |
 | `schemas` | Interface (3) | Pydantic config, boundary models, translation shapes |
 | `retrieval` | Domain (2) | Retrieval logic and scoring |
 | `graph` | Domain (2) | Graph construction primitives |
@@ -92,9 +97,10 @@ Each domain module owns its local types. No global schema dumping ground.
 | `scip/contracts.py` | SCIP model types, symbol resolution contracts |
 | `semantic/contracts.py` | Resolver registry types, patch contracts |
 | `store/contracts.py` | Persistence record types, serializer contracts |
-| `query/contracts.py` | Query intent types, answer contracts |
 | `ir/` (common) | Canonical IR: snapshot, element, symbol, relation |
-| `schemas/` (interface) | `FastCodeConfig`, runtime config, API-level boundary models |
+| `api/contracts.py` | API request/response boundary contracts |
+| `events/__init__.py` | Pipeline and agent lifecycle event contracts |
+| `schemas/` (interface) | `FastCodeConfig` and Pydantic boundary models |
 
 Domain `contracts.py` files use frozen dataclasses. No Pydantic in domain
 contracts. Interface (`schemas/`) uses Pydantic. Shell stages explicitly
@@ -104,7 +110,7 @@ translate between the two.
 
 FastCode currently has event-like records scattered across modules:
 - Pipeline status/metrics/warnings in `indexing/`
-- Agent context events (turn journals, observations) in `retrieval/core/`
+- Agent context events (turn journals, observations) in `retrieval/`
 
 The Events layer extracts these into a dedicated module. Events are
 cross-cutting lifecycle contracts that Shell stages emit and consume. They use
@@ -116,8 +122,8 @@ Initial Events extraction candidates:
 - Indexing run diagnostics and metrics events
 - Agent context lifecycle (turn started, observation appended, turn completed)
 
-This can start small and grow. The deny rules still enforce the boundary even
-if Events is initially empty or minimal.
+This starts small with `PipelineStageEvent` and `AgentContextEvent`. The deny
+rules still enforce the boundary even while event coverage grows.
 
 ## Violation Fixes
 
@@ -127,54 +133,61 @@ reaches up.
 
 ### Fix 1: `graph -> indexing` (Domain → Shell)
 
-**Current:** `graph` imports `indexing.call_extractor`
-**Fix:** Move `call_extractor` into `graph/`. Shell (`indexing`) calls it
-downward.
+**Old violation:** `graph` imported parser helpers from `indexing`.
+**Fix:** move parser-owned graph helpers into the graph domain:
+`graph/call_extractor.py` and `graph/tree_sitter.py`.
 
-### Fix 2: `scip -> indexing` (Domain → Shell)
+### Fix 2: `scip -> indexing` and root helpers (Domain → Shell/Facade)
 
-**Current:** `scip` imports `indexing.global_builder`
-**Fix:** Move `global_builder` into `scip/`. Shell (`indexing`) calls it
-downward.
+**Old violation:** SCIP translation imported shell/global helpers.
+**Fix:** move SCIP-owned translation helpers into the SCIP domain:
+`scip/global_builder.py` and `scip/module_resolver.py`.
 
-### Fix 3: `retrieval -> indexing` (Domain → Shell)
+### Fix 3: retrieval orchestration in the wrong layer
 
-**Current:** `retrieval` imports `indexing.embedder`
-**Fix:** Move `embedder` into `retrieval/`. Shell (`indexing`) calls it
-downward.
+**Old violation:** orchestration-heavy retrieval modules lived under the
+retrieval domain while importing query, store, and other shell concerns.
+**Fix:** move shell orchestration into the query shell:
+`query/retriever.py`, `query/iterative_agent.py`, and `query/agent_tools.py`.
+The retrieval package now owns pure contracts and core scoring/context logic.
 
-### Fix 4: `retrieval <-> query` cycle (Domain ↔ Shell)
+### Fix 4: shell-side native/runtime adapters
 
-**Current:** `retrieval` imports `query.processor`, `query.selector`; `query`
-imports `retrieval`
-**Fix:** Extract shared types (ranking contracts, selection results) into
-`retrieval/core/contracts.py` (Common tier). `query` imports from
-`retrieval.core` (downward, Shell → Common). `retrieval` no longer imports
-`query`.
+**Old violation:** root runtime helpers and native-library adapters sat outside
+the 7-tier package map.
+**Fix:** move runtime and native-adapter code to the owning shell package:
+`store/infrastructure/runtime.py`, `store/infrastructure/graph_runtime.py`,
+and `store/vector_math.py`.
 
-### Fix 5: `retrieval -> store` (Domain → Shell)
+### Fix 5: subprocess execution in domain packages
 
-**Current:** `retrieval` imports `store.pg_retrieval`, `store.vector`
-**Fix:** `retrieval` stays pure. Shell stages in `indexing`/`query` persist
-retrieval results via `store`. `retrieval` never imports `store`.
+**Old violation:** SCIP and semantic domain modules directly executed external
+toolchains.
+**Fix:** domain modules expose profiles and injected contracts; shell runners
+own process execution in `indexing/scip_runner.py` and
+`indexing/semantic_helper_runner.py`.
 
 ### Fix 6: `utils -> schemas` (Base → Interface)
 
-**Current:** `utils` imports `schemas.config`
-**Fix:** Config preparation (`prepare_runtime_config_mapping`) moves to
-`schemas/_compat.py`. `utils` becomes truly zero-dep: no `fastcode.*` imports.
+**Old violation:** `utils` handled config/env compatibility and imported
+interface-layer types.
+**Fix:** config preparation moved to `main/config.py`, token helpers moved to
+`query/tokens.py`, ignore handling moved to `indexing/ignore.py`, path helpers
+live in `utils/path_utils.py`, and `utils` is now stdlib-only.
 
 ## Schema Distribution
 
-The current `schemas` module becomes the Interface layer (Pydantic boundary
-models only):
+The current `schemas` module becomes the Interface layer:
 
-- `schemas.config` stays (runtime config is cross-cutting)
-- `schemas.core_types` domain-specific types move to their owning domain
-  modules as frozen dataclass contracts
-- `schemas.api` moves to `api/` as API-layer contracts
+- `schemas.config` stays for Pydantic config validation and frozen runtime
+  config construction
+- `schemas.ir` stays as the Pydantic boundary adapter for IR payloads
+- `schemas.core_types` was removed; domain-specific types moved to owning
+  contract modules such as `retrieval/contracts.py`, `scip/contracts.py`, and
+  `graph/contracts.py`
+- API request/response contracts moved to `api/contracts.py`
 
-## Enforcement: pytest-archon Deny Rules
+## Enforcement: AST Deny Rules
 
 New file: `fastcode/tests/architecture/test_layer_dag.py`
 
@@ -190,42 +203,47 @@ COMMON = ("fastcode.ir.*",)
 BASE = ("fastcode.utils.*",)
 ```
 
-### Deny Rules (one test per boundary, matching ETL pattern)
+### Deny Rules
 
 1. **domain_must_not_import_facade_shell_or_interface**
-   Domain should_not_import `FACADE + SHELL + INTERFACE`
+   Domain must not import `FACADE + SHELL + INTERFACE`
 
 2. **interface_must_not_import_domain_facade_or_shell**
-   Interface should_not_import `DOMAIN + FACADE + SHELL`
+   Interface must not import `DOMAIN + FACADE + SHELL`
 
 3. **events_must_not_import_domain_facade_or_shell**
-   Events should_not_import `DOMAIN + FACADE + SHELL`
+   Events must not import `DOMAIN + FACADE + SHELL`
 
 4. **common_must_not_import_events_interface_domain_facade_or_shell**
-   Common should_not_import `EVENTS + INTERFACE + DOMAIN + FACADE + SHELL`
+   Common must not import `EVENTS + INTERFACE + DOMAIN + FACADE + SHELL`
 
 5. **base_must_not_import_any_fastcode**
-   Base should_not_import `fastcode.*`
+   Base must not import `fastcode.*`
 
 6. **shell_must_not_import_facade**
-   Shell should_not_import `FACADE`
+   Shell must not import `FACADE`
 
 ### Additional Contract Tests
 
+- Every runtime module must be classified in exactly one top-level layer.
 - Each domain module's `contracts.py` uses frozen dataclasses, not Pydantic
   (AST-based check, following ETL's `test_stage_domain_contracts_use_frozen_dataclasses_not_pydantic`)
 - Domain modules contain no I/O imports (`sqlite3`, `subprocess`, `urllib`)
-- Foundation (`utils`) imports no third-party heavy deps (no pydantic, numpy,
-  etc.) — following ETL's `test_foundation_is_pure_constants_no_external_deps`
+- Foundation (`utils`) imports only stdlib modules — a stricter form of ETL's
+  `test_foundation_is_pure_constants_no_external_deps`
 - Explicit translation: Shell stages that receive Interface (Pydantic) models
   must explicitly convert to Domain (frozen dataclass) contracts, not use
   `**model_dump()` or `**__dict__` mass-assignment
+- Package roots are markers or explicit contract modules, not compatibility
+  import APIs.
+- Deleted pre-split modules remain deleted, and callers import their owning
+  split modules directly.
 
 ### Existing Architecture Tests
 
 Kept (not replaced):
 
-- `test_no_pydantic_in_core.py`
+- `test_no_pydantic_in_domain.py`
 - `test_purity_gates.py`
 - `test_explicit_translation.py`
 - `test_settings_flow.py`
@@ -236,21 +254,22 @@ Replaced:
 
 - `test_import_graph.py` → `test_layer_dag.py`
 
-## Dependency Addition
+## Dependency Decision
 
-Add `pytest-archon>=0.0.7` to `fastcode/pyproject.toml` under dev
-dependencies.
+No new dependency is required for this gate. The repo-local AST test enforces
+the same layer deny rules and additionally checks module classification,
+domain contracts, domain I/O purity, and Base-layer purity.
 
 ## What Stays the Same
 
-- Module names (no renaming)
 - Package location (`fastcode/src/fastcode/`)
 - All existing non-architecture tests
 - All existing architecture tests except `test_import_graph.py`
+- Runtime API endpoint behavior
 
 ## Out of Scope
 
 - Module renaming to match ETL naming conventions
 - Protocol-based DI patterns
-- Changes to public API surface
+- Backward-compatible Python import shims for moved modules
 - Performance optimizations

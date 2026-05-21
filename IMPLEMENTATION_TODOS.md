@@ -35,7 +35,9 @@ The remaining gap to a stable release is no longer mainly "does the core pipelin
   a built-artifact release gate; service extras are split from the core path,
   but multi-Python matrix coverage and dependency drift policy remain open
 - real external-tool integration evidence across supported languages
-- real PostgreSQL/backend semantics beyond local fakes
+- real PostgreSQL/backend semantics now have a storage gate for locks,
+  migrations, outbox, redo, SCIP refs, and relational facts; broader backend
+  load and upgrade evidence remains open
 - production deployment/auth runbooks for API/file-upload use beyond the current trusted-local/proxy-auth contract
 - request-local artifact serving and query read sharing now exist, with
   concurrency benchmarks; stable release still needs endpoint/operator evidence
@@ -69,12 +71,12 @@ This audit checked current source and regression tests directly, not git history
   `fastcode/src/fastcode/main/fastcode.py`
 - API upload/CORS/offload hardening: `fastcode/src/fastcode/utils/archive.py`,
   `fastcode/src/fastcode/api/cors.py`, `fastcode/src/fastcode/api/routes.py`
-- agent turn/context v0: `fastcode/src/fastcode/retrieval/core/agent_context.py`,
-  `fastcode/src/fastcode/retrieval/core/context_compiler.py`,
+- agent turn/context v0: `fastcode/src/fastcode/retrieval/agent_context.py`,
+  `fastcode/src/fastcode/retrieval/context_compiler.py`,
   `fastcode/src/fastcode/store/records.py`, `fastcode/src/fastcode/store/cache.py`
 
 **Really implemented:**
-- Architecture gates are active and green for import layers, no Pydantic in core,
+- Architecture gates are active and green for import layers, no Pydantic in domain/common packages,
   package-root purity, explicit translation, settings flow, and materialization
   boundaries. Verified with `uv run pytest fastcode/tests/architecture -q`
   (`16 passed`).
@@ -121,7 +123,8 @@ This audit checked current source and regression tests directly, not git history
 **Still open:**
 - multi-Python wheel/sdist install smoke from built artifacts
 - real external SCIP/tool command matrix for stable language claims
-- real PostgreSQL migration/locking/outbox/redo/fact semantics under integration load
+- broader PostgreSQL/backend load and upgrade evidence beyond the current
+  storage-semantics gate
 - backend/tool/performance release gates, full artifact migration policy,
   dependency/supply-chain review, and deployment/operator runbooks
 
@@ -349,16 +352,16 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
   - `indexing/pipeline.py` now materializes vector-store and PG-upsert element payloads through explicit serializers on the active snapshot indexing path instead of `CodeElement.to_dict()` expansion plus in-place metadata mutation
 - Retrieval boundary hardening:
   - `ir/element.py` now exposes explicit `serialize_code_element(...)` and `deserialize_code_element(...)` adapters so retrieval shells can materialize and rehydrate stable element payloads without recursive dataclass expansion or `CodeElement(**payload)` mass-assignment
-  - `retrieval/hybrid.py` and `retrieval/core/fusion.py` now build keyword/file/type/graph-expansion/doc-projection result payloads and BM25 persistence payloads through explicit `CodeElement` serialization instead of repeated `CodeElement.to_dict()` calls on active paths
-  - `retrieval/iterative.py` now serializes agent-selected class/function hits and file-level indexed lookups through explicit element payloads instead of `CodeElement.to_dict()` expansion on active agency-mode selection paths
-  - `retrieval/hybrid.py` and `main/fastcode.py` now reload persisted BM25 element payloads through the explicit deserializer instead of `CodeElement(**payload)` expansion on active cache/load paths
+  - `query/retriever.py` and `retrieval/fusion.py` now build keyword/file/type/graph-expansion/doc-projection result payloads and BM25 persistence payloads through explicit `CodeElement` serialization instead of repeated `CodeElement.to_dict()` calls on active paths
+  - `query/iterative_agent.py` now serializes agent-selected class/function hits and file-level indexed lookups through explicit element payloads instead of `CodeElement.to_dict()` expansion on active agency-mode selection paths
+  - `query/retriever.py` and `main/fastcode.py` now reload persisted BM25 element payloads through the explicit deserializer instead of `CodeElement(**payload)` expansion on active cache/load paths
 - Legacy graph boundary hardening:
   - `graph/build.py` now persists compatibility graph element indices through explicit element serializers instead of `CodeElement.to_dict()` calls
   - `graph/build.py` now reloads and merges persisted graph element payloads through the explicit element deserializer instead of `CodeElement(**payload)` expansion, while preserving the existing duplicate-name recovery behavior via `element_by_id`
 - Object materialization hardening:
   - PostgreSQL semantic fallback now keeps candidate vectors in NumPy arrays and only JSON-decodes metadata for ranked results returned across the Python boundary
   - repository overview persistence now writes an explicit JSON manifest plus NumPy embedding archive, lets metadata-only callers skip the embedding archive entirely, and only JSON-decodes ranked overview metadata for returned rows
-  - `utils/vectors.py` now centralizes float32 vector/matrix ownership policy so view-oriented call sites do not mutate caller-owned arrays while sanitizing non-finite values
+  - `store/vector_math.py` now centralizes float32 vector/matrix ownership policy so view-oriented call sites do not mutate caller-owned arrays while sanitizing non-finite values
   - PostgreSQL relational fact persistence uses explicit typed payload serializers instead of repeated record `to_dict()` expansion
   - snapshot persistence writes a compact symbol-index sidecar, and query-time
     snapshot serving can register symbol aliases or return single-symbol
@@ -381,18 +384,20 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
   - `QueryPipeline.query_snapshot()` can use request-local retriever/graph handles instead of mutating the singleton retriever state
   - regression coverage proves the handle path can isolate concurrent snapshot queries without `QueryPipeline._snapshot_query_lock`; public `FastCode` still serializes query entrypoints with the service lock, so this is not yet a read-scalability closure
 - Agent-context v0 hardening:
-  - pure typed turn/context records now live in `retrieval/core/agent_context.py`
-  - `retrieval/core/context_compiler.py` renders stable/turn/observation FCX working-memory artifacts and typed handoff artifacts
+  - pure typed turn/context records now live in `retrieval/agent_context.py`
+  - `retrieval/context_compiler.py` renders stable/turn/observation FCX working-memory artifacts and typed handoff artifacts
   - `store.records` and `store/cache.py` persist typed working-memory, turn-journal, and handoff records through explicit payload serializers
   - REST, web, MCP, and `FastCode` facades expose latest/specific turn context, evidence-ref expansion, and handoff creation/fetch
 - Lock fencing hardening:
   - PostgreSQL same-owner lock refresh preserves the current fencing token instead of invalidating in-flight work
 - Package-root import-boundary hardening:
   - `fastcode/__init__.py` no longer mutates process environment at import time
-  - `fastcode/__init__.py` keeps compatibility re-exports lazy instead of importing shell-heavy modules eagerly
-  - `fastcode.main.__init__` now exposes `FastCode` lazily so `import fastcode.main` does not load the composition root
-  - internal API/MCP modules import `FastCode` from `fastcode.main.fastcode` instead of the root compatibility surface
-  - architecture tests now enforce thin package roots and ban internal `from fastcode import ...` re-export usage
+  - `fastcode/__init__.py` is metadata-only and does not expose runtime objects
+  - subpackage roots are markers or explicit contract modules, not re-export APIs
+  - API/MCP/tests import concrete modules such as `fastcode.main.fastcode`,
+    `fastcode.api.routes`, and `fastcode.mcp.server` directly
+  - architecture tests now enforce thin package roots and ban package-root
+    re-export usage across both source and tests
 - Release package/install gate hardening:
   - `scripts/release_gate.py` builds all workspace wheel/sdist artifacts with `uv build --all-packages --clear`
   - the gate verifies required semantic helper assets are present in FastCode wheel and sdist artifacts
@@ -448,8 +453,8 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
 The current release bar is aligned to the repo-template functional-core guidance:
 
 1. Pydantic stops at the boundary:
-   - `fastcode.schemas.api` owns request/response validation.
-   - core packages (`ir`, `graph`, `retrieval`) stay Pydantic-free.
+   - `fastcode.api.contracts` owns request/response validation.
+   - domain/common packages (`ir`, `graph`, `retrieval`) stay Pydantic-free.
 2. Persistence trusts typed records:
    - store/infrastructure code should return frozen dataclasses or typed records, not ad hoc dict payloads.
 3. Translation stays explicit:
@@ -461,7 +466,7 @@ The current release bar is aligned to the repo-template functional-core guidance
 5. Package roots stay thin:
    - Python always executes `fastcode/__init__.py` before importing any `fastcode.*` submodule.
    - root and subpackage `__init__.py` files must not perform runtime setup, environment mutation, or eager shell imports.
-   - root re-exports are compatibility-only and lazy; internal modules import concrete domain/composition modules directly.
+   - runtime symbols are not re-exported from package roots; code and tests import concrete domain/composition modules directly.
 
 This contract is only partially complete today. The architecture tests now enforce parts of it, including package-root purity, but large store and shell surfaces are still dict-heavy.
 
@@ -631,7 +636,7 @@ bundle/distillation/activation layer remains future work.
   - repeated identical request reuses cached distillation
 
 **Layering guardrails:**
-- `retrieval/core/` can own pure evidence scoring and budget logic.
+- `retrieval/` can own pure evidence scoring and budget logic.
 - `query/` can orchestrate retrieval plus bundle assembly.
 - `store/` can persist typed bundle/distillation/activation records.
 - `api/` and `mcp/` should remain transport adapters.
@@ -674,10 +679,10 @@ bundle/distillation/activation layer remains future work.
 1. Keep `query/handler.py` as the outer turn orchestrator, but stop treating
    session history plus `get_recent_summaries()` as the main carry-forward
    state.
-2. Refactor `retrieval/iterative.py` round state into explicit typed
+2. Refactor `query/iterative_agent.py` round state into explicit typed
    plan/observation/history records so confidence, keep-files, and tool-call
    history stop living mainly in prompt-local dicts.
-3. Wrap `retrieval/agent_tools.py` outputs in normalized observation adapters
+3. Wrap `query/agent_tools.py` outputs in normalized observation adapters
    with evidence refs, cost, warnings, and freshness metadata.
 4. Extend `store/cache.py` or a sibling store with typed persistence for the
    turn journal and working-set artifacts, not only dialogue turns.
@@ -759,18 +764,19 @@ has recent gate evidence.
 
 **Gap:** The package split is now mostly landed, but stable release also requires the merged workspace to behave correctly from the repository root, not only when commands are run from `fastcode/`.
 
-The template philosophy remains correct for Python: use one importable package with descriptive domain modules instead of pretending uv workspace members provide native import isolation. The stable-release risk is not the nested domain layout itself; it is accidental boundary collapse through package roots, eager re-exports, and imports that route pure modules through shell-heavy compatibility surfaces.
+The template philosophy remains correct for Python: use one importable package with descriptive domain modules instead of pretending uv workspace members provide native import isolation. The stable-release risk is not the nested domain layout itself; it is accidental boundary collapse through package roots, re-exports, and imports that route pure modules through shell-heavy surfaces.
 
 **Current state:**
 - root `pytest` collection now honors workspace-level `testpaths`, recursion excludes, import paths, and marker registration
 - stale renamed-module references were cleaned up in active tests and comments
 - root smoke no longer collects `repo_backup/` or dies on import-file mismatch
+- architecture tests enforce concrete split-module imports across source and tests
 
 **Remaining work:**
 - remove or clean stale `__pycache__` trees left behind by the pre-merge layout so they stop polluting diagnostics
 - keep root and package pytest policy in sync when markers or plugins change
 - audit public docs/examples for pre-merge module paths
-- keep architecture tests green for package-root purity whenever new public exports or subpackage `__init__.py` files are added
+- keep architecture tests green for package-root purity whenever new subpackage `__init__.py` files are added
 
 **Exit criteria:**
 - `uv run pytest` from repository root is a supported release command
@@ -998,18 +1004,34 @@ by edit class.
 
 ### P0.6 Production storage semantics
 
-**Gap:** SQLite local mode is well covered, and Postgres-oriented code exists, but stable production semantics require real backend tests for locks, migrations, outbox, redo, and relational fact persistence.
+**Status:** closed for the current storage-semantics slice. SQLite local mode
+is documented as single-process/local only, and PostgreSQL-backed storage now
+has a real backend gate for the release-critical primitives listed below.
 
 **Required work:**
-- Run a real PostgreSQL integration suite for snapshot save/load, manifests, locks, fencing, staging, outbox, redo tasks, SCIP refs, and graph facts.
-- Verify migration/idempotency behavior on an existing database, not only fresh schema creation.
-- Document SQLite as local/single-process only where lock/fact APIs are no-ops.
-- Add stale-lock and ownership tests against real PostgreSQL transactions.
-- Add backup/restore and schema version compatibility notes.
+- [x] Run a real PostgreSQL integration suite for snapshot save/load, manifests, locks, fencing, staging, outbox, redo tasks, SCIP refs, and graph facts.
+- [x] Verify migration/idempotency behavior on an existing database, not only fresh schema creation.
+- [x] Document SQLite as local/single-process only where lock/fact APIs are no-ops.
+- [x] Add stale-lock and ownership tests against real PostgreSQL transactions.
+- [x] Add backup/restore and schema version compatibility notes.
 
 **Exit criteria:**
-- Postgres integration tests are part of the release gate or explicitly required before tagging.
-- SQLite limitations are documented in user-facing release docs.
+- [x] Postgres integration tests are part of the release gate or explicitly required before tagging.
+- [x] SQLite limitations are documented in user-facing release docs.
+
+**Current evidence:**
+- `fastcode/tests/e2e/test_e2e_pg_storage_semantics.py` exercises the real
+  PostgreSQL storage gate independently of Ollama/pgvector indexing.
+- Verified on May 21, 2026 with
+  `uv run pytest fastcode/tests/e2e/test_e2e_pg_storage_semantics.py -q`
+  against `postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e`.
+- The gate exposed and now guards a duplicate-outbox bug where
+  `enqueue_outbox_event()` returned `True` for `ON CONFLICT DO NOTHING`;
+  `fastcode/tests/store/test_snapshot_store.py` now pins the rowcount-based
+  behavior without requiring PostgreSQL.
+- `docs/release.md`, `DEPLOYMENT.md`, and `docs/deployment-guide.md` document
+  the gate command, SQLite limitations, backup/restore pairing, and
+  `schema_migrations` compatibility notes.
 
 ### P0.6a FP/FCIS data schema flow completion
 
@@ -1027,18 +1049,18 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 - `store/manifest.py` and `store/snapshot.py` still expose mixed record/dict APIs instead of converging on typed records
 - `store/projection.py`, `store/cache.py`, `store/vector.py`, and `store/pg_retrieval.py` remain heavily dict-oriented at public compatibility boundaries even where active row materialization is now typed
 - query/retrieval paths still use dict-shaped rows as a primary interchange format instead of a small typed boundary model set
-- `schemas/__init__.py` and `schemas/api.py` correctly isolate Pydantic, but the rest of the system has not fully converged on explicit translation adapters
+- `api/contracts.py` and `schemas/config.py` isolate Pydantic, but the rest of the system has not fully converged on explicit translation adapters
 
 **Required work:**
 - define the canonical schema flow explicitly in code/docs:
-  - `schemas.api` / `schemas.config` for Pydantic boundary types
-  - `schemas.core_types` and `store.records` for frozen dataclass interchange
+  - `api.contracts` / `schemas.config` for Pydantic boundary types
+  - owning domain contracts and `store.records` for frozen dataclass interchange
   - adapters that translate field-by-field between boundary, core, and persistence forms
 - eliminate mixed dict/record public APIs where possible:
   - promote typed snapshot artifact/redo/outbox records into public `*_record()` accessors where those surfaces are stable
   - add typed projection/build/session/cache metadata records where those payloads are stable enough
 - make store modules prefer `*_record()` style APIs and treat dict-returning helpers as compatibility shims
-- keep retrieval-core purity strict:
+- keep retrieval domain purity strict:
   - no Pydantic imports
   - no hidden boundary serialization logic in pure ranking/fusion/graph functions
 - add architecture fitness tests that assert:
@@ -1103,9 +1125,9 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
     safe incremental plans by copying unchanged rows from the previous snapshot
     and upserting only changed-path rows
 - retrieval result assembly is narrower:
-  - `retrieval/hybrid.py` and `retrieval/core/fusion.py` now materialize result elements through explicit `serialize_code_element(...)` payloads instead of repeated `CodeElement.to_dict()` calls for keyword hits, file/type helpers, graph expansion, projected-only doc backfill, and BM25 persistence
-  - `retrieval/iterative.py` now uses the same explicit serializer for agent-found file/class/function result rows instead of expanding full `CodeElement.to_dict()` payloads during selection-to-result conversion
-  - persisted BM25 reload paths in `retrieval/hybrid.py` and `main/fastcode.py` now rehydrate `CodeElement` objects through an explicit adapter instead of `CodeElement(**payload)` mass-assignment
+  - `query/retriever.py` and `retrieval/fusion.py` now materialize result elements through explicit `serialize_code_element(...)` payloads instead of repeated `CodeElement.to_dict()` calls for keyword hits, file/type helpers, graph expansion, projected-only doc backfill, and BM25 persistence
+  - `query/iterative_agent.py` now uses the same explicit serializer for agent-found file/class/function result rows instead of expanding full `CodeElement.to_dict()` payloads during selection-to-result conversion
+  - persisted BM25 reload paths in `query/retriever.py` and `main/fastcode.py` now rehydrate `CodeElement` objects through an explicit adapter instead of `CodeElement(**payload)` mass-assignment
 - graph artifact boundaries are narrower:
   - `graph/build.py` now writes compatibility graph element indices through explicit `serialize_code_element(...)` payloads and rehydrates persisted `element_by_name` / `element_by_id` entries through `deserialize_code_element(...)` on load/merge instead of `CodeElement.to_dict()` / `CodeElement(**payload)` round-trips
   - IR graph snapshots now persist and reload compact `IRGraphView` payloads backed by `python-igraph`; retrieval graph expansion uses the compact reachability API instead of materializing a NetworkX union graph when compact views are available
@@ -1150,14 +1172,14 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
   - stale pre-buffer list payloads are treated as cache misses and overwritten with the current binary format
   - `indexing/indexer.py` now hands the embedder a minimal explicit payload instead of materializing full `CodeElement.to_dict()` copies for every indexed element
 - retrieval result path:
-  - `retrieval/hybrid.py` and `retrieval/core/fusion.py` now defer `CodeElement` materialization to explicit final result serializers instead of expanding full dataclass payloads through `to_dict()` in keyword/graph/doc-projection helper paths
+  - `query/retriever.py` and `retrieval/fusion.py` now defer `CodeElement` materialization to explicit final result serializers instead of expanding full dataclass payloads through `to_dict()` in keyword/graph/doc-projection helper paths
 - PostgreSQL retrieval path:
   - `store/pg_retrieval.py` now strips raw embedding arrays from `metadata_json` before insert so vector payloads are not duplicated in JSON storage
   - the active insert/search path passes native float32 arrays through the pgvector Psycopg adapter; vector literals are retained only for the degraded case where the Python adapter is unavailable
 - vector retrieval path:
   - `store/vector.py` keeps shard-backed vector rows hot after load, rebuilds FAISS lazily only when a compatibility operation needs it, persists repository overviews as an explicit JSON manifest plus NumPy embedding archive, and vectorizes repository-overview ranking before result metadata assembly
   - vector search and batch-search paths now materialize `VectorSearchResultRecord` values before the legacy `(metadata, score)` compatibility boundary
-  - `utils/vectors.py` gives vector hot paths explicit view/contiguous/mutable ownership policies and avoids mutating caller-owned arrays during non-finite sanitization
+  - `store/vector_math.py` gives vector hot paths explicit view/contiguous/mutable ownership policies and avoids mutating caller-owned arrays during non-finite sanitization
   - full repository-overview consumers still decode JSON metadata into Python dicts because selector/BM25 flows currently operate on Python text/metadata payloads
 - PostgreSQL retrieval result path:
   - semantic fallback now delays JSON metadata inflation until after vectorized NumPy ranking

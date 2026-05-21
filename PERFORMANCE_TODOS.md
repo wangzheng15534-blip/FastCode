@@ -446,7 +446,7 @@ Evidence:
 - multi-repository indexing repeats the list-to-array path
   (`fastcode/src/fastcode/main/fastcode.py:1564`).
 - `as_float32_matrix()` is available as the explicit vector boundary helper
-  (`fastcode/src/fastcode/utils/vectors.py:41`).
+  (`fastcode/src/fastcode/store/vector_math.py`).
 
 TODO:
 
@@ -552,9 +552,9 @@ Evidence:
   are still incomplete without NetworkX conversion.
 - `graph/build.py` keeps lazy adjacency payloads but materializes NetworkX for
   path/stats/merge compatibility (`fastcode/src/fastcode/graph/build.py:220`).
-- `retrieval/hybrid.py` uses `IRGraphView.union()` when compact views are
+- `query/retriever.py` uses `IRGraphView.union()` when compact views are
   available, but falls back to NetworkX expansion otherwise
-  (`fastcode/src/fastcode/retrieval/hybrid.py:278`).
+  (`fastcode/src/fastcode/query/retriever.py`).
 - `mcp/graph_tools.py` still imports NetworkX for legacy compatibility
   fallback, but directed path, impact, caller, and Steiner wrappers use compact
   saved graph handles when available. Main composition-root
@@ -693,11 +693,11 @@ Exit criteria:
 Evidence:
 
 - `index_for_bm25()` builds a full corpus and `BM25Okapi`
-  (`fastcode/src/fastcode/retrieval/hybrid.py:220`).
+  (`fastcode/src/fastcode/query/retriever.py`).
 - `load_bm25()` reloads all corpus and element payloads and rebuilds
-  `BM25Okapi` (`fastcode/src/fastcode/retrieval/hybrid.py:1853`).
+  `BM25Okapi` (`fastcode/src/fastcode/query/retriever.py`).
 - `_load_bm25_payload()` materializes ordered corpus and element lists from
-  shards (`fastcode/src/fastcode/retrieval/hybrid.py:2253`).
+  shards (`fastcode/src/fastcode/query/retriever.py`).
 
 TODO:
 

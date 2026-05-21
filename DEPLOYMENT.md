@@ -42,9 +42,10 @@ entrypoints are needed:
   'dist/fastcode-*.whl[api,mcp,postgres,redis]'
 ```
 
-PostgreSQL-backed production semantics are still release-gate open. Do not claim
-production backend support until the real PostgreSQL integration gate in
-[docs/release.md](./docs/release.md) has passed for the release candidate.
+PostgreSQL-backed storage semantics are guarded by the real PostgreSQL backend
+gate in [docs/release.md](./docs/release.md). Run it before any release or
+deployment claim that depends on durable locks, redo/outbox queues, manifests,
+SCIP refs, or relational graph facts.
 
 ## Local Mode
 
@@ -57,6 +58,42 @@ fastcode-web --host 127.0.0.1 --port 5777
 
 The REST API default host is `127.0.0.1`. Passing `--host 0.0.0.0` is an
 explicit operator decision and requires the production controls below.
+
+SQLite is local and single-process only. In SQLite mode, lock/fencing APIs are
+compatibility no-ops, redo/outbox claim paths do not provide durable
+multi-worker queue semantics, and PostgreSQL relational fact tables are not
+populated. Use SQLite for local development, single-user demos, and package
+smokes; use PostgreSQL for production-style storage semantics.
+
+## PostgreSQL Storage
+
+Install the service extras and configure the storage backend explicitly:
+
+```bash
+python -m pip install 'fastcode[postgres]'
+export FASTCODE_STORAGE_BACKEND=postgres
+export FASTCODE_POSTGRES_DSN='postgresql://user:pass@host:5432/fastcode'
+```
+
+Before operating a PostgreSQL-backed release candidate, run:
+
+```bash
+PG_E2E_DSN="$FASTCODE_POSTGRES_DSN" \
+uv run pytest -n auto fastcode/tests/e2e/test_e2e_pg_storage_semantics.py -q
+```
+
+That gate exercises snapshot save/load, manifest heads, schema idempotency,
+staging, lock ownership and stale fencing tokens, redo/outbox state transitions,
+SCIP refs, and relational graph facts against a real PostgreSQL database.
+
+Back up PostgreSQL and filesystem artifacts together. PostgreSQL owns snapshots,
+refs, manifests, locks, redo/outbox state, SCIP refs, design documents, and
+relational facts. The configured persist/cache/vector directories own snapshot
+shards, graph shards, vector indexes, BM25 artifacts, and cache payloads. Restore
+both from the same point in time, start FastCode once so idempotent schema checks
+run, then rerun the PostgreSQL storage gate. Schema compatibility is tracked by
+`schema_migrations`; release notes must say whether existing artifact families
+are readable, migrated, or require rebuild.
 
 ## Production Exposure
 

@@ -51,7 +51,6 @@ Primary modules:
 - `mcp/`
 - `query/`
 - `retrieval/`
-- `retrieval/core/`
 - `schemas/`
 - `scip/`
 - `semantic/`
@@ -68,7 +67,7 @@ These rules are active in tests and lint:
 
 1. No upward imports across layers.
 2. No cross-layer cycles.
-3. No Pydantic in `ir/`, `graph/`, or `retrieval/core/`.
+3. No Pydantic in `ir/`, `graph/`, or `retrieval/`.
 4. No direct env reads or `load_dotenv()` in inner packages.
 5. Package roots stay thin and lazy.
 6. No `**model_dump()` or `**__dict__` mass-assignment in shell packages.
@@ -84,8 +83,8 @@ Applied contributor rule for current hardening work:
 
 Important architecture tests:
 
-- `fastcode/tests/architecture/test_import_graph.py`
-- `fastcode/tests/architecture/test_no_pydantic_in_core.py`
+- `fastcode/tests/architecture/test_layer_dag.py`
+- `fastcode/tests/architecture/test_no_pydantic_in_domain.py`
 - `fastcode/tests/architecture/test_purity_gates.py`
 - `fastcode/tests/architecture/test_explicit_translation.py`
 - `fastcode/tests/architecture/test_settings_flow.py`
@@ -94,7 +93,7 @@ Important module-local guards:
 
 - `fastcode/src/fastcode/graph/ruff.toml`
 - `fastcode/src/fastcode/ir/ruff.toml`
-- `fastcode/src/fastcode/retrieval/core/ruff.toml`
+- `fastcode/src/fastcode/retrieval/ruff.toml`
 - `fastcode/src/fastcode/schemas/ruff.toml`
 - `fastcode/src/fastcode/store/infrastructure/ruff.toml`
 
@@ -103,7 +102,7 @@ Important module-local guards:
 The active config flow is:
 
 1. raw YAML and `.env` input
-2. `fastcode.utils._compat.prepare_runtime_config_mapping(...)`
+2. `fastcode.main.config.prepare_runtime_config_mapping(...)`
 3. `fastcode.schemas.config.FastCodeConfig`
 4. `fastcode.main.fastcode.FastCode`
 

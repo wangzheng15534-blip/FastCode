@@ -31,49 +31,39 @@ The importable package is `fastcode/src/fastcode/`.
 
 Current top-level modules:
 
-- `api/` HTTP and web transport shells
-- `graph/` graph construction primitives
+- `api/` HTTP transport shell and API contracts
+- `events/` lifecycle event contracts
+- `graph/` graph construction primitives and graph-domain contracts
 - `indexing/` repository loading, extraction orchestration, projections
 - `ir/` canonical frozen IR types and helpers
-- `main/` composition root and CLI wiring
+- `main/` composition root, CLI wiring, and runtime config preparation
 - `mcp/` MCP transport shell
-- `query/` query understanding and answer generation orchestration
-- `retrieval/` retrieval orchestration and iterative agent behavior
-- `retrieval/core/` pure retrieval logic and scoring helpers
+- `query/` query orchestration, iterative agent behavior, and tool adapters
+- `retrieval/` pure retrieval logic, scoring, and context assembly
 - `schemas/` boundary models and typed config
-- `scip/` SCIP adapters and loaders
+- `scip/` SCIP adapters, loaders, and translation helpers
 - `semantic/` semantic resolver registry and helper-backed upgrades
-- `store/` persistence orchestration
-- `store/infrastructure/` lower-level storage adapters
-- `utils/` compatibility helpers and shared utilities
+- `store/` persistence orchestration and store contracts
+- `store/infrastructure/` lower-level storage adapters and runtime wiring
+- `utils/` stdlib-only shared utilities
 
 ## Enforced layer DAG
 
 The import graph is enforced by
-`fastcode/tests/architecture/test_import_graph.py`.
+`fastcode/tests/architecture/test_layer_dag.py`.
 
-Layers:
+Current tiers:
 
-- Layer 0:
-  - `schemas`
-  - `ir`
-  - `utils`
-  - `retrieval.core`
-  - `store.infrastructure`
-- Layer 1:
-  - `graph`
-  - `indexing`
-  - `query`
-  - `retrieval`
-  - `scip`
-  - `semantic`
-  - `store`
-- Layer 2:
-  - `api`
-  - `mcp`
-  - `main`
+- Facade: `api`, `mcp`, `main`
+- Shell: `indexing`, `query`, `store`
+- Events: `events`
+- Interface: `schemas`
+- Domain: `retrieval`, `graph`, `scip`, `semantic`
+- Common: `ir`
+- Base: `utils`
 
-Rule: lower layers must not import upward, and cross-layer cycles are forbidden.
+Rule: dependencies flow downward, cross-layer cycles are forbidden, and
+`utils` stays stdlib-only.
 
 ## Architecture contract
 
@@ -82,16 +72,17 @@ The repo currently enforces these rules in code, tests, and module-local
 
 1. Pydantic stops at the boundary.
    - `schemas/` owns Pydantic validation and settings parsing.
-   - `ir/`, `graph/`, and `retrieval/core/` remain Pydantic-free.
+   - `ir/`, `graph/`, and `retrieval/` remain Pydantic-free.
 
 2. Pure packages stay shell-free.
    - `ir/`, `graph/`, and `retrieval/` may not pull in `pydantic`,
      `sqlite3`, `subprocess`, or `urllib`.
 
 3. Package roots stay thin.
-   - `fastcode/__init__.py` and subpackage `__init__.py` are compatibility
-     surfaces, not composition roots.
-   - Internal packages must not rely on `from fastcode import ...` re-exports.
+   - `fastcode/__init__.py` is metadata-only; subpackage `__init__.py` files
+     are markers or explicit contract modules, not compatibility APIs.
+   - Code and tests import concrete split modules directly instead of relying on
+     package-root re-exports or `from fastcode.<package> import <module>` aliases.
 
 4. Translation stays explicit.
    - Shell packages must not mass-assign with `**model_dump()` or `**__dict__`.
@@ -117,7 +108,7 @@ The repo currently enforces these rules in code, tests, and module-local
 
 The current config boundary is:
 
-1. Raw YAML and `.env` input enter through `fastcode.utils._compat`.
+1. Raw YAML and `.env` input enter through `fastcode.main.config`.
 2. `prepare_runtime_config_mapping(...)` resolves paths and overlays env-backed
    runtime settings.
 3. `fastcode.schemas.config` validates that mapping with Pydantic boundary
@@ -261,16 +252,16 @@ What is still missing before stable-release claims:
 
 The query stack is split between:
 
-- `query/` for intent detection, rewriting, answer generation, and selection
-- `retrieval/` for orchestration
-- `retrieval/core/` for pure scoring, combination, graph-boundary logic, and
-  context assembly
+- `query/` for orchestration: retrieval, iterative agency, tool adapters,
+  intent detection, rewriting, answer generation, and selection
+- `retrieval/` for pure retrieval-domain contracts, scoring, combination,
+  graph-boundary logic, and context assembly
 
 Current design:
 
 1. query understanding extracts intent and search cues
-2. retrieval combines semantic, keyword, and graph-aware evidence
-3. iterative retrieval can escalate when direct retrieval is insufficient
+2. query-shell retrieval combines semantic, keyword, and graph-aware evidence
+3. query-shell iterative retrieval can escalate when direct retrieval is insufficient
 4. answer generation consumes retrieved evidence plus provenance
 
 Current hardened properties:
@@ -340,7 +331,7 @@ The broader target context model has four record families:
 
 Current implementation status: `EvidenceRef`, `ToolObservation`, `RiskState`,
 `AcceptanceContract`, `TurnIntent`, `TurnPlan`, `WorkingMemoryArtifact`,
-`TurnJournal`, and `HandoffArtifact` exist in `retrieval/core/` with explicit
+`TurnJournal`, and `HandoffArtifact` exist in `retrieval/` with explicit
 cache records and shell facades. Durable `ContextBundle`, `DistillationRecord`,
 and `ActivationRecord` records are still target architecture, not implemented
 release features.
@@ -399,7 +390,7 @@ Open design questions:
 The context-bundle work should fit the existing layer DAG instead of becoming a
 new composition root:
 
-- `retrieval/core/` owns pure scoring, budget selection, evidence-ref
+- `retrieval/` owns pure scoring, budget selection, evidence-ref
   normalization, bundle assembly, and text rendering helpers.
 - `query/` owns orchestration: query understanding, retrieval, optional
   semantic escalation, bundle creation, answer generation, and activation
@@ -411,7 +402,7 @@ new composition root:
   own L0/L1/L2 projection generation.
 
 The v1 implementation should not introduce Pydantic models inside
-`retrieval/core/`, should not make `store/` import API schemas, and should not
+`retrieval/`, should not make `store/` import API schemas, and should not
 route bundle persistence through generic `dict` or recursive JSON cleanup on hot
 paths.
 
@@ -448,15 +439,15 @@ history plus ad hoc tool output.
 
 Current code already exposes the v0 substrate:
 
-- `retrieval/core/agent_context.py` owns typed evidence, observation, risk,
+- `retrieval/agent_context.py` owns typed evidence, observation, risk,
   contract, working-memory, journal, and handoff records
-- `retrieval/core/context_compiler.py` renders FCX working-memory and handoff
+- `retrieval/context_compiler.py` renders FCX working-memory and handoff
   artifacts from typed state
 - `query/handler.py` owns session-aware orchestration and persists compiled turn
   artifacts
-- `retrieval/iterative.py` models multi-round confidence, tool calls, and
+- `query/iterative_agent.py` models multi-round confidence, tool calls, and
   keep/discard decisions while accepting compiled context from prior turns
-- `retrieval/agent_tools.py` is the read-only repository boundary
+- `query/agent_tools.py` is the read-only repository boundary
 - `store/cache.py` persists dialogue turns, session indexes, turn journals,
   working memory, and handoff artifacts
 

@@ -21,9 +21,8 @@ Supported deployment modes for the current pre-release:
 
 - local single-user SQLite mode
 - trusted-local API/web service mode behind localhost binding
-- PostgreSQL-backed retrieval mode as an implementation target with initial
-  real pgvector evidence; production backend semantics remain pending the full
-  backend gate
+- PostgreSQL-backed retrieval and metadata storage mode, gated by the real
+  PostgreSQL integration commands below
 
 The API and web services do not provide built-in user authentication. Shared or
 remote deployments require a proxy/gateway with TLS and authz.
@@ -89,7 +88,8 @@ Current evidence: this gate passed on May 13, 2026 with Python 3.13.13.
 
 ### Backend Integration Gate
 
-Status: partially evidenced, still open for production semantics.
+Status: required before tagging any release that claims PostgreSQL-backed
+storage semantics.
 
 Current real-service evidence from May 14, 2026:
 
@@ -109,12 +109,39 @@ values, zero legacy `embedding_arr` rows, no raw embedding leaks in
 chunk rows. The smoke degraded only because Terminus publishing was intentionally
 unconfigured.
 
-Before stable release, run a real PostgreSQL suite that covers snapshot
-save/load, manifests, locks, fencing, staging, outbox, redo tasks, SCIP refs,
-graph facts, migration idempotency, and stale-lock ownership behavior.
+Storage semantics gate:
+
+```bash
+PG_E2E_DSN=postgresql://postgres:postgres@127.0.0.1:5432/fastcode_e2e \
+uv run pytest -n auto \
+  fastcode/tests/e2e/test_e2e_pg_storage_semantics.py -q
+```
+
+That gate covers real PostgreSQL snapshot save/load, manifest head chaining,
+schema migration idempotency on an existing database, snapshot staging and
+promotion, lock ownership and stale-fencing-token invalidation, redo task
+claim/retry/done transitions, outbox duplicate insert detection and retry/done
+transitions, multi-artifact SCIP refs, and relational graph fact persistence
+including delta copy/upsert behavior. It is intentionally separate from the
+Ollama/pgvector indexing smoke so storage semantics can be validated without an
+embedding service.
 
 SQLite is local/single-process storage. PostgreSQL is required for production
-backend semantics.
+backend semantics. In SQLite mode, lock/fencing APIs are no-ops that return
+local success values, redo/outbox claim paths do not provide durable queue
+semantics, and PostgreSQL relational fact tables are not populated.
+
+For PostgreSQL backup/restore validation, take database dumps and filesystem
+artifact backups together. The database owns snapshots, refs, manifests,
+resource locks, redo/outbox state, SCIP refs, design documents, and relational
+facts; the configured persist/cache/vector directories own snapshot shards,
+graph shards, vector indexes, BM25 artifacts, and cache payloads. Restore both
+sets from the same point in time, instantiate `SnapshotStore` and
+`ManifestStore` once to apply idempotent schema checks, then rerun the storage
+semantics gate above. Current schema compatibility is tracked through
+`schema_migrations` rows for `core_metadata`, `pg_full_spec_alignment`, and
+`manifest_store`; release notes must state whether existing artifact families
+are readable or require rebuild.
 
 ### External Tool Gate
 

@@ -22,7 +22,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from fastcode.api import routes as api
+import fastcode.api.routes as api
 from fastcode.ir.types import IRSnapshot
 from fastcode.store.manifest import ManifestStore
 from fastcode.store.snapshot import SnapshotStore
@@ -335,6 +335,48 @@ class TestManifests:
         assert body["manifest"]["snapshot_id"] == "snap:manifest-repo2:s1"
 
 
+class TestCodeStatusPack:
+    """GET /code-status/{snapshot_id}."""
+
+    def test_code_status_pack_offloads_snapshot_export(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        offloaded: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
+
+        async def record_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+            offloaded.append((func, args, kwargs))
+            return func(*args, **kwargs)
+
+        fake_fastcode = MagicMock()
+        fake_fastcode.get_code_status_pack.return_value = {
+            "schema_version": "code_status_pack.v0",
+            "snapshot": {"snapshot_id": "snap:repo:1"},
+        }
+        monkeypatch.setattr(api.asyncio, "to_thread", record_to_thread)
+
+        with patch(
+            "fastcode.api.routes._ensure_fastcode_initialized",
+            return_value=fake_fastcode,
+        ):
+            body = asyncio.run(
+                api.get_code_status_pack(
+                    "snap:repo:1",
+                    include_graph_facts=False,
+                )
+            )
+
+        assert body["status"] == "success"
+        assert body["pack"]["schema_version"] == "code_status_pack.v0"
+        assert offloaded == [
+            (
+                fake_fastcode.get_code_status_pack,
+                ("snap:repo:1",),
+                {"include_graph_facts": False},
+            )
+        ]
+
+
 class TestRootAndHealth:
     """Static endpoints that do not need storage."""
 
@@ -533,9 +575,7 @@ class TestApiSerializationBoundaries:
                     "sources": [],
                 }
 
-        async def _executor_to_thread(
-            func: Any, /, *args: Any, **kwargs: Any
-        ) -> Any:
+        async def _executor_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
                 None, functools.partial(func, *args, **kwargs)

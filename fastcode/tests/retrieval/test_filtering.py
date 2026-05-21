@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.retrieval.core.filtering import (
+from fastcode.retrieval.filtering import (
     apply_filters,
     diversify,
     final_repo_filter,

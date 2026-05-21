@@ -291,9 +291,11 @@ class _FakeCursor:
         self,
         row: dict[str, Any] | None = None,
         rows: list[dict[str, Any]] | None = None,
+        rowcount: int = 0,
     ) -> None:
         self._row = row
         self._rows = rows or []
+        self.rowcount = rowcount
 
     def fetchone(self) -> dict[str, Any] | None:
         return self._row
@@ -423,6 +425,22 @@ class _FakePostgresQueueRuntime:
             task["next_attempt_at"] = str(next_attempt_at)
             task["updated_at"] = str(updated_at)
             return _FakeCursor()
+
+        if "INSERT INTO publish_outbox" in sql:
+            event_id, event_type, payload, snapshot_id, max_attempts, created_at = (
+                params
+            )
+            if str(event_id) in self.outbox_events:
+                return _FakeCursor(rowcount=0)
+            self.add_outbox_event(
+                event_id=str(event_id),
+                event_type=str(event_type),
+                payload=str(payload),
+                snapshot_id=str(snapshot_id),
+                max_attempts=int(max_attempts),
+                created_at=str(created_at),
+            )
+            return _FakeCursor(rowcount=1)
 
         if "SELECT * FROM publish_outbox" in sql:
             limit = int(params[0])
@@ -666,6 +684,179 @@ class TestSnapshotSaveLoadProperties:
         assert loaded.supports[0].metadata == {"doc_id": "unit:file:a.py"}
         assert loaded.relations[0].support_sources == {"fc_structure"}
         assert loaded.embeddings[0].vector == [0.25, 0.5]
+
+    def test_file_ir_shard_payloads_use_explicit_serializers(self) -> None:
+        class NoDictCodeUnit(IRCodeUnit):
+            def to_dict(self) -> dict[str, Any]:
+                raise AssertionError("file IR shards must not call unit.to_dict()")
+
+        class NoDictUnitSupport(IRUnitSupport):
+            def to_dict(self) -> dict[str, Any]:
+                raise AssertionError("file IR shards must not call support.to_dict()")
+
+        class NoDictRelation(IRRelation):
+            def to_dict(self) -> dict[str, Any]:
+                raise AssertionError("file IR shards must not call relation.to_dict()")
+
+        class NoDictEmbedding(IRUnitEmbedding):
+            def to_dict(self) -> dict[str, Any]:
+                raise AssertionError("file IR shards must not call embedding.to_dict()")
+
+        snap = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:file-ir-shards",
+            units=[
+                NoDictCodeUnit(
+                    unit_id="unit:file:a.py",
+                    kind="file",
+                    path="./pkg/a.py",
+                    language="python",
+                    display_name="a.py",
+                    source_set={"fc_structure", "scip"},
+                    metadata={"content_hash": "hash-a", "rank": 1},
+                )
+            ],
+            supports=[
+                NoDictUnitSupport(
+                    support_id="supp:def:a",
+                    unit_id="unit:file:a.py",
+                    source="fc_structure",
+                    support_kind="occurrence",
+                    role="definition",
+                    start_line=1,
+                    start_col=0,
+                    end_line=1,
+                    end_col=4,
+                    metadata={"doc_id": "unit:file:a.py"},
+                )
+            ],
+            relations=[
+                NoDictRelation(
+                    relation_id="rel:contain:a",
+                    src_unit_id="unit:file:a.py",
+                    dst_unit_id="unit:file:a.py",
+                    relation_type="contain",
+                    resolution_state="structural",
+                    support_sources={"fc_structure"},
+                    support_ids=["supp:def:a"],
+                    metadata={"source": "fc_structure"},
+                )
+            ],
+            embeddings=[
+                NoDictEmbedding(
+                    embedding_id="emb:a",
+                    unit_id="unit:file:a.py",
+                    source="fc_embedding",
+                    vector=[0.25, 0.5],
+                    embedding_text="a.py",
+                    model_id="test-model",
+                    metadata={"dim": 2},
+                )
+            ],
+        )
+
+        shards = SnapshotStore.file_ir_shard_payloads(snap)
+
+        assert len(shards) == 1
+        shard = shards[0]
+        assert shard["schema_version"] == "fastcode.file_ir_shard.v1"
+        assert shard["snapshot_id"] == snap.snapshot_id
+        assert shard["repo_name"] == "repo"
+        assert shard["relative_path"] == "pkg/a.py"
+        assert shard["content_hash"] == "hash-a"
+        assert shard["units"][0]["unit_id"] == "unit:file:a.py"
+        assert shard["units"][0]["source_set"] == ["fc_structure", "scip"]
+        assert shard["units"][0]["metadata"] == {"content_hash": "hash-a", "rank": 1}
+        assert shard["supports"][0]["metadata"] == {"doc_id": "unit:file:a.py"}
+        assert shard["relations"][0]["support_sources"] == ["fc_structure"]
+        assert shard["relations"][0]["support_ids"] == ["supp:def:a"]
+        assert shard["embeddings"][0]["vector"] is None
+        assert shard["embeddings"][0]["metadata"] == {"dim": 2}
+        assert [
+            shard[k][0]["_sequence_no"]
+            for k in ("units", "supports", "relations", "embeddings")
+        ] == [0, 0, 0, 0]
+
+    def test_file_ir_shard_paths_include_relation_owner_shards(self) -> None:
+        snap = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:file-ir-relation-shards",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:a",
+                    kind="file",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a.py",
+                    metadata={"content_hash": "hash-a"},
+                ),
+                IRCodeUnit(
+                    unit_id="unit:b",
+                    kind="file",
+                    path="pkg/b.py",
+                    language="python",
+                    display_name="b.py",
+                    metadata={"content_hash": "hash-b"},
+                ),
+                IRCodeUnit(
+                    unit_id="unit:c",
+                    kind="file",
+                    path="pkg/c.py",
+                    language="python",
+                    display_name="c.py",
+                    metadata={"content_hash": "hash-c"},
+                ),
+            ],
+            relations=[
+                IRRelation(
+                    relation_id="rel:a:b",
+                    src_unit_id="unit:a",
+                    dst_unit_id="unit:b",
+                    relation_type="call",
+                    resolution_state="structural",
+                )
+            ],
+        )
+
+        rewrite_paths = SnapshotStore.file_ir_shard_paths_for_paths(
+            snap,
+            ["pkg/b.py"],
+        )
+        shards = SnapshotStore.file_ir_shard_payloads(snap, paths=rewrite_paths)
+        shards_by_path = {shard["relative_path"]: shard for shard in shards}
+
+        assert rewrite_paths == ["pkg/a.py", "pkg/b.py"]
+        assert set(shards_by_path) == {"pkg/a.py", "pkg/b.py"}
+        assert shards_by_path["pkg/a.py"]["relations"][0]["relation_id"] == "rel:a:b"
+        assert shards_by_path["pkg/b.py"]["units"][0]["unit_id"] == "unit:b"
+
+    def test_file_ir_shard_paths_widen_on_removed_paths(self) -> None:
+        snap = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:file-ir-removal",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:a",
+                    kind="file",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a.py",
+                ),
+                IRCodeUnit(
+                    unit_id="unit:c",
+                    kind="file",
+                    path="pkg/c.py",
+                    language="python",
+                    display_name="c.py",
+                ),
+            ],
+        )
+
+        assert SnapshotStore.file_ir_shard_paths_for_paths(
+            snap,
+            [],
+            removed_paths=["pkg/b.py"],
+        ) == ["pkg/a.py", "pkg/c.py"]
 
     def test_save_snapshot_writes_sharded_manifest_and_lazy_path_readers(self):
         """REGRESSION: snapshot persistence uses manifest + path shards."""
@@ -2125,6 +2316,49 @@ class TestSnapshotStoreRedoProperties:
         assert runtime.redo_tasks["redo_1"]["updated_at"] == "2026-05-05T00:00:05+00:00"
         assert store.claim_redo_task() is None
 
+    def test_claim_redo_task_record_returns_typed_running_record(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = SnapshotStore.__new__(SnapshotStore)
+        runtime = _FakePostgresQueueRuntime()
+        runtime.add_redo_task(
+            task_id="redo_record",
+            task_type="index_run_recovery",
+            payload_json='{"run_id":"run-record"}',
+        )
+        store.db_runtime = runtime
+
+        def _boom(_: object) -> dict[str, Any]:
+            raise AssertionError("snapshot store must not call row_to_dict()")
+
+        def _boom_task(_: RedoTaskRecord) -> dict[str, Any]:
+            raise AssertionError(
+                "typed redo claim must not call RedoTaskRecord.to_dict()"
+            )
+
+        monkeypatch.setattr(
+            snapshot_module, "utc_now", lambda: "2026-05-05T00:00:07+00:00"
+        )
+        monkeypatch.setattr(runtime, "row_to_dict", _boom)
+        monkeypatch.setattr(RedoTaskRecord, "to_dict", _boom_task)
+
+        task = store.claim_redo_task_record()
+
+        assert task == RedoTaskRecord(
+            task_id="redo_record",
+            task_type="index_run_recovery",
+            payload_json='{"run_id":"run-record"}',
+            status="running",
+            attempts=1,
+            last_error=None,
+            next_attempt_at=None,
+            created_at="2026-05-05T00:00:00+00:00",
+            updated_at="2026-05-05T00:00:07+00:00",
+        )
+        assert runtime.redo_tasks["redo_record"]["status"] == "running"
+        assert runtime.redo_tasks["redo_record"]["attempts"] == 1
+        assert store.claim_redo_task_record() is None
+
     def test_mark_redo_task_failed_uses_explicit_attempt_lookup(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2155,6 +2389,37 @@ class TestSnapshotStoreRedoProperties:
 
 
 class TestSnapshotStoreOutboxPostgresProperties:
+    def test_enqueue_outbox_event_returns_false_for_duplicate_event_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = SnapshotStore.__new__(SnapshotStore)
+        runtime = _FakePostgresQueueRuntime()
+        store.db_runtime = runtime
+        monkeypatch.setattr(
+            snapshot_module, "utc_now", lambda: "2026-05-05T00:00:06+00:00"
+        )
+
+        inserted = store.enqueue_outbox_event(
+            "evt1",
+            "lineage_publish",
+            '{"snapshot":"snap:1"}',
+            "snap:1",
+            max_attempts=2,
+        )
+        duplicate = store.enqueue_outbox_event(
+            "evt1",
+            "lineage_publish",
+            '{"snapshot":"snap:duplicate"}',
+            "snap:duplicate",
+            max_attempts=5,
+        )
+
+        assert inserted is True
+        assert duplicate is False
+        assert runtime.outbox_events["evt1"]["payload"] == '{"snapshot":"snap:1"}'
+        assert runtime.outbox_events["evt1"]["snapshot_id"] == "snap:1"
+        assert runtime.outbox_events["evt1"]["max_attempts"] == 2
+
     def test_claim_outbox_event_returns_in_progress_payload_after_claim(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2214,6 +2479,77 @@ class TestSnapshotStoreOutboxPostgresProperties:
         assert runtime.outbox_events["evt2"]["status"] == "in_progress"
         assert runtime.outbox_events["evt3"]["status"] == "failed"
         assert store.get_outbox_pending_count() == 0
+
+    def test_claim_outbox_event_records_returns_typed_records(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = SnapshotStore.__new__(SnapshotStore)
+        runtime = _FakePostgresQueueRuntime()
+        runtime.add_outbox_event(
+            event_id="evt-record-1",
+            event_type="lineage_publish",
+            payload='{"snapshot":"snap:record:1"}',
+            snapshot_id="snap:record:1",
+            created_at="2026-05-05T00:00:00+00:00",
+        )
+        runtime.add_outbox_event(
+            event_id="evt-record-2",
+            event_type="lineage_publish",
+            payload='{"snapshot":"snap:record:2"}',
+            snapshot_id="snap:record:2",
+            status="failed",
+            attempts=1,
+            max_attempts=3,
+            error_message="retry",
+            created_at="2026-05-05T00:00:01+00:00",
+        )
+        store.db_runtime = runtime
+
+        def _boom(_: object) -> dict[str, Any]:
+            raise AssertionError("snapshot store must not call row_to_dict()")
+
+        def _boom_event(_: OutboxEventRecord) -> dict[str, Any]:
+            raise AssertionError(
+                "typed outbox claim must not call OutboxEventRecord.to_dict()"
+            )
+
+        monkeypatch.setattr(
+            snapshot_module, "utc_now", lambda: "2026-05-05T00:00:08+00:00"
+        )
+        monkeypatch.setattr(runtime, "row_to_dict", _boom)
+        monkeypatch.setattr(OutboxEventRecord, "to_dict", _boom_event)
+
+        events = store.claim_outbox_event_records(limit=10)
+
+        assert events == [
+            OutboxEventRecord(
+                event_id="evt-record-1",
+                event_type="lineage_publish",
+                payload='{"snapshot":"snap:record:1"}',
+                snapshot_id="snap:record:1",
+                status="in_progress",
+                attempts=0,
+                max_attempts=5,
+                created_at="2026-05-05T00:00:00+00:00",
+                last_attempt_at="2026-05-05T00:00:08+00:00",
+                error_message=None,
+            ),
+            OutboxEventRecord(
+                event_id="evt-record-2",
+                event_type="lineage_publish",
+                payload='{"snapshot":"snap:record:2"}',
+                snapshot_id="snap:record:2",
+                status="in_progress",
+                attempts=1,
+                max_attempts=3,
+                created_at="2026-05-05T00:00:01+00:00",
+                last_attempt_at="2026-05-05T00:00:08+00:00",
+                error_message="retry",
+            ),
+        ]
+        assert runtime.outbox_events["evt-record-1"]["status"] == "in_progress"
+        assert runtime.outbox_events["evt-record-2"]["status"] == "in_progress"
+        assert store.claim_outbox_event_records(limit=10) == []
 
     def test_mark_outbox_event_failed_and_count_use_explicit_row_access(
         self, monkeypatch: pytest.MonkeyPatch

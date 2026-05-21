@@ -14,9 +14,15 @@ import pytest
 
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs, IRGraphView
-from fastcode.ir.types import IRCodeUnit, IRSnapshot
-from fastcode.main import FastCode
-from fastcode.retrieval.core.agent_context import (
+from fastcode.ir.types import (
+    IRCodeUnit,
+    IRRelation,
+    IRSnapshot,
+    IRSymbol,
+    IRUnitSupport,
+)
+from fastcode.main.fastcode import FastCode
+from fastcode.retrieval.agent_context import (
     AcceptedFact,
     EvidenceRef,
     Hypothesis,
@@ -24,7 +30,7 @@ from fastcode.retrieval.core.agent_context import (
     TurnIntent,
     WorkingMemoryArtifact,
 )
-from fastcode.retrieval.core.context_compiler import (
+from fastcode.retrieval.context_compiler import (
     build_context_bundle,
     build_tool_observation,
     build_turn_journal,
@@ -190,6 +196,117 @@ def test_api_facade_scip_artifacts_use_explicit_record_payloads(
         "/tmp/go.scip",
     ]
     assert artifacts[1]["metadata"] == {}
+
+
+def test_code_status_pack_uses_snapshot_record_and_explicit_ir_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fc = FastCode.__new__(FastCode)
+    snapshot_id = "snap:repo:code-status"
+    snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id=snapshot_id,
+        branch="main",
+        commit_id="abc123",
+        tree_id="tree123",
+        units=[
+            IRCodeUnit(
+                unit_id="file:pkg/a.py",
+                kind="file",
+                path="pkg/a.py",
+                language="python",
+                display_name="pkg/a.py",
+                source_set={"fc_structure"},
+                metadata={"content_hash": "hash-a", "blob_oid": "blob-a"},
+            ),
+            IRCodeUnit(
+                unit_id="sym:pkg.a.work",
+                kind="function",
+                path="pkg/a.py",
+                language="python",
+                display_name="work",
+                qualified_name="pkg.a.work",
+                signature="def work() -> int",
+                start_line=1,
+                end_line=2,
+                source_set={"fc_structure", "scip"},
+            ),
+        ],
+        supports=[
+            IRUnitSupport(
+                support_id="support:work",
+                unit_id="sym:pkg.a.work",
+                source="scip",
+                support_kind="occurrence",
+                role="definition",
+                path="pkg/a.py",
+                start_line=1,
+                end_line=1,
+            )
+        ],
+        relations=[
+            IRRelation(
+                relation_id="rel:contain",
+                src_unit_id="file:pkg/a.py",
+                dst_unit_id="sym:pkg.a.work",
+                relation_type="contain",
+                resolution_state="structural",
+                support_ids=["support:work"],
+            )
+        ],
+    )
+    snapshot_record = SnapshotRecord(
+        snapshot_id=snapshot_id,
+        repo_name="repo",
+        branch="main",
+        commit_id="abc123",
+        tree_id="tree123",
+        artifact_key="artifact-code-status",
+        ir_path="/tmp/ir.json",
+        ir_graphs_path=None,
+        created_at="2026-05-21T00:00:00+00:00",
+        metadata_json=None,
+    )
+    manifest = ManifestRecord(
+        manifest_id="manifest-code-status",
+        repo_name="repo",
+        ref_name="main",
+        snapshot_id=snapshot_id,
+        index_run_id="run-code-status",
+        published_at="2026-05-21T00:00:01+00:00",
+        previous_manifest_id=None,
+        status="published",
+    )
+
+    def _boom_to_dict(_: object) -> dict[str, Any]:
+        raise AssertionError("code status export must not call to_dict()")
+
+    monkeypatch.setattr(IRSnapshot, "to_dict", _boom_to_dict)
+    monkeypatch.setattr(IRCodeUnit, "to_dict", _boom_to_dict)
+    monkeypatch.setattr(IRUnitSupport, "to_dict", _boom_to_dict)
+    monkeypatch.setattr(IRRelation, "to_dict", _boom_to_dict)
+    monkeypatch.setattr(ManifestRecord, "to_dict", _boom_to_dict)
+
+    fc.snapshot_store = SimpleNamespace(
+        get_snapshot_record=lambda requested: (
+            snapshot_record if requested == snapshot_id else None
+        ),
+        load_snapshot=lambda requested: snapshot if requested == snapshot_id else None,
+        load_ir_graphs=lambda _requested: None,
+    )
+    fc.manifest_store = SimpleNamespace(
+        get_snapshot_manifest_record=lambda requested: (
+            manifest if requested == snapshot_id else None
+        )
+    )
+
+    pack = fc.get_code_status_pack(snapshot_id, include_graph_facts=False)
+
+    assert pack["schema_version"] == "code_status_pack.v0"
+    assert pack["snapshot"]["artifact_key"] == "artifact-code-status"
+    assert pack["manifest"]["manifest_id"] == "manifest-code-status"
+    assert pack["source_files"][0]["path"] == "pkg/a.py"
+    assert pack["relation_facts"][0]["support_span_ids"]
 
 
 def test_diagnostic_bundle_reports_support_safe_runtime_state(
@@ -367,7 +484,7 @@ def _make_working_memory_record(
     session_id: str = "sess-1",
     turn_number: int = 2,
 ) -> tuple[WorkingMemoryRecord, dict[str, Any]]:
-    from fastcode.retrieval.core.agent_context import build_acceptance_contract
+    from fastcode.retrieval.agent_context import build_acceptance_contract
 
     intent = TurnIntent(
         session_id=session_id,
@@ -787,6 +904,7 @@ def test_find_symbol_uses_compact_symbol_record_without_full_snapshot_load():
             "symbol_id": symbol_id,
             "display_name": "AuthService",
             "path": "src/auth.py",
+            "metadata": {"tags": {"core"}},
         },
         load_snapshot=lambda _snapshot_id: (_ for _ in ()).throw(
             AssertionError("find_symbol should not full-load IRSnapshot")
@@ -797,6 +915,74 @@ def test_find_symbol_uses_compact_symbol_record_without_full_snapshot_load():
         "symbol_id": "sym:auth",
         "display_name": "AuthService",
         "path": "src/auth.py",
+        "metadata": {"tags": ["core"]},
+    }
+
+
+def test_find_symbol_fallback_uses_explicit_symbol_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fc = FastCode.__new__(FastCode)
+    fc.snapshot_symbol_index = SnapshotSymbolIndex()
+    symbol = IRSymbol(
+        symbol_id="sym:auth",
+        external_symbol_id="scip:auth",
+        path="src/auth.py",
+        display_name="AuthService",
+        kind="class",
+        language="python",
+        qualified_name="auth.AuthService",
+        signature="class AuthService",
+        start_line=1,
+        start_col=0,
+        end_line=10,
+        end_col=0,
+        source_priority=100,
+        source_set={"scip", "fc_structure"},
+        metadata={"rank": 1, "tags": {"core"}},
+    )
+    fc.snapshot_store = SimpleNamespace(
+        load_snapshot_symbol_index_payload=lambda snapshot_id: {
+            "schema_version": "snapshot_symbol_index.v1",
+            "snapshot_id": snapshot_id,
+            "symbols": [
+                {
+                    "canonical": "sym:auth",
+                    "aliases": ["scip:auth"],
+                    "names": ["AuthService"],
+                    "path": "src/auth.py",
+                }
+            ],
+        },
+        load_snapshot_symbol_record=lambda _snapshot_id, _symbol_id: None,
+        load_snapshot=lambda _snapshot_id: IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:1",
+            symbols=[symbol],
+        ),
+    )
+
+    def _boom(_: IRSymbol) -> dict[str, Any]:
+        raise AssertionError("find_symbol fallback must not call IRSymbol.to_dict()")
+
+    monkeypatch.setattr(IRSymbol, "to_dict", _boom)
+
+    assert fc.find_symbol("snap:1", name="AuthService") == {
+        "symbol_id": "sym:auth",
+        "external_symbol_id": "scip:auth",
+        "path": "src/auth.py",
+        "display_name": "AuthService",
+        "kind": "class",
+        "language": "python",
+        "qualified_name": "auth.AuthService",
+        "signature": "class AuthService",
+        "start_line": 1,
+        "start_col": 0,
+        "end_line": 10,
+        "end_col": 0,
+        "source_priority": 100,
+        "source_set": ["fc_structure", "scip"],
+        "metadata": {"rank": 1, "tags": ["core"]},
     }
 
 

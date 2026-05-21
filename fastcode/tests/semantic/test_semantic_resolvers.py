@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NoReturn, cast
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import networkx as nx
 import pytest
@@ -22,33 +21,39 @@ from fastcode.ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from fastcode.main import FastCode
-from fastcode.semantic.resolvers import (
-    PYTHON_RESOLVER_EXTRACTOR,
-    PYTHON_RESOLVER_SOURCE,
-    CppSemanticResolver,
-    CSemanticResolver,
-    CSharpCompilerResolver,
-    FortranCompilerResolver,
-    GoCompilerResolver,
-    JavaCompilerResolver,
-    JavaScriptCompilerResolver,
-    JuliaCompilerResolver,
-    PythonSemanticResolver,
-    ResolutionPatch,
-    RustCompilerResolver,
-    TypeScriptCompilerResolver,
-    ZigCompilerResolver,
-    apply_resolution_patch,
-    build_default_semantic_resolver_registry,
-)
+from fastcode.main.fastcode import FastCode
 from fastcode.semantic.resolvers._utils import (
     _hash_id,
     _normalize_path,
     validate_helper_paths,
 )
+from fastcode.semantic.resolvers.base import ResolutionPatch
+from fastcode.semantic.resolvers.c_family import CppSemanticResolver, CSemanticResolver
+from fastcode.semantic.resolvers.csharp import CSharpCompilerResolver
+from fastcode.semantic.resolvers.fortran import FortranCompilerResolver
+from fastcode.semantic.resolvers.go import GoCompilerResolver
 from fastcode.semantic.resolvers.helper_backed import HelperBackedSemanticResolver
-from fastcode.semantic.resolvers.patching import _source_preference
+from fastcode.semantic.resolvers.java import JavaCompilerResolver
+from fastcode.semantic.resolvers.js_ts import (
+    JavaScriptCompilerResolver,
+    TypeScriptCompilerResolver,
+)
+from fastcode.semantic.resolvers.julia import JuliaCompilerResolver
+from fastcode.semantic.resolvers.patching import (
+    _source_preference,
+    apply_resolution_patch,
+)
+from fastcode.semantic.resolvers.python import (
+    PYTHON_RESOLVER_EXTRACTOR,
+    PYTHON_RESOLVER_SOURCE,
+    PythonSemanticResolver,
+)
+from fastcode.semantic.resolvers.registry import (
+    SemanticResolverRegistry,
+    build_default_semantic_resolver_registry,
+)
+from fastcode.semantic.resolvers.rust import RustCompilerResolver
+from fastcode.semantic.resolvers.zig import ZigCompilerResolver
 from fastcode.utils.materialization import (
     BOUNDARY_SEMANTIC_PATCH_CHANGED_OBJECTS,
     BOUNDARY_SEMANTIC_PATCH_PRESERVED_OBJECTS,
@@ -1169,8 +1174,6 @@ def test_resolver_failure_gracefully_degrades():
         ) -> NoReturn:
             raise RuntimeError("resolver crashed")
 
-    from fastcode.semantic.resolvers import SemanticResolverRegistry
-
     fc.semantic_resolver_registry = SemanticResolverRegistry([BrokenResolver()])
     fc.pipeline.semantic_resolver_registry = fc.semantic_resolver_registry
     warnings: list[str] = []
@@ -1939,13 +1942,9 @@ def test_compiled_go_helper_command_builds_and_reuses_cached_binary(
         Path(command[3]).write_bytes(b"binary")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    with (
-        patch.object(resolver, "_go_helper_binary_path", return_value=binary),
-        patch(
-            "fastcode.semantic.resolvers.helper_backed.subprocess.run",
-            side_effect=_fake_build,
-        ) as run_mock,
-    ):
+    run_mock = MagicMock(side_effect=_fake_build)
+    resolver.set_command_runner(run_mock)
+    with patch.object(resolver, "_go_helper_binary_path", return_value=binary):
         first = resolver._compiled_go_helper_command("/usr/bin/go", helper)
         second = resolver._compiled_go_helper_command("/usr/bin/go", helper)
 
@@ -2283,11 +2282,13 @@ def test_helper_backed_resolver_skips_ambiguous_import_target_matches() -> None:
 def test_helper_backed_resolver_records_helper_json_failure() -> None:
     resolver = _DummyHelperResolver()
     patch_result = ResolutionPatch()
-    with patch("fastcode.semantic.resolvers.helper_backed.subprocess.run") as run_mock:
-        run_mock.return_value = SimpleNamespace(returncode=0, stdout="{", stderr="")
-        payload = resolver._run_semantic_helper(
-            ["/tmp/a.py"], patch_result, repo_root="/tmp"
-        )
+    run_mock = MagicMock(
+        return_value=SimpleNamespace(returncode=0, stdout="{", stderr="")
+    )
+    resolver.set_command_runner(run_mock)
+    payload = resolver._run_semantic_helper(
+        ["/tmp/a.py"], patch_result, repo_root="/tmp"
+    )
 
     assert payload == {}
     assert any(d.code == "invalid_helper_json" for d in patch_result.diagnostics)
@@ -2326,9 +2327,11 @@ def test_helper_backed_resolver_falls_back_on_helper_nonzero_exit(
             "fastcode.semantic.resolvers.helper_backed.os.getcwd",
             return_value=str(tmp_path),
         ),
-        patch("fastcode.semantic.resolvers.helper_backed.subprocess.run") as run_mock,
     ):
-        run_mock.return_value = SimpleNamespace(returncode=7, stdout="", stderr="boom")
+        run_mock = MagicMock(
+            return_value=SimpleNamespace(returncode=7, stdout="", stderr="boom")
+        )
+        resolver.set_command_runner(run_mock)
         patch_result = resolver.resolve(
             snapshot=snapshot,
             elements=[element],
@@ -2386,11 +2389,8 @@ def test_helper_backed_resolver_falls_back_on_helper_timeout(tmp_path: Path) -> 
             "fastcode.semantic.resolvers.helper_backed.os.getcwd",
             return_value=str(tmp_path),
         ),
-        patch(
-            "fastcode.semantic.resolvers.helper_backed.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd=["dummy"], timeout=1),
-        ),
     ):
+        resolver.set_command_runner(MagicMock(side_effect=TimeoutError("timeout")))
         patch_result = resolver.resolve(
             snapshot=snapshot,
             elements=[element],
@@ -2423,11 +2423,12 @@ def test_helper_backed_resolver_keeps_compiler_tier_on_valid_empty_payload(
             "fastcode.semantic.resolvers.helper_backed.os.getcwd",
             return_value=str(tmp_path),
         ),
-        patch(
-            "fastcode.semantic.resolvers.helper_backed.subprocess.run",
-            return_value=SimpleNamespace(returncode=0, stdout="{}", stderr=""),
-        ),
     ):
+        resolver.set_command_runner(
+            MagicMock(
+                return_value=SimpleNamespace(returncode=0, stdout="{}", stderr="")
+            )
+        )
         patch_result = resolver.resolve(
             snapshot=snapshot,
             elements=[element],
@@ -2522,9 +2523,11 @@ def test_helper_backed_resolver_uses_snapshot_repo_root_for_helper_execution(
             "fastcode.semantic.resolvers.helper_backed.os.getcwd",
             return_value=str(foreign_cwd),
         ),
-        patch("fastcode.semantic.resolvers.helper_backed.subprocess.run") as run_mock,
     ):
-        run_mock.return_value = SimpleNamespace(returncode=0, stdout="{}", stderr="")
+        run_mock = MagicMock(
+            return_value=SimpleNamespace(returncode=0, stdout="{}", stderr="")
+        )
+        resolver.set_command_runner(run_mock)
         patch_result = resolver.resolve(
             snapshot=snapshot,
             elements=[element],
@@ -2595,20 +2598,21 @@ def test_helper_backed_resolver_reuses_artifact_cache_on_unchanged_inputs(
 
 def test_is_scip_available_returns_false_for_unsupported_language():
     """is_scip_available must return False for unknown languages."""
-    from fastcode.scip.indexers import is_scip_available
+    from fastcode.indexing.scip_runner import is_scip_available
 
     assert is_scip_available("brainfuck") is False
 
 
 def test_is_scip_available_checks_binary_presence():
     """is_scip_available must check PATH for the indexer binary."""
-    from fastcode.scip.indexers import is_scip_available
+    from fastcode.indexing.scip_runner import is_scip_available
 
-    with patch("fastcode.scip.indexers.shutil.which", return_value=None):
+    with patch("fastcode.indexing.scip_runner.shutil.which", return_value=None):
         assert is_scip_available("python") is False
 
     with patch(
-        "fastcode.scip.indexers.shutil.which", return_value="/usr/bin/scip-python"
+        "fastcode.indexing.scip_runner.shutil.which",
+        return_value="/usr/bin/scip-python",
     ):
         assert is_scip_available("python") is True
 

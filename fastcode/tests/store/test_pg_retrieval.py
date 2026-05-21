@@ -607,7 +607,7 @@ def test_upsert_elements_batches_vector_and_search_rows_double():
 def test_vector_parameter_falls_back_to_literal_without_pgvector_adapter_double(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import fastcode.db_runtime as db_runtime_module
+    import fastcode.store.infrastructure.runtime as db_runtime_module
 
     monkeypatch.setattr(db_runtime_module, "register_vector", None)
 

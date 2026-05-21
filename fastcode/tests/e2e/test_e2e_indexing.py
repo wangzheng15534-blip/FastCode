@@ -26,11 +26,9 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
-import networkx as nx
 import pytest
 
 from fastcode.graph.build import CodeGraphBuilder
-from fastcode.graph_runtime import LadybugGraphRuntime
 from fastcode.indexing.doc_ingester import KeyDocIngester
 from fastcode.indexing.embedder import CodeEmbedder
 from fastcode.indexing.indexer import CodeIndexer
@@ -39,16 +37,19 @@ from fastcode.indexing.parser import CodeParser
 from fastcode.indexing.pipeline import IndexPipeline
 from fastcode.indexing.terminus import TerminusPublisher
 from fastcode.ir.graph import IRGraphBuilder
-from fastcode.main import FastCode
+from fastcode.main.config import config_to_legacy_dict
+from fastcode.main.fastcode import FastCode
 from fastcode.schemas.config import config_from_mapping
-from fastcode.semantic import build_default_semantic_resolver_registry
+from fastcode.semantic.resolvers.registry import (
+    build_default_semantic_resolver_registry,
+)
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.store.index_run import IndexRunStore
+from fastcode.store.infrastructure.graph_runtime import LadybugGraphRuntime
 from fastcode.store.manifest import ManifestStore
 from fastcode.store.pg_retrieval import PgRetrievalStore
 from fastcode.store.snapshot import SnapshotStore
 from fastcode.store.vector import VectorStore
-from fastcode.utils import config_to_legacy_dict
 
 pytestmark = [pytest.mark.e2e]
 
@@ -290,7 +291,7 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
     )
 
     from fastcode.query.processor import QueryProcessor
-    from fastcode.retrieval.hybrid import HybridRetriever
+    from fastcode.query.retriever import HybridRetriever
     from fastcode.store.cache import CacheManager
 
     config_repo_root = fc.config.get("repo_root", "./repos")
@@ -416,22 +417,18 @@ def test_e2e_indexing_sqlite_real_embeddings(
     # IR graphs saved (5 types).
     ir_graphs = fc.snapshot_store.load_ir_graphs(snapshot_id)
     assert ir_graphs is not None
-    assert isinstance(ir_graphs.dependency_graph, nx.DiGraph)
-    assert isinstance(ir_graphs.call_graph, nx.DiGraph)
-    assert isinstance(ir_graphs.inheritance_graph, nx.DiGraph)
-    assert isinstance(ir_graphs.reference_graph, nx.DiGraph)
-    assert isinstance(ir_graphs.containment_graph, nx.DiGraph)
+    graph_handles = [
+        ir_graphs.dependency_graph,
+        ir_graphs.call_graph,
+        ir_graphs.inheritance_graph,
+        ir_graphs.reference_graph,
+        ir_graphs.containment_graph,
+    ]
+    for graph in graph_handles:
+        assert callable(getattr(graph, "number_of_nodes", None))
+        assert callable(getattr(graph, "number_of_edges", None))
     assert ir_graphs.containment_graph.number_of_edges() >= 1
-    total_edges = sum(
-        g.number_of_edges()
-        for g in [
-            ir_graphs.dependency_graph,
-            ir_graphs.call_graph,
-            ir_graphs.inheritance_graph,
-            ir_graphs.reference_graph,
-            ir_graphs.containment_graph,
-        ]
-    )
+    total_edges = sum(g.number_of_edges() for g in graph_handles)
     assert total_edges >= 1
 
     # Manifest published.

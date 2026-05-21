@@ -1,18 +1,18 @@
-"""Tests for fastcode.retrieval.core.fusion — pure fusion functions extracted from HybridRetriever."""
+"""Tests for fastcode.retrieval.fusion — pure fusion functions extracted from HybridRetriever."""
 
 from typing import Any
 
 import pytest
 
 from fastcode.ir.element import CodeElement
-from fastcode.retrieval.core.fusion import (
+from fastcode.retrieval.contracts import FusionConfig
+from fastcode.retrieval.fusion import (
     adaptive_fuse_channels,
     apply_doc_projection_to_code,
     compute_adaptive_fusion_params,
     extract_trace_links,
     project_doc_priors,
 )
-from fastcode.schemas.core_types import FusionConfig
 
 
 def _mk_row(elem_id: str, elem_type: str, total: float, **extra: Any) -> dict[str, Any]:

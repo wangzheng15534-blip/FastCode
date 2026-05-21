@@ -11,26 +11,27 @@ from _pytest.monkeypatch import MonkeyPatch
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.utils import (
-    calculate_code_complexity,
-    clean_docstring,
+from fastcode.main.config import prepare_runtime_config_mapping, resolve_config_paths
+from fastcode.query.tokens import truncate_to_tokens
+from fastcode.utils.clock import utc_now
+from fastcode.utils.filesystem import (
     compute_file_hash,
     ensure_dir,
-    extract_code_snippet,
-    format_code_block,
     get_file_extension,
-    get_language_from_extension,
     get_repo_name_from_url,
     is_supported_file,
     is_text_file,
-    merge_dicts,
     normalize_path,
-    prepare_runtime_config_mapping,
-    resolve_config_paths,
+)
+from fastcode.utils.json import safe_jsonable
+from fastcode.utils.paths import get_language_from_extension
+from fastcode.utils.text import (
+    calculate_code_complexity,
+    clean_docstring,
+    extract_code_snippet,
+    format_code_block,
+    merge_dicts,
     safe_get,
-    safe_jsonable,
-    truncate_to_tokens,
-    utc_now,
 )
 
 # --- Helpers ---

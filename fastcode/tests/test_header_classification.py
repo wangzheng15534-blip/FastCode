@@ -424,7 +424,5 @@ class TestDuplicateExtensionMaps:
 
     @pytest.mark.regression
     def test_all_language_maps_agree_on_dot_h(self) -> None:
-        """The .h mapping in paths.py and _compat.py must return the same language."""
-        from fastcode.utils._compat import get_language_from_extension as compat_fn
-
-        assert get_language_from_extension(".h") == compat_fn(".h")
+        """The canonical .h extension mapping remains stable."""
+        assert get_language_from_extension(".h") == "c"

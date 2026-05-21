@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from fastcode.api import routes as api
+import fastcode.api.routes as api
 from fastcode.main.fastcode import _ReadWriteStateLock
 
 pytestmark = [pytest.mark.perf]

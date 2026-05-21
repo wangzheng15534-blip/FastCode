@@ -293,6 +293,23 @@ def test_edit_class_report_generation_perf(tmp_path: Path, benchmark: Any) -> No
     assert report_path.exists()
 
 
+def test_one_file_body_edit_incremental_cost_is_below_full_reindex_perf(
+    tmp_path: Path,
+) -> None:
+    payload = _measure_fixture(edit_class_fixture("body_only"), tmp_path)
+    full = payload["full_reindex"]
+    incremental = payload["incremental_update"]
+
+    assert incremental["provider_calls"] * 2 <= full["provider_calls"]
+    assert incremental["files_scanned"] * 2 <= full["files_scanned"]
+    assert incremental["files_hashed"] * 2 <= full["files_hashed"]
+    assert incremental["changed_vectors"] * 2 <= full["changed_vectors"]
+    assert incremental["bm25_shards"] * 2 <= full["bm25_shards"]
+    assert incremental["graph_shards"] * 2 <= full["graph_shards"]
+    assert incremental["bytes_read"] < full["bytes_read"]
+    assert incremental["bytes_written"] < full["bytes_written"]
+
+
 def test_helper_semantic_report_generation_perf(tmp_path: Path, benchmark: Any) -> None:
     report_path = tmp_path / "reports" / "helper_semantic.json"
 

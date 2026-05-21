@@ -274,10 +274,7 @@ class TestLoadScipArtifactJson:
             path = os.path.join(tmpdir, "test.scip")
             with open(path, "wb") as f:
                 f.write(b"\x00\x01\x02")
-            with (
-                patch("fastcode.scip.loader.shutil.which", return_value=None),
-                pytest.raises(ValueError, match=r"could not be parsed"),
-            ):
+            with pytest.raises(ValueError, match=r"could not be parsed"):
                 load_scip_artifact(path)
 
     @given(
@@ -524,10 +521,11 @@ def test_binary_scip_to_ir_round_trip(tmp_path: pathlib.Path):
 
 def test_run_scip_python_index_delegates_to_scip_indexers(tmp_path: pathlib.Path):
     """run_scip_python_index delegates to scip_indexers.run_scip_indexer."""
-    from fastcode.scip.loader import run_scip_python_index
+    from fastcode.indexing.scip_runner import run_scip_python_index
 
     with patch(
-        "fastcode.scip.indexers.run_scip_indexer", return_value="/fake/output.scip"
+        "fastcode.indexing.scip_runner.run_scip_indexer",
+        return_value="/fake/output.scip",
     ) as mock_run:
         result = run_scip_python_index(str(tmp_path), "/fake/output.scip")
 

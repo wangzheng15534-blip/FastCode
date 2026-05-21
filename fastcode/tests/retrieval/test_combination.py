@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.retrieval.core.combination import combine_results
+from fastcode.retrieval.combination import combine_results
 
 
 def _mk_meta(elem_id: str, **extra) -> dict[str, Any]:

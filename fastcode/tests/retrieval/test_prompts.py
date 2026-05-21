@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from fastcode.retrieval.core.prompts import (
+from fastcode.retrieval.prompts import (
     format_elements_with_metadata,
     format_tool_call_history,
 )

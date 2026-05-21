@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import numpy as np
 
+from fastcode.store.vector_math import as_float32_matrix
 from fastcode.utils.materialization import (
     BOUNDARY_JSON_ENCODE,
     BOUNDARY_VECTOR_LIST_CONVERSION,
     collect_materialization_counters,
     increment_materialization_boundary,
 )
-from fastcode.utils.vectors import as_float32_matrix
 
 
 def test_materialization_counters_are_scoped() -> None:

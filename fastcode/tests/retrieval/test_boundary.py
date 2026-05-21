@@ -1,7 +1,7 @@
 """Tests for I/O import guard and boundary conversion.
 
-Part A -- test_core_modules_have_no_io_imports:
-  Scans every .py in fastcode/retrieval/core/ (except __init__.py) and asserts
+Part A -- test_retrieval_modules_have_no_io_imports:
+  Scans every .py in fastcode/retrieval/ (except __init__.py) and asserts
   that none import from forbidden I/O modules.
 
 Part B/C -- boundary conversion tests:
@@ -17,21 +17,15 @@ from typing import Any
 
 import pytest
 
-from fastcode.retrieval.core.boundary import (
+from fastcode.retrieval.boundary import (
     CoreQueryInput,
     hit_to_response,
     query_request_to_core,
 )
-from fastcode.schemas.core_types import Hit
+from fastcode.retrieval.contracts import Hit
 
-CORE_DIR = (
-    pathlib.Path(__file__).resolve().parent.parent.parent.parent
-    / "src"
-    / "fastcode"
-    / "retrieval"
-    / "core"
-)
-PACKAGE_DIR = CORE_DIR.parent.parent
+PACKAGE_DIR = pathlib.Path(__file__).resolve().parents[2] / "src" / "fastcode"
+RETRIEVAL_DIR = PACKAGE_DIR / "retrieval"
 
 IO_MODULES = frozenset(
     {
@@ -82,13 +76,13 @@ def _collect_imports(source: str) -> list[str]:
     return names
 
 
-class TestCoreImportGuard:
-    """Ensure fastcode/core/ never touches I/O libraries."""
+class TestRetrievalImportGuard:
+    """Ensure fastcode/retrieval/ never touches I/O libraries."""
 
-    def test_core_modules_have_no_io_imports(self) -> None:
+    def test_retrieval_modules_have_no_io_imports(self) -> None:
         py_files = sorted(
             p
-            for p in CORE_DIR.iterdir()
+            for p in RETRIEVAL_DIR.iterdir()
             if p.suffix == ".py" and p.name != "__init__.py"
         )
 
@@ -100,7 +94,7 @@ class TestCoreImportGuard:
                 if imp in IO_MODULES:
                     violations.append(f"{py_file.name}: import '{imp}' is forbidden")
 
-        assert violations == [], "I/O imports found in core/:\n" + "\n".join(
+        assert violations == [], "I/O imports found in retrieval/:\n" + "\n".join(
             f"  {v}" for v in violations
         )
 
@@ -211,7 +205,7 @@ class TestBoundaryExplicitTranslation:
 
     def test_boundary_uses_explicit_translation(self) -> None:
         source = pathlib.Path(
-            __import__("fastcode.retrieval.core.boundary", fromlist=[""]).__file__
+            __import__("fastcode.retrieval.boundary", fromlist=[""]).__file__
         ).read_text(encoding="utf-8")
 
         # Build the set of line numbers that are comments or docstrings
@@ -250,7 +244,7 @@ class TestBoundaryExplicitTranslation:
 
 
 class TestArchitectureBoundaries:
-    """Verify dependency flow: api -> store/infrastructure -> core -> schemas."""
+    """Verify dependency flow across API, storage, retrieval, and schemas."""
 
     def _scan_imports(self, directory: pathlib.Path) -> dict[str, list[str]]:
         """Return mapping: filename → list of top-level import module names."""

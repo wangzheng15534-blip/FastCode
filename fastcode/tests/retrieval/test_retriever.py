@@ -16,7 +16,7 @@ from rank_bm25 import BM25Okapi
 
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs, IRGraphView
-from fastcode.retrieval.hybrid import HybridRetriever
+from fastcode.query.retriever import HybridRetriever
 
 
 def _mk_row(
@@ -494,7 +494,7 @@ def test_ir_graph_expansion_uses_compact_graph_view_without_networkx_walk() -> N
     )
 
     with patch(
-        "fastcode.retrieval.hybrid.nx.single_source_shortest_path_length",
+        "fastcode.query.retriever.nx.single_source_shortest_path_length",
         side_effect=AssertionError("compact graph path must not materialize networkx"),
     ):
         related = retriever._get_related_ids(
@@ -561,7 +561,7 @@ def test_load_bm25_uses_explicit_code_element_deserializer(tmp_path: Path) -> No
         )
 
     with patch(
-        "fastcode.retrieval.hybrid.deserialize_code_element",
+        "fastcode.query.retriever.deserialize_code_element",
         side_effect=_deserialize,
     ) as mock_deserialize:
         assert retriever.load_bm25("index") is True
@@ -683,7 +683,7 @@ def test_reload_specific_repositories_uses_explicit_deserializer(
         )
 
     with patch(
-        "fastcode.retrieval.hybrid.deserialize_code_element",
+        "fastcode.query.retriever.deserialize_code_element",
         side_effect=_deserialize,
     ) as mock_deserialize:
         assert retriever.reload_specific_repositories(["repo"]) is True
@@ -785,7 +785,7 @@ def test_shard_native_bm25_search_reads_only_query_term_shards(
         return real_pickle_load(handle)
 
     with patch(
-        "fastcode.retrieval.hybrid.pickle.load", side_effect=_counting_pickle_load
+        "fastcode.query.retriever.pickle.load", side_effect=_counting_pickle_load
     ):
         results = loaded._keyword_search("alpha", top_k=3)
 

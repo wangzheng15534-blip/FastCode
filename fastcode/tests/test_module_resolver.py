@@ -8,7 +8,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.module_resolver import ModuleResolver
+from fastcode.scip.module_resolver import ModuleResolver
 
 # --- Helpers ---
 

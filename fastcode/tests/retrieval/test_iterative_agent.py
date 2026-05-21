@@ -5,8 +5,8 @@ from typing import Any
 from unittest.mock import patch
 
 from fastcode.ir.element import CodeElement
+from fastcode.query.iterative_agent import IterativeAgent
 from fastcode.query.processor import ProcessedQuery
-from fastcode.retrieval.iterative import IterativeAgent
 
 
 def _make_iterative_agent(

@@ -85,6 +85,64 @@ def test_materialize_indexed_elements_for_storage_avoids_code_element_to_dict() 
     assert "source_priority" not in embedded.metadata
 
 
+def test_incremental_parsed_artifact_hits_are_embedded_before_materialization() -> None:
+    class _Embedder:
+        embedding_dim = 3
+
+        def __init__(self) -> None:
+            self.calls: list[list[dict[str, Any]]] = []
+
+        def embed_elements(
+            self,
+            elements: list[dict[str, Any]],
+        ) -> list[dict[str, Any]]:
+            self.calls.append(elements)
+            embedded: list[dict[str, Any]] = []
+            for element in elements:
+                payload = dict(element)
+                metadata = dict(payload.get("metadata", {}) or {})
+                payload["embedding"] = np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
+                payload["embedding_text"] = f"text:{payload['id']}"
+                payload["embedding_artifact_ref"] = f"artifact:{payload['id']}"
+                metadata["embedding_text_hash"] = f"hash:{payload['id']}"
+                metadata["embedding_fingerprint"] = {
+                    "provider": "test",
+                    "model": "stub",
+                    "dimension": 3,
+                }
+                payload["metadata"] = metadata
+                embedded.append(payload)
+            return embedded
+
+    pipeline = IndexPipeline.__new__(IndexPipeline)
+    embedder = _Embedder()
+    pipeline.embedder = embedder
+    element = _element("parsed_hit", embedding=None)
+
+    with patch.object(
+        CodeElement,
+        "to_dict",
+        autospec=True,
+        side_effect=AssertionError(
+            "embedding backfill must not call CodeElement.to_dict()"
+        ),
+    ):
+        embedded_count = pipeline._embed_missing_indexed_element_embeddings([element])
+        vectors, metadata, _all_payloads = (
+            IndexPipeline._materialize_indexed_elements_for_storage(
+                [element], snapshot_id="snap:parsed-hit"
+            )
+        )
+
+    assert embedded_count == 1
+    assert len(embedder.calls) == 1
+    assert embedder.calls[0][0]["metadata"]["stable_unit_id"] == "unit:parsed_hit"
+    assert vectors.shape == (1, 3)
+    assert np.array_equal(vectors[0], np.asarray([1.0, 2.0, 3.0], dtype=np.float32))
+    assert metadata[0]["metadata"]["embedding_text_hash"] == "hash:parsed_hit"
+    assert metadata[0]["metadata"]["embedding_artifact_ref"] == "artifact:parsed_hit"
+
+
 def test_ast_ir_embeddings_preserve_embedding_fingerprint_metadata() -> None:
     fingerprint = {
         "version": 2,

@@ -2,19 +2,17 @@ from __future__ import annotations
 
 import pytest
 
-from fastcode.retrieval.core import fcx
+from fastcode.retrieval.fcx import parse_block, render_block, render_record
 
 
 def test_fcx_render_and_parse_block_roundtrip() -> None:
     records = [
-        fcx.render_record("F", "f1", fields={"scope": "turn", "refs": ("e1", "e2")}),
-        fcx.render_record(
-            "Q", "q1", fields={"need": "evidence"}, tail="Need auth flow"
-        ),
-        fcx.render_record("END", fields={"refs": 2}),
+        render_record("F", "f1", fields={"scope": "turn", "refs": ("e1", "e2")}),
+        render_record("Q", "q1", fields={"need": "evidence"}, tail="Need auth flow"),
+        render_record("END", fields={"refs": 2}),
     ]
 
-    block = fcx.render_block(
+    block = render_block(
         mode="turn",
         header_fields={
             "v": 1,
@@ -27,7 +25,7 @@ def test_fcx_render_and_parse_block_roundtrip() -> None:
         records=records,
     )
 
-    parsed = fcx.parse_block(block)
+    parsed = parse_block(block)
 
     assert parsed["header"]["mode"] == "turn"
     assert parsed["header"]["sid"] == "session-1"
@@ -48,4 +46,4 @@ def test_fcx_parse_block_rejects_duplicate_ids() -> None:
     )
 
     with pytest.raises(ValueError, match="duplicate FCX record id"):
-        fcx.parse_block(block)
+        parse_block(block)

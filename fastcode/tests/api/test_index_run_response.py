@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from fastcode.api import routes as api
-from fastcode.schemas.api import DiagnosticBundleResponse, IndexRunResponse
+import fastcode.api.routes as api
+from fastcode.api.contracts import DiagnosticBundleResponse, IndexRunResponse
 
 
 class _FakeFastCode:

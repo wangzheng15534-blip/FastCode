@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from fastcode.schemas.core_types import SnapshotRecord
+from fastcode.store.contracts import SnapshotRecord
 from fastcode.store.infrastructure.db import load_snapshot_record, save_snapshot_record
 
 

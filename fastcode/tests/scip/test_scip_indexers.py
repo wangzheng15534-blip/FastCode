@@ -6,6 +6,7 @@ import importlib.util
 import os
 import pathlib
 import tempfile
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +21,8 @@ except ModuleNotFoundError:
 from fastcode.scip.indexers import (
     SUPPORTED_LANGUAGES,
     detect_scip_languages,
+    detect_scip_languages_from_file_infos,
+    detect_scip_languages_in_paths,
     get_indexer_command,
     get_scip_indexer_profile,
 )
@@ -130,13 +133,14 @@ def test_supported_languages():
 
 def test_run_scip_indexer_success(tmp_path: pathlib.Path):
     """run_scip_indexer executes indexer and returns artifact path."""
-    from fastcode.scip.indexers import run_scip_indexer
+    from fastcode.indexing.scip_runner import run_scip_indexer
 
     output = tmp_path / "index.scip"
-    with patch("fastcode.scip.indexers.subprocess.run") as mock_run:
+    with patch("fastcode.indexing.scip_runner.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         with patch(
-            "fastcode.scip.indexers.shutil.which", return_value="/usr/bin/scip-python"
+            "fastcode.indexing.scip_runner.shutil.which",
+            return_value="/usr/bin/scip-python",
         ):
             result = run_scip_indexer("python", str(tmp_path), str(output))
     assert result == str(output)
@@ -144,10 +148,10 @@ def test_run_scip_indexer_success(tmp_path: pathlib.Path):
 
 def test_run_scip_indexer_not_installed(tmp_path: pathlib.Path):
     """run_scip_indexer raises when indexer not installed."""
-    from fastcode.scip.indexers import run_scip_indexer
+    from fastcode.indexing.scip_runner import run_scip_indexer
 
     with (
-        patch("fastcode.scip.indexers.shutil.which", return_value=None),
+        patch("fastcode.indexing.scip_runner.shutil.which", return_value=None),
         pytest.raises(RuntimeError, match="not found"),
     ):
         run_scip_indexer("python", str(tmp_path), str(tmp_path / "out.scip"))
@@ -155,13 +159,13 @@ def test_run_scip_indexer_not_installed(tmp_path: pathlib.Path):
 
 def test_run_scip_indexer_failure(tmp_path: pathlib.Path):
     """run_scip_indexer raises when indexer exits non-zero."""
-    from fastcode.scip.indexers import run_scip_indexer
+    from fastcode.indexing.scip_runner import run_scip_indexer
 
-    with patch("fastcode.scip.indexers.subprocess.run") as mock_run:
+    with patch("fastcode.indexing.scip_runner.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error msg")
         with (
             patch(
-                "fastcode.scip.indexers.shutil.which",
+                "fastcode.indexing.scip_runner.shutil.which",
                 return_value="/usr/bin/scip-python",
             ),
             pytest.raises(RuntimeError, match="error msg"),
@@ -202,10 +206,65 @@ def test_auto_detect_deduplicates():
         assert languages.count("java") == 1
 
 
+def test_detect_scip_languages_from_file_infos_uses_inventory_without_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inventory-backed language detection must not rescan the repo."""
+
+    def _boom_walk(_repo_path: str) -> Iterator[tuple[str, list[str], list[str]]]:
+        raise AssertionError("precomputed file inventory should avoid os.walk")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr("fastcode.scip.indexers.os.walk", _boom_walk)
+
+    languages = detect_scip_languages_from_file_infos(
+        [
+            {"relative_path": "src/main.go", "extension": ".go"},
+            {"relative_path": "src/lib.rs"},
+            {"relative_path": "web/app.tsx", "language": "typescript"},
+            {"relative_path": "README.md", "extension": ".md"},
+        ]
+    )
+
+    assert languages == ["go", "rust", "typescript"]
+
+
+def test_detect_scip_languages_in_paths_does_not_fallback_to_repo_walk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "a.py").write_text("print('not in scope')\n")
+    (tmp_path / "README.md").write_text("# docs\n")
+
+    def _boom_walk(_repo_path: str) -> Iterator[tuple[str, list[str], list[str]]]:
+        raise AssertionError("scoped SCIP detection must not walk the full repo")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr("fastcode.scip.indexers.os.walk", _boom_walk)
+
+    languages = detect_scip_languages_in_paths(str(tmp_path), ["README.md"])
+
+    assert languages == []
+
+
+def test_detect_scip_languages_in_paths_scans_only_requested_directories(
+    tmp_path: pathlib.Path,
+) -> None:
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "other").mkdir()
+    (tmp_path / "pkg" / "a.py").write_text("print('scoped')\n")
+    (tmp_path / "other" / "main.go").write_text("package main\n")
+
+    languages = detect_scip_languages_in_paths(str(tmp_path), ["pkg"])
+
+    assert languages == ["python"]
+
+
 @requires_protobuf
 def test_run_scip_for_language_success(tmp_path: pathlib.Path):
     """run_scip_for_language orchestrates indexing and loading."""
-    from fastcode.scip.indexers import run_scip_for_language
+    from fastcode.indexing.scip_runner import run_scip_for_language
     from fastcode.scip.pb2 import Index
 
     # Create a fake repo with a Java file
@@ -222,7 +281,8 @@ def test_run_scip_for_language_success(tmp_path: pathlib.Path):
     artifact_path = output_dir / "java.scip"
     artifact_path.write_bytes(idx.SerializeToString())
     with patch(
-        "fastcode.scip.indexers.run_scip_indexer", return_value=str(artifact_path)
+        "fastcode.indexing.scip_runner.run_scip_indexer",
+        return_value=str(artifact_path),
     ):
         result = run_scip_for_language("java", str(tmp_path), str(output_dir))
 
@@ -233,10 +293,11 @@ def test_run_scip_for_language_success(tmp_path: pathlib.Path):
 
 def test_run_scip_for_language_not_available(tmp_path: pathlib.Path):
     """run_scip_for_language returns None when indexer not installed."""
-    from fastcode.scip.indexers import run_scip_for_language
+    from fastcode.indexing.scip_runner import run_scip_for_language
 
     with patch(
-        "fastcode.scip.indexers.run_scip_indexer", side_effect=RuntimeError("not found")
+        "fastcode.indexing.scip_runner.run_scip_indexer",
+        side_effect=RuntimeError("not found"),
     ):
         result = run_scip_for_language("java", str(tmp_path), str(tmp_path))
 

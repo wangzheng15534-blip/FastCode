@@ -4,7 +4,8 @@ import math
 
 import pytest
 
-from fastcode.retrieval.core.iteration import (
+from fastcode.retrieval.contracts import IterationConfig
+from fastcode.retrieval.iteration import (
     calculate_recent_confidence_gain,
     calculate_recent_lines_added,
     calculate_repo_factor,
@@ -15,7 +16,6 @@ from fastcode.retrieval.core.iteration import (
     rate_efficiency,
     should_continue_iteration,
 )
-from fastcode.schemas.core_types import IterationConfig
 
 
 class TestCalculateRecentConfidenceGain:

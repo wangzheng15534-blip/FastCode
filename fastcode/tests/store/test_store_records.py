@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from typing import Any
 
 import pytest
 
@@ -373,6 +374,46 @@ def test_pg_retrieval_result_record_roundtrip():
         present_fields=("id", "type", "name", "relative_path", "repo_name", "metadata"),
     )
     record = PgRetrievalResultRecord(element=element, score=0.75)
+
+    restored = PgRetrievalResultRecord.from_dict(record.to_dict())
+
+    assert restored == record
+
+
+def test_pg_retrieval_result_record_avoids_nested_record_serializers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    element = PgRetrievalElementRecord(
+        id="elem:1",
+        element_type="function",
+        name="f",
+        relative_path="pkg/a.py",
+        repo_name="repo",
+        start_line=10,
+        end_line=12,
+        embedding_fingerprint={"provider": "test", "model": "m1"},
+        metadata={"embedding_text_hash": "hash"},
+        present_fields=("id", "type", "name", "relative_path", "repo_name", "metadata"),
+    )
+    record = PgRetrievalResultRecord(element=element, score=0.75)
+
+    def _boom_to_dict(_: PgRetrievalElementRecord) -> dict[str, Any]:
+        raise AssertionError("PgRetrievalResultRecord must not call element.to_dict()")
+
+    def _boom_from_dict(
+        cls: type[PgRetrievalElementRecord],
+        data: dict[str, Any],
+    ) -> PgRetrievalElementRecord:
+        raise AssertionError(
+            f"PgRetrievalResultRecord must not call {cls.__name__}.from_dict()"
+        )
+
+    monkeypatch.setattr(PgRetrievalElementRecord, "to_dict", _boom_to_dict)
+    monkeypatch.setattr(
+        PgRetrievalElementRecord,
+        "from_dict",
+        classmethod(_boom_from_dict),
+    )
 
     restored = PgRetrievalResultRecord.from_dict(record.to_dict())
 

@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 
-from fastcode.utils.vectors import as_float32_matrix, as_float32_vector
+from fastcode.store.vector_math import as_float32_matrix, as_float32_vector
 
 
 def test_as_float32_vector_view_does_not_mutate_nonfinite_input() -> None:
@@ -48,7 +48,7 @@ def test_as_float32_matrix_sequence_preallocates_without_vstack(
     def _boom_vstack(_values: object) -> np.ndarray:
         raise AssertionError("sequence conversion should preallocate rows")
 
-    monkeypatch.setattr("fastcode.utils.vectors.np.vstack", _boom_vstack)
+    monkeypatch.setattr("fastcode.store.vector_math.np.vstack", _boom_vstack)
 
     matrix = as_float32_matrix(
         [

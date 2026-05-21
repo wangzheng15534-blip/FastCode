@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fastcode.indexing import pipeline as pipeline_module
+import fastcode.indexing.pipeline as pipeline_module
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import IRSnapshot
 from fastcode.main.fastcode import FastCode, _ReadWriteStateLock

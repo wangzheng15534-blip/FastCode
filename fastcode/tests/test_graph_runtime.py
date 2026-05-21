@@ -8,7 +8,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.graph_runtime import LadybugGraphRuntime, _esc
+from fastcode.store.infrastructure.graph_runtime import LadybugGraphRuntime, _esc
 
 # --- Strategies ---
 
@@ -43,6 +43,54 @@ def test_sanitize_attach_dsn_allows_postgres_and_escapes_quotes():
     dsn = "postgresql://user:pa'ss@localhost:5432/fastcode"
     safe = LadybugGraphRuntime._sanitize_attach_dsn(dsn)
     assert safe == "postgresql://user:pa''ss@localhost:5432/fastcode"
+
+
+def test_postgres_attach_conninfo_converts_socket_url():
+    dsn = "postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e"
+
+    conninfo = LadybugGraphRuntime._postgres_attach_conninfo(dsn)
+
+    assert conninfo == (
+        "host=/var/run/postgresql user=jacob password=jacob dbname=fastcode_e2e"
+    )
+
+
+def test_postgres_attach_loads_extension_before_attach():
+    class _Conn:
+        def __init__(self) -> None:
+            self.statements: list[str] = []
+
+        def execute(self, statement: str) -> list[object]:
+            self.statements.append(statement)
+            if (
+                statement == "LOAD postgres"
+                and "INSTALL postgres" not in self.statements
+            ):
+                raise RuntimeError("Extension: postgres has not been installed")
+            return []
+
+    conn = _Conn()
+    rt = LadybugGraphRuntime.__new__(LadybugGraphRuntime)
+    rt._conn = conn
+    rt.logger = type("_Logger", (), {"warning": lambda *_args, **_kwargs: None})()
+    rt.postgres_attached = False
+    rt.postgres_attach_error = None
+
+    rt._attach_postgres(
+        "postgresql://jacob:jacob@/var/run/postgresql?dbname=fastcode_e2e"
+    )
+
+    assert conn.statements == [
+        "LOAD postgres",
+        "INSTALL postgres",
+        "LOAD postgres",
+        (
+            "ATTACH 'host=/var/run/postgresql user=jacob password=jacob "
+            "dbname=fastcode_e2e' AS pg (dbtype postgres)"
+        ),
+    ]
+    assert rt.postgres_attached is True
+    assert rt.postgres_attach_error is None
 
 
 # --- Properties ---

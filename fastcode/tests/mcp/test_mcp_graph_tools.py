@@ -383,7 +383,7 @@ class TestImpactAnalysis:
 
 
 def test_apply_forced_env_excludes_uses_runtime_override_api():
-    from fastcode.mcp import server as mcp_mod
+    import fastcode.mcp.server as mcp_mod
 
     fc = SimpleNamespace(
         config={

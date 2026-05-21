@@ -15,7 +15,7 @@ import pytest
 from fastcode.indexing.projection import ProjectionService
 from fastcode.ir.projection import ProjectionBuildResult, ProjectionScope
 from fastcode.ir.types import IRCodeUnit, IRSnapshot
-from fastcode.main import FastCode
+from fastcode.main.fastcode import FastCode
 
 pytestmark = [pytest.mark.test_double]
 
@@ -519,7 +519,7 @@ def test_api_prefix_endpoint_success_double():
         l1_data={"layer": "L1", "summary": "API nav"},
     )
 
-    from fastcode.api import routes as api_mod
+    import fastcode.api.routes as api_mod
 
     with patch.object(api_mod, "_ensure_fastcode_initialized", return_value=fc):
         client = TestClient(api_mod.app)
@@ -542,7 +542,7 @@ def test_api_prefix_endpoint_not_found_double():
         projection_id=None,
     )
 
-    from fastcode.api import routes as api_mod
+    import fastcode.api.routes as api_mod
 
     with patch.object(api_mod, "_ensure_fastcode_initialized", return_value=fc):
         client = TestClient(api_mod.app)
@@ -580,7 +580,7 @@ def test_api_prefix_endpoint_existing_layer_route_unaffected_double():
 
     fc.get_projection_layer = fake_get_projection_layer
 
-    from fastcode.api import routes as api_mod
+    import fastcode.api.routes as api_mod
 
     with patch.object(api_mod, "_ensure_fastcode_initialized", return_value=fc):
         client = TestClient(api_mod.app)
@@ -598,7 +598,7 @@ def test_api_prefix_endpoint_existing_layer_route_unaffected_double():
 
 def test_mcp_get_session_prefix_success_double():
     """MCP get_session_prefix tool returns found=True with L0+L1."""
-    from fastcode.mcp import server as mcp_mod
+    import fastcode.mcp.server as mcp_mod
 
     fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:mcp_test",
@@ -619,7 +619,7 @@ def test_mcp_get_session_prefix_success_double():
 
 def test_mcp_get_session_prefix_not_found_double():
     """MCP get_session_prefix tool returns found=False when no projection."""
-    from fastcode.mcp import server as mcp_mod
+    import fastcode.mcp.server as mcp_mod
 
     fc, _store, _conn = _make_fc_with_prefix(
         snapshot_id="snap:repo:mcp_missing",
@@ -636,7 +636,7 @@ def test_mcp_get_session_prefix_not_found_double():
 
 def test_mcp_get_session_prefix_exception_double():
     """MCP get_session_prefix tool returns found=False on exception."""
-    from fastcode.mcp import server as mcp_mod
+    import fastcode.mcp.server as mcp_mod
 
     # The error comes from get_session_prefix raising, not from _get_fastcode.
     # Mock _get_fastcode to return a fake fc, then make get_session_prefix raise.

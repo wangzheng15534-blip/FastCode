@@ -12,11 +12,11 @@ import pytest
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs
 from fastcode.ir.types import IRSnapshot
-from fastcode.main import FastCode
+from fastcode.main.fastcode import FastCode
 from fastcode.query.handler import QueryPipeline
 from fastcode.query.processor import ProcessedQuery
-from fastcode.retrieval.core.agent_context import DistillationRecord, EvidenceRef
-from fastcode.retrieval.hybrid import HybridRetriever
+from fastcode.query.retriever import HybridRetriever
+from fastcode.retrieval.agent_context import DistillationRecord, EvidenceRef
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.store.records import ContextDistillationRecord
 

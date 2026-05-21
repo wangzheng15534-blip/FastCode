@@ -14,7 +14,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.db_runtime import DBRuntime
+from fastcode.store.infrastructure.runtime import DBRuntime
 
 # --- Strategies ---
 
@@ -105,7 +105,7 @@ def _make_sqlite_runtime(**overrides: Any) -> DBRuntime:
 
 def _make_postgres_runtime_fake() -> DBRuntime:
     """Create a postgres-backend runtime with psycopg mocked to bypass import."""
-    import fastcode.db_runtime as mod
+    import fastcode.store.infrastructure.runtime as mod
 
     orig_psycopg = mod.psycopg
     orig_pool = mod.ConnectionPool
@@ -186,7 +186,7 @@ class TestInit:
     @pytest.mark.negative
     def test_postgres_without_psycopg_raises_property(self) -> None:
         """Lines 48-49: missing psycopg raises RuntimeError."""
-        import fastcode.db_runtime as mod
+        import fastcode.store.infrastructure.runtime as mod
 
         orig = mod.psycopg
         try:
@@ -201,14 +201,16 @@ class TestInit:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Line 58: warning when psycopg_pool unavailable, pool set to None."""
-        import fastcode.db_runtime as mod
+        import fastcode.store.infrastructure.runtime as mod
 
         orig_psycopg = mod.psycopg
         orig_pool = mod.ConnectionPool
         try:
             mod.psycopg = True
             mod.ConnectionPool = None
-            with caplog.at_level(logging.WARNING, logger="fastcode.db_runtime"):
+            with caplog.at_level(
+                logging.WARNING, logger="fastcode.store.infrastructure.runtime"
+            ):
                 rt = DBRuntime(
                     backend="postgres", postgres_dsn="postgresql://localhost/db"
                 )
@@ -357,7 +359,7 @@ class TestConnect:
     @pytest.mark.edge
     def test_postgres_connect_without_pool_direct_path_property(self) -> None:
         """Lines 86-95: postgres connect falls to direct psycopg when no pool."""
-        import fastcode.db_runtime as mod
+        import fastcode.store.infrastructure.runtime as mod
 
         orig_psycopg = mod.psycopg
         orig_pool = mod.ConnectionPool
@@ -562,7 +564,7 @@ class TestBeginWrite:
     @pytest.mark.edge
     def test_begin_write_postgres_path_property(self) -> None:
         """Line 125: postgres uses plain BEGIN, not BEGIN IMMEDIATE."""
-        import fastcode.db_runtime as mod
+        import fastcode.store.infrastructure.runtime as mod
 
         orig_psycopg = mod.psycopg
         orig_pool = mod.ConnectionPool
@@ -602,7 +604,7 @@ class TestConnectionPooling:
     def test_configure_postgres_connection_registers_pgvector_property(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import fastcode.db_runtime as mod
+        import fastcode.store.infrastructure.runtime as mod
 
         calls: list[Any] = []
 
@@ -619,7 +621,7 @@ class TestConnectionPooling:
     def test_configure_postgres_connection_commits_adapter_setup_property(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import fastcode.db_runtime as mod
+        import fastcode.store.infrastructure.runtime as mod
 
         events: list[str] = []
 
@@ -640,7 +642,7 @@ class TestConnectionPooling:
     def test_configure_postgres_connection_rolls_back_failed_setup_property(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import fastcode.db_runtime as mod
+        import fastcode.store.infrastructure.runtime as mod
 
         events: list[str] = []
 
@@ -661,7 +663,7 @@ class TestConnectionPooling:
     def test_configure_postgres_connection_allows_missing_pgvector_property(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import fastcode.db_runtime as mod
+        import fastcode.store.infrastructure.runtime as mod
 
         monkeypatch.setattr(mod, "register_vector", None)
 

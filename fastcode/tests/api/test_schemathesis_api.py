@@ -11,7 +11,7 @@ from __future__ import annotations
 import schemathesis
 from fastapi.testclient import TestClient
 
-from fastcode.api import routes as api
+import fastcode.api.routes as api
 
 schema = schemathesis.openapi.from_asgi("/openapi.json", api.app)
 

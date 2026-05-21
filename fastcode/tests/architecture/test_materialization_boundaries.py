@@ -16,7 +16,7 @@ HOT_PATHS = [
     PACKAGE_ROOT / "store" / "pg_retrieval.py",
     PACKAGE_ROOT / "store" / "snapshot.py",
     PACKAGE_ROOT / "store" / "vector.py",
-    PACKAGE_ROOT / "retrieval" / "hybrid.py",
+    PACKAGE_ROOT / "query" / "retriever.py",
 ]
 VECTOR_INSERTION_PATHS = [
     PACKAGE_ROOT / "main" / "fastcode.py",
@@ -43,10 +43,10 @@ ALLOWED_GENERIC_DICT_CALLS = {
     # Legacy object fallback and typed config adapters are compatibility/config
     # boundaries, not row-shaped persistence or vector materialization paths.
     ("indexing/pipeline.py", "_legacy_element_mapping", "to_dict"),
-    ("retrieval/hybrid.py", "_project_doc_priors", "from_dict"),
-    ("retrieval/hybrid.py", "_apply_doc_projection_to_code", "from_dict"),
-    ("retrieval/hybrid.py", "_adaptive_fuse_channels", "from_dict"),
-    ("retrieval/hybrid.py", "_compute_adaptive_fusion_params", "from_dict"),
+    ("query/retriever.py", "_project_doc_priors", "from_dict"),
+    ("query/retriever.py", "_apply_doc_projection_to_code", "from_dict"),
+    ("query/retriever.py", "_adaptive_fuse_channels", "from_dict"),
+    ("query/retriever.py", "_compute_adaptive_fusion_params", "from_dict"),
 }
 ALLOWED_NETWORKX_IMPORTS = {
     # Compatibility and explicit graph materialization boundaries. New hot paths
@@ -55,7 +55,7 @@ ALLOWED_NETWORKX_IMPORTS = {
     "indexing/projection_transform.py",
     "ir/graph.py",
     "mcp/graph_tools.py",
-    "retrieval/hybrid.py",
+    "query/retriever.py",
     "store/snapshot.py",
 }
 

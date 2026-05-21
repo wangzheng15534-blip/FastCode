@@ -12,7 +12,7 @@ import pytest
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot
 from fastcode.store.vector import VectorStore
-from fastcode.utils import as_float32_matrix
+from fastcode.store.vector_math import as_float32_matrix
 from fastcode.utils.materialization import (
     BOUNDARY_VECTOR_LIST_CONVERSION,
     collect_materialization_counters,

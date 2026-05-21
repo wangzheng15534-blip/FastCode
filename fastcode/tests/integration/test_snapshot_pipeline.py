@@ -5,7 +5,7 @@ import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -373,11 +373,25 @@ def _make_minimal_pipeline(tmp: str) -> IndexPipeline:
 def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_layers_") as tmp:
         pipeline = _make_minimal_pipeline(tmp)
+        source_path = os.path.join(tmp, "a.py")
+        with open(source_path, "w", encoding="utf-8") as handle:
+            handle.write("pass\n")
+        source_stat = os.stat(source_path)
+        pipeline.loader.scan_files = lambda: [
+            {
+                "path": source_path,
+                "relative_path": "a.py",
+                "size": source_stat.st_size,
+                "mtime": source_stat.st_mtime,
+                "extension": ".py",
+                "content_hash": "hash-a",
+            }
+        ]
         element = CodeElement(
             id="file:a",
             type="file",
             name="a.py",
-            file_path="a.py",
+            file_path=source_path,
             relative_path="a.py",
             language="python",
             start_line=1,
@@ -509,6 +523,31 @@ def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
         assert layers[1]["reason"] == "disabled_by_config"
         assert layers[1]["warnings"] == ["layer_disabled: enable_scip=false"]
         assert result["pipeline_metrics"]["never_silent_fallback"] is True
+        parsed_artifacts = result["unit_artifact_persistence"][
+            "parsed_element_artifacts"
+        ]
+        assert parsed_artifacts == {
+            "mode": "content_addressed",
+            "artifact_type": "parsed_elements",
+            "candidate_files": 1,
+            "written_records": 1,
+            "candidate_elements": 1,
+        }
+        parsed_records = (
+            pipeline.file_artifact_store.list_parsed_element_records_for_file_infos(
+                repo_name="repo",
+                file_infos=[{"relative_path": "a.py", "content_hash": "hash-a"}],
+                paths=["a.py"],
+            )
+        )
+        parsed_payload = (
+            pipeline.file_artifact_store.parsed_elements_payload_from_record(
+                parsed_records[0]
+            )
+        )
+        assert parsed_payload["elements"][0]["id"] == "file:a"
+        assert "embedding" not in parsed_payload["elements"][0]
+        assert "embedding" not in parsed_payload["elements"][0]["metadata"]
         materialization_counts = result["pipeline_metrics"][
             "materialization_boundary_counts"
         ]
@@ -855,6 +894,19 @@ def test_pipeline_backfill_persists_missing_layer_metadata_to_snapshot_store() -
 def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_scip_experimental_") as tmp:
         pipeline = _make_minimal_pipeline(tmp)
+        zig_path = os.path.join(tmp, "a.zig")
+        with open(zig_path, "w", encoding="utf-8") as handle:
+            handle.write("pub fn main() void {}\n")
+        zig_stat = os.stat(zig_path)
+        pipeline.loader.scan_files = lambda: [
+            {
+                "path": zig_path,
+                "relative_path": "a.zig",
+                "size": zig_stat.st_size,
+                "extension": ".zig",
+                "language": "zig",
+            }
+        ]
         element = SimpleNamespace(
             id="file:a",
             type="file",
@@ -974,8 +1026,10 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
             )
             stack.enter_context(
                 patch(
-                    "fastcode.indexing.pipeline.detect_scip_languages",
-                    return_value=["zig"],
+                    "fastcode.scip.indexers.os.walk",
+                    side_effect=AssertionError(
+                        "full SCIP detection should use current_files inventory"
+                    ),
                 )
             )
             stack.enter_context(
@@ -1104,6 +1158,35 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
         previous_record = pipeline.snapshot_store.save_snapshot(
             previous_snapshot, metadata={}
         )
+        pipeline.unit_artifact_store.replace_snapshot_file_ir_shards(
+            "snap:repo:prev",
+            shards=[
+                {
+                    "relative_path": "a.py",
+                    "content_hash": "hash-a-prev",
+                    "units": [
+                        {
+                            "unit_id": "doc:snap:repo:prev:a.py",
+                            "kind": "file",
+                            "path": "a.py",
+                            "metadata": {"content_hash": "hash-a-prev"},
+                        }
+                    ],
+                },
+                {
+                    "relative_path": "b.py",
+                    "content_hash": "hash-b-prev",
+                    "units": [
+                        {
+                            "unit_id": "doc:snap:repo:prev:b.py",
+                            "kind": "file",
+                            "path": "b.py",
+                            "metadata": {"content_hash": "hash-b-prev"},
+                        }
+                    ],
+                },
+            ],
+        )
         pipeline.manifest_store.publish(
             repo_name="repo",
             ref_name="main",
@@ -1187,7 +1270,19 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             signature=None,
             docstring=None,
             summary=None,
-            metadata={"embedding": np.array([0.4, 0.5, 0.6])},
+            metadata={
+                "embedding": np.array([0.4, 0.5, 0.6]),
+                "embedding_artifact_ref": "vector://repo/b",
+                "embedding_fingerprint": {
+                    "provider": "test",
+                    "model": "tiny",
+                    "dimension": 3,
+                },
+                "embedding_text": "print('new')",
+                "embedding_text_hash": "embed-text-b",
+                "stable_unit_id": "unit:file:b",
+                "content_hash": "hash-b-current",
+            },
             repo_name="repo",
             repo_url=tmp,
             to_dict=lambda: {
@@ -1203,7 +1298,19 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
                 "signature": None,
                 "docstring": None,
                 "summary": None,
-                "metadata": {"embedding": np.array([0.4, 0.5, 0.6])},
+                "metadata": {
+                    "embedding": np.array([0.4, 0.5, 0.6]),
+                    "embedding_artifact_ref": "vector://repo/b",
+                    "embedding_fingerprint": {
+                        "provider": "test",
+                        "model": "tiny",
+                        "dimension": 3,
+                    },
+                    "embedding_text": "print('new')",
+                    "embedding_text_hash": "embed-text-b",
+                    "stable_unit_id": "unit:file:b",
+                    "content_hash": "hash-b-current",
+                },
                 "repo_name": "repo",
                 "repo_url": tmp,
             },
@@ -1231,8 +1338,31 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
                     language="python",
                     display_name="b.py",
                     source_set={"fc_structure"},
-                    metadata={"source": "fc_structure"},
+                    metadata={
+                        "source": "fc_structure",
+                        "content_hash": "hash-b-current",
+                    },
                 ),
+            ],
+            supports=[
+                IRUnitSupport(
+                    support_id="support:b",
+                    unit_id="doc:snap:repo:current:b.py",
+                    source="fc_structure",
+                    support_kind="definition",
+                    path="b.py",
+                )
+            ],
+            relations=[
+                IRRelation(
+                    relation_id="rel:b",
+                    src_unit_id="doc:snap:repo:current:b.py",
+                    dst_unit_id="doc:snap:repo:current:b.py",
+                    relation_type="self",
+                    resolution_state="resolved",
+                    support_sources={"fc_structure"},
+                    support_ids=["support:b"],
+                )
             ],
         )
 
@@ -1304,13 +1434,17 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
                 "path": unchanged_path,
                 "relative_path": "a.py",
                 "size": unchanged_stat.st_size,
+                "mtime": unchanged_stat.st_mtime,
                 "extension": ".py",
+                "content_hash": unchanged_fingerprint["content_hash"],
             },
             {
                 "path": changed_path,
                 "relative_path": "b.py",
                 "size": changed_stat.st_size,
+                "mtime": changed_stat.st_mtime,
                 "extension": ".py",
+                "content_hash": "hash-b-current-file",
             },
         ]
 
@@ -1327,6 +1461,15 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
         def _capture_ast(**kwargs: Any) -> IRSnapshot:
             seen_ast_element_ids.extend(elem.id for elem in kwargs["elements"])
             return ast_snapshot
+
+        original_code_unit_payload = SnapshotStore._code_unit_payload
+
+        def _guard_file_ir_unit_payload(unit: IRCodeUnit) -> dict[str, Any]:
+            if unit.path == "a.py":
+                raise AssertionError(
+                    "incremental file IR delta must not serialize unchanged shards"
+                )
+            return original_code_unit_payload(unit)
 
         with ExitStack() as stack:
             stack.enter_context(
@@ -1368,6 +1511,13 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             )
             stack.enter_context(
                 patch("fastcode.indexing.pipeline.merge_ir", return_value=ast_snapshot)
+            )
+            stack.enter_context(
+                patch.object(
+                    SnapshotStore,
+                    "_code_unit_payload",
+                    side_effect=_guard_file_ir_unit_payload,
+                )
             )
             stack.enter_context(
                 patch("fastcode.indexing.pipeline.validate_snapshot", return_value=[])
@@ -1445,6 +1595,98 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             }
         ]
         assert bm25_incremental_calls == vector_incremental_calls
+        file_ir_persistence = result["unit_artifact_persistence"]["file_ir_shards"]
+        assert {
+            key: file_ir_persistence[key]
+            for key in (
+                "mode",
+                "previous_snapshot_id",
+                "copied_shards",
+                "written_shards",
+                "removed_shards",
+                "excluded_path_count",
+            )
+        } == {
+            "mode": "delta",
+            "previous_snapshot_id": "snap:repo:prev",
+            "copied_shards": 1,
+            "written_shards": 1,
+            "removed_shards": 0,
+            "excluded_path_count": 1,
+        }
+        assert file_ir_persistence["reused_content_addressed_shards"] == 0
+        assert file_ir_persistence["content_artifact_reuse"] == {
+            "mode": "content_addressed",
+            "requested_shards": 1,
+            "reused_shards": 0,
+        }
+        assert file_ir_persistence["content_artifact_publish"] == {
+            "mode": "content_addressed",
+            "artifact_type": "file_ir",
+            "written_records": 1,
+            "candidate_shards": 1,
+        }
+        assert result["unit_artifact_persistence"]["embedding_ref_artifacts"] == {
+            "mode": "content_addressed",
+            "artifact_type": "embedding_refs",
+            "candidate_files": 1,
+            "written_records": 1,
+        }
+        assert result["unit_artifact_persistence"]["semantic_fact_artifacts"] == {
+            "mode": "content_addressed",
+            "artifact_type": "semantic_facts",
+            "candidate_shards": 1,
+            "written_records": 1,
+        }
+        file_ir_shards = pipeline.unit_artifact_store.list_file_ir_shards(
+            "snap:repo:current"
+        )
+        file_ir_by_path = {shard["relative_path"]: shard for shard in file_ir_shards}
+        assert file_ir_by_path["a.py"]["snapshot_id"] == "snap:repo:current"
+        assert file_ir_by_path["a.py"]["content_hash"] == "hash-a-prev"
+        assert file_ir_by_path["a.py"]["units"][0]["unit_id"] == (
+            "doc:snap:repo:prev:a.py"
+        )
+        assert file_ir_by_path["b.py"]["content_hash"] == "hash-b-current"
+        assert file_ir_by_path["b.py"]["units"][0]["unit_id"] == (
+            "doc:snap:repo:current:b.py"
+        )
+        embedding_ref_records = (
+            pipeline.file_artifact_store.list_embedding_ref_records_for_file_infos(
+                repo_name="repo",
+                file_infos=[
+                    {"relative_path": "b.py", "content_hash": "hash-b-current-file"}
+                ],
+                paths=["b.py"],
+            )
+        )
+        semantic_fact_records = (
+            pipeline.file_artifact_store.list_semantic_fact_records_for_file_infos(
+                repo_name="repo",
+                file_infos=[
+                    {"relative_path": "b.py", "content_hash": "hash-b-current-file"}
+                ],
+                paths=["b.py"],
+            )
+        )
+        embedding_refs_payload = (
+            pipeline.file_artifact_store.embedding_refs_payload_from_record(
+                embedding_ref_records[0]
+            )
+        )
+        semantic_facts_payload = (
+            pipeline.file_artifact_store.semantic_facts_payload_from_record(
+                semantic_fact_records[0]
+            )
+        )
+        assert embedding_refs_payload["embeddings"][0]["embedding_text_hash"] == (
+            "embed-text-b"
+        )
+        assert embedding_refs_payload["embeddings"][0]["embedding_artifact_ref"] == (
+            "vector://repo/b"
+        )
+        assert semantic_facts_payload["supports"][0]["support_id"] == "support:b"
+        assert semantic_facts_payload["relations"][0]["relation_id"] == "rel:b"
         prefilter = result["incremental_prefilter"]
         expected_prefilter = {
             "previous_snapshot_id": "snap:repo:prev",
@@ -1532,14 +1774,14 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "degraded_reasons": [
                 "interface_digest_missing_previous",
                 "semantic_frontier_widened",
-                "stable_unit_id_missing",
+                "stable_unit_id_new",
             ],
         }
         assert prefilter["degraded"] is True
         assert prefilter["degraded_reasons"] == [
             "interface_digest_missing_previous",
             "semantic_frontier_widened",
-            "stable_unit_id_missing",
+            "stable_unit_id_new",
         ]
         update_snapshot_metadata.assert_called_once()
         assert update_snapshot_metadata.call_args.args[0] == "snap:repo:current"
@@ -1581,6 +1823,1056 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
         }
         assert cache_update["artifact_handle_cache"]["hit_count"] == 0
         assert cache_update["artifact_handle_cache"]["miss_count"] == 0
+
+
+def test_incremental_implementation_local_change_reuses_graph_shards() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_graph_delta_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        unchanged_path = os.path.join(tmp, "a.py")
+        changed_path = os.path.join(tmp, "b.py")
+        with open(unchanged_path, "w", encoding="utf-8") as handle:
+            handle.write("print('a')\n")
+        with open(changed_path, "w", encoding="utf-8") as handle:
+            handle.write("def b():\n    return 2\n")
+
+        unchanged_stat = os.stat(unchanged_path)
+        changed_stat = os.stat(changed_path)
+        unchanged_fingerprint = pipeline._file_fingerprint(unchanged_path)
+        assert unchanged_fingerprint is not None
+
+        previous_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:prev",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+            units=[
+                IRCodeUnit(
+                    unit_id="doc:snap:repo:prev:a.py",
+                    kind="file",
+                    path="a.py",
+                    language="python",
+                    display_name="a.py",
+                    source_set={"fc_structure"},
+                    metadata={
+                        "stable_unit_id": "unit:file:a",
+                        "content_hash": unchanged_fingerprint["content_hash"],
+                    },
+                ),
+                IRCodeUnit(
+                    unit_id="doc:snap:repo:prev:b.py",
+                    kind="file",
+                    path="b.py",
+                    language="python",
+                    display_name="b.py",
+                    source_set={"fc_structure"},
+                    metadata={
+                        "stable_unit_id": "unit:function:b",
+                        "content_hash": "hash-b-prev",
+                    },
+                ),
+            ],
+        )
+        previous_record = pipeline.snapshot_store.save_snapshot(
+            previous_snapshot, metadata={}
+        )
+        pipeline.manifest_store.publish(
+            repo_name="repo",
+            ref_name="main",
+            snapshot_id="snap:repo:prev",
+            index_run_id="run_prev",
+            status="published",
+        )
+
+        surface_metadata = {
+            "stable_unit_id": "unit:function:b",
+            "signature_hash": "sig:b",
+            "api_surface_hash": "api:b",
+            "edge_surface_hash": "edge:b",
+        }
+        previous_metadata = [
+            {
+                "id": "unchanged:a",
+                "type": "file",
+                "name": "a.py",
+                "file_path": unchanged_path,
+                "relative_path": "a.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "code": "print('a')\n",
+                "signature": None,
+                "docstring": None,
+                "summary": None,
+                "metadata": {"stable_unit_id": "unit:file:a"},
+                "repo_name": "repo",
+                "repo_url": tmp,
+            },
+            {
+                "id": "previous:b",
+                "type": "function",
+                "name": "b",
+                "file_path": changed_path,
+                "relative_path": "b.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 2,
+                "code": "def b():\n    return 1\n",
+                "signature": "def b()",
+                "docstring": None,
+                "summary": None,
+                "metadata": {
+                    **surface_metadata,
+                    "embedding": np.array([0.1, 0.2, 0.3]),
+                    "embedding_fingerprint": {
+                        "provider": "test",
+                        "model": "tiny",
+                        "dimension": 3,
+                    },
+                    "embedding_text": "def b(): return 1",
+                    "embedding_text_hash": "embed-text-b-old",
+                },
+                "repo_name": "repo",
+                "repo_url": tmp,
+            },
+        ]
+        previous_interface_digests = pipeline._interface_digests_from_metadata(
+            previous_metadata
+        )
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_metadata.pkl"),
+            "wb",
+        ) as handle:
+            pickle.dump({"metadata": previous_metadata}, handle)
+
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_manifest.json"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            json.dump(
+                {
+                    "schema_version": 2,
+                    "compatibility": pipeline._incremental_compatibility_payload(),
+                    "compatibility_hash": pipeline._incremental_compatibility_hash(),
+                    "files": {
+                        "a.py": {
+                            **unchanged_fingerprint,
+                            "interface_digest": previous_interface_digests["a.py"],
+                            "element_ids": ["unchanged:a"],
+                        },
+                        "b.py": {
+                            "mtime": changed_stat.st_mtime - 10,
+                            "size": changed_stat.st_size + 1,
+                            "content_hash": "hash-b-prev-file",
+                            "interface_digest": previous_interface_digests["b.py"],
+                            "element_ids": ["previous:b"],
+                        },
+                    },
+                },
+                handle,
+            )
+
+        changed_element = CodeElement(
+            id="changed:b",
+            type="function",
+            name="b",
+            file_path=changed_path,
+            relative_path="b.py",
+            language="python",
+            start_line=1,
+            end_line=2,
+            code="def b():\n    return 2\n",
+            signature="def b()",
+            docstring=None,
+            summary=None,
+            metadata={
+                **surface_metadata,
+                "embedding": np.array([0.4, 0.5, 0.6]),
+                "embedding_artifact_ref": "vector://repo/b",
+                "embedding_fingerprint": {
+                    "provider": "test",
+                    "model": "tiny",
+                    "dimension": 3,
+                },
+                "embedding_text": "def b(): return 2",
+                "embedding_text_hash": "embed-text-b-new",
+                "content_hash": "hash-b-current",
+            },
+            repo_name="repo",
+            repo_url=tmp,
+        )
+        ast_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:current",
+            branch="main",
+            commit_id="c2",
+            tree_id="t2",
+            units=[
+                IRCodeUnit(
+                    unit_id="doc:snap:repo:current:b.py",
+                    kind="file",
+                    path="b.py",
+                    language="python",
+                    display_name="b.py",
+                    source_set={"fc_structure"},
+                    metadata={
+                        "stable_unit_id": "unit:function:b",
+                        "content_hash": "hash-b-current",
+                    },
+                )
+            ],
+        )
+
+        temp_store_metadata: list[dict[str, Any]] = []
+        vector_delta_calls: list[dict[str, Any]] = []
+        bm25_delta_calls: list[dict[str, Any]] = []
+        graph_delta_calls: list[dict[str, Any]] = []
+
+        def _publish_vector_delta(
+            artifact_key: str,
+            *,
+            previous_name: str,
+            reusable_path_keys: set[str],
+            snapshot_id: str | None = None,
+        ) -> dict[str, int]:
+            del snapshot_id
+            vector_delta_calls.append(
+                {
+                    "artifact_key": artifact_key,
+                    "previous_name": previous_name,
+                    "reusable_path_keys": sorted(reusable_path_keys),
+                }
+            )
+            return {"vector_shards_reused": len(reusable_path_keys)}
+
+        def _publish_bm25_delta(
+            artifact_key: str,
+            *,
+            previous_name: str,
+            reusable_path_keys: set[str],
+        ) -> dict[str, int]:
+            bm25_delta_calls.append(
+                {
+                    "artifact_key": artifact_key,
+                    "previous_name": previous_name,
+                    "reusable_path_keys": sorted(reusable_path_keys),
+                }
+            )
+            return {"bm25_shards_reused": len(reusable_path_keys)}
+
+        def _publish_graph_delta(
+            artifact_key: str,
+            *,
+            previous_name: str,
+            reusable_path_keys: set[str],
+        ) -> dict[str, int]:
+            graph_delta_calls.append(
+                {
+                    "artifact_key": artifact_key,
+                    "previous_name": previous_name,
+                    "reusable_path_keys": sorted(reusable_path_keys),
+                }
+            )
+            return {
+                "graph_shards_reused": len(reusable_path_keys),
+                "graph_shards_written": 1,
+            }
+
+        temp_store = SimpleNamespace(
+            metadata=temp_store_metadata,
+            initialize=lambda dim: None,
+            add_vectors=lambda vectors, metadata: temp_store_metadata.extend(metadata),
+            save=lambda artifact_key: None,
+            publish_delta=_publish_vector_delta,
+        )
+        temp_graph = SimpleNamespace(
+            dependency_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            inheritance_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            call_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            build_graphs=lambda elements, module_resolver, symbol_resolver: None,
+            save=lambda artifact_key: None,
+            publish_delta=_publish_graph_delta,
+        )
+        temp_retriever = SimpleNamespace(
+            index_for_bm25=lambda elements: None,
+            build_repo_overview_bm25=lambda: None,
+            save_bm25=lambda artifact_key: None,
+            publish_bm25_delta=_publish_bm25_delta,
+        )
+
+        graph_builder_calls: list[str] = []
+
+        def _code_graph_builder_factory(config: Any) -> Any:
+            del config
+            graph_builder_calls.append("call")
+            if len(graph_builder_calls) == 1:
+                return temp_graph
+            if len(graph_builder_calls) == 2:
+                return SimpleNamespace()
+            raise AssertionError(
+                "implementation-local graph delta must not rebuild full graph"
+            )
+
+        pipeline.loader.scan_files = lambda: [
+            {
+                "path": unchanged_path,
+                "relative_path": "a.py",
+                "size": unchanged_stat.st_size,
+                "mtime": unchanged_stat.st_mtime,
+                "extension": ".py",
+                "content_hash": unchanged_fingerprint["content_hash"],
+            },
+            {
+                "path": changed_path,
+                "relative_path": "b.py",
+                "size": changed_stat.st_size,
+                "mtime": changed_stat.st_mtime,
+                "extension": ".py",
+                "content_hash": "hash-b-current-file",
+            },
+        ]
+        index_files_mock = Mock(return_value=[changed_element])
+        pipeline.indexer.index_files = index_files_mock
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    pipeline,
+                    "_resolve_snapshot_ref",
+                    return_value={
+                        "repo_name": "repo",
+                        "branch": "main",
+                        "commit_id": "c2",
+                        "tree_id": "t2",
+                        "snapshot_id": "snap:repo:current",
+                    },
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline, "_build_git_meta", return_value={})
+            )
+            stack.enter_context(
+                patch("fastcode.indexing.pipeline.VectorStore", return_value=temp_store)
+            )
+            stack.enter_context(
+                patch(
+                    "fastcode.indexing.pipeline.CodeGraphBuilder",
+                    side_effect=_code_graph_builder_factory,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "fastcode.indexing.pipeline.HybridRetriever",
+                    return_value=temp_retriever,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "fastcode.indexing.pipeline.build_ir_from_ast",
+                    return_value=ast_snapshot,
+                )
+            )
+            stack.enter_context(
+                patch("fastcode.indexing.pipeline.merge_ir", return_value=ast_snapshot)
+            )
+            stack.enter_context(
+                patch("fastcode.indexing.pipeline.validate_snapshot", return_value=[])
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline,
+                    "_apply_semantic_resolvers",
+                    side_effect=lambda **kwargs: kwargs["snapshot"],
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "stage_snapshot", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "save_relational_facts", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "save_ir_graphs", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "import_git_backbone", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store,
+                    "update_snapshot_metadata",
+                    return_value=None,
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline.snapshot_store, "release_lock", return_value=None)
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store,
+                    "validate_fencing_token",
+                    return_value=True,
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline, "_load_artifacts_by_key", return_value=True)
+            )
+
+            result = pipeline.run_index_pipeline(
+                source=tmp,
+                is_url=False,
+                enable_scip=False,
+                publish=False,
+            )
+
+        index_files_mock.assert_called_once()
+        artifact_key = pipeline.snapshot_store.artifact_key_for_snapshot(
+            "snap:repo:current"
+        )
+        expected_delta_call = {
+            "artifact_key": artifact_key,
+            "previous_name": previous_record.artifact_key,
+            "reusable_path_keys": ["a.py"],
+        }
+        assert vector_delta_calls == [expected_delta_call]
+        assert bm25_delta_calls == [expected_delta_call]
+        assert graph_delta_calls == [expected_delta_call]
+        assert len(graph_builder_calls) == 2
+        prefilter = result["incremental_prefilter"]
+        assert prefilter["change_kinds"] == ["embedding_text_hash"]
+        assert prefilter["semantic_frontier_widened"] == 0
+        assert prefilter["api_frontier_changed"] == 0
+        assert prefilter["artifact_shard_reuse"] == {
+            "vector_shards_reused": 1,
+            "bm25_shards_reused": 1,
+            "graph_shards_reused": 1,
+            "graph_shards_written": 1,
+        }
+        assert "graph_fallback_reason" not in prefilter["artifact_shard_reuse"]
+        assert "artifact_delta_graph_fallback_reason" not in prefilter
+
+
+def test_incremental_no_change_reuses_artifacts_without_embedding_provider_calls() -> (
+    None
+):
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_incremental_noop_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        paths = {
+            "a.py": os.path.join(tmp, "a.py"),
+            "b.py": os.path.join(tmp, "b.py"),
+        }
+        with open(paths["a.py"], "w", encoding="utf-8") as handle:
+            handle.write("print('a')\n")
+        with open(paths["b.py"], "w", encoding="utf-8") as handle:
+            handle.write("print('b')\n")
+        fingerprints = {
+            rel_path: pipeline._file_fingerprint(abs_path)
+            for rel_path, abs_path in paths.items()
+        }
+        assert all(fingerprint is not None for fingerprint in fingerprints.values())
+
+        previous_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:prev",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+            units=[
+                IRCodeUnit(
+                    unit_id=f"doc:snap:repo:prev:{rel_path}",
+                    kind="file",
+                    path=rel_path,
+                    language="python",
+                    display_name=rel_path,
+                    source_set={"fc_structure"},
+                    metadata={
+                        "stable_unit_id": f"unit:file:{rel_path}",
+                        "content_hash": cast(dict[str, Any], fingerprints[rel_path])[
+                            "content_hash"
+                        ],
+                    },
+                )
+                for rel_path in sorted(paths)
+            ],
+        )
+        previous_record = pipeline.snapshot_store.save_snapshot(
+            previous_snapshot, metadata={}
+        )
+        pipeline.unit_artifact_store.replace_snapshot_units(
+            "snap:repo:prev",
+            elements=[
+                {
+                    "id": f"unchanged:{rel_path}",
+                    "type": "file",
+                    "relative_path": rel_path,
+                    "metadata": {
+                        "stable_unit_id": f"unit:file:{rel_path}",
+                        "content_hash": cast(dict[str, Any], fingerprints[rel_path])[
+                            "content_hash"
+                        ],
+                    },
+                }
+                for rel_path in sorted(paths)
+            ],
+        )
+        pipeline.unit_artifact_store.replace_snapshot_file_ir_shards(
+            "snap:repo:prev",
+            shards=[
+                {
+                    "relative_path": rel_path,
+                    "content_hash": cast(dict[str, Any], fingerprints[rel_path])[
+                        "content_hash"
+                    ],
+                    "units": [
+                        {
+                            "unit_id": f"doc:snap:repo:prev:{rel_path}",
+                            "kind": "file",
+                            "path": rel_path,
+                            "metadata": {
+                                "content_hash": cast(
+                                    dict[str, Any], fingerprints[rel_path]
+                                )["content_hash"]
+                            },
+                        }
+                    ],
+                }
+                for rel_path in sorted(paths)
+            ],
+        )
+        pipeline.manifest_store.publish(
+            repo_name="repo",
+            ref_name="main",
+            snapshot_id="snap:repo:prev",
+            index_run_id="run_prev",
+            status="published",
+        )
+
+        previous_metadata = [
+            {
+                "id": f"unchanged:{rel_path}",
+                "type": "file",
+                "name": rel_path,
+                "file_path": abs_path,
+                "relative_path": rel_path,
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+                "code": f"print('{rel_path[0]}')\n",
+                "signature": None,
+                "docstring": None,
+                "summary": None,
+                "metadata": {
+                    "stable_unit_id": f"unit:file:{rel_path}",
+                    "embedding": np.array([0.1, 0.2, 0.3], dtype=np.float32),
+                    "embedding_text": rel_path,
+                    "embedding_text_hash": f"embed:{rel_path}",
+                    "embedding_fingerprint": {
+                        "provider": "test",
+                        "model": "tiny",
+                        "dimension": 3,
+                    },
+                },
+                "repo_name": "repo",
+                "repo_url": tmp,
+            }
+            for rel_path, abs_path in sorted(paths.items())
+        ]
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_metadata.pkl"),
+            "wb",
+        ) as handle:
+            pickle.dump({"metadata": previous_metadata}, handle)
+
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_manifest.json"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            json.dump(
+                {
+                    "schema_version": 2,
+                    "compatibility": pipeline._incremental_compatibility_payload(),
+                    "compatibility_hash": pipeline._incremental_compatibility_hash(),
+                    "files": {
+                        rel_path: {
+                            **cast(dict[str, Any], fingerprints[rel_path]),
+                            "element_ids": [f"unchanged:{rel_path}"],
+                        }
+                        for rel_path in sorted(paths)
+                    },
+                },
+                handle,
+            )
+
+        vector_delta_calls: list[dict[str, Any]] = []
+        bm25_delta_calls: list[dict[str, Any]] = []
+        graph_delta_calls: list[dict[str, Any]] = []
+        graph_build_inputs: list[list[str]] = []
+        bm25_inputs: list[list[str]] = []
+
+        def _publish_vector_delta(
+            artifact_key: str,
+            *,
+            previous_name: str,
+            reusable_path_keys: set[str],
+            snapshot_id: str | None = None,
+        ) -> dict[str, int]:
+            del snapshot_id
+            vector_delta_calls.append(
+                {
+                    "artifact_key": artifact_key,
+                    "previous_name": previous_name,
+                    "reusable_path_keys": sorted(reusable_path_keys),
+                }
+            )
+            return {"vector_shards_reused": len(reusable_path_keys)}
+
+        def _publish_bm25_delta(
+            artifact_key: str,
+            *,
+            previous_name: str,
+            reusable_path_keys: set[str],
+        ) -> dict[str, int]:
+            bm25_delta_calls.append(
+                {
+                    "artifact_key": artifact_key,
+                    "previous_name": previous_name,
+                    "reusable_path_keys": sorted(reusable_path_keys),
+                }
+            )
+            return {"bm25_shards_reused": len(reusable_path_keys)}
+
+        def _publish_graph_delta(
+            artifact_key: str,
+            *,
+            previous_name: str,
+            reusable_path_keys: set[str],
+        ) -> dict[str, int]:
+            graph_delta_calls.append(
+                {
+                    "artifact_key": artifact_key,
+                    "previous_name": previous_name,
+                    "reusable_path_keys": sorted(reusable_path_keys),
+                }
+            )
+            return {"graph_shards_reused": len(reusable_path_keys)}
+
+        temp_store = SimpleNamespace(
+            metadata=[],
+            initialize=lambda dim: None,
+            add_vectors=Mock(
+                side_effect=AssertionError("unchanged run must not add vectors")
+            ),
+            save=lambda artifact_key: None,
+            publish_delta=_publish_vector_delta,
+        )
+        temp_graph = SimpleNamespace(
+            dependency_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            inheritance_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            call_graph=SimpleNamespace(
+                number_of_nodes=lambda: 0, number_of_edges=lambda: 0
+            ),
+            build_graphs=lambda elements, module_resolver, symbol_resolver: (
+                graph_build_inputs.append([element.id for element in elements])
+            ),
+            save=lambda artifact_key: None,
+            publish_delta=_publish_graph_delta,
+        )
+        temp_retriever = SimpleNamespace(
+            index_for_bm25=lambda elements: bm25_inputs.append(
+                [element.id for element in elements]
+            ),
+            build_repo_overview_bm25=lambda: None,
+            save_bm25=lambda artifact_key: None,
+            publish_bm25_delta=_publish_bm25_delta,
+        )
+        graph_builder_calls: list[str] = []
+
+        def _code_graph_builder_factory(config: Any) -> Any:
+            del config
+            graph_builder_calls.append("call")
+            if len(graph_builder_calls) == 1:
+                return temp_graph
+            if len(graph_builder_calls) == 2:
+                return SimpleNamespace()
+            raise AssertionError("unchanged run must not rebuild full graph")
+
+        current_files = []
+        for rel_path, abs_path in sorted(paths.items()):
+            stat = os.stat(abs_path)
+            current_files.append(
+                {
+                    "path": abs_path,
+                    "relative_path": rel_path,
+                    "size": stat.st_size,
+                    "mtime": stat.st_mtime,
+                    "extension": ".py",
+                    "content_hash": cast(dict[str, Any], fingerprints[rel_path])[
+                        "content_hash"
+                    ],
+                }
+            )
+        pipeline.loader.scan_files = lambda: list(current_files)
+        pipeline.indexer.extract_elements = Mock(
+            side_effect=AssertionError("unchanged run must not extract full repo")
+        )
+        pipeline.indexer.index_files = Mock(
+            side_effect=AssertionError("unchanged run must not parse changed files")
+        )
+        pipeline.embedder.embed_elements = Mock(
+            side_effect=AssertionError("unchanged run must not call embedding provider")
+        )
+        pipeline.embedder.embedding_metrics = lambda: {
+            "cache_hit_count": 0,
+            "cache_miss_count": 0,
+            "cache_write_count": 0,
+            "provider_batch_count": 0,
+        }
+        pipeline.embedder.reset_embedding_metrics = lambda: None
+
+        seen_ast_element_ids: list[str] = []
+
+        def _capture_ast(**kwargs: Any) -> IRSnapshot:
+            seen_ast_element_ids.extend(element.id for element in kwargs["elements"])
+            return IRSnapshot(
+                repo_name="repo",
+                snapshot_id="snap:repo:current",
+                branch="main",
+                commit_id="c2",
+                tree_id="t2",
+            )
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    pipeline,
+                    "_resolve_snapshot_ref",
+                    return_value={
+                        "repo_name": "repo",
+                        "branch": "main",
+                        "commit_id": "c2",
+                        "tree_id": "t2",
+                        "snapshot_id": "snap:repo:current",
+                    },
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline, "_build_git_meta", return_value={})
+            )
+            stack.enter_context(
+                patch("fastcode.indexing.pipeline.VectorStore", return_value=temp_store)
+            )
+            stack.enter_context(
+                patch(
+                    "fastcode.indexing.pipeline.CodeGraphBuilder",
+                    side_effect=_code_graph_builder_factory,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "fastcode.indexing.pipeline.HybridRetriever",
+                    return_value=temp_retriever,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "fastcode.indexing.pipeline.build_ir_from_ast",
+                    side_effect=_capture_ast,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "fastcode.indexing.pipeline.merge_ir",
+                    side_effect=lambda left, right: left,
+                )
+            )
+            stack.enter_context(
+                patch("fastcode.indexing.pipeline.validate_snapshot", return_value=[])
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline,
+                    "_apply_semantic_resolvers",
+                    side_effect=lambda **kwargs: kwargs["snapshot"],
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "stage_snapshot", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "save_relational_facts", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "save_ir_graphs", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store, "import_git_backbone", return_value=None
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline.snapshot_store, "release_lock", return_value=None)
+            )
+            stack.enter_context(
+                patch.object(
+                    pipeline.snapshot_store,
+                    "validate_fencing_token",
+                    return_value=True,
+                )
+            )
+            stack.enter_context(
+                patch.object(pipeline, "_load_artifacts_by_key", return_value=True)
+            )
+
+            result = pipeline.run_index_pipeline(
+                source=tmp,
+                is_url=False,
+                enable_scip=False,
+                publish=False,
+            )
+
+        artifact_key = pipeline.snapshot_store.artifact_key_for_snapshot(
+            "snap:repo:current"
+        )
+        expected_delta_call = {
+            "artifact_key": artifact_key,
+            "previous_name": previous_record.artifact_key,
+            "reusable_path_keys": ["a.py", "b.py"],
+        }
+        assert seen_ast_element_ids == []
+        assert graph_build_inputs == [[]]
+        assert bm25_inputs == [[]]
+        assert graph_builder_calls == ["call", "call"]
+        assert vector_delta_calls == [expected_delta_call]
+        assert bm25_delta_calls == [expected_delta_call]
+        assert graph_delta_calls == [expected_delta_call]
+        assert result["incremental"] == {
+            "added": 0,
+            "modified": 0,
+            "removed": 0,
+            "unchanged": 2,
+        }
+        prefilter = result["incremental_prefilter"]
+        assert prefilter["reindexed_elements"] == 0
+        assert prefilter["changed_paths"] == []
+        assert prefilter["artifact_shard_reuse"] == {
+            "vector_shards_reused": 2,
+            "bm25_shards_reused": 2,
+            "graph_shards_reused": 2,
+        }
+        assert result["repair_queue"] == {"pending": 0}
+        assert result["unit_artifact_persistence"]["copied_rows"] == 2
+        assert result["unit_artifact_persistence"]["changed_rows"] == 0
+        assert (
+            result["unit_artifact_persistence"]["file_ir_shards"]["copied_shards"] == 2
+        )
+        assert (
+            result["unit_artifact_persistence"]["file_ir_shards"]["written_shards"] == 0
+        )
+
+        loaded_current = pipeline.snapshot_store.load_snapshot("snap:repo:current")
+        assert loaded_current is not None
+        assert loaded_current.snapshot_id == "snap:repo:current"
+        assert [unit.path for unit in loaded_current.units] == ["a.py", "b.py"]
+
+
+def test_incremental_prefilter_reuses_content_addressed_parsed_elements() -> None:
+    with tempfile.TemporaryDirectory(prefix="fc_pipeline_parse_artifact_") as tmp:
+        pipeline = _make_minimal_pipeline(tmp)
+        unchanged_path = os.path.join(tmp, "a.py")
+        changed_path = os.path.join(tmp, "b.py")
+        with open(unchanged_path, "w", encoding="utf-8") as handle:
+            handle.write("print('a')\n")
+        with open(changed_path, "w", encoding="utf-8") as handle:
+            handle.write("def b():\n    return 2\n")
+
+        unchanged_stat = os.stat(unchanged_path)
+        changed_stat = os.stat(changed_path)
+        unchanged_fingerprint = pipeline._file_fingerprint(unchanged_path)
+        assert unchanged_fingerprint is not None
+
+        previous_snapshot = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:prev",
+            branch="main",
+            commit_id="c1",
+            tree_id="t1",
+        )
+        previous_record = pipeline.snapshot_store.save_snapshot(
+            previous_snapshot, metadata={}
+        )
+        pipeline.manifest_store.publish(
+            repo_name="repo",
+            ref_name="main",
+            snapshot_id="snap:repo:prev",
+            index_run_id="run_prev",
+            status="published",
+        )
+
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_metadata.pkl"),
+            "wb",
+        ) as handle:
+            pickle.dump(
+                {
+                    "metadata": [
+                        {
+                            "id": "unchanged:a",
+                            "type": "file",
+                            "name": "a.py",
+                            "file_path": unchanged_path,
+                            "relative_path": "a.py",
+                            "language": "python",
+                            "start_line": 1,
+                            "end_line": 1,
+                            "code": "print('a')\n",
+                            "signature": None,
+                            "docstring": None,
+                            "summary": None,
+                            "metadata": {"stable_unit_id": "unit:file:a"},
+                            "repo_name": "repo",
+                            "repo_url": tmp,
+                        }
+                    ]
+                },
+                handle,
+            )
+
+        with open(
+            os.path.join(tmp, f"{previous_record.artifact_key}_manifest.json"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            json.dump(
+                {
+                    "schema_version": 2,
+                    "compatibility": pipeline._incremental_compatibility_payload(),
+                    "compatibility_hash": pipeline._incremental_compatibility_hash(),
+                    "files": {
+                        "a.py": {
+                            **unchanged_fingerprint,
+                            "element_ids": ["unchanged:a"],
+                        },
+                        "b.py": {
+                            "mtime": changed_stat.st_mtime - 10,
+                            "size": changed_stat.st_size + 1,
+                            "content_hash": "stale-b",
+                            "element_ids": ["stale:b"],
+                        },
+                    },
+                },
+                handle,
+            )
+
+        current_files = [
+            {
+                "path": unchanged_path,
+                "relative_path": "a.py",
+                "size": unchanged_stat.st_size,
+                "mtime": unchanged_stat.st_mtime,
+                "extension": ".py",
+                "content_hash": unchanged_fingerprint["content_hash"],
+            },
+            {
+                "path": changed_path,
+                "relative_path": "b.py",
+                "size": changed_stat.st_size,
+                "mtime": changed_stat.st_mtime,
+                "extension": ".py",
+                "content_hash": "hash-b-current",
+            },
+        ]
+        pipeline.file_artifact_store.upsert_parsed_elements(
+            repo_name="repo",
+            elements=[
+                {
+                    "id": "cached:b",
+                    "type": "function",
+                    "name": "b",
+                    "file_path": changed_path,
+                    "relative_path": "b.py",
+                    "language": "python",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "code": "def b():\n    return 2\n",
+                    "signature": "def b()",
+                    "docstring": None,
+                    "summary": None,
+                    "metadata": {
+                        "stable_unit_id": "unit:function:b",
+                        "content_hash": "hash-b-current",
+                    },
+                    "repo_name": "repo",
+                    "repo_url": tmp,
+                }
+            ],
+            file_infos=current_files,
+            paths=["b.py"],
+        )
+
+        pipeline.indexer.index_files = Mock(
+            side_effect=AssertionError(
+                "content-addressed parsed artifact should bypass parsing"
+            )
+        )
+
+        planned_elements, plan = pipeline._plan_incremental_elements(
+            repo_name="repo",
+            repo_url=tmp,
+            snapshot_id="snap:repo:current",
+            snapshot_ref={
+                "repo_name": "repo",
+                "branch": "main",
+                "commit_id": "c2",
+                "tree_id": "t2",
+                "snapshot_id": "snap:repo:current",
+            },
+            ref=None,
+            current_files=current_files,
+        )
+
+        assert planned_elements is not None
+        assert plan is not None
+        assert [element.id for element in planned_elements] == ["cached:b"]
+        assert plan["parsed_artifact_reuse"] == {
+            "mode": "content_addressed",
+            "requested_files": 1,
+            "reused_files": 1,
+            "missed_files": 0,
+            "reused_elements": 1,
+        }
+        assert plan["parsed_artifact_publish"] == {
+            "mode": "content_addressed",
+            "artifact_type": "parsed_elements",
+            "candidate_files": 0,
+            "written_records": 0,
+            "candidate_elements": 0,
+        }
 
 
 def test_incremental_diff_reuses_inventory_fingerprints(

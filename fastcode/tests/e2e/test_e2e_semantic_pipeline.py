@@ -31,7 +31,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from fastcode.graph.build import CodeGraphBuilder
-from fastcode.graph_runtime import LadybugGraphRuntime
 from fastcode.indexing.doc_ingester import KeyDocIngester
 from fastcode.indexing.embedder import CodeEmbedder
 from fastcode.indexing.indexer import CodeIndexer
@@ -40,16 +39,19 @@ from fastcode.indexing.parser import CodeParser
 from fastcode.indexing.pipeline import IndexPipeline
 from fastcode.indexing.terminus import TerminusPublisher
 from fastcode.ir.graph import IRGraphBuilder
-from fastcode.main import FastCode
+from fastcode.main.config import config_to_legacy_dict
+from fastcode.main.fastcode import FastCode
 from fastcode.schemas.config import config_from_mapping
-from fastcode.semantic import build_default_semantic_resolver_registry
+from fastcode.semantic.resolvers.registry import (
+    build_default_semantic_resolver_registry,
+)
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.store.index_run import IndexRunStore
+from fastcode.store.infrastructure.graph_runtime import LadybugGraphRuntime
 from fastcode.store.manifest import ManifestStore
 from fastcode.store.pg_retrieval import PgRetrievalStore
 from fastcode.store.snapshot import SnapshotStore
 from fastcode.store.vector import VectorStore
-from fastcode.utils import config_to_legacy_dict
 
 pytestmark = [pytest.mark.e2e]
 
@@ -125,7 +127,10 @@ def _build_test_repo(tmp_path: pathlib.Path) -> Any:
     repo_dir = tmp_path / "test_repo"
     repo_dir.mkdir()
 
-    (repo_dir / "math_utils.py").write_text(_TEST_PYTHON_SOURCE, encoding="utf-8")
+    (repo_dir / "math_utils.py").write_text(
+        f"{_TEST_PYTHON_SOURCE}\n# E2E case: {tmp_path.as_posix()}\n",
+        encoding="utf-8",
+    )
     (repo_dir / ".e2e_case_id").write_text(tmp_path.name, encoding="utf-8")
     docs_dir = repo_dir / "docs" / "design"
     docs_dir.mkdir(parents=True)
@@ -177,6 +182,7 @@ def _base_config(
     enable_docs: Any = True,
     enable_ladybug: Any = False,
     ladybug_db_path: Any = "",
+    ladybug_postgres_attach_dsn: Any = "",
     ollama_url: Any = "http://127.0.0.1:11434/api/embeddings",
 ) -> dict[str, Any]:
     """Return a minimal config dict with all paths under tmp_path."""
@@ -187,7 +193,7 @@ def _base_config(
     for d in (persist_dir, repo_root, cache_dir, backup_dir):
         os.makedirs(d, exist_ok=True)
 
-    config = {
+    config: dict[str, Any] = {
         "storage": {
             "backend": backend,
             "postgres_dsn": pg_dsn,
@@ -269,6 +275,10 @@ def _base_config(
                 "db_path": ladybug_db_path or str(tmp_path / "ladybug" / "test.lb"),
             },
         }
+        if ladybug_postgres_attach_dsn:
+            config["graph"]["ladybug"]["postgres_attach_dsn"] = (
+                ladybug_postgres_attach_dsn
+            )
     else:
         config["graph"] = {"ladybug": {"enabled": False}}
 
@@ -309,7 +319,7 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
     )
 
     from fastcode.query.processor import QueryProcessor
-    from fastcode.retrieval.hybrid import HybridRetriever
+    from fastcode.query.retriever import HybridRetriever
     from fastcode.store.cache import CacheManager
 
     config_repo_root = fc.config.get("repo_root", "./repos")
@@ -568,30 +578,48 @@ def test_e2e_semantic_indexing_with_postgres(
 def test_e2e_semantic_indexing_with_ladybug(
     tmp_path: pathlib.Path,
     require_ollama_nomic_embeddings: str,
+    require_postgres_e2e: str,
     require_ladybug_runtime: None,
 ):
-    """Index pipeline with LadybugDB graph backend + semantic chunking.
+    """Index pipeline with Postgres docs/vector storage + Ladybug graph overlay.
 
     Verifies:
     - Ladybug runtime initializes and is enabled
+    - Ladybug attaches to the same PostgreSQL backend used for docs/vector data
     - Doc chunks are synced to Ladybug tables
     - Mentions are synced to Ladybug tables
     - Semantic chunking produces meaningful chunks
     """
+    pg_dsn = require_postgres_e2e
     ladybug_path = str(tmp_path / "ladybug" / "test.lb")
     repo_path = _build_test_repo(tmp_path)
     config = _base_config(
         tmp_path,
-        backend="sqlite",
+        backend="postgres",
+        pg_dsn=pg_dsn,
         enable_docs=True,
         enable_ladybug=True,
         ladybug_db_path=ladybug_path,
+        ladybug_postgres_attach_dsn=pg_dsn,
         ollama_url=require_ollama_nomic_embeddings,
     )
     fc = _build_fastcode(config)
 
     # Verify Ladybug is wired and enabled
+    _cleanup_pg_tables(pg_dsn)
     assert fc.graph_runtime.enabled is True, "Ladybug should be enabled"
+    assert fc.snapshot_store.db_runtime.backend == "postgres"
+    assert fc.graph_runtime.postgres_attach_dsn == pg_dsn
+    assert fc.graph_runtime.postgres_attached is True, (
+        fc.graph_runtime.postgres_attach_error
+    )
+    attached_rows = [
+        tuple(row)
+        for row in fc.graph_runtime._conn.execute(
+            "CALL show_attached_databases() RETURN *;"
+        )
+    ]
+    assert ("pg", "POSTGRES") in attached_rows
 
     result = fc.run_index_pipeline(
         source=repo_path,
@@ -646,6 +674,8 @@ def test_e2e_semantic_indexing_with_ladybug(
     # Semantic chunks should have heading metadata
     headings = [c.heading for c in chunks if c.heading]
     assert len(headings) >= 1, "Semantic chunks should preserve heading metadata"
+
+    _cleanup_pg_tables(pg_dsn)
 
 
 # ===========================================================================

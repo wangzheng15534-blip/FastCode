@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 from fastapi.testclient import TestClient
 
-from fastcode.api import web as web_app
+import fastcode.api.web as web_app
 
 
 def _zip_bytes(entries: dict[str, bytes]) -> bytes:

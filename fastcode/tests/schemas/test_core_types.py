@@ -1,4 +1,4 @@
-"""Tests for fastcode.schemas.core_types -- behavior, not field existence.
+"""Tests for split owner contracts -- behavior, not field existence.
 
 Previous version: 688 lines of dataclass field checks.
 This version: tests actual conversion logic, error paths, and invariants.
@@ -11,12 +11,8 @@ from typing import Any
 
 import pytest
 
-from fastcode.schemas.core_types import (
-    FusionConfig,
-    Hit,
-    ScipKind,
-    ScipRole,
-)
+from fastcode.retrieval.contracts import FusionConfig, Hit
+from fastcode.scip.contracts import ScipKind, ScipRole
 
 
 def _sample_retrieval_row(**overrides: Any) -> dict[str, Any]:

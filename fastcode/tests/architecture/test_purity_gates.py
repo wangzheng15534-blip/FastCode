@@ -9,7 +9,11 @@ PURE_PACKAGES = ["ir", "graph", "retrieval"]
 BANNED_MODULES = {"pydantic", "sqlite3", "subprocess", "urllib"}
 PACKAGE_ROOTS = [
     PACKAGE_ROOT / "__init__.py",
-    *sorted((PACKAGE_ROOT / pkg / "__init__.py") for pkg in PACKAGE_ROOT.iterdir() if pkg.is_dir()),
+    *sorted(
+        (PACKAGE_ROOT / pkg / "__init__.py")
+        for pkg in PACKAGE_ROOT.iterdir()
+        if pkg.is_dir()
+    ),
 ]
 
 
@@ -41,8 +45,8 @@ def test_pure_packages_no_banned_imports():
     assert not violations, "Banned imports in pure packages:\n" + "\n".join(violations)
 
 
-def test_package_roots_do_not_import_root_compat_exports():
-    """Internal package roots must not depend on root compatibility re-exports."""
+def test_package_roots_do_not_import_fastcode_root_exports():
+    """Internal package roots must not depend on fastcode root exports."""
     violations = []
     for py_file in PACKAGE_ROOTS:
         if not py_file.exists():
@@ -58,6 +62,6 @@ def test_package_roots_do_not_import_root_compat_exports():
                     f"{py_file.relative_to(PACKAGE_ROOT)}:{node.lineno}: from fastcode import ..."
                 )
     assert not violations, (
-        "Package roots must import concrete modules directly, not the root "
-        "compatibility surface:\n" + "\n".join(violations)
+        "Package roots must import concrete modules directly, not fastcode root "
+        "exports:\n" + "\n".join(violations)
     )

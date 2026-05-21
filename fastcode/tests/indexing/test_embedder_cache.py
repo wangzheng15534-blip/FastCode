@@ -410,6 +410,33 @@ def test_embed_elements_recomputes_stale_reuse_index_fingerprint() -> None:
     )
 
 
+def test_embed_elements_recomputes_wrong_dimension_reuse_index_vector() -> None:
+    cache = _MemoryCache()
+    embedder = _CountingEmbedder(cache)
+    existing_batch = [_element("same")]
+    embedder.embed_elements(existing_batch)
+    existing = existing_batch[0]
+    existing["embedding"] = np.asarray([999.0, 999.0], dtype=np.float32)
+    candidate = _element("same")
+    stable_unit_id = str(candidate["metadata"]["stable_unit_id"])
+    embedder._embedding_cache_enabled = False
+    embedder.raw_batches.clear()
+
+    result = embedder.embed_elements(
+        [candidate],
+        reuse_index={stable_unit_id: existing},
+    )
+
+    assert embedder.raw_batches == [[embedder.prepare_text(candidate)]]
+    result_embedding = result[0].get("embedding")
+    assert isinstance(result_embedding, np.ndarray)
+    assert result_embedding.shape == (3,)
+    assert np.array_equal(
+        result_embedding,
+        np.asarray(embedder._vector_for_text(embedder.prepare_text(candidate))),
+    )
+
+
 def test_embedding_cache_key_is_model_aware() -> None:
     cache = _MemoryCache()
     first = _CountingEmbedder(cache, model_name="model-a")

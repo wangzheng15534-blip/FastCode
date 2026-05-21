@@ -1,156 +1,80 @@
 # AGENTS.md
 
-This file provides contributor guidance for work in this repository.
+Repository-level instructions for contributors and coding agents. Read the
+nearest module-local `AGENTS.md` for package-specific rules.
 
-## What to trust
+## Truth Order
 
-Use this order of truth when docs disagree:
+Use this order when docs disagree:
 
-1. architecture tests and module-local lint rules
-2. current code under `fastcode/src/fastcode/`
-3. [IMPLEMENTATION_TODOS.md](./IMPLEMENTATION_TODOS.md)
-4. [ARCHITECTURE.md](./ARCHITECTURE.md)
-5. historical README or older branch docs
+1. Architecture tests and repo-wide lint rules.
+2. Current code under `fastcode/src/fastcode/`.
+3. Nearest module-local `AGENTS.md`.
+4. [IMPLEMENTATION_TODOS.md](./IMPLEMENTATION_TODOS.md).
+5. [ARCHITECTURE.md](./ARCHITECTURE.md).
+6. Historical README or older branch docs.
 
-The codebase has moved significantly. Do not assume older module paths or
-runtime behavior are still correct without checking the current package layout.
+FastCode has moved significantly. Verify current paths, imports, and runtime
+behavior before trusting older examples.
 
-## Quick Start
+## Package Map
 
-```bash
-# Install workspace deps
-uv sync --extra dev
+The runtime package is a layered monolith rooted at `fastcode/src/fastcode/`.
+The current branch is a hardened pre-release, not a stable release.
 
-# Fast checks
-uv run ruff format --check .
-uv run ruff check .
-uv run pyright
+- `api/`: HTTP API shell, CORS, web entrypoint, response serialization.
+- `events/`: lightweight lifecycle event contracts.
+- `graph/`: graph-domain construction, tree-sitter helpers, call extraction.
+- `indexing/`: repository loading, parsing, indexing, projection, publishing.
+- `ir/`: canonical frozen IR dataclasses, graph views, merge, validation.
+- `main/`: config preparation, CLI wiring, `FastCode` composition root.
+- `mcp/`: MCP transport shell and graph/query tool adapters.
+- `query/`: query orchestration, retriever shell, agent tools, LLM answering.
+- `retrieval/`: pure retrieval scoring, fusion, context, iteration logic.
+- `schemas/`: Pydantic boundary schemas and frozen runtime config creation.
+- `scip/`: SCIP models, loaders, indexers, symbol resolution, IR adapters.
+- `semantic/`: semantic resolver contracts and helper-backed upgrades.
+- `store/`: persistence, snapshots, vectors, manifests, cache, records.
+- `store/infrastructure/`: lower-level DB, filesystem, graph, LLM runtime glue.
+- `utils/`: stdlib-only shared helpers.
 
-# Run all tests from repository root
-uv run pytest -n auto
+## Architecture Rules
 
-# Build package artifacts
-uv build
-```
+Dependencies flow downward through the layer DAG. Do not introduce upward imports
+or cross-layer cycles. `ir/`, `graph/`, and `retrieval/` stay Pydantic-free and
+shell-free.
 
-## Current project shape
+Inner packages do not read env directly. Config flows through
+`prepare_runtime_config_mapping(...)`, `FastCodeConfig`, then `FastCode`.
 
-FastCode is a repository-understanding system for coding agents. The current
-`develop` branch is a hardened pre-release, not a finished stable release.
+Keep package roots thin. Avoid compatibility exports, `__getattr__` shims, and
+runtime imports in `__init__.py`.
 
-The implementation is a layered monolithic package rooted at
-`fastcode/src/fastcode/`.
+Prefer explicit field serializers/deserializers at API, persistence, cache, and
+native-library boundaries. Avoid hot-path `row_to_dict() -> from_dict()/to_dict()`
+round trips when typed records or explicit adapters are available.
 
-Primary modules:
+Keep embeddings and ranked vector candidates native or NumPy-backed until a
+backend boundary requires JSON or Python lists.
 
-- `api/`
-- `graph/`
-- `indexing/`
-- `ir/`
-- `main/`
-- `mcp/`
-- `query/`
-- `retrieval/`
-- `schemas/`
-- `scip/`
-- `semantic/`
-- `store/`
-- `store/infrastructure/`
-- `utils/`
+## Commands
 
-Read [ARCHITECTURE.md](./ARCHITECTURE.md) for the current package DAG and
-boundary rationale.
+Run commands from the repository root unless a tool explicitly says otherwise.
 
-## Enforced architecture rules
+- Install workspace deps: `uv sync --extra dev`
+- Format check: `uv run ruff format --check .`
+- Lint check: `uv run ruff check .`
+- Type check: `uv run pyright`
+- Architecture tests: `uv run pytest -n auto fastcode/tests/architecture`
+- Full tests: `uv run pytest -n auto`
+- Build artifacts: `uv build`
 
-These rules are active in tests and lint:
+## Testing
 
-1. No upward imports across layers.
-2. No cross-layer cycles.
-3. No Pydantic in `ir/`, `graph/`, or `retrieval/`.
-4. No direct env reads or `load_dotenv()` in inner packages.
-5. Package roots stay thin and lazy.
-6. No `**model_dump()` or `**__dict__` mass-assignment in shell packages.
+Prefer focused tests while iterating, then validate at root level. Use fixtures
+from `fastcode/tests/conftest.py`. `FastCode.__new__(FastCode)` is acceptable
+for unit tests that bypass heavy initialization.
 
-Applied contributor rule for current hardening work:
-
-- Prefer explicit field serializers/deserializers at API, persistence, cache,
-  and native-library boundaries.
-- Do not introduce new `row_to_dict() -> from_dict()/to_dict()` round-trips on
-  hot paths when a typed record or explicit adapter is available.
-- Keep embeddings and ranked vector candidates in native/NumPy form until the
-  backend boundary actually requires JSON or Python lists.
-
-Important architecture tests:
-
-- `fastcode/tests/architecture/test_layer_dag.py`
-- `fastcode/tests/architecture/test_no_pydantic_in_domain.py`
-- `fastcode/tests/architecture/test_purity_gates.py`
-- `fastcode/tests/architecture/test_explicit_translation.py`
-- `fastcode/tests/architecture/test_settings_flow.py`
-
-Important module-local guards:
-
-- `fastcode/src/fastcode/graph/ruff.toml`
-- `fastcode/src/fastcode/ir/ruff.toml`
-- `fastcode/src/fastcode/retrieval/ruff.toml`
-- `fastcode/src/fastcode/schemas/ruff.toml`
-- `fastcode/src/fastcode/store/infrastructure/ruff.toml`
-
-## Runtime configuration
-
-The active config flow is:
-
-1. raw YAML and `.env` input
-2. `fastcode.main.config.prepare_runtime_config_mapping(...)`
-3. `fastcode.schemas.config.FastCodeConfig`
-4. `fastcode.main.fastcode.FastCode`
-
-`FastCodeConfig` is the canonical frozen runtime config.
-
-Do not add new direct `os.getenv`, `os.environ[...]`, or `load_dotenv()` calls
-inside `indexing/`, `query/`, `retrieval/`, `store/`, `mcp/`, or `schemas/`.
-
-## Testing guidance
-
-- Run tests from repository root. The merged workspace layout matters.
-- Prefer focused runs while iterating, then validate at root-level.
-- Use existing fixture factories in `fastcode/tests/conftest.py`.
-- Partial construction via `FastCode.__new__(FastCode)` is normal in unit tests
-  that need to bypass heavy initialization.
-- For boundary-hardening changes, add regressions that fail if the old generic
-  conversion path is used again, for example patching `to_dict()`,
-  `from_dict()`, or `row_to_dict()` to raise.
-
-Common focused commands:
-
-```bash
-uv run pytest -n auto -k "architecture or settings_flow"
-uv run pytest -n auto fastcode/tests/architecture
-uv run pytest -n auto fastcode/tests/main/test_main.py
-uv run pytest -n auto fastcode/tests/mcp/test_mcp_graph_tools.py
-```
-
-## Packaging and runtime notes
-
-- Package metadata currently requires Python `>=3.11`.
-- Do not trust stale README claims that say `3.12+` without checking current
-  package metadata and dependency support.
-- Entry points are defined in `fastcode/pyproject.toml`:
-  - `fastcode`
-  - `fastcode-api`
-  - `fastcode-mcp`
-  - `fastcode-web`
-
-## Current release reality
-
-The core pipeline is much harder to break than the prototype, but several
-stable-release blockers remain open. The maintained list is in
-[IMPLEMENTATION_TODOS.md](./IMPLEMENTATION_TODOS.md), especially:
-
-- install and packaging reproducibility
-- true end-to-end incremental caching
-- deeper FP/FCIS boundary typing
-- real backend and toolchain evidence
-- API and upload hardening
-- deploy and operations docs
+For boundary-hardening changes, add regressions that fail if old generic
+conversion paths are reused, for example patched `to_dict()`, `from_dict()`, or
+`row_to_dict()` calls that raise.

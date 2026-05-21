@@ -186,6 +186,26 @@ def test_embed_batch_deduplicates_inputs_before_raw_embedding() -> None:
     assert np.array_equal(embeddings[0], embeddings[3])
 
 
+def test_embed_batch_cache_hits_preallocate_matrix_without_vstack(
+    monkeypatch: Any,
+) -> None:
+    cache = _MemoryCache()
+    embedder = _CountingEmbedder(cache)
+    embedder.embed_batch(["a", "b"])
+    embedder.raw_batches.clear()
+
+    def _boom_vstack(_values: object) -> np.ndarray:
+        raise AssertionError("embedding cache batch return must not use np.vstack")
+
+    monkeypatch.setattr("fastcode.indexing.embedder.np.vstack", _boom_vstack)
+
+    embeddings = embedder.embed_batch(["a", "b", "a"])
+
+    assert embedder.raw_batches == []
+    assert embeddings.shape == (3, 3)
+    assert np.array_equal(embeddings[0], embeddings[2])
+
+
 def test_embedding_metrics_track_cache_batches_and_reset() -> None:
     cache = _MemoryCache()
     embedder = _CountingEmbedder(cache)

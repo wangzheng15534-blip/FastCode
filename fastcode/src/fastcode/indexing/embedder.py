@@ -563,6 +563,30 @@ class CodeEmbedder:
             self._embedding_cache.set(key, payload)
         self._increment_embedding_metric("cache_write_count")
 
+    @staticmethod
+    def _embedding_rows_to_matrix(
+        embeddings: Sequence[np.ndarray | None],
+    ) -> np.ndarray:
+        first_embedding = next(
+            (embedding for embedding in embeddings if embedding is not None),
+            None,
+        )
+        if first_embedding is None:
+            return np.asarray([], dtype=np.float32)
+        first_row = np.asarray(first_embedding, dtype=np.float32).reshape(-1)
+        matrix = np.empty((len(embeddings), first_row.size), dtype=np.float32)
+        for index, embedding in enumerate(embeddings):
+            if embedding is None:
+                raise RuntimeError(f"Embedding cache fill failed at index: {index}")
+            row = np.asarray(embedding, dtype=np.float32).reshape(-1)
+            if row.size != first_row.size:
+                raise RuntimeError(
+                    f"Embedding cache fill produced inconsistent dimensions: "
+                    f"expected {first_row.size}, got {row.size} at index {index}"
+                )
+            matrix[index] = row
+        return matrix
+
     def _embed_texts_with_cache(self, texts: list[str]) -> np.ndarray:
         if not texts:
             return np.array([])
@@ -597,6 +621,24 @@ class CodeEmbedder:
             miss_embeddings = np.asarray(
                 self._embed_batch_uncached(miss_texts), dtype=np.float32
             )
+            if miss_embeddings.ndim == 1 and len(miss_texts) == 1:
+                miss_embeddings = miss_embeddings.reshape(1, -1)
+            if (
+                miss_embeddings.ndim != 2
+                or miss_embeddings.shape[0] != len(miss_texts)
+                or not miss_embeddings.shape[1]
+            ):
+                raise RuntimeError("Uncached embedding batch returned invalid shape")
+            single_miss_indexes = [indexes for _text, indexes in misses.values()]
+            can_return_miss_matrix = (
+                hits == 0
+                and miss_embeddings.ndim == 2
+                and miss_embeddings.shape[0] == len(texts)
+                and all(
+                    indexes == [index]
+                    for index, indexes in enumerate(single_miss_indexes)
+                )
+            )
             for (key, (text, indexes)), embedding in zip(
                 miss_items, miss_embeddings, strict=True
             ):
@@ -604,6 +646,8 @@ class CodeEmbedder:
                 for index in indexes:
                     embeddings[index] = embedding_array
                 self._set_cached_embedding(key, text, embedding_array)
+            if can_return_miss_matrix:
+                return miss_embeddings
 
         if hits:
             self._increment_embedding_metric("cache_hit_count", hits)
@@ -617,7 +661,7 @@ class CodeEmbedder:
                 f"Embedding cache fill failed at indexes: {missing_indexes}"
             )
 
-        return np.vstack(cast(list[np.ndarray], embeddings))
+        return self._embedding_rows_to_matrix(embeddings)
 
     def _truncate_ollama_text(self, text: str) -> str:
         if len(text) > self.max_seq_length:

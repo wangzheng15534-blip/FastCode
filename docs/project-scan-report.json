@@ -1,0 +1,51 @@
+{
+  "workflow_version": "1.2.0",
+  "timestamps": {
+    "started": "2026-04-22T23:00:00Z",
+    "last_updated": "2026-04-23T00:15:00Z",
+    "completed": "2026-04-23T00:15:00Z"
+  },
+  "mode": "initial_scan",
+  "scan_level": "exhaustive",
+  "project_root": "/home/jacob/develop/FastCode",
+  "project_knowledge": "/home/jacob/develop/FastCode/docs",
+  "completed_steps": [
+    {"step": "step_1", "status": "completed", "timestamp": "2026-04-22T23:01:00Z", "summary": "Classified as monolith with 1 part (backend)"},
+    {"step": "step_2", "status": "completed", "timestamp": "2026-04-22T23:02:00Z", "summary": "Found 12 existing docs, archived stale plans"},
+    {"step": "step_3", "status": "completed", "timestamp": "2026-04-22T23:05:00Z", "summary": "Tech stack: Python 3.11, FastAPI, PostgreSQL, TerminusDB, NetworkX"},
+    {"step": "step_4", "status": "completed", "timestamp": "2026-04-22T23:15:00Z", "summary": "Exhaustive scan: 45 core modules, 4 adapters, 4 API files, nanobot bridge"},
+    {"step": "step_5", "status": "completed", "timestamp": "2026-04-22T23:10:00Z", "summary": "Source tree documented with 5 critical folders"},
+    {"step": "step_6", "status": "completed", "timestamp": "2026-04-22T23:12:00Z", "summary": "Dev setup and deployment documented"},
+    {"step": "step_8", "status": "completed", "timestamp": "2026-04-22T23:20:00Z", "summary": "Architecture doc written for FastCode"},
+    {"step": "step_9", "status": "completed", "timestamp": "2026-04-22T23:25:00Z", "summary": "All supporting docs written"},
+    {"step": "step_10", "status": "completed", "timestamp": "2026-04-22T23:26:00Z", "summary": "Master index generated"},
+    {"step": "step_11", "status": "completed", "timestamp": "2026-04-22T23:28:00Z", "summary": "Validation complete, no incomplete markers"},
+    {"step": "step_12", "status": "completed", "timestamp": "2026-04-22T23:30:00Z", "summary": "Workflow complete"},
+    {"step": "rescan", "status": "completed", "timestamp": "2026-04-23T00:15:00Z", "summary": "Rescan: fixed architecture docs to reflect precision-anchored extraction (not dual-source merge), hierarchical fusion (intra-collection score fusion + cross-collection weighted RRF, not flat RRF), doc→code projection (docs never enter graph), integrated scouting workflow"}
+  ],
+  "current_step": "completed",
+  "findings": {
+    "project_classification": "monolith, 1 part, Python 3.11",
+    "technology_stack": "Python 3.11, FastAPI, Flask, PostgreSQL, TerminusDB, NetworkX, Tree-sitter, SCIP",
+    "api_endpoints": 35,
+    "mcp_tools": 11,
+    "cli_commands": 14,
+    "data_models": 12,
+    "source_files_scanned": 45
+  },
+  "project_types": [
+    {"part_id": "fastcode", "project_type_id": "backend", "display_name": "FastCode"}
+  ],
+  "outputs_generated": [
+    "project-scan-report.json",
+    "source-tree-analysis.md",
+    "development-guide.md",
+    "deployment-guide.md",
+    "api-contracts.md",
+    "data-models.md",
+    "architecture.md",
+    "project-overview.md",
+    "index.md"
+  ],
+  "resume_instructions": "Workflow complete"
+}

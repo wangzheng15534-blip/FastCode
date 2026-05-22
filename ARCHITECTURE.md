@@ -32,15 +32,16 @@ The importable package is `fastcode/src/fastcode/`.
 Current top-level modules:
 
 - `api/` HTTP transport shell and API contracts
-- `events/` lifecycle event contracts
 - `graph/` graph construction primitives and graph-domain contracts
+- `inbound/` explicit inbound schema/DTO to frozen contract mappers
 - `indexing/` repository loading, extraction orchestration, projections
 - `ir/` canonical frozen IR types and helpers
 - `main/` composition root, CLI wiring, and runtime config preparation
 - `mcp/` MCP transport shell
 - `query/` query orchestration, iterative agent behavior, and tool adapters
 - `retrieval/` pure retrieval logic, scoring, and context assembly
-- `schemas/` boundary models and typed config
+- `runtime/` frozen runtime config and runtime lifecycle event contracts
+- `schemas/` Pydantic inbound validation schemas and DTOs
 - `scip/` SCIP adapters, loaders, and translation helpers
 - `semantic/` semantic resolver registry and helper-backed upgrades
 - `store/` persistence orchestration and store contracts
@@ -56,8 +57,9 @@ Current tiers:
 
 - Facade: `api`, `mcp`, `main`
 - Shell: `indexing`, `query`, `store`
-- Events: `events`
-- Interface: `schemas`
+- Runtime contracts: `runtime`
+- Inbound mappers: `inbound`
+- Inbound schemas: `schemas`
 - Domain: `retrieval`, `graph`, `scip`, `semantic`
 - Common: `ir`
 - Base: `utils`
@@ -71,7 +73,13 @@ The repo currently enforces these rules in code, architecture tests, and
 repo-wide lint rules:
 
 1. Pydantic stops at the boundary.
-   - `schemas/` owns Pydantic validation and settings parsing.
+   - `schemas/` owns Pydantic validation, external aliases/defaults/coercion,
+     and settings parsing.
+   - `inbound/` translates validated schemas/DTOs into frozen internal
+     contracts.
+   - Closed external vocabularies use schema-local `StrEnum` DTOs; closed
+     internal vocabularies use runtime/domain `StrEnum` types. The mapper owns
+     value translation between them.
    - `ir/`, `graph/`, and `retrieval/` remain Pydantic-free.
 
 2. Pure packages stay shell-free.
@@ -104,6 +112,14 @@ repo-wide lint rules:
      `load_dotenv()` directly.
    - Environment loading is centralized in config preparation.
 
+6. Events and config are not single hub layers.
+   - Runtime events and runtime config contracts live under `runtime/`.
+   - External config schemas live under `schemas/`.
+   - Inbound schema-to-contract mappers live under `inbound/`.
+   - Config loading belongs to `main/`.
+   - Future domain event/config types should live near their owning domain or
+     shared kernel, not in a top-level `events/` or `config/` bucket.
+
 ## Runtime configuration flow
 
 The current config boundary is:
@@ -111,12 +127,19 @@ The current config boundary is:
 1. Raw YAML and `.env` input enter through `fastcode.main.config`.
 2. `prepare_runtime_config_mapping(...)` resolves paths and overlays env-backed
    runtime settings.
-3. `fastcode.schemas.config` validates that mapping with Pydantic boundary
-   models and returns frozen dataclass runtime config as `FastCodeConfig`.
-4. `fastcode.main.fastcode.FastCode` owns the runtime config instance and
+3. `fastcode.schemas.config.FastCodeConfigDTO` validates the external config
+   shape with Pydantic.
+4. `fastcode.inbound.config_mapper` explicitly maps validated DTOs into
+   `fastcode.runtime.config.FastCodeConfig`, including external-to-runtime
+   vocabulary translation.
+5. `fastcode.main.fastcode.FastCode` owns the runtime config instance and
    exposes explicit mutation points for runtime-only overrides.
-5. Legacy dict consumers still receive a compatibility dict view, but the
-   canonical config is typed and frozen.
+6. Shell consumers receive an explicit runtime mapping view, while the canonical
+   config is typed and frozen.
+
+Runtime config dataclasses enforce internal invariants such as positive limits,
+pool bounds, and runtime enum membership. Those checks are separate from
+Pydantic's external shape validation.
 
 Important current rule:
 
@@ -143,7 +166,7 @@ The IR path is designed to support:
 The codebase is moving away from dict-heavy shell payloads toward typed records.
 Already-landed areas include:
 
-- frozen runtime config in `schemas/config.py`
+- frozen runtime config in `runtime/config.py`
 - typed snapshot and manifest records
 - typed store-facing record flows in parts of persistence
 - explicit `CodeElement` serializers for retrieval, graph persistence, and
@@ -832,7 +855,7 @@ Current design rule:
 
 - infrastructure returns typed records and primitives where possible
 - higher-level store code should not depend on API schemas or transport shells
-- compatibility dict-return helpers may remain for callers, but active internal
+- runtime mapping helpers may remain for shell callers, but active internal
   persistence and queue paths should reconstruct rows through explicit typed
   adapters
 

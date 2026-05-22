@@ -4,16 +4,18 @@ Date: 2026-05-21
 
 ## Goal
 
-Enforce a 7-tier dependency DAG in FastCode with repo-local architecture tests,
+Enforce a dependency DAG in FastCode with repo-local architecture tests,
 following the pattern proven in the ETL project:
 
 ```
-Facade → Shell → Events → Interface → Domain → Common → Base
+Facade/Shell → Inbound Mapper → Schemas DTO
+             → Runtime Contracts
+             → Domain → Common → Base
 ```
 
-Dependencies flow downward. Domain modules stay pure. Interface defines
-Pydantic boundary models. Shell stages call downward through Interface
-translations into Domain logic.
+Dependencies flow downward. Domain modules stay pure. `schemas/` defines
+Pydantic boundary DTOs, `inbound/` performs schema-to-contract translation, and
+`runtime/` owns frozen runtime contracts.
 
 Implementation refinement: the current gate uses AST-based tests in
 `fastcode/tests/architecture/test_layer_dag.py` instead of adding
@@ -22,21 +24,16 @@ that every runtime module is classified.
 
 ## Layer Model
 
-```
-Facade (6)      api, mcp, main
-                    ↓
-Shell (5)       indexing, query, store
-                    ↓
-Events (4)      (pipeline lifecycle events, agent context events)
-                    ↓
-Interface (3)   schemas (Pydantic boundary models, config, translation shapes)
-                    ↓
-Domain (2)      retrieval, graph, scip, semantic
-                    ↓
-Common (1)      ir (canonical types, shared value objects)
-                    ↓
-Base (0)        utils (zero-dep stdlib helpers)
-```
+The current AST gate is a partial order rather than one strict vertical stack:
+
+- Facade: `api`, `mcp`, `main`
+- Shell: `indexing`, `query`, `store`
+- Inbound mapper: `inbound`
+- Inbound schema: `schemas`
+- Runtime contracts: `runtime`
+- Domain: `retrieval`, `graph`, `scip`, `semantic`
+- Common: `ir`
+- Base: `utils`
 
 ### Layer Assignments
 
@@ -48,8 +45,9 @@ Base (0)        utils (zero-dep stdlib helpers)
 | `indexing` | Shell (5) | Pipeline orchestration, I/O stages |
 | `query` | Shell (5) | Query orchestration |
 | `store` | Shell (5) | Persistence I/O |
-| `events` | Events (4) | Pipeline lifecycle and agent context events |
-| `schemas` | Interface (3) | Pydantic config, boundary models, translation shapes |
+| `inbound` | Inbound (3) | Explicit inbound schema/DTO to frozen contract mappers |
+| `schemas` | Interface (2) | Pydantic config DTOs and boundary models |
+| `runtime` | Runtime contract (2) | Frozen runtime config and lifecycle event contracts |
 | `retrieval` | Domain (2) | Retrieval logic and scoring |
 | `graph` | Domain (2) | Graph construction primitives |
 | `scip` | Domain (2) | SCIP translation logic |
@@ -61,30 +59,36 @@ Base (0)        utils (zero-dep stdlib helpers)
 
 - **Facade:** composition root / presentation. Wires everything together.
 - **Shell:** I/O infrastructure. Runs stages, reads/writes storage. Calls
-  downward into Events, Interface, Domain, Common, Base.
-- **Events:** event sourcing contracts, pipeline lifecycle events, agent
-  context event envelopes. May import Interface, Common, Base.
-- **Interface:** Pydantic config, typed column/record definitions, boundary
-  models. The translation layer between Shell I/O and Domain types. May
-  import Common, Base. Must NOT import Domain.
+  downward into runtime contracts, inbound mappers, Interface, Domain, Common,
+  Base.
+- **Runtime:** frozen runtime config and lifecycle event contracts. No
+  Pydantic, shell, facade, inbound, schema, or domain imports.
+- **Inbound:** explicit translation from validated external DTOs into frozen
+  internal contracts. May import `schemas` DTOs and `runtime` contracts.
+- **Interface:** Pydantic config DTOs and boundary models. Owns external shape,
+  aliases, defaults, coercion, and validation. Must NOT import runtime,
+  inbound, shell, facade, or domain packages.
 - **Domain:** pure business logic. No I/O, no Pydantic. Each domain module has
   its own `contracts.py` with frozen dataclasses. May import Common, Base.
 - **Common:** shared value objects, cross-cutting contracts. May import Base.
 - **Base:** zero-dep. `utils` may not import any `fastcode.*` package.
 
-### Key Constraint: Interface and Domain Are Siblings
+### Key Constraint: Boundaries Are Directional
 
-Interface and Domain do NOT import each other. They are parallel layers that
-both depend on Common and Base:
+External config input moves through a one-way boundary:
 
 ```
-Shell → Events → Interface ──→ Common → Base
-                  Domain   ──→ Common → Base
+raw mapping → schemas DTO → inbound mapper → runtime contract
 ```
 
-Shell stages translate between Interface (Pydantic) and Domain (frozen
-dataclass) types at the boundary. This is the explicit translation pattern
-already enforced by `test_explicit_translation.py`.
+Schemas do not construct runtime contracts, and runtime contracts do not import
+schemas. Inbound mappers perform field-by-field translation instead of
+`model_dump()` / `**kwargs` construction.
+
+Closed vocabulary fields are represented with `StrEnum` on both sides of the
+boundary. Schema enums describe accepted external values; runtime/domain enums
+describe trusted internal states. The inbound mapper owns value translation
+between those enum sets.
 
 ## Distributed Type Ownership
 
@@ -99,31 +103,15 @@ Each domain module owns its local types. No global schema dumping ground.
 | `store/contracts.py` | Persistence record types, serializer contracts |
 | `ir/` (common) | Canonical IR: snapshot, element, symbol, relation |
 | `api/contracts.py` | API request/response boundary contracts |
-| `events/__init__.py` | Pipeline and agent lifecycle event contracts |
-| `schemas/` (interface) | `FastCodeConfig` and Pydantic boundary models |
+| `runtime/events.py` | Runtime lifecycle event contracts |
+| `runtime/config.py` | Frozen runtime config contracts |
+| `schemas/` (inbound schema) | `FastCodeConfigDTO` and Pydantic boundary models |
+| `inbound/config_mapper.py` | Config DTO to frozen runtime config translation |
 
 Domain `contracts.py` files use frozen dataclasses. No Pydantic in domain
-contracts. Interface (`schemas/`) uses Pydantic. Shell stages explicitly
-translate between the two.
-
-## Events Layer
-
-FastCode currently has event-like records scattered across modules:
-- Pipeline status/metrics/warnings in `indexing/`
-- Agent context events (turn journals, observations) in `retrieval/`
-
-The Events layer extracts these into a dedicated module. Events are
-cross-cutting lifecycle contracts that Shell stages emit and consume. They use
-frozen dataclasses (no Pydantic), following ETL's pattern where Events sits
-above Interface.
-
-Initial Events extraction candidates:
-- Pipeline stage lifecycle events (started, completed, failed, skipped)
-- Indexing run diagnostics and metrics events
-- Agent context lifecycle (turn started, observation appended, turn completed)
-
-This starts small with `PipelineStageEvent` and `AgentContextEvent`. The deny
-rules still enforce the boundary even while event coverage grows.
+contracts. Inbound schema (`schemas/`) uses Pydantic DTOs only. Inbound mappers
+explicitly translate between external DTO meaning and internal frozen runtime
+contracts.
 
 ## Violation Fixes
 
@@ -154,7 +142,7 @@ The retrieval package now owns pure contracts and core scoring/context logic.
 ### Fix 4: shell-side native/runtime adapters
 
 **Old violation:** root runtime helpers and native-library adapters sat outside
-the 7-tier package map.
+the classified package map.
 **Fix:** move runtime and native-adapter code to the owning shell package:
 `store/infrastructure/runtime.py`, `store/infrastructure/graph_runtime.py`,
 and `store/vector_math.py`.
@@ -167,20 +155,23 @@ toolchains.
 own process execution in `indexing/scip_runner.py` and
 `indexing/semantic_helper_runner.py`.
 
-### Fix 6: `utils -> schemas` (Base → Interface)
+### Fix 6: `utils -> schemas` (Base → Inbound Schema)
 
 **Old violation:** `utils` handled config/env compatibility and imported
-interface-layer types.
+inbound-schema types.
 **Fix:** config preparation moved to `main/config.py`, token helpers moved to
 `query/tokens.py`, ignore handling moved to `indexing/ignore.py`, path helpers
 live in `utils/path_utils.py`, and `utils` is now stdlib-only.
 
 ## Schema Distribution
 
-The current `schemas` module becomes the Interface layer:
+The current config boundary is split by responsibility:
 
-- `schemas.config` stays for Pydantic config validation and frozen runtime
-  config construction
+- `schemas.config` owns Pydantic config DTO validation only
+- `inbound.config_mapper` owns field-explicit DTO to runtime contract mapping
+- `runtime.config` owns frozen runtime config contracts
+- runtime/domain contracts own semantic invariants and command/config validity,
+  not Pydantic models
 - `schemas.ir` stays as the Pydantic boundary adapter for IR payloads
 - `schemas.core_types` was removed; domain-specific types moved to owning
   contract modules such as `retrieval/contracts.py`, `scip/contracts.py`, and
@@ -196,8 +187,9 @@ New file: `fastcode/tests/architecture/test_layer_dag.py`
 ```python
 FACADE = ("fastcode.api.*", "fastcode.mcp.*", "fastcode.main.*")
 SHELL = ("fastcode.indexing.*", "fastcode.query.*", "fastcode.store.*")
-EVENTS = ("fastcode.events.*",)
-INTERFACE = ("fastcode.schemas.*",)
+RUNTIME = ("fastcode.runtime.*",)
+INBOUND = ("fastcode.inbound.*",)
+INBOUND_SCHEMA = ("fastcode.schemas.*",)
 DOMAIN = ("fastcode.retrieval.*", "fastcode.graph.*", "fastcode.scip.*", "fastcode.semantic.*")
 COMMON = ("fastcode.ir.*",)
 BASE = ("fastcode.utils.*",)
@@ -205,22 +197,27 @@ BASE = ("fastcode.utils.*",)
 
 ### Deny Rules
 
-1. **domain_must_not_import_facade_shell_or_interface**
-   Domain must not import `FACADE + SHELL + INTERFACE`
+1. **domain_must_not_import_facade_shell_or_inbound_schema**
+   Domain must not import `FACADE + SHELL + INBOUND_SCHEMA`
 
-2. **interface_must_not_import_domain_facade_or_shell**
-   Interface must not import `DOMAIN + FACADE + SHELL`
+2. **inbound_schema_must_not_import_runtime_inbound_domain_facade_or_shell**
+   Inbound schema must not import `RUNTIME + INBOUND + DOMAIN + FACADE + SHELL`
 
-3. **events_must_not_import_domain_facade_or_shell**
-   Events must not import `DOMAIN + FACADE + SHELL`
+3. **runtime_must_not_import_schemas_inbound_domain_facade_or_shell**
+   Runtime contracts must stay Pydantic-free and independent of boundary
+   schemas, inbound mappers, domain packages, facades, and shells.
 
-4. **common_must_not_import_events_interface_domain_facade_or_shell**
-   Common must not import `EVENTS + INTERFACE + DOMAIN + FACADE + SHELL`
+4. **inbound_must_not_import_domain_facade_or_shell**
+   Inbound mappers may import schemas and runtime contracts, but not domain,
+   facade, or shell packages.
 
-5. **base_must_not_import_any_fastcode**
+5. **common_must_not_import_runtime_inbound_schema_domain_facade_or_shell**
+   Common must not import `RUNTIME + INBOUND + INBOUND_SCHEMA + DOMAIN + FACADE + SHELL`
+
+6. **base_must_not_import_any_fastcode**
    Base must not import `fastcode.*`
 
-6. **shell_must_not_import_facade**
+7. **shell_must_not_import_facade**
    Shell must not import `FACADE`
 
 ### Additional Contract Tests

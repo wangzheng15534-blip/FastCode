@@ -9,6 +9,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
 
 PURE_PACKAGES = ["ir", "graph", "retrieval"]
 BANNED_MODULES = {"pydantic", "sqlite3", "subprocess", "urllib"}
+FORBIDDEN_TOP_LEVEL_HUBS = ("config.py", "config", "events.py", "events")
 BANNED_IMPORTS_BY_PACKAGE = {
     "graph": {
         "pydantic": "The graph layer must stay Pydantic-free.",
@@ -51,12 +52,15 @@ BANNED_IMPORTS_BY_PACKAGE = {
         "fastcode.main": "retrieval must not depend on the composition root.",
         "fastcode.mcp": "retrieval must not depend on transport shells.",
         "fastcode.query": "retrieval must stay independent of query orchestration.",
-        "fastcode.schemas": "retrieval must not depend on Pydantic interface schemas.",
+        "fastcode.schemas": "retrieval must not depend on Pydantic inbound schemas.",
+        "fastcode.inbound": "retrieval must not depend on inbound boundary mappers.",
         "fastcode.scip": "retrieval must stay independent of SCIP loading and adapters.",
         "fastcode.semantic": "retrieval must stay independent of semantic adapters.",
         "fastcode.store": "retrieval must stay independent of storage orchestration.",
     },
     "schemas": {
+        "fastcode.runtime": "Schemas validate external DTOs; inbound mappers build runtime contracts.",
+        "fastcode.inbound": "Schemas must not depend on inbound mappers.",
         "fastcode.api": "Schema types must stay independent of API route implementations.",
         "fastcode.graph": "Schema types must stay independent of graph construction.",
         "fastcode.indexing": "Schema types must stay independent of indexing orchestration.",
@@ -68,6 +72,23 @@ BANNED_IMPORTS_BY_PACKAGE = {
         "fastcode.semantic": "Schema types must stay independent of semantic adapters.",
         "fastcode.store": "Schema types must stay independent of storage orchestration.",
     },
+    "inbound": {
+        "pydantic": "Inbound mappers consume validated DTOs through schemas, not Pydantic directly.",
+        "dotenv": "Inbound mappers must not load environment files.",
+        "sqlite3": "Inbound mappers must stay independent of database I/O.",
+        "subprocess": "Inbound mappers must stay independent of process execution.",
+        "urllib": "Inbound mappers must stay independent of network I/O.",
+        "fastcode.api": "Inbound mappers must not depend on entrypoint shells.",
+        "fastcode.graph": "Inbound mappers must not depend on domain orchestration.",
+        "fastcode.indexing": "Inbound mappers must not depend on shell orchestration.",
+        "fastcode.main": "Inbound mappers must not depend on the composition root.",
+        "fastcode.mcp": "Inbound mappers must not depend on transport shells.",
+        "fastcode.query": "Inbound mappers must not depend on query orchestration.",
+        "fastcode.retrieval": "Inbound mappers must not depend on retrieval logic.",
+        "fastcode.scip": "Inbound mappers must not depend on SCIP adapters.",
+        "fastcode.semantic": "Inbound mappers must not depend on semantic adapters.",
+        "fastcode.store": "Inbound mappers must not depend on storage orchestration.",
+    },
     "store/infrastructure": {
         "pydantic": "store.infrastructure should operate on frozen dataclasses and primitives.",
         "fastcode.api": "store.infrastructure must stay independent of entrypoint shells.",
@@ -77,9 +98,29 @@ BANNED_IMPORTS_BY_PACKAGE = {
         "fastcode.mcp": "store.infrastructure must stay independent of transport shells.",
         "fastcode.query": "store.infrastructure must stay independent of query orchestration.",
         "fastcode.retrieval": "store.infrastructure must stay independent of retrieval orchestration.",
-        "fastcode.schemas": "store.infrastructure must not depend on Pydantic interface schemas.",
+        "fastcode.schemas": "store.infrastructure must not depend on Pydantic inbound schemas.",
+        "fastcode.inbound": "store.infrastructure must not depend on inbound boundary mappers.",
         "fastcode.scip": "store.infrastructure must stay independent of SCIP adapters.",
         "fastcode.semantic": "store.infrastructure must stay independent of semantic adapters.",
+    },
+    "runtime": {
+        "pydantic": "runtime contracts must stay Pydantic-free.",
+        "dotenv": "runtime contracts must not load environment files.",
+        "sqlite3": "runtime contracts must stay independent of database I/O.",
+        "subprocess": "runtime contracts must stay independent of process execution.",
+        "urllib": "runtime contracts must stay independent of network I/O.",
+        "fastcode.api": "runtime contracts must not depend on entrypoint shells.",
+        "fastcode.graph": "runtime contracts must not depend on domain orchestration.",
+        "fastcode.indexing": "runtime contracts must not depend on shell orchestration.",
+        "fastcode.main": "runtime contracts must not depend on the composition root.",
+        "fastcode.mcp": "runtime contracts must not depend on transport shells.",
+        "fastcode.query": "runtime contracts must not depend on query orchestration.",
+        "fastcode.retrieval": "runtime contracts must not depend on retrieval logic.",
+        "fastcode.schemas": "runtime contracts must not depend on boundary schemas.",
+        "fastcode.inbound": "runtime contracts must not depend on inbound mappers.",
+        "fastcode.scip": "runtime contracts must not depend on SCIP adapters.",
+        "fastcode.semantic": "runtime contracts must not depend on semantic adapters.",
+        "fastcode.store": "runtime contracts must not depend on storage orchestration.",
     },
 }
 PACKAGE_ROOTS = [
@@ -94,6 +135,12 @@ PACKAGE_ROOTS = [
 
 def _tree(path: Path) -> ast.Module:
     return ast.parse(path.read_text())
+
+
+def _has_source_content(path: Path) -> bool:
+    if path.is_file():
+        return True
+    return any("__pycache__" not in child.parts for child in path.rglob("*"))
 
 
 def _iter_python_files(package_path: str) -> list[Path]:
@@ -159,6 +206,64 @@ def _matches_banned_import(imported: str, banned: str) -> bool:
     return imported == banned or imported.startswith(f"{banned}.")
 
 
+def _has_env_loading(filepath: Path) -> list[str]:
+    tree = _tree(filepath)
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "dotenv":
+            violations.append(
+                f"{filepath.relative_to(PACKAGE_ROOT)}:{node.lineno}: dotenv import"
+            )
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id == "load_dotenv":
+                violations.append(
+                    f"{filepath.relative_to(PACKAGE_ROOT)}:{node.lineno}: load_dotenv()"
+                )
+            elif (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "os"
+                and node.func.attr == "getenv"
+            ):
+                violations.append(
+                    f"{filepath.relative_to(PACKAGE_ROOT)}:{node.lineno}: os.getenv()"
+                )
+            elif (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Attribute)
+                and isinstance(node.func.value.value, ast.Name)
+                and node.func.value.value.id == "os"
+                and node.func.value.attr == "environ"
+                and node.func.attr == "get"
+            ):
+                violations.append(
+                    f"{filepath.relative_to(PACKAGE_ROOT)}:{node.lineno}: os.environ.get()"
+                )
+        elif (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Attribute)
+            and isinstance(node.value.value, ast.Name)
+            and node.value.value.id == "os"
+            and node.value.attr == "environ"
+        ):
+            violations.append(
+                f"{filepath.relative_to(PACKAGE_ROOT)}:{node.lineno}: os.environ[...]"
+            )
+    return violations
+
+
+def test_no_top_level_events_or_config_hubs() -> None:
+    """Events and config must live in role-specific packages, not root hubs."""
+    violations = [
+        rel_path
+        for rel_path in FORBIDDEN_TOP_LEVEL_HUBS
+        if _has_source_content(PACKAGE_ROOT / rel_path)
+    ]
+    assert not violations, "Forbidden top-level hubs restored:\n" + "\n".join(
+        violations
+    )
+
+
 def test_pure_packages_no_banned_imports() -> None:
     """Files in pure packages must not import banned modules."""
     violations: list[str] = []
@@ -194,6 +299,14 @@ def test_package_boundary_import_bans() -> None:
     assert not violations, "Package boundary import violations:\n" + "\n".join(
         violations
     )
+
+
+def test_runtime_contracts_do_not_load_env_or_dotenv() -> None:
+    """Runtime contracts receive resolved values; loaders stay in shell packages."""
+    violations: list[str] = []
+    for py_file in _iter_python_files("runtime"):
+        violations.extend(_has_env_loading(py_file))
+    assert not violations, "Runtime env access violations:\n" + "\n".join(violations)
 
 
 def test_package_roots_do_not_import_fastcode_root_exports() -> None:

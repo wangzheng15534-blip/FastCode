@@ -23,15 +23,16 @@ The runtime package is a layered monolith rooted at `fastcode/src/fastcode/`.
 The current branch is a hardened pre-release, not a stable release.
 
 - `api/`: HTTP API shell, CORS, web entrypoint, response serialization.
-- `events/`: lightweight lifecycle event contracts.
 - `graph/`: graph-domain construction, tree-sitter helpers, call extraction.
+- `inbound/`: explicit inbound DTO/schema to frozen contract mappers.
 - `indexing/`: repository loading, parsing, indexing, projection, publishing.
 - `ir/`: canonical frozen IR dataclasses, graph views, merge, validation.
 - `main/`: config preparation, CLI wiring, `FastCode` composition root.
 - `mcp/`: MCP transport shell and graph/query tool adapters.
 - `query/`: query orchestration, retriever shell, agent tools, LLM answering.
 - `retrieval/`: pure retrieval scoring, fusion, context, iteration logic.
-- `schemas/`: Pydantic boundary schemas and frozen runtime config creation.
+- `runtime/`: frozen runtime config and runtime lifecycle event contracts.
+- `schemas/`: Pydantic inbound validation schemas and DTOs.
 - `scip/`: SCIP models, loaders, indexers, symbol resolution, IR adapters.
 - `semantic/`: semantic resolver contracts and helper-backed upgrades.
 - `store/`: persistence, snapshots, vectors, manifests, cache, records.
@@ -45,7 +46,15 @@ or cross-layer cycles. `ir/`, `graph/`, and `retrieval/` stay Pydantic-free and
 shell-free.
 
 Inner packages do not read env directly. Config flows through
-`prepare_runtime_config_mapping(...)`, `FastCodeConfig`, then `FastCode`.
+`prepare_runtime_config_mapping(...)`,
+`fastcode.schemas.config.FastCodeConfigDTO`, explicit inbound mappers in
+`fastcode.inbound.config_mapper`, `fastcode.runtime.config.FastCodeConfig`,
+then `FastCode`.
+
+Events and config are not miscellaneous hub layers. Runtime events/config live
+under `runtime/`; external config schemas live under `schemas/`; schema-to-
+contract translation lives under `inbound/`; config loading stays in `main/`;
+future domain events/config should live near their owning domain.
 
 Keep package roots thin. Avoid compatibility exports, `__getattr__` shims, and
 runtime imports in `__init__.py`.

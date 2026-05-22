@@ -91,6 +91,8 @@ parametrize-names-type = "tuple"
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "fastcode.db_runtime".msg = "Deleted compatibility module; import the owning split package instead."
+"fastcode.config".msg = "Do not add a top-level config hub; use runtime, schemas, main, domain-local, or infra-local config modules."
+"fastcode.events".msg = "Deleted generic event hub; import runtime, domain-local, port, or adapter event contracts instead."
 "fastcode.graph_runtime".msg = "Deleted compatibility module; import the owning split package instead."
 "fastcode.llm_utils".msg = "Deleted compatibility module; import the owning split package instead."
 "fastcode.module_resolver".msg = "Deleted compatibility module; import the owning split package instead."

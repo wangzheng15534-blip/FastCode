@@ -52,7 +52,9 @@ class PgRetrievalStore:
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.enabled = self.db_runtime.backend == "postgres"
-        self.backend_mode = config.get("retrieval", {}).get("backend", "pg_hybrid")
+        self.backend_mode = config.get("retrieval", {}).get(
+            "retrieval_backend", "pg_hybrid"
+        )
         self.last_upsert_metrics: dict[str, Any] = {}
         if self.enabled:
             self._init_db()

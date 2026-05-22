@@ -1,1 +1,1 @@
-"""Pydantic interface package."""
+"""Pydantic inbound schema package."""

@@ -80,11 +80,15 @@ class HybridRetriever:
         self.semantic_weight: float = self.retrieval_config.get("semantic_weight", 0.6)
         self.keyword_weight: float = self.retrieval_config.get("keyword_weight", 0.3)
         self.graph_weight: float = self.retrieval_config.get("graph_weight", 0.1)
-        self.graph_backend: str = self.retrieval_config.get("graph_backend", "ir")
-        self.allow_legacy_graph_fallback: bool = self.retrieval_config.get(
-            "allow_legacy_graph_fallback", True
+        self.graph_expansion_backend: str = self.retrieval_config.get(
+            "graph_expansion_backend", "ir"
         )
-        self.retrieval_backend: str = self.retrieval_config.get("backend", "pg_hybrid")
+        self.allow_graph_builder_fallback: bool = self.retrieval_config.get(
+            "allow_graph_builder_fallback", True
+        )
+        self.retrieval_backend: str = self.retrieval_config.get(
+            "retrieval_backend", "pg_hybrid"
+        )
         self.adaptive_fusion_cfg: dict[str, Any] = (
             self.retrieval_config.get("adaptive_fusion", {}) or {}
         )
@@ -1665,7 +1669,7 @@ class HybridRetriever:
     def _get_related_ids(
         self, element_id: str, element_meta: dict[str, Any], max_hops: int = 2
     ) -> set[str]:
-        use_ir = self.graph_backend == "ir" and (
+        use_ir = self.graph_expansion_backend == "ir" and (
             getattr(self, "ir_graphs", None) is not None
             or getattr(self, "_ir_graph_loader", None) is not None
         )
@@ -1675,10 +1679,10 @@ class HybridRetriever:
             )
             if ids:
                 return ids
-            if not self.allow_legacy_graph_fallback:
+            if not self.allow_graph_builder_fallback:
                 return set()
             self.logger.debug(
-                "IR graph expansion yielded no results; falling back to legacy graph"
+                "IR graph expansion yielded no results; using graph-builder expansion"
             )
         return self.graph_builder.get_related_elements(element_id, max_hops)
 
@@ -2666,7 +2670,10 @@ class HybridRetriever:
                 continue
             os.remove(os.path.join(shard_dir, entry_name))
 
-        manifest["shards"].sort(key=lambda entry: str(entry.get("path_key") or ""))
+        def _manifest_path_key(entry: dict[str, Any]) -> str:
+            return str(entry.get("path_key") or "")
+
+        cast(list[dict[str, Any]], manifest["shards"]).sort(key=_manifest_path_key)
         manifest_path = self._bm25_manifest_path(name)
         self._bm25_populate_manifest_statistics(manifest)
         tmp_manifest = f"{manifest_path}.tmp"

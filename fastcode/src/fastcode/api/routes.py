@@ -391,7 +391,7 @@ async def health_check():
         "multi_repo_mode": fastcode_instance.multi_repo_mode,
         "storage_backend": fastcode_instance.snapshot_store.db_runtime.backend,
         "retrieval_backend": fastcode_instance.config.get("retrieval", {}).get(
-            "backend", "legacy"
+            "retrieval_backend", "local"
         ),
     }
 
@@ -416,11 +416,13 @@ async def get_status(full_scan: bool = False):
         repo_loaded=fastcode.repo_loaded,
         repo_indexed=fastcode.repo_indexed,
         repo_info=fastcode.repo_info,
-        graph_backend=fastcode.config.get("retrieval", {}).get(
-            "graph_backend", "legacy"
+        graph_expansion_backend=fastcode.config.get("retrieval", {}).get(
+            "graph_expansion_backend", "graph_builder"
         ),
         storage_backend=fastcode.snapshot_store.db_runtime.backend,
-        retrieval_backend=fastcode.config.get("retrieval", {}).get("backend", "legacy"),
+        retrieval_backend=fastcode.config.get("retrieval", {}).get(
+            "retrieval_backend", "local"
+        ),
         available_repositories=available_repos,
         loaded_repositories=loaded_repos,
     )

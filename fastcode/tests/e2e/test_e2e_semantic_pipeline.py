@@ -31,6 +31,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from fastcode.graph.build import CodeGraphBuilder
+from fastcode.inbound.config_mapper import config_from_mapping
 from fastcode.indexing.doc_ingester import KeyDocIngester
 from fastcode.indexing.embedder import CodeEmbedder
 from fastcode.indexing.indexer import CodeIndexer
@@ -39,9 +40,8 @@ from fastcode.indexing.parser import CodeParser
 from fastcode.indexing.pipeline import IndexPipeline
 from fastcode.indexing.terminus import TerminusPublisher
 from fastcode.ir.graph import IRGraphBuilder
-from fastcode.main.config import config_to_legacy_dict
+from fastcode.main.config import config_to_runtime_mapping
 from fastcode.main.fastcode import FastCode
-from fastcode.schemas.config import config_from_mapping
 from fastcode.semantic.resolvers.registry import (
     build_default_semantic_resolver_registry,
 )
@@ -247,8 +247,8 @@ def _base_config(
             "keyword_weight": 0.3,
             "graph_weight": 0.1,
             "max_results": 5,
-            "backend": "pg_hybrid",
-            "graph_backend": "ir",
+            "retrieval_backend": "pg_hybrid",
+            "graph_expansion_backend": "ir",
         },
         "cache": {"enabled": False},
         "repo_root": repo_root,
@@ -294,7 +294,7 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
     """Construct a FastCode instance with real components from config."""
     fc = FastCode.__new__(FastCode)
     fc.runtime_config = config_from_mapping(config)
-    fc.config = config_to_legacy_dict(fc.runtime_config)
+    fc.config = config_to_runtime_mapping(fc.runtime_config)
     fc.eval_config = fc.config.get("evaluation", {})
     fc.eval_mode = False
     fc.in_memory_index = False

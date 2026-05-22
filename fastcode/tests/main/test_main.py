@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+from fastcode.inbound.config_mapper import config_from_mapping
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs, IRGraphView
 from fastcode.ir.types import (
@@ -37,7 +38,6 @@ from fastcode.retrieval.context_compiler import (
     build_turn_plan,
     compile_working_memory,
 )
-from fastcode.schemas.config import config_from_mapping
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.store.records import (
     ContextActivationRecord,
@@ -331,7 +331,10 @@ def test_diagnostic_bundle_reports_support_safe_runtime_state(
             "model": "all-minilm",
             "ollama_url": "http://127.0.0.1:11434",
         },
-        "retrieval": {"backend": "pg_hybrid", "graph_backend": "ir"},
+        "retrieval": {
+            "retrieval_backend": "pg_hybrid",
+            "graph_expansion_backend": "ir",
+        },
         "generation": {
             "provider": "openai",
             "model": "gpt-test",
@@ -1277,16 +1280,16 @@ def test_index_repository_uses_snapshot_pipeline_by_default() -> None:
     assert calls[0]["get_loaded_repositories"]() is fc.loaded_repositories
 
 
-def test_index_repository_legacy_direct_path_requires_explicit_flag() -> None:
+def test_index_repository_direct_path_requires_explicit_flag() -> None:
     fc = FastCode.__new__(FastCode)
-    fc.config = {"indexing": {"allow_legacy_direct_index": True}}
-    fc._index_repository_legacy_unlocked = lambda force=False: {
-        "legacy": True,
+    fc.config = {"indexing": {"allow_direct_index": True}}
+    fc._index_repository_direct_unlocked = lambda force=False: {
+        "direct": True,
         "force": force,
     }
 
     assert fc._index_repository_unlocked(force=True) == {
-        "legacy": True,
+        "direct": True,
         "force": True,
     }
 

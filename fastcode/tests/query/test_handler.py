@@ -598,10 +598,10 @@ def test_semantic_escalation_enables_real_ir_graph_expansion() -> None:
     token_store.metadata["ir_symbol_id"] = "unit:token_store"
 
     real_retriever = HybridRetriever.__new__(HybridRetriever)
-    real_retriever.graph_backend = "ir"
+    real_retriever.graph_expansion_backend = "ir"
     real_retriever.ir_graphs = None
     real_retriever.ir_snapshot_id = None
-    real_retriever.allow_legacy_graph_fallback = False
+    real_retriever.allow_graph_builder_fallback = False
     real_retriever.graph_weight = 1.0
     real_retriever.logger = MagicMock()
     real_retriever.graph_builder = SimpleNamespace(

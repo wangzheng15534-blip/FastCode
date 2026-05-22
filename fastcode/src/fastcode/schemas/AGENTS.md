@@ -1,12 +1,14 @@
 # schemas
 
-Boundary schemas and runtime config validation.
+Inbound validation schemas and DTOs.
 
-- Owns Pydantic boundary models and conversion into frozen runtime config
-  dataclasses.
-- `FastCodeConfig` is the canonical runtime config shape after validation.
+- Own Pydantic boundary models for external/config shapes: aliases, defaults,
+  coercion, and field validation.
+- Do not build frozen runtime/app contracts here. Explicit schema-to-contract
+  translation belongs in `fastcode.inbound`.
 - Do not import API route implementations, MCP server code, main runtime objects,
-  query orchestration, retrieval logic, graph, scip, semantic, or store.
+  runtime contracts, inbound mappers, query orchestration, retrieval logic,
+  graph, scip, semantic, or store.
 - Do not read env directly. Env overlays are prepared in `main/config.py` before
   schema validation.
 - Keep compatibility exports thin and explicit; IR remains canonical for code

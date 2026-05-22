@@ -112,9 +112,9 @@ retrieval:
   semantic_weight: 0.5
   keyword_weight: 0.5
   graph_weight: 1
-  backend: "pg_hybrid"  # "pg_hybrid" primary, fallback to legacy
-  graph_backend: "ir"  # "ir" (default) or "legacy"
-  allow_legacy_graph_fallback: true
+  retrieval_backend: "pg_hybrid"  # "pg_hybrid" or "local"
+  graph_expansion_backend: "ir"  # "ir" (default) or "graph_builder"
+  allow_graph_builder_fallback: true
 
   # Filters
   min_similarity: 0.15

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
 
 import yaml
 from dotenv import load_dotenv
 
-from fastcode.schemas.config import FastCodeConfig, config_from_mapping
+from fastcode.inbound.config_mapper import config_from_mapping
+from fastcode.runtime.config import FastCodeConfig
 
 
 def setup_logging(config: dict[str, Any]) -> logging.Logger:
@@ -38,8 +38,8 @@ def setup_logging(config: dict[str, Any]) -> logging.Logger:
 
 
 def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
-    """Load runtime config and return the legacy dict view."""
-    return config_to_legacy_dict(load_runtime_config(config_path))
+    """Load runtime config and return the shell runtime mapping."""
+    return config_to_runtime_mapping(load_runtime_config(config_path))
 
 
 def load_runtime_config(config_path: str = "config/config.yaml") -> FastCodeConfig:
@@ -61,9 +61,9 @@ def load_runtime_config(config_path: str = "config/config.yaml") -> FastCodeConf
     return config_from_mapping(resolved)
 
 
-def config_to_legacy_dict(config: FastCodeConfig) -> dict[str, Any]:
-    """Convert frozen runtime config into the existing dict compatibility view."""
-    return asdict(config)
+def config_to_runtime_mapping(config: FastCodeConfig) -> dict[str, Any]:
+    """Convert frozen runtime config into a shell runtime mapping."""
+    return config.to_dict()
 
 
 def prepare_runtime_config_mapping(

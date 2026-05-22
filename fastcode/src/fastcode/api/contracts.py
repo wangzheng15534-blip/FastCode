@@ -213,7 +213,7 @@ class StatusResponse(BaseModel):
     repo_loaded: bool
     repo_indexed: bool
     repo_info: dict[str, Any]
-    graph_backend: str | None = None
+    graph_expansion_backend: str | None = None
     storage_backend: str | None = None
     retrieval_backend: str | None = None
     available_repositories: list[dict[str, Any]] = Field(

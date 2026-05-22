@@ -135,8 +135,6 @@ class VectorStore:
         configured_shard_storage = str(
             self.vector_config.get("shard_storage") or _VECTOR_SHARD_FORMAT_COMPRESSED
         ).lower()
-        if configured_shard_storage in {"mmap", "memory_mapped"}:
-            configured_shard_storage = _VECTOR_SHARD_FORMAT_NPY
         if configured_shard_storage not in {
             _VECTOR_SHARD_FORMAT_COMPRESSED,
             _VECTOR_SHARD_FORMAT_NPY,

@@ -24,6 +24,7 @@ from rank_bm25 import BM25Okapi
 import fastcode.retrieval.snapshot as _snapshot
 
 from ..graph.build import CodeGraphBuilder
+from ..inbound.config_mapper import config_from_mapping
 from ..indexing.doc_ingester import KeyDocIngester
 from ..indexing.embedder import CodeEmbedder
 from ..indexing.indexer import CodeIndexer
@@ -66,7 +67,7 @@ from ..retrieval.context_compiler import (
 from ..retrieval.context_compiler import (
     render_context_bundle as render_context_bundle_artifact,
 )
-from ..schemas.config import FastCodeConfig, config_from_mapping
+from ..runtime.config import FastCodeConfig
 from ..scip.global_builder import GlobalIndexBuilder
 from ..scip.module_resolver import ModuleResolver
 from ..scip.symbol_resolver import SymbolResolver
@@ -95,7 +96,7 @@ from ..utils.clock import utc_now
 from ..utils.filesystem import ensure_dir, normalize_path
 from ..utils.json import safe_jsonable
 from .config import (
-    config_to_legacy_dict,
+    config_to_runtime_mapping,
     load_runtime_config,
     prepare_runtime_config_mapping,
     setup_logging,
@@ -346,7 +347,7 @@ class FastCode:
             )
             self.runtime_config = config_from_mapping(resolved_default_config)
 
-        self.config = config_to_legacy_dict(self.runtime_config)
+        self.config = config_to_runtime_mapping(self.runtime_config)
 
         # Evaluation-specific overrides (keep core system decoupled)
         self.eval_config = self.config.get("evaluation", {})
@@ -519,9 +520,9 @@ class FastCode:
         ] = {}  # {repo_name: repo_info}
 
     def _set_runtime_config(self, config: FastCodeConfig) -> None:
-        """Replace canonical runtime config and refresh dict compatibility view."""
+        """Replace canonical runtime config and refresh the shell mapping view."""
         self.runtime_config = config
-        self.config = config_to_legacy_dict(config)
+        self.config = config_to_runtime_mapping(config)
         self.eval_config = self.config.get("evaluation", {})
         self.eval_mode = self.eval_config.get("enabled", False)
         self.in_memory_index = self.eval_config.get("in_memory_index", False)
@@ -629,15 +630,15 @@ class FastCode:
         with self._state_lock():
             return self._index_repository_unlocked(force=force)
 
-    def _legacy_direct_index_enabled(self) -> bool:
+    def _direct_index_enabled(self) -> bool:
         indexing_config = self.config.get("indexing", {})
         if not isinstance(indexing_config, dict):
             return False
-        return bool(indexing_config.get("allow_legacy_direct_index", False))
+        return bool(indexing_config.get("allow_direct_index", False))
 
     def _index_repository_unlocked(self, force: bool = False):
-        if self._legacy_direct_index_enabled():
-            return self._index_repository_legacy_unlocked(force=force)
+        if self._direct_index_enabled():
+            return self._index_repository_direct_unlocked(force=force)
         force = force or self.eval_config.get("force_reindex", False)
         if not self.repo_loaded:
             raise RuntimeError("No repository loaded. Call load_repository() first.")
@@ -654,13 +655,13 @@ class FastCode:
             graph_runtime=self.graph_runtime,
         )
 
-    def _index_repository_legacy_unlocked(self, force: bool = False):
+    def _index_repository_direct_unlocked(self, force: bool = False):
         """
-        Legacy direct repository indexing path.
+        Direct repository indexing path.
 
-        The default public path uses the snapshot pipeline. This method remains
-        as an explicit compatibility escape hatch for callers that set
-        indexing.allow_legacy_direct_index=true.
+        The default public path uses the snapshot pipeline. This method is an
+        explicit internal escape hatch for callers that set
+        indexing.allow_direct_index=true.
 
         Args:
             force: Force re-indexing even if cache exists
@@ -1953,7 +1954,7 @@ class FastCode:
             # ── indexing ─────────────────────────────────────────────
             "indexing": {
                 "levels": ["file", "class", "function", "documentation"],  # [INTERNAL]
-                "allow_legacy_direct_index": False,  # [INTERNAL]
+                "allow_direct_index": False,  # [INTERNAL]
             },
             # ── vector_store ─────────────────────────────────────────
             "vector_store": {
@@ -1967,9 +1968,9 @@ class FastCode:
                 "keyword_weight": 0.3,  # [TUNABLE]  hybrid search keyword weight
                 "graph_weight": 0.1,  # [TUNABLE]  hybrid search graph weight
                 "max_results": 5,  # [TUNABLE]  max results per query
-                "backend": "pg_hybrid",  # [ESSENTIAL] "pg_hybrid" or legacy
-                "graph_backend": "ir",  # [ESSENTIAL] "ir" or "legacy"
-                "allow_legacy_graph_fallback": True,  # [INTERNAL]
+                "retrieval_backend": "pg_hybrid",  # [ESSENTIAL] "pg_hybrid" or "local"
+                "graph_expansion_backend": "ir",  # [ESSENTIAL] "ir" or "graph_builder"
+                "allow_graph_builder_fallback": True,  # [INTERNAL]
             },
             # ── generation ───────────────────────────────────────────
             "generation": {
@@ -2025,9 +2026,9 @@ class FastCode:
             return self._load_multiple_repositories_unlocked(sources)
 
     def _load_multiple_repositories_unlocked(self, sources: list[dict[str, Any]]):
-        if not self._legacy_direct_index_enabled():
+        if not self._direct_index_enabled():
             return self._load_multiple_repositories_pipeline_unlocked(sources)
-        return self._load_multiple_repositories_legacy_unlocked(sources)
+        return self._load_multiple_repositories_direct_unlocked(sources)
 
     def _load_multiple_repositories_pipeline_unlocked(
         self, sources: list[dict[str, Any]]
@@ -2100,15 +2101,15 @@ class FastCode:
             "errors": errors,
         }
 
-    def _load_multiple_repositories_legacy_unlocked(
+    def _load_multiple_repositories_direct_unlocked(
         self, sources: list[dict[str, Any]]
     ):
         """
-        Legacy direct multi-repository indexing path.
+        Direct multi-repository indexing path.
 
         The default multi-repository path uses the snapshot pipeline. This
-        direct vector/BM25/graph staging path is retained only for callers that
-        set indexing.allow_legacy_direct_index=true.
+        direct vector/BM25/graph staging path is enabled only for callers that
+        set indexing.allow_direct_index=true.
 
         Args:
             sources: List of dictionaries with 'source', 'is_url', and optionally 'is_zip' keys
@@ -2486,9 +2487,7 @@ class FastCode:
                 "levels": [
                     str(item) for item in cls._diagnostic_list(indexing.get("levels"))
                 ],
-                "allow_legacy_direct_index": bool(
-                    indexing.get("allow_legacy_direct_index", False)
-                ),
+                "allow_direct_index": bool(indexing.get("allow_direct_index", False)),
             },
             "vector_store": {
                 "persist_directory": cls._redact_diagnostic_value(
@@ -2498,8 +2497,8 @@ class FastCode:
                 "shard_storage": vector_store.get("shard_storage"),
             },
             "retrieval": {
-                "backend": retrieval.get("backend"),
-                "graph_backend": retrieval.get("graph_backend"),
+                "retrieval_backend": retrieval.get("retrieval_backend"),
+                "graph_expansion_backend": retrieval.get("graph_expansion_backend"),
                 "max_results": retrieval.get("max_results"),
                 "semantic_weight": retrieval.get("semantic_weight"),
                 "keyword_weight": retrieval.get("keyword_weight"),

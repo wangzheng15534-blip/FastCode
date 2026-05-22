@@ -404,8 +404,8 @@ def test_retrieval_helpers_avoid_code_element_to_dict() -> None:
 def test_ir_graph_expansion_loads_snapshot_graphs_lazily_and_caches_union() -> None:
     retriever = _mk_retriever()
     retriever.logger = MagicMock()
-    retriever.graph_backend = "ir"
-    retriever.allow_legacy_graph_fallback = False
+    retriever.graph_expansion_backend = "ir"
+    retriever.allow_graph_builder_fallback = False
 
     seed_elem = _element(
         "service.py",
@@ -464,8 +464,8 @@ def test_ir_graph_expansion_loads_snapshot_graphs_lazily_and_caches_union() -> N
 def test_ir_graph_expansion_uses_compact_graph_view_without_networkx_walk() -> None:
     retriever = _mk_retriever()
     retriever.logger = MagicMock()
-    retriever.graph_backend = "ir"
-    retriever.allow_legacy_graph_fallback = False
+    retriever.graph_expansion_backend = "ir"
+    retriever.allow_graph_builder_fallback = False
 
     seed_elem = _element(
         "service.py",

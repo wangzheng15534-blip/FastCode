@@ -76,7 +76,7 @@ poetry.lock
 # prompt
 # architecture/
 CLAUDE.md
-architecture/
+/architecture/
 *.backupbenchmark/swebench/repo_cache/
 # testcases
 graph_testcases
@@ -84,7 +84,9 @@ graph_testcases
 # benchmark / baseline
 benchmark/
 examples/
-docs/
+/.fastcode/
+/docs/_build/
+/docs/site/
 association_agent.py
 accurate_agent.py
 # api.py

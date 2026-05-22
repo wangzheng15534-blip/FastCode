@@ -8,6 +8,23 @@ FastCode is a **branch-aware code knowledge graph for AI agents**. Based on the 
 
 **Design principle:** Canonical facts are truth, graph is derived view.
 
+## Package Boundary Note
+
+The implementation package follows the FCIS shell split used by the architecture
+tests:
+
+- **app-runtime shell:** workflow/runtime use in `indexing/`, `query/`, and most
+  of `store/`;
+- **capability ports:** owner-local adapter contracts such as
+  `store/contracts.py`;
+- **infrastructure:** concrete DB, filesystem, network, subprocess,
+  native-library, and SDK wrappers such as `store/infrastructure/`.
+
+There is intentionally no top-level `fastcode.ports` package today. Add one
+only when a capability contract is genuinely shared by multiple owners and
+cannot live cleanly beside a single owner. This is separate from network ports
+listed in the API surface section.
+
 ---
 
 ## Three-Layer Architecture

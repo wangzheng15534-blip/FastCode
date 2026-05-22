@@ -8,9 +8,11 @@ Enforce a dependency DAG in FastCode with repo-local architecture tests,
 following the pattern proven in the ETL project:
 
 ```
-Facade/Shell → Inbound Mapper → Schemas DTO
-             → Runtime Contracts
-             → Domain → Common → Base
+Facade → App Runtime Shell
+       → Infrastructure Shell / Capability Ports
+       → Inbound Mapper → Schemas DTO
+       → Runtime Contracts
+       → Domain → Common → Base
 ```
 
 Dependencies flow downward. Domain modules stay pure. `schemas/` defines
@@ -27,7 +29,9 @@ that every runtime module is classified.
 The current AST gate is a partial order rather than one strict vertical stack:
 
 - Facade: `api`, `mcp`, `main`
-- Shell: `indexing`, `query`, `store`
+- App-runtime shell: `indexing`, `query`, most of `store`
+- Infrastructure shell: concrete adapters such as `store/infrastructure`
+- Capability ports: owner-local contracts such as `store/contracts.py`
 - Inbound mapper: `inbound`
 - Inbound schema: `schemas`
 - Runtime contracts: `runtime`
@@ -42,9 +46,11 @@ The current AST gate is a partial order rather than one strict vertical stack:
 | `api` | Facade (6) | HTTP/web transport |
 | `mcp` | Facade (6) | MCP transport |
 | `main` | Facade (6) | Composition root, CLI wiring |
-| `indexing` | Shell (5) | Pipeline orchestration, I/O stages |
-| `query` | Shell (5) | Query orchestration |
-| `store` | Shell (5) | Persistence I/O |
+| `indexing` | App runtime shell (5) | Pipeline orchestration and owner-local tool runners |
+| `query` | App runtime shell (5) | Query orchestration and request-time runtime use |
+| `store` | App runtime shell (5) | Persistence orchestration |
+| `store/contracts.py` | Capability port (4) | Store-owned adapter boundary contracts |
+| `store/infrastructure` | Infrastructure shell (4) | Concrete DB, filesystem, graph, and low-level runtime wrappers |
 | `inbound` | Inbound (3) | Explicit inbound schema/DTO to frozen contract mappers |
 | `schemas` | Interface (2) | Pydantic config DTOs and boundary models |
 | `runtime` | Runtime contract (2) | Frozen runtime config and lifecycle event contracts |
@@ -58,9 +64,17 @@ The current AST gate is a partial order rather than one strict vertical stack:
 ### What Each Layer Means (from ETL)
 
 - **Facade:** composition root / presentation. Wires everything together.
-- **Shell:** I/O infrastructure. Runs stages, reads/writes storage. Calls
-  downward into runtime contracts, inbound mappers, Interface, Domain, Common,
-  Base.
+- **App runtime shell:** use-case/application runtime. Coordinates workflows,
+  owns mutable runtime use, chooses adapters, and calls downward into
+  infrastructure, ports, runtime contracts, inbound mappers, Interface, Domain,
+  Common, and Base.
+- **Infrastructure shell:** concrete network, DB, filesystem, subprocess,
+  native-library, and SDK wrappers. It should operate on primitives, typed
+  records, and frozen contracts, not reach back into app-runtime orchestration.
+- **Capability ports:** stable contracts across adapter boundaries. Prefer
+  owner-local ports until a capability is genuinely shared across multiple
+  domains or shells. FastCode does not currently need a generic top-level
+  `ports/` package.
 - **Runtime:** frozen runtime config and lifecycle event contracts. No
   Pydantic, shell, facade, inbound, schema, or domain imports.
 - **Inbound:** explicit translation from validated external DTOs into frozen
@@ -93,6 +107,8 @@ between those enum sets.
 ## Distributed Type Ownership
 
 Each domain module owns its local types. No global schema dumping ground.
+Capability ports also stay owner-local when ownership is clear; they are not a
+new global schema bucket.
 
 | Module | Owns |
 |--------|------|
@@ -107,6 +123,10 @@ Each domain module owns its local types. No global schema dumping ground.
 | `runtime/config.py` | Frozen runtime config contracts |
 | `schemas/` (inbound schema) | `FastCodeConfigDTO` and Pydantic boundary models |
 | `inbound/config_mapper.py` | Config DTO to frozen runtime config translation |
+
+Current ports decision: no top-level `fastcode.ports` package. Add one only
+when at least two owners need the same capability contract and an owner-local
+module would create ambiguous dependencies.
 
 Domain `contracts.py` files use frozen dataclasses. No Pydantic in domain
 contracts. Inbound schema (`schemas/`) uses Pydantic DTOs only. Inbound mappers
@@ -147,6 +167,11 @@ the classified package map.
 `store/infrastructure/runtime.py`, `store/infrastructure/graph_runtime.py`,
 and `store/vector_math.py`.
 
+Refinement: `store/infrastructure/*` is infrastructure shell. Most of `store/*`
+remains app-runtime shell. `store/contracts.py` is classified as a store-owned
+capability port because infrastructure adapters consume its records without
+depending on orchestration.
+
 ### Fix 5: subprocess execution in domain packages
 
 **Old violation:** SCIP and semantic domain modules directly executed external
@@ -186,8 +211,10 @@ New file: `fastcode/tests/architecture/test_layer_dag.py`
 
 ```python
 FACADE = ("fastcode.api.*", "fastcode.mcp.*", "fastcode.main.*")
-SHELL = ("fastcode.indexing.*", "fastcode.query.*", "fastcode.store.*")
-RUNTIME = ("fastcode.runtime.*",)
+APP_RUNTIME = ("fastcode.indexing.*", "fastcode.query.*", "fastcode.store.*")
+INFRA = ("fastcode.store.infrastructure.*",)
+PORTS = ("fastcode.ports.*", "fastcode.store.contracts")
+RUNTIME_CONTRACT = ("fastcode.runtime.*",)
 INBOUND = ("fastcode.inbound.*",)
 INBOUND_SCHEMA = ("fastcode.schemas.*",)
 DOMAIN = ("fastcode.retrieval.*", "fastcode.graph.*", "fastcode.scip.*", "fastcode.semantic.*")
@@ -198,10 +225,10 @@ BASE = ("fastcode.utils.*",)
 ### Deny Rules
 
 1. **domain_must_not_import_facade_shell_or_inbound_schema**
-   Domain must not import `FACADE + SHELL + INBOUND_SCHEMA`
+   Domain must not import `FACADE + APP_RUNTIME + INFRA + PORTS + INBOUND_SCHEMA`
 
 2. **inbound_schema_must_not_import_runtime_inbound_domain_facade_or_shell**
-   Inbound schema must not import `RUNTIME + INBOUND + DOMAIN + FACADE + SHELL`
+   Inbound schema must not import `RUNTIME_CONTRACT + INBOUND + DOMAIN + PORTS + FACADE + APP_RUNTIME + INFRA`
 
 3. **runtime_must_not_import_schemas_inbound_domain_facade_or_shell**
    Runtime contracts must stay Pydantic-free and independent of boundary
@@ -209,20 +236,32 @@ BASE = ("fastcode.utils.*",)
 
 4. **inbound_must_not_import_domain_facade_or_shell**
    Inbound mappers may import schemas and runtime contracts, but not domain,
-   facade, or shell packages.
+   facade, port, app-runtime, or infrastructure packages.
 
 5. **common_must_not_import_runtime_inbound_schema_domain_facade_or_shell**
-   Common must not import `RUNTIME + INBOUND + INBOUND_SCHEMA + DOMAIN + FACADE + SHELL`
+   Common must not import `RUNTIME_CONTRACT + INBOUND + INBOUND_SCHEMA + DOMAIN + PORTS + FACADE + APP_RUNTIME + INFRA`
 
 6. **base_must_not_import_any_fastcode**
    Base must not import `fastcode.*`
 
-7. **shell_must_not_import_facade**
-   Shell must not import `FACADE`
+7. **app_runtime_must_not_import_facade**
+   App-runtime shell must not import `FACADE`
+
+8. **infrastructure_must_not_import_app_runtime_or_domain**
+   Infrastructure adapters must not import app-runtime orchestration, facades,
+   inbound mappers, schemas, or domain logic. They may import owner-local ports.
+
+9. **ports_are_contract_only**
+   Capability ports must not import infrastructure libraries, Pydantic,
+   facades, app-runtime shell, infrastructure adapters, or inbound mappers.
 
 ### Additional Contract Tests
 
 - Every runtime module must be classified in exactly one top-level layer.
+- FCIS shell subroles are classified explicitly where the current layout
+  supports it: app-runtime shell, infrastructure shell, and capability ports.
+- Capability ports remain contract-only and cannot import concrete I/O/SDK
+  dependencies.
 - Each domain module's `contracts.py` uses frozen dataclasses, not Pydantic
   (AST-based check, following ETL's `test_stage_domain_contracts_use_frozen_dataclasses_not_pydantic`)
 - Domain modules contain no I/O imports (`sqlite3`, `subprocess`, `urllib`)

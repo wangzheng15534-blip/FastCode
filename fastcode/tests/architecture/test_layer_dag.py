@@ -8,14 +8,20 @@ from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
 
-LAYERS = {
+PREFIX_LAYERS = {
+    "ports": "PORTS",
+    "store.contracts": "PORTS",
+    "store.infrastructure": "INFRA",
+}
+
+TOP_LEVEL_LAYERS = {
     "api": "FACADE",
     "mcp": "FACADE",
     "main": "FACADE",
-    "indexing": "SHELL",
-    "query": "SHELL",
-    "store": "SHELL",
-    "runtime": "RUNTIME",
+    "indexing": "APP_RUNTIME",
+    "query": "APP_RUNTIME",
+    "store": "APP_RUNTIME",
+    "runtime": "RUNTIME_CONTRACT",
     "inbound": "INBOUND_MAPPER",
     "schemas": "INBOUND_SCHEMA",
     "retrieval": "DOMAIN",
@@ -27,46 +33,93 @@ LAYERS = {
 }
 
 DENY = {
-    "DOMAIN": {"FACADE", "SHELL", "INBOUND_MAPPER", "INBOUND_SCHEMA"},
-    "INBOUND_SCHEMA": {"RUNTIME", "INBOUND_MAPPER", "DOMAIN", "FACADE", "SHELL"},
-    "INBOUND_MAPPER": {"DOMAIN", "FACADE", "SHELL"},
-    "RUNTIME": {"FACADE", "SHELL", "INBOUND_MAPPER", "INBOUND_SCHEMA", "DOMAIN"},
-    "COMMON": {
-        "RUNTIME",
+    "DOMAIN": {
+        "FACADE",
+        "APP_RUNTIME",
+        "INFRA",
+        "PORTS",
+        "INBOUND_MAPPER",
+        "INBOUND_SCHEMA",
+    },
+    "INBOUND_SCHEMA": {
+        "RUNTIME_CONTRACT",
+        "INBOUND_MAPPER",
+        "DOMAIN",
+        "PORTS",
+        "FACADE",
+        "APP_RUNTIME",
+        "INFRA",
+    },
+    "INBOUND_MAPPER": {"DOMAIN", "PORTS", "FACADE", "APP_RUNTIME", "INFRA"},
+    "RUNTIME_CONTRACT": {
+        "FACADE",
+        "APP_RUNTIME",
+        "INFRA",
+        "PORTS",
         "INBOUND_MAPPER",
         "INBOUND_SCHEMA",
         "DOMAIN",
+    },
+    "PORTS": {"FACADE", "APP_RUNTIME", "INFRA", "INBOUND_MAPPER", "INBOUND_SCHEMA"},
+    "INFRA": {"FACADE", "APP_RUNTIME", "INBOUND_MAPPER", "INBOUND_SCHEMA", "DOMAIN"},
+    "COMMON": {
+        "RUNTIME_CONTRACT",
+        "INBOUND_MAPPER",
+        "INBOUND_SCHEMA",
+        "DOMAIN",
+        "PORTS",
         "FACADE",
-        "SHELL",
+        "APP_RUNTIME",
+        "INFRA",
     },
     "BASE": {
-        "RUNTIME",
+        "RUNTIME_CONTRACT",
         "INBOUND_MAPPER",
         "INBOUND_SCHEMA",
         "DOMAIN",
         "COMMON",
+        "PORTS",
         "FACADE",
-        "SHELL",
+        "APP_RUNTIME",
+        "INFRA",
     },
-    "SHELL": {"FACADE"},
+    # App-runtime shell code is not yet fully separated from infra adapters.
+    # Until that migration is complete, the hard gate only prevents it from
+    # reaching back into entrypoint/composition facades.
+    "APP_RUNTIME": {"FACADE"},
 }
 
 DOMAIN_PACKAGES = ("graph", "retrieval", "scip", "semantic")
 BANNED_DOMAIN_IMPORTS = {"pydantic", "sqlite3", "subprocess", "urllib"}
+BANNED_PORT_IMPORTS = {
+    "anthropic",
+    "dotenv",
+    "faiss",
+    "httpx",
+    "numpy",
+    "openai",
+    "pydantic",
+    "requests",
+    "sqlite3",
+    "subprocess",
+    "urllib",
+}
 STDLIB_IMPORTS = set(sys.stdlib_module_names) | {"__future__"}
 
 
 def _layer_for_module(module_path: str) -> str | None:
+    for prefix, layer in sorted(
+        PREFIX_LAYERS.items(), key=lambda item: len(item[0]), reverse=True
+    ):
+        if module_path == prefix or module_path.startswith(f"{prefix}."):
+            return layer
     top_level = module_path.split(".", 1)[0]
-    return LAYERS.get(top_level)
+    return TOP_LEVEL_LAYERS.get(top_level)
 
 
 def _importer_module_for_file(filepath: Path) -> str | None:
     rel = filepath.relative_to(PACKAGE_ROOT).with_suffix("")
-    if rel.name == "__init__":
-        parts = rel.parts[:-1]
-    else:
-        parts = rel.parts[:-1]
+    parts = rel.parts[:-1] if rel.name == "__init__" else rel.parts
     return ".".join(parts) if parts else None
 
 
@@ -124,6 +177,18 @@ def _get_fastcode_imports(filepath: Path) -> list[tuple[str, int, bool]]:
     return imports
 
 
+def _imported_roots(filepath: Path) -> list[tuple[str, int]]:
+    roots: list[tuple[str, int]] = []
+    for node in ast.walk(_tree(filepath)):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            roots.append((node.module.split(".", 1)[0], node.lineno))
+        elif isinstance(node, ast.Import):
+            roots.extend(
+                (alias.name.split(".", 1)[0], node.lineno) for alias in node.names
+            )
+    return roots
+
+
 def test_all_runtime_modules_are_classified() -> None:
     """Every runtime Python module must live in one of the explicit layers."""
     violations: list[str] = []
@@ -164,6 +229,44 @@ def test_strict_layer_dag_imports() -> None:
     assert not violations, "Layer DAG violations:\n" + "\n".join(violations)
 
 
+def test_fcis_shell_subroles_are_explicitly_classified() -> None:
+    """The shell is split into app-runtime, infra, and capability-port roles."""
+    expected = {
+        "indexing.pipeline": "APP_RUNTIME",
+        "query.retriever": "APP_RUNTIME",
+        "store.snapshot": "APP_RUNTIME",
+        "store.infrastructure.db": "INFRA",
+        "store.contracts": "PORTS",
+    }
+
+    violations = [
+        f"{module}: expected {layer}, got {_layer_for_module(module)}"
+        for module, layer in expected.items()
+        if _layer_for_module(module) != layer
+    ]
+    assert not violations, "FCIS shell role classification drift:\n" + "\n".join(
+        violations
+    )
+
+
+def test_capability_ports_are_contract_only() -> None:
+    """Ports define capabilities; infrastructure and validation stay elsewhere."""
+    violations: list[str] = []
+    for py_file in _iter_python_files():
+        importer_module = _importer_module_for_file(py_file)
+        if importer_module is None or _layer_for_module(importer_module) != "PORTS":
+            continue
+        for imported_root, line in _imported_roots(py_file):
+            if imported_root in BANNED_PORT_IMPORTS:
+                violations.append(
+                    f"{py_file.relative_to(PACKAGE_ROOT)}:{line}: "
+                    f"port imports {imported_root}"
+                )
+    assert not violations, "Capability port import violations:\n" + "\n".join(
+        violations
+    )
+
+
 def test_domain_contracts_use_frozen_dataclasses_not_pydantic() -> None:
     """Domain contracts are local frozen dataclasses and never Pydantic models."""
     violations: list[str] = []
@@ -174,11 +277,14 @@ def test_domain_contracts_use_frozen_dataclasses_not_pydantic() -> None:
             continue
         tree = _tree(contracts_file)
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                if "pydantic" in node.module:
-                    violations.append(
-                        f"{contracts_file.relative_to(PACKAGE_ROOT)}:{node.lineno}: pydantic import"
-                    )
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and "pydantic" in node.module
+            ):
+                violations.append(
+                    f"{contracts_file.relative_to(PACKAGE_ROOT)}:{node.lineno}: pydantic import"
+                )
             if not isinstance(node, ast.ClassDef):
                 continue
             dataclass_decorator = next(
@@ -247,13 +353,13 @@ def test_base_uses_only_stdlib_imports() -> None:
                 if node.level == 0:
                     imported_roots.append(node.module.split(".", 1)[0])
             elif isinstance(node, ast.Import):
-                imported_roots.extend(alias.name.split(".", 1)[0] for alias in node.names)
+                imported_roots.extend(
+                    alias.name.split(".", 1)[0] for alias in node.names
+                )
             for imported_root in imported_roots:
                 if imported_root not in STDLIB_IMPORTS:
                     violations.append(
                         f"{py_file.relative_to(PACKAGE_ROOT)}:{node.lineno}: "
                         f"imports non-stdlib module {imported_root}"
                     )
-    assert not violations, "Non-stdlib imports in Base layer:\n" + "\n".join(
-        violations
-    )
+    assert not violations, "Non-stdlib imports in Base layer:\n" + "\n".join(violations)

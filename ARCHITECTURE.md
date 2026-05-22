@@ -56,7 +56,9 @@ The import graph is enforced by
 Current tiers:
 
 - Facade: `api`, `mcp`, `main`
-- Shell: `indexing`, `query`, `store`
+- App-runtime shell: `indexing`, `query`, and most of `store`
+- Infrastructure shell: concrete adapter packages such as `store/infrastructure`
+- Capability ports: owner-local adapter contracts such as `store/contracts.py`
 - Runtime contracts: `runtime`
 - Inbound mappers: `inbound`
 - Inbound schemas: `schemas`
@@ -66,6 +68,26 @@ Current tiers:
 
 Rule: dependencies flow downward, cross-layer cycles are forbidden, and
 `utils` stays stdlib-only.
+
+The shell tier follows the FCIS split:
+
+- **App runtime / use-case shell** coordinates workflows, manages mutable
+  runtime state, invokes domain logic, and chooses adapters. In the current
+  layout this is `indexing/`, `query/`, and most of `store/`.
+- **Capability ports** are stable contracts across an adapter boundary. They
+  should be owner-local until the capability is truly shared across multiple
+  owners. Current examples are `store/contracts.py` and domain-local
+  `contracts.py` files. A top-level `ports/` package is intentionally absent
+  until there is a real cross-package capability surface.
+- **Infrastructure** owns concrete network, DB, filesystem, subprocess,
+  native-library, and SDK wrappers. Current examples are `store/infrastructure/`
+  and owner-local runners such as `indexing/scip_runner.py` and
+  `indexing/semantic_helper_runner.py`.
+
+The architecture gate classifies these subroles explicitly where the current
+layout supports it: `store.infrastructure.*` is infrastructure,
+`store.contracts` is a capability port, and the rest of `store` remains
+app-runtime shell.
 
 ## Architecture contract
 
@@ -119,6 +141,16 @@ repo-wide lint rules:
    - Config loading belongs to `main/`.
    - Future domain event/config types should live near their owning domain or
      shared kernel, not in a top-level `events/` or `config/` bucket.
+
+7. Ports are capability contracts, not a dumping ground.
+   - Prefer owner-local contracts when a capability has one clear owner.
+   - Do not add a generic top-level `ports/` package for symmetry with the
+     architecture diagram.
+   - Introduce `ports/` only when at least two owners need the same stable
+     capability contract and an owner-local module would create ambiguous
+     dependencies.
+   - Ports must not import app-runtime shell code, infrastructure adapters,
+     facades, inbound mappers, or Pydantic schemas.
 
 ## Runtime configuration flow
 
@@ -840,10 +872,11 @@ silently treated as production-complete.
 
 ## Storage architecture
 
-Storage is split into orchestration and infrastructure:
+Storage follows the FCIS shell split:
 
-- `store/` coordinates persistence behavior
-- `store/infrastructure/` holds lower-level storage-facing code
+- `store/` coordinates persistence behavior as app-runtime shell code
+- `store/contracts.py` owns store-local capability-port records
+- `store/infrastructure/` holds lower-level storage-facing infrastructure code
 
 Current backends in active use:
 

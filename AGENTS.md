@@ -45,6 +45,20 @@ Dependencies flow downward through the layer DAG. Do not introduce upward import
 or cross-layer cycles. `ir/`, `graph/`, and `retrieval/` stay Pydantic-free and
 shell-free.
 
+Shell code follows the FCIS split:
+
+- app-runtime/use-case shell: coordinates workflows and owns mutable runtime
+  use, currently `indexing/`, `query/`, and most of `store/`;
+- capability ports: owner-local contracts used across an adapter boundary,
+  currently files such as `store/contracts.py` and domain `contracts.py` files;
+- infrastructure: concrete network, DB, filesystem, subprocess, native-library,
+  and SDK wrappers, currently `store/infrastructure/` plus owner-local runners
+  such as `indexing/scip_runner.py`.
+
+Do not add a generic top-level `ports/` package just to mirror the pattern. Add
+one only when multiple domains or shells share a real capability surface that
+cannot live cleanly beside its owner.
+
 Inner packages do not read env directly. Config flows through
 `prepare_runtime_config_mapping(...)`,
 `fastcode.schemas.config.FastCodeConfigDTO`, explicit inbound mappers in

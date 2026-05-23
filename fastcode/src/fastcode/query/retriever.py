@@ -48,6 +48,46 @@ from .iterative_agent import IterativeAgent
 _BM25_SHARD_STORAGE_VERSION = 1
 
 
+def _float_config_value(
+    config: dict[str, Any],
+    key: str,
+    default: float,
+) -> float:
+    raw_value = config.get(key)
+    if raw_value is None or isinstance(raw_value, bool):
+        return default
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _int_config_value(
+    config: dict[str, Any],
+    key: str,
+    default: int,
+) -> int:
+    raw_value = config.get(key)
+    if raw_value is None or isinstance(raw_value, bool):
+        return default
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _fusion_config_from_runtime(config: dict[str, Any]) -> FusionConfig:
+    defaults = FusionConfig()
+    return FusionConfig(
+        alpha_base=_float_config_value(config, "alpha_base", defaults.alpha_base),
+        alpha_min=_float_config_value(config, "alpha_min", defaults.alpha_min),
+        alpha_max=_float_config_value(config, "alpha_max", defaults.alpha_max),
+        rrf_k_base=_int_config_value(config, "rrf_k_base", defaults.rrf_k_base),
+        rrf_k_min=_int_config_value(config, "rrf_k_min", defaults.rrf_k_min),
+        rrf_k_max=_int_config_value(config, "rrf_k_max", defaults.rrf_k_max),
+    )
+
+
 @dataclass
 class RetrievalChannelOutput:
     collection: str
@@ -551,7 +591,7 @@ class HybridRetriever:
             query=query,
             query_info=query_info,
             doc_results=doc_results,
-            config=FusionConfig.from_dict(self.adaptive_fusion_cfg),
+            config=_fusion_config_from_runtime(self.adaptive_fusion_cfg),
             doc_projection_beta_max=float(
                 self.retrieval_config.get("doc_projection_beta_max", 0.35)
             ),
@@ -598,7 +638,7 @@ class HybridRetriever:
             query_info=query_info,
             code_results=code_results,
             doc_results=doc_results,
-            config=FusionConfig.from_dict(self.adaptive_fusion_cfg),
+            config=_fusion_config_from_runtime(self.adaptive_fusion_cfg),
             doc_projection_beta_max=float(
                 self.retrieval_config.get("doc_projection_beta_max", 0.35)
             ),
@@ -1265,7 +1305,7 @@ class HybridRetriever:
             query_info=query_info,
             code_results=code_results,
             doc_results=doc_results,
-            config=FusionConfig.from_dict(self.adaptive_fusion_cfg),
+            config=_fusion_config_from_runtime(self.adaptive_fusion_cfg),
             debug=self._last_fusion_debug,
         )
 
@@ -1325,7 +1365,7 @@ class HybridRetriever:
             query_info=query_info,
             code_results=code_results,
             doc_results=doc_results,
-            config=FusionConfig.from_dict(self.adaptive_fusion_cfg),
+            config=_fusion_config_from_runtime(self.adaptive_fusion_cfg),
         )
 
     def _semantic_search(

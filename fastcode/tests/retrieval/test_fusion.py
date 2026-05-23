@@ -29,15 +29,13 @@ def _mk_row(elem_id: str, elem_type: str, total: float, **extra: Any) -> dict[st
 
 
 def _default_fusion_config() -> FusionConfig:
-    return FusionConfig.from_dict(
-        {
-            "alpha_base": 0.8,
-            "alpha_min": 0.25,
-            "alpha_max": 0.9,
-            "rrf_k_base": 60,
-            "rrf_k_min": 20,
-            "rrf_k_max": 100,
-        }
+    return FusionConfig(
+        alpha_base=0.8,
+        alpha_min=0.25,
+        alpha_max=0.9,
+        rrf_k_base=60,
+        rrf_k_min=20,
+        rrf_k_max=100,
     )
 
 

@@ -88,17 +88,6 @@ class FusionConfig:
     rrf_k_min: int = 20
     rrf_k_max: int = 100
 
-    @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> FusionConfig:
-        return cls(
-            alpha_base=float(d["alpha_base"]) if "alpha_base" in d else cls.alpha_base,
-            alpha_min=float(d["alpha_min"]) if "alpha_min" in d else cls.alpha_min,
-            alpha_max=float(d["alpha_max"]) if "alpha_max" in d else cls.alpha_max,
-            rrf_k_base=int(d["rrf_k_base"]) if "rrf_k_base" in d else cls.rrf_k_base,
-            rrf_k_min=int(d["rrf_k_min"]) if "rrf_k_min" in d else cls.rrf_k_min,
-            rrf_k_max=int(d["rrf_k_max"]) if "rrf_k_max" in d else cls.rrf_k_max,
-        )
-
 
 @dataclass(frozen=True)
 class FusionWeights:

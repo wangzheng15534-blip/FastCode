@@ -16,7 +16,7 @@ from rank_bm25 import BM25Okapi
 
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs, IRGraphView
-from fastcode.query.retriever import HybridRetriever
+from fastcode.query.retriever import HybridRetriever, _fusion_config_from_runtime
 
 
 def _mk_row(
@@ -100,6 +100,24 @@ def _element(
 
 
 # --- Adaptive fusion tests ---
+
+
+def test_runtime_fusion_config_maps_to_typed_record() -> None:
+    config = _fusion_config_from_runtime(
+        {
+            "alpha_base": "0.7",
+            "alpha_min": None,
+            "rrf_k_base": "40",
+            "rrf_k_max": 200,
+            "enabled": True,
+            "unexpected": "ignored",
+        }
+    )
+
+    assert config.alpha_base == pytest.approx(0.7)
+    assert config.alpha_min == pytest.approx(0.25)
+    assert config.rrf_k_base == 40
+    assert config.rrf_k_max == 200
 
 
 def test_adaptive_fusion_prefers_docs_for_design_intent_queries():

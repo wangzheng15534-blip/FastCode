@@ -1,93 +1,79 @@
-"""Pure filtering, diversification, and reranking — extracted from retriever.py."""
+"""Pure filtering, diversification, and reranking."""
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations
 
-from typing import Any
+from .contracts import ElementFilter, Hit
 
 
 def apply_filters(
-    results: list[dict[str, Any]],
-    filters: dict[str, Any],
-) -> list[dict[str, Any]]:
+    results: list[Hit],
+    filters: ElementFilter,
+) -> list[Hit]:
     """Filter results by language, type, file_path, and snapshot_id."""
-    filtered: list[dict[str, Any]] = []
-    for result in results:
-        elem = result["element"]
-        if "language" in filters and elem.get("language") != filters["language"]:
+    filtered: list[Hit] = []
+    for hit in results:
+        if filters.language is not None and hit.language != filters.language:
             continue
-        if "type" in filters and elem.get("type") != filters["type"]:
+        if filters.element_type is not None and hit.element_type != filters.element_type:
             continue
-        if "file_path" in filters and filters["file_path"] not in elem.get(
-            "relative_path", ""
-        ):
+        if filters.file_path is not None and filters.file_path not in hit.relative_path:
             continue
-        if "snapshot_id" in filters:
-            elem_snapshot = elem.get("snapshot_id") or (
-                elem.get("metadata", {}) or {}
-            ).get("snapshot_id")
-            if elem_snapshot != filters["snapshot_id"]:
+        if filters.snapshot_id is not None:
+            hit_snapshot = hit.snapshot_id or str(hit.metadata.get("snapshot_id") or "")
+            if hit_snapshot != filters.snapshot_id:
                 continue
-        filtered.append(result)
+        filtered.append(hit)
     return filtered
 
 
 def diversify(
-    results: list[dict[str, Any]],
+    results: list[Hit],
     diversity_penalty: float,
-) -> list[dict[str, Any]]:
+) -> list[Hit]:
     """Penalize results from already-seen files to improve diversity."""
     # When penalty is 0, preserve original order (matching original behavior).
     if not results or diversity_penalty == 0:
         return results
 
-    diversified: list[dict[str, Any]] = []
+    diversified: list[Hit] = []
     seen_files: set[str] = set()
 
-    for item in results:
-        file_path = item["element"].get("file_path", "")
+    for hit in results:
+        file_path = hit.file_path
         if file_path in seen_files:
             penalty_factor = 1 - diversity_penalty
-            penalized = {
-                **item,
-                "total_score": item["total_score"] * penalty_factor,
-                "semantic_score": item["semantic_score"] * penalty_factor,
-                "keyword_score": item["keyword_score"] * penalty_factor,
-                "pseudocode_score": item["pseudocode_score"] * penalty_factor,
-                "graph_score": item["graph_score"] * penalty_factor,
-            }
+            penalized = hit.scaled_scores(penalty_factor)
         else:
             seen_files.add(file_path)
-            penalized = item
+            penalized = hit
         diversified.append(penalized)
 
-    diversified.sort(key=lambda x: x["total_score"], reverse=True)
+    diversified.sort(key=lambda hit: hit.total_score, reverse=True)
     return diversified
 
 
 def final_repo_filter(
-    results: list[dict[str, Any]],
+    results: list[Hit],
     repo_filter: list[str],
     return_count: bool = False,
-) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], int]:
+) -> list[Hit] | tuple[list[Hit], int]:
     """Filter results to only include elements from allowed repositories."""
     if not repo_filter:
         return (results, 0) if return_count else results
 
-    filtered_results: list[dict[str, Any]] = []
+    filtered_results: list[Hit] = []
     filtered_count = 0
-    for result in results:
-        elem = result["element"]
-        repo_name = elem.get("repo_name", "")
-        if repo_name in repo_filter:
-            filtered_results.append(result)
+    for hit in results:
+        if hit.repo_name in repo_filter:
+            filtered_results.append(hit)
         else:
             filtered_count += 1
 
     return (filtered_results, filtered_count) if return_count else filtered_results
 
 
-def rerank(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def rerank(results: list[Hit]) -> list[Hit]:
     """Re-rank results by element type preferences."""
     type_weights = {
         "function": 1.2,
@@ -97,20 +83,10 @@ def rerank(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "design_document": 0.95,
     }
 
-    reranked: list[dict[str, Any]] = []
-    for result in results:
-        elem_type = result["element"].get("type", "")
-        weight = type_weights.get(elem_type, 1.0)
-        reranked.append(
-            {
-                **result,
-                "total_score": result["total_score"] * weight,
-                "semantic_score": result["semantic_score"] * weight,
-                "keyword_score": result["keyword_score"] * weight,
-                "pseudocode_score": result["pseudocode_score"] * weight,
-                "graph_score": result["graph_score"] * weight,
-            }
-        )
+    reranked: list[Hit] = []
+    for hit in results:
+        weight = type_weights.get(hit.element_type, 1.0)
+        reranked.append(hit.scaled_scores(weight))
 
-    reranked.sort(key=lambda x: x["total_score"], reverse=True)
+    reranked.sort(key=lambda hit: hit.total_score, reverse=True)
     return reranked

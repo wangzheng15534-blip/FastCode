@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import pickle
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -200,13 +201,13 @@ def test_semantic_search_passes_query_embedding_fingerprint_to_vector_store():
     captured: dict[str, Any] = {}
 
     class _Embedder:
-        def embed_text(self, query: str) -> np.ndarray:
-            assert query == "find alpha"
-            return np.asarray([1.0, 0.0], dtype=np.float32)
+        embedding_dim = 2
 
-        def embedding_fingerprint(
-            self, *, resolve_dimension: bool = False
-        ) -> dict[str, Any]:
+        def embed_many(self, texts: Sequence[str]) -> np.ndarray:
+            assert list(texts) == ["find alpha"]
+            return np.asarray([[1.0, 0.0]], dtype=np.float32)
+
+        def fingerprint(self, *, resolve_dimension: bool = False) -> dict[str, Any]:
             assert resolve_dimension is True
             return fingerprint
 

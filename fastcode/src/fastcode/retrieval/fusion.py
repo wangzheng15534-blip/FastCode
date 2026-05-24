@@ -7,15 +7,22 @@ plus fastcode.retrieval.scoring and fastcode.retrieval.contracts.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any, cast
 
 from fastcode.ir.element import CodeElement, CodeElementMeta, serialize_code_element
-from fastcode.retrieval.contracts import FusionConfig
+from fastcode.retrieval.contracts import (
+    DocProjectionPriors,
+    FusionConfig,
+    Hit,
+    ProjectionEvidence,
+    RetrievalSource,
+    TraceLink,
+)
 
 from .scoring import (
-    clone_result_row,
     normalized_query_entropy,
-    normalized_totals,
     sigmoid,
     tokenize_signal,
     trace_confidence_weight,
@@ -27,12 +34,10 @@ from .scoring import (
 # ---------------------------------------------------------------------------
 
 
-def extract_trace_links(row: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract grounded trace links from a retrieval result row."""
-    elem = cast(dict[str, Any], row.get("element") or {})
-    meta = cast(dict[str, Any], elem.get("metadata") or {})
-    raw_links: list[Any] = meta.get("trace_links") or meta.get("mentions") or []
-    links: list[dict[str, Any]] = []
+def extract_trace_links(hit: Hit) -> tuple[TraceLink, ...]:
+    """Extract grounded trace links from a retrieval hit."""
+    raw_links = hit.metadata.get("trace_links") or hit.metadata.get("mentions") or []
+    links: list[TraceLink] = []
     for link in raw_links:
         if not isinstance(link, dict):
             continue
@@ -48,17 +53,24 @@ def extract_trace_links(row: dict[str, Any]) -> list[dict[str, Any]]:
             link_dict.get("weight")
             or trace_confidence_weight(link_dict.get("confidence"))
         )
+        raw_confidence = link_dict.get("confidence")
         links.append(
-            {
-                "unit_id": str(unit_id),
-                "weight": max(0.0, min(1.0, weight)),
-                "evidence_type": link_dict.get("evidence_type") or "trace_link",
-                "chunk_id": link_dict.get("chunk_id") or elem.get("id"),
-                "symbol_name": link_dict.get("symbol_name"),
-                "confidence": link_dict.get("confidence"),
-            }
+            TraceLink(
+                unit_id=str(unit_id),
+                weight=max(0.0, min(1.0, weight)),
+                evidence_type=str(link_dict.get("evidence_type") or "trace_link"),
+                chunk_id=str(link_dict.get("chunk_id") or hit.element_id),
+                symbol_name=(
+                    str(link_dict["symbol_name"])
+                    if link_dict.get("symbol_name") is not None
+                    else None
+                ),
+                confidence=(
+                    str(raw_confidence) if raw_confidence is not None else None
+                ),
+            )
         )
-    return links
+    return tuple(links)
 
 
 def _find_code_element_for_ir_unit(
@@ -81,29 +93,54 @@ def _find_code_element_for_ir_unit(
             return serialize_code_element(cast(CodeElement, elem))
     return None
 
-
-def _new_fused_entry(element: dict[str, Any]) -> dict[str, Any]:
-    """Create a new fused result entry."""
+def _normalized_hit_totals(results: Sequence[Hit]) -> dict[str, float]:
+    if not results:
+        return {}
+    max_score = max(float(hit.total_score) for hit in results)
+    if max_score <= 0:
+        return {
+            hit.element_id: 1.0 / float(rank)
+            for rank, hit in enumerate(results, start=1)
+            if hit.element_id
+        }
     return {
-        "element": element,
-        "semantic_score": 0.0,
-        "keyword_score": 0.0,
-        "pseudocode_score": 0.0,
-        "graph_score": 0.0,
-        "total_score": 0.0,
-        "fusion": {},
+        hit.element_id: max(0.0, min(1.0, float(hit.total_score) / max_score))
+        for hit in results
+        if hit.element_id
     }
 
 
-def _ensure_fused_entry(
-    fused: dict[str, dict[str, Any]],
+def _fusion_payload(hit: Hit) -> dict[str, Any]:
+    raw = hit.extra.get("fusion")
+    return dict(cast(dict[str, Any], raw)) if isinstance(raw, dict) else {}
+
+
+def _hit_with_fusion(hit: Hit, fusion: dict[str, Any]) -> Hit:
+    return replace(hit, extra={**hit.extra, "fusion": dict(fusion)})
+
+
+def _new_fused_hit(hit: Hit) -> Hit:
+    """Create a new fused result entry from a channel hit."""
+    empty_scores = hit.with_scores(
+        score=0.0,
+        semantic_score=0.0,
+        keyword_score=0.0,
+        pseudocode_score=0.0,
+        graph_score=0.0,
+        total_score=0.0,
+    )
+    return _hit_with_fusion(empty_scores, {})
+
+
+def _ensure_fused_hit(
+    fused: dict[str, Hit],
     elem_id: str,
-    element: dict[str, Any],
-) -> dict[str, Any]:
+    hit: Hit,
+) -> Hit:
     """Ensure an entry exists in *fused* for *elem_id*, creating if needed."""
     entry = fused.get(elem_id)
     if entry is None:
-        entry = _new_fused_entry(element)
+        entry = _new_fused_hit(hit)
         fused[elem_id] = entry
     return entry
 
@@ -117,8 +154,8 @@ def compute_adaptive_fusion_params(
     *,
     query: str,
     query_info: dict[str, Any],
-    code_results: list[dict[str, Any]],
-    doc_results: list[dict[str, Any]],
+    code_results: Sequence[Hit],
+    doc_results: Sequence[Hit],
     config: FusionConfig,
 ) -> tuple[float, float, float]:
     """Compute adaptive fusion parameters (alpha, k_code, k_doc).
@@ -175,8 +212,8 @@ def compute_adaptive_fusion_params(
     doc_affinity = weighted_keyword_affinity(tokens, doc_term_weights)
     code_affinity = weighted_keyword_affinity(tokens, code_term_weights)
 
-    code_top = float(code_results[0].get("total_score", 0.0)) if code_results else 0.0
-    doc_top = float(doc_results[0].get("total_score", 0.0)) if doc_results else 0.0
+    code_top = float(code_results[0].total_score) if code_results else 0.0
+    doc_top = float(doc_results[0].total_score) if doc_results else 0.0
 
     alpha = alpha_base
     # Continuous domain affinity (replaces binary doc_hit/code_hit).
@@ -225,15 +262,15 @@ def adaptive_fuse_channels(
     *,
     query: str,
     query_info: dict[str, Any],
-    code_results: list[dict[str, Any]],
-    doc_results: list[dict[str, Any]],
+    code_results: Sequence[Hit],
+    doc_results: Sequence[Hit],
     config: FusionConfig,
     debug: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+) -> list[Hit]:
     """RRF-fuse code and doc results with adaptive alpha/k.
 
     Returns:
-        Sorted list of fused result dicts.
+        Sorted list of fused hits.
     """
     alpha, k_code, k_doc = compute_adaptive_fusion_params(
         query=query,
@@ -242,53 +279,51 @@ def adaptive_fuse_channels(
         doc_results=doc_results,
         config=config,
     )
-    fused: dict[str, dict[str, Any]] = {}
-    for rank, row in enumerate(code_results, start=1):
-        elem = row.get("element", {})
-        elem_id = elem.get("id")
+    fused: dict[str, Hit] = {}
+    for rank, hit in enumerate(code_results, start=1):
+        elem_id = hit.element_id
         if not elem_id:
             continue
         rrf = 1.0 / (float(k_code) + float(rank))
-        entry = _ensure_fused_entry(fused, elem_id, elem)
-        entry["semantic_score"] = max(
-            entry.get("semantic_score", 0.0), row.get("semantic_score", 0.0)
+        entry = _ensure_fused_hit(fused, elem_id, hit)
+        fusion = _fusion_payload(entry)
+        fusion["code_rrf"] = rrf
+        fusion["alpha"] = alpha
+        fusion["k_code"] = k_code
+        fusion["k_doc"] = k_doc
+        fused[elem_id] = _hit_with_fusion(
+            entry.with_scores(
+                semantic_score=max(entry.semantic_score, hit.semantic_score),
+                keyword_score=max(entry.keyword_score, hit.keyword_score),
+                pseudocode_score=max(entry.pseudocode_score, hit.pseudocode_score),
+                graph_score=max(entry.graph_score, hit.graph_score),
+                total_score=entry.total_score + (alpha * rrf),
+            ),
+            fusion,
         )
-        entry["keyword_score"] = max(
-            entry.get("keyword_score", 0.0), row.get("keyword_score", 0.0)
-        )
-        entry["pseudocode_score"] = max(
-            entry.get("pseudocode_score", 0.0), row.get("pseudocode_score", 0.0)
-        )
-        entry["graph_score"] = max(
-            entry.get("graph_score", 0.0), row.get("graph_score", 0.0)
-        )
-        entry["total_score"] += alpha * rrf
-        entry["fusion"]["code_rrf"] = rrf
-        entry["fusion"]["alpha"] = alpha
-        entry["fusion"]["k_code"] = k_code
-        entry["fusion"]["k_doc"] = k_doc
 
-    for rank, row in enumerate(doc_results, start=1):
-        elem = row.get("element", {})
-        elem_id = elem.get("id")
+    for rank, hit in enumerate(doc_results, start=1):
+        elem_id = hit.element_id
         if not elem_id:
             continue
         rrf = 1.0 / (float(k_doc) + float(rank))
-        entry = _ensure_fused_entry(fused, elem_id, elem)
-        entry["semantic_score"] = max(
-            entry.get("semantic_score", 0.0), row.get("semantic_score", 0.0)
+        entry = _ensure_fused_hit(fused, elem_id, hit)
+        fusion = _fusion_payload(entry)
+        fusion["doc_rrf"] = rrf
+        fusion["alpha"] = alpha
+        fusion["k_code"] = k_code
+        fusion["k_doc"] = k_doc
+        fused[elem_id] = _hit_with_fusion(
+            entry.with_scores(
+                semantic_score=max(entry.semantic_score, hit.semantic_score),
+                keyword_score=max(entry.keyword_score, hit.keyword_score),
+                total_score=entry.total_score + ((1.0 - alpha) * rrf),
+            ),
+            fusion,
         )
-        entry["keyword_score"] = max(
-            entry.get("keyword_score", 0.0), row.get("keyword_score", 0.0)
-        )
-        entry["total_score"] += (1.0 - alpha) * rrf
-        entry["fusion"]["doc_rrf"] = rrf
-        entry["fusion"]["alpha"] = alpha
-        entry["fusion"]["k_code"] = k_code
-        entry["fusion"]["k_doc"] = k_doc
 
-    out = list(fused.values())
-    out.sort(key=lambda x: x.get("total_score", 0.0), reverse=True)
+    out = [hit.with_scores(score=hit.total_score) for hit in fused.values()]
+    out.sort(key=lambda hit: hit.total_score, reverse=True)
 
     if debug is not None:
         debug.update(
@@ -308,14 +343,14 @@ def project_doc_priors(
     *,
     query: str,
     query_info: dict[str, Any],
-    doc_results: list[dict[str, Any]],
+    doc_results: Sequence[Hit],
     config: FusionConfig,
     doc_projection_beta_max: float = 0.35,
-) -> dict[str, Any]:
+) -> DocProjectionPriors:
     """Compute doc-to-code projection priors from doc results.
 
     Returns:
-        Dict with ``p_doc``, ``beta``, ``priors``, and ``evidence``.
+        Frozen projection prior record.
     """
     alpha, _, _ = compute_adaptive_fusion_params(
         query=query,
@@ -326,59 +361,57 @@ def project_doc_priors(
     )
     p_doc = 1.0 - alpha
     beta = max(0.0, min(1.0, doc_projection_beta_max * p_doc))
-    norm_scores = normalized_totals(doc_results)
+    norm_scores = _normalized_hit_totals(doc_results)
 
     priors: dict[str, float] = {}
-    evidence: dict[str, list[dict[str, Any]]] = {}
-    for row in doc_results:
-        elem = cast(dict[str, Any], row.get("element") or {})
-        elem_id = str(elem.get("id") or "")
-        if not elem_id:
+    evidence: dict[str, list[ProjectionEvidence]] = {}
+    for hit in doc_results:
+        if not hit.element_id:
             continue
-        doc_score = norm_scores.get(elem_id, 0.0)
+        doc_score = norm_scores.get(hit.element_id, 0.0)
         if doc_score <= 0.0:
             continue
-        for link in extract_trace_links(row):
-            unit_id = link["unit_id"]
-            contribution = max(0.0, min(1.0, doc_score * float(link["weight"])))
+        for link in extract_trace_links(hit):
+            unit_id = link.unit_id
+            contribution = max(0.0, min(1.0, doc_score * float(link.weight)))
             prior = priors.get(unit_id, 0.0)
             priors[unit_id] = 1.0 - ((1.0 - prior) * (1.0 - contribution))
             evidence.setdefault(unit_id, []).append(
-                {
-                    **link,
-                    "doc_id": elem_id,
-                    "doc_score": doc_score,
-                    "contribution": contribution,
-                }
+                ProjectionEvidence(
+                    link=link,
+                    doc_id=hit.element_id,
+                    doc_score=doc_score,
+                    contribution=contribution,
+                )
             )
 
-    return {
-        "p_doc": p_doc,
-        "beta": beta,
-        "priors": priors,
-        "evidence": evidence,
-    }
+    return DocProjectionPriors(
+        p_doc=p_doc,
+        beta=beta,
+        priors=priors,
+        evidence={unit_id: tuple(items) for unit_id, items in evidence.items()},
+    )
 
 
 def apply_doc_projection_to_code(
     *,
     query: str,
     query_info: dict[str, Any],
-    code_results: list[dict[str, Any]],
-    doc_results: list[dict[str, Any]],
+    code_results: Sequence[Hit],
+    doc_results: Sequence[Hit],
     config: FusionConfig,
     doc_projection_beta_max: float = 0.35,
     bm25_elements: list[Any] | None = None,
     repo_filter: list[str] | None = None,
     debug: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+) -> list[Hit]:
     """Apply doc projection priors to code results.
 
     Returns:
-        Sorted list of projected code results.
+        Sorted list of projected code hits.
     """
     if not doc_results:
-        return [clone_result_row(row) for row in code_results]
+        return list(code_results)
 
     projection = project_doc_priors(
         query=query,
@@ -387,38 +420,35 @@ def apply_doc_projection_to_code(
         config=config,
         doc_projection_beta_max=doc_projection_beta_max,
     )
-    beta = float(projection["beta"])
-    priors: dict[str, float] = projection["priors"]
-    evidence: dict[str, list[dict[str, Any]]] = projection["evidence"]
-    code_norm = normalized_totals(code_results)
+    beta = projection.beta
+    priors = projection.priors
+    evidence = projection.evidence
+    code_norm = _normalized_hit_totals(code_results)
 
-    seeded: dict[str, dict[str, Any]] = {}
-    for row in code_results:
-        materialized = clone_result_row(row)
-        elem = cast(dict[str, Any], materialized.get("element") or {})
-        elem_id = str(elem.get("id") or "")
-        meta = cast(dict[str, Any], elem.get("metadata") or {})
-        unit_id = meta.get("ir_symbol_id") or meta.get("ir_node_id")
+    seeded: dict[str, Hit] = {}
+    for hit in code_results:
+        elem_id = hit.element_id
+        unit_id = hit.metadata.get("ir_symbol_id") or hit.metadata.get("ir_node_id")
         retrieval_score = code_norm.get(elem_id, 0.0)
         projected_prior = float(priors.get(str(unit_id), 0.0)) if unit_id else 0.0
         seed_score = ((1.0 - beta) * retrieval_score) + (beta * projected_prior)
-        materialized["retrieval_score"] = materialized.get("total_score", 0.0)
-        materialized["projection_score"] = projected_prior
-        materialized["seed_score"] = seed_score
-        materialized["traceability"] = evidence.get(str(unit_id), []) if unit_id else []
-        materialized["total_score"] = seed_score
-        seeded[elem_id] = materialized
+        seeded[elem_id] = hit.with_scores(
+            score=seed_score,
+            retrieval_score=hit.total_score,
+            projection_score=projected_prior,
+            seed_score=seed_score,
+            traceability=evidence.get(str(unit_id), ()) if unit_id else (),
+            total_score=seed_score,
+        )
 
     for unit_id, prior in priors.items():
         if prior <= 0.0:
             continue
-
-        def _row_has_unit_id(row: dict[str, Any], uid: str) -> bool:
-            elem = cast(dict[str, Any], row.get("element") or {})
-            meta = cast(dict[str, Any], elem.get("metadata") or {})
-            return meta.get("ir_symbol_id") == uid
-
-        if any(_row_has_unit_id(row, unit_id) for row in seeded.values()):
+        if any(
+            hit.metadata.get("ir_symbol_id") == unit_id
+            or hit.metadata.get("ir_node_id") == unit_id
+            for hit in seeded.values()
+        ):
             continue
         if bm25_elements is None:
             continue
@@ -429,23 +459,23 @@ def apply_doc_projection_to_code(
         )
         if element is None:
             continue
-        elem_id = str(element.get("id") or "")
-        seeded[elem_id] = {
-            "element": element,
-            "semantic_score": 0.0,
-            "keyword_score": 0.0,
-            "pseudocode_score": 0.0,
-            "graph_score": 0.0,
-            "retrieval_score": 0.0,
-            "projection_score": prior,
-            "seed_score": beta * float(prior),
-            "total_score": beta * float(prior),
-            "traceability": evidence.get(unit_id, []),
-            "projected_only": True,
-        }
+        seed_score = beta * float(prior)
+        hit = Hit.from_element(
+            element,
+            score=seed_score,
+            source=RetrievalSource.RETRIEVAL,
+            total_score=seed_score,
+        )
+        seeded[hit.element_id] = hit.with_scores(
+            retrieval_score=0.0,
+            projection_score=prior,
+            seed_score=seed_score,
+            traceability=evidence.get(unit_id, ()),
+            projected_only=True,
+        )
 
     out = list(seeded.values())
-    out.sort(key=lambda row: float(row.get("total_score", 0.0)), reverse=True)
+    out.sort(key=lambda hit: hit.total_score, reverse=True)
 
     if debug is not None:
         debug["doc_projection"] = {

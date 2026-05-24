@@ -2,12 +2,73 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
+from enum import StrEnum
 from typing import Any, cast
 
 
 def _empty_payload() -> dict[str, Any]:
     return {}
+
+
+class RetrievalSource(StrEnum):
+    """String-backed retrieval provenance used at API and prompt boundaries."""
+
+    SEMANTIC = "semantic"
+    KEYWORD = "keyword"
+    PSEUDOCODE = "pseudocode"
+    GRAPH = "graph"
+    TOOL = "tool"
+    LLM_SELECTION = "llm_selection"
+    RETRIEVAL = "retrieval"
+    SCIP = "scip"
+    UNKNOWN = "unknown"
+
+
+def _string_value(value: Any) -> str:
+    return str(value) if value is not None else ""
+
+
+def _optional_string_value(value: Any) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _int_value(value: Any) -> int:
+    if value is None or isinstance(value, bool):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _float_value(value: Any) -> float:
+    if value is None or isinstance(value, bool):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _mapping_payload(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    mapping = cast(Mapping[Any, Any], value)
+    return {str(key): item for key, item in mapping.items()}
+
+
+def _source_value(value: Any) -> RetrievalSource:
+    if isinstance(value, RetrievalSource):
+        return value
+    raw = str(value or "").strip()
+    if not raw:
+        return RetrievalSource.UNKNOWN
+    try:
+        return RetrievalSource(raw)
+    except ValueError:
+        return RetrievalSource.UNKNOWN
 
 
 @dataclass(frozen=True)
@@ -23,58 +84,253 @@ class Hit:
     pseudocode_score: float = 0.0
     graph_score: float = 0.0
     total_score: float = 0.0
-    source: str = ""
+    source: RetrievalSource | str = RetrievalSource.UNKNOWN
+    language: str = ""
+    file_path: str = ""
+    relative_path: str = ""
+    repo_name: str = ""
+    repo_url: str = ""
+    snapshot_id: str = ""
+    start_line: int = 0
+    end_line: int = 0
+    signature: str | None = None
+    docstring: str | None = None
+    summary: str | None = None
     metadata: dict[str, Any] = field(default_factory=_empty_payload)
+    element_extra: dict[str, Any] = field(default_factory=_empty_payload)
+    extra: dict[str, Any] = field(default_factory=_empty_payload)
+    retrieval_score: float = 0.0
+    projection_score: float = 0.0
+    seed_score: float = 0.0
+    traceability: tuple[ProjectionEvidence, ...] = ()
     projected_only: bool = False
     llm_selected: bool = False
     agent_found: bool = False
+    related_to: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source", _source_value(self.source))
+
+    @property
+    def source_kind(self) -> RetrievalSource:
+        return _source_value(self.source)
 
     @classmethod
     def from_retrieval_row(cls, row: dict[str, Any]) -> Hit:
         raw_elem = row.get("element")
-        elem = cast(dict[str, Any], raw_elem) if isinstance(raw_elem, dict) else {}
-        raw_metadata = elem.get("metadata")
-        metadata = (
-            dict(cast(dict[str, Any], raw_metadata))
-            if isinstance(raw_metadata, dict)
-            else {}
-        )
+        elem = cast(Mapping[str, Any], raw_elem) if isinstance(raw_elem, Mapping) else {}
+        metadata = _mapping_payload(elem.get("metadata"))
+        element_known = {
+            "id",
+            "type",
+            "element_type",
+            "name",
+            "language",
+            "file_path",
+            "relative_path",
+            "repo_name",
+            "repo_url",
+            "snapshot_id",
+            "start_line",
+            "end_line",
+            "signature",
+            "docstring",
+            "summary",
+            "metadata",
+        }
+        top_level_known = {
+            "element",
+            "score",
+            "semantic_score",
+            "keyword_score",
+            "pseudocode_score",
+            "graph_score",
+            "total_score",
+            "source",
+            "retrieval_score",
+            "projection_score",
+            "seed_score",
+            "traceability",
+            "projected_only",
+            "llm_file_selected",
+            "agent_found",
+            "related_to",
+        }
+        raw_type = elem.get("type")
+        if raw_type is None:
+            raw_type = elem.get("element_type")
+        total_score = _float_value(row.get("total_score"))
+        score = _float_value(row.get("score"))
+        if score == 0.0 and total_score != 0.0:
+            score = total_score
         return cls(
-            element_id=str(elem.get("id") or ""),
-            element_type=str(elem.get("type") or ""),
-            element_name=str(elem.get("name") or ""),
-            score=float(row.get("score") or 0.0),
-            semantic_score=float(row.get("semantic_score") or 0.0),
-            keyword_score=float(row.get("keyword_score") or 0.0),
-            pseudocode_score=float(row.get("pseudocode_score") or 0.0),
-            graph_score=float(row.get("graph_score") or 0.0),
-            total_score=float(row.get("total_score") or 0.0),
-            source=str(row.get("source") or ""),
+            element_id=_string_value(elem.get("id")),
+            element_type=_string_value(raw_type),
+            element_name=_string_value(elem.get("name")),
+            score=score,
+            semantic_score=_float_value(row.get("semantic_score")),
+            keyword_score=_float_value(row.get("keyword_score")),
+            pseudocode_score=_float_value(row.get("pseudocode_score")),
+            graph_score=_float_value(row.get("graph_score")),
+            total_score=total_score,
+            source=_source_value(row.get("source")),
+            language=_string_value(elem.get("language")),
+            file_path=_string_value(elem.get("file_path")),
+            relative_path=_string_value(elem.get("relative_path")),
+            repo_name=_string_value(elem.get("repo_name")),
+            repo_url=_string_value(elem.get("repo_url")),
+            snapshot_id=_string_value(elem.get("snapshot_id")),
+            start_line=_int_value(elem.get("start_line")),
+            end_line=_int_value(elem.get("end_line")),
+            signature=_optional_string_value(elem.get("signature")),
+            docstring=_optional_string_value(elem.get("docstring")),
+            summary=_optional_string_value(elem.get("summary")),
             metadata=metadata,
+            element_extra={
+                str(key): value
+                for key, value in elem.items()
+                if str(key) not in element_known
+            },
+            extra={
+                str(key): value
+                for key, value in row.items()
+                if str(key) not in top_level_known
+            },
+            retrieval_score=_float_value(row.get("retrieval_score")),
+            projection_score=_float_value(row.get("projection_score")),
+            seed_score=_float_value(row.get("seed_score")),
+            traceability=tuple(
+                cast(tuple[ProjectionEvidence, ...], row.get("traceability") or ())
+            ),
             projected_only=bool(row.get("projected_only")),
             llm_selected=bool(row.get("llm_file_selected")),
             agent_found=bool(row.get("agent_found")),
+            related_to=_string_value(row.get("related_to")),
         )
 
+    @classmethod
+    def from_element(
+        cls,
+        element: Mapping[str, Any],
+        *,
+        score: float,
+        source: RetrievalSource,
+        semantic_score: float = 0.0,
+        keyword_score: float = 0.0,
+        pseudocode_score: float = 0.0,
+        graph_score: float = 0.0,
+        total_score: float | None = None,
+        related_to: str = "",
+    ) -> Hit:
+        row = {
+            "element": dict(element),
+            "score": score,
+            "semantic_score": semantic_score,
+            "keyword_score": keyword_score,
+            "pseudocode_score": pseudocode_score,
+            "graph_score": graph_score,
+            "total_score": score if total_score is None else total_score,
+            "source": source.value,
+            "related_to": related_to,
+        }
+        return cls.from_retrieval_row(row)
+
     def to_retrieval_row(self) -> dict[str, Any]:
-        return {
-            "element": {
+        element: dict[str, Any] = dict(self.element_extra)
+        element.update(
+            {
                 "id": self.element_id,
                 "type": self.element_type,
                 "name": self.element_name,
+                "language": self.language,
+                "file_path": self.file_path,
+                "relative_path": self.relative_path,
+                "repo_name": self.repo_name,
+                "repo_url": self.repo_url,
+                "snapshot_id": self.snapshot_id,
+                "start_line": self.start_line,
+                "end_line": self.end_line,
+                "signature": self.signature,
+                "docstring": self.docstring,
+                "summary": self.summary,
                 "metadata": dict(self.metadata),
-            },
-            "semantic_score": self.semantic_score,
-            "keyword_score": self.keyword_score,
-            "total_score": self.total_score,
-            "score": self.score,
-            "pseudocode_score": self.pseudocode_score,
-            "graph_score": self.graph_score,
-            "source": self.source,
-            "projected_only": self.projected_only,
-            "llm_file_selected": self.llm_selected,
-            "agent_found": self.agent_found,
-        }
+            }
+        )
+        row = dict(self.extra)
+        row.update(
+            {
+                "element": element,
+                "semantic_score": self.semantic_score,
+                "keyword_score": self.keyword_score,
+                "total_score": self.total_score,
+                "score": self.score,
+                "pseudocode_score": self.pseudocode_score,
+                "graph_score": self.graph_score,
+                "source": self.source_kind.value,
+                "retrieval_score": self.retrieval_score,
+                "projection_score": self.projection_score,
+                "seed_score": self.seed_score,
+                "traceability": list(self.traceability),
+                "projected_only": self.projected_only,
+                "llm_file_selected": self.llm_selected,
+                "agent_found": self.agent_found,
+            }
+        )
+        if self.related_to:
+            row["related_to"] = self.related_to
+        return row
+
+    def with_scores(
+        self,
+        *,
+        score: float | None = None,
+        semantic_score: float | None = None,
+        keyword_score: float | None = None,
+        pseudocode_score: float | None = None,
+        graph_score: float | None = None,
+        total_score: float | None = None,
+        retrieval_score: float | None = None,
+        projection_score: float | None = None,
+        seed_score: float | None = None,
+        traceability: tuple[ProjectionEvidence, ...] | None = None,
+        projected_only: bool | None = None,
+    ) -> Hit:
+        return replace(
+            self,
+            score=self.score if score is None else score,
+            semantic_score=(
+                self.semantic_score if semantic_score is None else semantic_score
+            ),
+            keyword_score=self.keyword_score if keyword_score is None else keyword_score,
+            pseudocode_score=(
+                self.pseudocode_score
+                if pseudocode_score is None
+                else pseudocode_score
+            ),
+            graph_score=self.graph_score if graph_score is None else graph_score,
+            total_score=self.total_score if total_score is None else total_score,
+            retrieval_score=(
+                self.retrieval_score if retrieval_score is None else retrieval_score
+            ),
+            projection_score=(
+                self.projection_score if projection_score is None else projection_score
+            ),
+            seed_score=self.seed_score if seed_score is None else seed_score,
+            traceability=self.traceability if traceability is None else traceability,
+            projected_only=self.projected_only
+            if projected_only is None
+            else projected_only,
+        )
+
+    def scaled_scores(self, factor: float) -> Hit:
+        return self.with_scores(
+            score=self.score * factor,
+            semantic_score=self.semantic_score * factor,
+            keyword_score=self.keyword_score * factor,
+            pseudocode_score=self.pseudocode_score * factor,
+            graph_score=self.graph_score * factor,
+            total_score=self.total_score * factor,
+        )
 
 
 @dataclass(frozen=True)
@@ -99,6 +355,40 @@ class FusionWeights:
     beta: float = 0.35
     rrf_k_code: float = 60.0
     rrf_k_doc: float = 60.0
+
+
+@dataclass(frozen=True)
+class TraceLink:
+    """Grounded doc-to-code trace link extracted from retrieval metadata."""
+
+    unit_id: str
+    weight: float
+    evidence_type: str
+    chunk_id: str
+    symbol_name: str | None = None
+    confidence: str | None = None
+
+
+@dataclass(frozen=True)
+class ProjectionEvidence:
+    """Evidence contribution from a document hit to a projected code unit."""
+
+    link: TraceLink
+    doc_id: str
+    doc_score: float
+    contribution: float
+
+
+@dataclass(frozen=True)
+class DocProjectionPriors:
+    """Doc-derived projection priors keyed by IR unit id."""
+
+    p_doc: float
+    beta: float
+    priors: dict[str, float] = field(default_factory=_empty_payload)
+    evidence: dict[str, tuple[ProjectionEvidence, ...]] = field(
+        default_factory=_empty_payload
+    )
 
 
 @dataclass(frozen=True)
@@ -158,6 +448,15 @@ class IterationHistoryEntry:
 class ToolCall:
     """A tool invocation requested by the LLM."""
 
+    tool: str
+    parameters: dict[str, Any] = field(default_factory=_empty_payload)
+
+
+@dataclass(frozen=True)
+class ToolHistoryEntry:
+    """A tool invocation with the round that produced it."""
+
+    round: int
     tool: str
     parameters: dict[str, Any] = field(default_factory=_empty_payload)
 
@@ -277,6 +576,28 @@ class SourceRef:
     line: int = 0
     element_type: str = ""
     repo_name: str = ""
+
+
+@dataclass(frozen=True)
+class SourceCitation:
+    """Source citation used by answer formatting and API serialization."""
+
+    repository: str
+    file: str
+    name: str
+    element_type: str
+    lines: str
+    score: float
+
+
+@dataclass(frozen=True)
+class AnswerDisplayResult:
+    """Typed answer payload for user-facing formatting."""
+
+    answer: str
+    sources: tuple[SourceCitation, ...] = ()
+    prompt_tokens: int | None = None
+    context_elements: int = 0
 
 
 @dataclass(frozen=True)

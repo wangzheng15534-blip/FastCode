@@ -1,9 +1,8 @@
-# fastcode/core/summary.py
-"""Pure summary and formatting functions — extracted from answer_generator.py."""
+"""Pure summary and formatting functions."""
 
 from __future__ import annotations
 
-from typing import Any
+from .contracts import AnswerDisplayResult, Hit, SourceCitation
 
 _DOC_PREVIEW_MAX = 150
 
@@ -11,18 +10,16 @@ _DOC_PREVIEW_MAX = 150
 def generate_fallback_summary(
     query: str,
     answer: str,
-    retrieved_elements: list[dict[str, Any]],
+    retrieved_elements: tuple[Hit, ...],
 ) -> str:
     """Generate a fallback summary when LLM doesn't produce one."""
     parts: list[str] = []
 
     files_read: set[str] = set()
-    for elem_data in retrieved_elements:
-        elem = elem_data.get("element", {})
-        repo_name = elem.get("repo_name", "")
-        rel_path = elem.get("relative_path", "")
-        if repo_name and rel_path:
-            files_read.add(f"{repo_name}/{rel_path}")
+    for hit in retrieved_elements:
+        rel_path = hit.relative_path or hit.file_path
+        if hit.repo_name and rel_path:
+            files_read.add(f"{hit.repo_name}/{rel_path}")
 
     if files_read:
         parts.append("Files Read:")
@@ -33,23 +30,22 @@ def generate_fallback_summary(
 
     parts.append("\nCode Elements Referenced:")
     elements_added = 0
-    for elem_data in retrieved_elements[:15]:
-        elem = elem_data.get("element", {})
-        repo_name = elem.get("repo_name", "")
-        rel_path = elem.get("relative_path", "")
-        elem_type = elem.get("type", "")
-        elem_name = elem.get("name", "")
+    for hit in retrieved_elements[:15]:
+        rel_path = hit.relative_path or hit.file_path
 
-        if repo_name and rel_path and elem_name:
-            elem_info = f"- [{repo_name}/{rel_path}] {elem_type}: {elem_name}"
-            signature = elem.get("signature", "")
-            if signature:
-                elem_info += f" ({signature})"
+        if hit.repo_name and rel_path and hit.element_name:
+            elem_info = (
+                f"- [{hit.repo_name}/{rel_path}] "
+                f"{hit.element_type}: {hit.element_name}"
+            )
+            if hit.signature:
+                elem_info += f" ({hit.signature})"
             parts.append(elem_info)
-            docstring = elem.get("docstring", "")
-            if docstring:
-                doc_preview = docstring[:_DOC_PREVIEW_MAX].replace("\n", " ").strip()
-                if len(docstring) > _DOC_PREVIEW_MAX:
+            if hit.docstring:
+                doc_preview = (
+                    hit.docstring[:_DOC_PREVIEW_MAX].replace("\n", " ").strip()
+                )
+                if len(hit.docstring) > _DOC_PREVIEW_MAX:
                     doc_preview += "..."
                 parts.append(f"  Doc: {doc_preview}")
             elements_added += 1
@@ -64,46 +60,44 @@ def generate_fallback_summary(
     return "\n".join(parts)
 
 
-def extract_sources(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def extract_sources(elements: tuple[Hit, ...]) -> tuple[SourceCitation, ...]:
     """Extract source information from elements."""
-    sources: list[dict[str, Any]] = []
-    for elem_data in elements:
-        elem = elem_data.get("element", {})
+    sources: list[SourceCitation] = []
+    for hit in elements:
         sources.append(
-            {
-                "repository": elem.get("repo_name", ""),
-                "file": elem.get("relative_path", ""),
-                "name": elem.get("name", ""),
-                "type": elem.get("type", ""),
-                "lines": f"{elem.get('start_line', 0)}-{elem.get('end_line', 0)}",
-                "score": elem_data.get("total_score", 0),
-            }
+            SourceCitation(
+                repository=hit.repo_name,
+                file=hit.relative_path or hit.file_path,
+                name=hit.element_name,
+                element_type=hit.element_type,
+                lines=f"{hit.start_line}-{hit.end_line}",
+                score=hit.total_score,
+            )
         )
-    return sources
+    return tuple(sources)
 
 
-def format_answer_with_sources(result: dict[str, Any]) -> str:
+def format_answer_with_sources(result: AnswerDisplayResult) -> str:
     """Format answer with sources for display."""
     output: list[str] = []
 
     output.append("## Answer\n")
-    output.append(result.get("answer", ""))
+    output.append(result.answer)
 
-    sources = result.get("sources", [])
-    if sources:
+    if result.sources:
         output.append("\n\n## Sources\n")
-        for i, source in enumerate(sources, 1):
-            repo_info = f"[{source['repository']}] " if source.get("repository") else ""
+        for i, source in enumerate(result.sources, 1):
+            repo_info = f"[{source.repository}] " if source.repository else ""
             output.append(
-                f"{i}. {repo_info}**{source['name']}** ({source['type']}) "
-                f"in `{source['file']}` (lines {source['lines']}) "
-                f"- Relevance: {source['score']:.2f}"
+                f"{i}. {repo_info}**{source.name}** ({source.element_type}) "
+                f"in `{source.file}` (lines {source.lines}) "
+                f"- Relevance: {source.score:.2f}"
             )
 
-    if "prompt_tokens" in result:
+    if result.prompt_tokens is not None:
         output.append(
-            f"\n\n*Used {result['prompt_tokens']} prompt tokens, "
-            f"{result.get('context_elements', 0)} code snippets*"
+            f"\n\n*Used {result.prompt_tokens} prompt tokens, "
+            f"{result.context_elements} code snippets*"
         )
 
     return "\n".join(output)

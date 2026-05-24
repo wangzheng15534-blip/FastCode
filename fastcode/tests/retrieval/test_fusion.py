@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from fastcode.ir.element import CodeElement
-from fastcode.retrieval.contracts import FusionConfig
+from fastcode.retrieval.contracts import FusionConfig, Hit
 from fastcode.retrieval.fusion import (
     adaptive_fuse_channels,
     apply_doc_projection_to_code,
@@ -28,6 +28,10 @@ def _mk_row(elem_id: str, elem_type: str, total: float, **extra: Any) -> dict[st
     return row
 
 
+def _mk_hit(elem_id: str, elem_type: str, total: float, **extra: Any) -> Hit:
+    return Hit.from_retrieval_row(_mk_row(elem_id, elem_type, total, **extra))
+
+
 def _default_fusion_config() -> FusionConfig:
     return FusionConfig(
         alpha_base=0.8,
@@ -46,17 +50,17 @@ def _default_fusion_config() -> FusionConfig:
 
 def test_design_intent_lowers_alpha():
     """Design-oriented queries should lower alpha below alpha_base."""
-    code_rows = [_mk_row("code:1", "function", 0.45), _mk_row("code:2", "class", 0.42)]
-    doc_rows = [
-        _mk_row("doc:1", "design_document", 0.82),
-        _mk_row("doc:2", "design_document", 0.7),
+    code_hits = [_mk_hit("code:1", "function", 0.45), _mk_hit("code:2", "class", 0.42)]
+    doc_hits = [
+        _mk_hit("doc:1", "design_document", 0.82),
+        _mk_hit("doc:2", "design_document", 0.7),
     ]
 
     alpha, k_code, k_doc = compute_adaptive_fusion_params(
         query="What is the architecture rationale for branch indexing design?",
         query_info={"intent": "design_rationale"},
-        code_results=code_rows,
-        doc_results=doc_rows,
+        code_results=code_hits,
+        doc_results=doc_hits,
         config=_default_fusion_config(),
     )
 
@@ -68,14 +72,14 @@ def test_design_intent_lowers_alpha():
 
 def test_code_query_keeps_alpha_high():
     """Code-oriented queries should keep alpha closer to alpha_base."""
-    code_rows = [_mk_row("code:1", "function", 0.9), _mk_row("code:2", "class", 0.85)]
-    doc_rows = [_mk_row("doc:1", "design_document", 0.3)]
+    code_hits = [_mk_hit("code:1", "function", 0.9), _mk_hit("code:2", "class", 0.85)]
+    doc_hits = [_mk_hit("doc:1", "design_document", 0.3)]
 
     alpha, _, _ = compute_adaptive_fusion_params(
         query="fix the bug in the function call trace",
         query_info={},
-        code_results=code_rows,
-        doc_results=doc_rows,
+        code_results=code_hits,
+        doc_results=doc_hits,
         config=_default_fusion_config(),
     )
 
@@ -84,21 +88,21 @@ def test_code_query_keeps_alpha_high():
 
 def test_more_doc_keywords_lower_alpha():
     """More design-keyword terms should produce a lower alpha."""
-    code_rows = [_mk_row("code:1", "function", 0.6)]
-    doc_rows = [_mk_row("doc:1", "design_document", 0.6)]
+    code_hits = [_mk_hit("code:1", "function", 0.6)]
+    doc_hits = [_mk_hit("doc:1", "design_document", 0.6)]
 
     alpha_low, _, _ = compute_adaptive_fusion_params(
         query="architecture",
         query_info={},
-        code_results=code_rows,
-        doc_results=doc_rows,
+        code_results=code_hits,
+        doc_results=doc_hits,
         config=_default_fusion_config(),
     )
     alpha_high, _, _ = compute_adaptive_fusion_params(
         query="architecture design rationale adr rfc decision tradeoff",
         query_info={},
-        code_results=code_rows,
-        doc_results=doc_rows,
+        code_results=code_hits,
+        doc_results=doc_hits,
         config=_default_fusion_config(),
     )
 
@@ -107,21 +111,21 @@ def test_more_doc_keywords_lower_alpha():
 
 def test_entropy_affects_alpha_and_k():
     """High-entropy queries pull alpha toward 0.5 and increase k_code."""
-    code_rows = [_mk_row("code:1", "function", 0.62)]
-    doc_rows = [_mk_row("doc:1", "design_document", 0.62)]
+    code_hits = [_mk_hit("code:1", "function", 0.62)]
+    doc_hits = [_mk_hit("doc:1", "design_document", 0.62)]
 
     alpha_low_entropy, k_code_low, _ = compute_adaptive_fusion_params(
         query="bug bug bug bug bug fix fix fix",
         query_info={},
-        code_results=code_rows,
-        doc_results=doc_rows,
+        code_results=code_hits,
+        doc_results=doc_hits,
         config=_default_fusion_config(),
     )
     alpha_high_entropy, k_code_high, _ = compute_adaptive_fusion_params(
         query="bug design call architecture method rationale trace decision implementation",
         query_info={},
-        code_results=code_rows,
-        doc_results=doc_rows,
+        code_results=code_hits,
+        doc_results=doc_hits,
         config=_default_fusion_config(),
     )
 
@@ -151,56 +155,56 @@ def test_empty_results_returns_base_params():
 
 def test_fuse_channels_merges_code_and_doc():
     """Fused results should contain elements from both code and doc channels."""
-    code_rows = [_mk_row("code:1", "function", 0.45)]
-    doc_rows = [_mk_row("doc:1", "design_document", 0.82)]
+    code_hits = [_mk_hit("code:1", "function", 0.45)]
+    doc_hits = [_mk_hit("doc:1", "design_document", 0.82)]
 
     fused = adaptive_fuse_channels(
         query="architecture rationale",
         query_info={"intent": "design_rationale"},
-        code_results=code_rows,
-        doc_results=doc_rows,
+        code_results=code_hits,
+        doc_results=doc_hits,
         config=_default_fusion_config(),
     )
 
-    ids = [r["element"]["id"] for r in fused]
+    ids = [hit.element_id for hit in fused]
     assert "doc:1" in ids
     assert "code:1" in ids
     # Both channels should contribute fusion metadata
-    for row in fused:
-        assert "fusion" in row
+    for hit in fused:
+        assert "fusion" in hit.extra
 
 
 def test_fuse_channels_sorted_by_total_score():
     """Results should be sorted by total_score descending."""
-    code_rows = [
-        _mk_row("code:1", "function", 0.9),
-        _mk_row("code:2", "function", 0.1),
+    code_hits = [
+        _mk_hit("code:1", "function", 0.9),
+        _mk_hit("code:2", "function", 0.1),
     ]
-    doc_rows = []
+    doc_hits: list[Hit] = []
 
     fused = adaptive_fuse_channels(
         query="function bug fix",
         query_info={},
-        code_results=code_rows,
-        doc_results=doc_rows,
+        code_results=code_hits,
+        doc_results=doc_hits,
         config=_default_fusion_config(),
     )
 
-    scores = [r["total_score"] for r in fused]
+    scores = [hit.total_score for hit in fused]
     assert scores == sorted(scores, reverse=True)
 
 
 def test_fuse_channels_debug_populated():
     """Debug dict should be updated with fusion params."""
     debug: dict[str, Any] = {}
-    code_rows = [_mk_row("code:1", "function", 0.5)]
-    doc_rows = [_mk_row("doc:1", "design_document", 0.5)]
+    code_hits = [_mk_hit("code:1", "function", 0.5)]
+    doc_hits = [_mk_hit("doc:1", "design_document", 0.5)]
 
     adaptive_fuse_channels(
         query="test",
         query_info={},
-        code_results=code_rows,
-        doc_results=doc_rows,
+        code_results=code_hits,
+        doc_results=doc_hits,
         config=_default_fusion_config(),
         debug=debug,
     )
@@ -214,14 +218,14 @@ def test_fuse_channels_debug_populated():
 
 def test_fuse_channels_skips_no_id():
     """Rows without element id should be silently skipped."""
-    code_rows = [{"element": {}, "total_score": 0.5}]
-    doc_rows = []
+    code_hits = [Hit.from_retrieval_row({"element": {}, "total_score": 0.5})]
+    doc_hits: list[Hit] = []
 
     fused = adaptive_fuse_channels(
         query="test",
         query_info={},
-        code_results=code_rows,
-        doc_results=doc_rows,
+        code_results=code_hits,
+        doc_results=doc_hits,
         config=_default_fusion_config(),
     )
 
@@ -235,8 +239,8 @@ def test_fuse_channels_skips_no_id():
 
 def test_project_doc_priors_builds_grounded_priors():
     """Doc results with trace links should produce priors for linked units."""
-    doc_rows = [
-        _mk_row(
+    doc_hits = [
+        _mk_hit(
             "doc:1",
             "design_document",
             0.9,
@@ -265,13 +269,13 @@ def test_project_doc_priors_builds_grounded_priors():
     projection = project_doc_priors(
         query="architecture rationale",
         query_info={"intent": "design_rationale"},
-        doc_results=doc_rows,
+        doc_results=doc_hits,
         config=_default_fusion_config(),
     )
 
-    assert projection["p_doc"] > 0.0
-    assert projection["priors"]["ir:service"] > projection["priors"]["ir:repo"]
-    assert projection["evidence"]["ir:service"]
+    assert projection.p_doc > 0.0
+    assert projection.priors["ir:service"] > projection.priors["ir:repo"]
+    assert projection.evidence["ir:service"]
 
 
 def test_project_doc_priors_empty_doc_results():
@@ -283,8 +287,8 @@ def test_project_doc_priors_empty_doc_results():
         config=_default_fusion_config(),
     )
 
-    assert projection["priors"] == {}
-    assert projection["evidence"] == {}
+    assert projection.priors == {}
+    assert projection.evidence == {}
 
 
 # ---------------------------------------------------------------------------
@@ -293,27 +297,26 @@ def test_project_doc_priors_empty_doc_results():
 
 
 def test_apply_doc_projection_returns_clones_when_no_docs():
-    """Without doc results, code results should be cloned and returned."""
-    code_rows = [_mk_row("code:1", "function", 0.5)]
+    """Without doc results, typed code hits should be returned unchanged."""
+    code_hits = [_mk_hit("code:1", "function", 0.5)]
 
     result = apply_doc_projection_to_code(
         query="test",
         query_info={},
-        code_results=code_rows,
+        code_results=code_hits,
         doc_results=[],
         config=_default_fusion_config(),
     )
 
     assert len(result) == 1
-    assert result[0]["element"]["id"] == "code:1"
-    # Verify it's a clone, not the same dict
-    assert result[0] is not code_rows[0]
+    assert result[0].element_id == "code:1"
+    assert result == code_hits
 
 
 def test_apply_doc_projection_adds_projected_only():
     """Doc-projected elements not in code results should get projected_only=True."""
-    code_rows = [
-        _mk_row(
+    code_hits = [
+        _mk_hit(
             "code:service",
             "function",
             0.5,
@@ -325,8 +328,8 @@ def test_apply_doc_projection_adds_projected_only():
             },
         )
     ]
-    doc_rows = [
-        _mk_row(
+    doc_hits = [
+        _mk_hit(
             "doc:1",
             "design_document",
             0.9,
@@ -372,17 +375,17 @@ def test_apply_doc_projection_adds_projected_only():
     result = apply_doc_projection_to_code(
         query="design architecture",
         query_info={"intent": "design_rationale"},
-        code_results=code_rows,
-        doc_results=doc_rows,
+        code_results=code_hits,
+        doc_results=doc_hits,
         config=_default_fusion_config(),
         bm25_elements=[mock_elem],
     )
 
-    by_id = {row["element"]["id"]: row for row in result}
-    assert by_id["code:service"]["projection_score"] > 0.0
-    assert by_id["code:service"]["seed_score"] > 0.0
-    assert by_id["code:repo"]["projected_only"] is True
-    assert by_id["code:repo"]["traceability"]
+    by_id = {hit.element_id: hit for hit in result}
+    assert by_id["code:service"].projection_score > 0.0
+    assert by_id["code:service"].seed_score > 0.0
+    assert by_id["code:repo"].projected_only is True
+    assert by_id["code:repo"].traceability
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +395,7 @@ def test_apply_doc_projection_adds_projected_only():
 
 def test_extract_trace_links_ignores_ungrounded():
     """Links without unit_id should be ignored."""
-    row = _mk_row(
+    hit = _mk_hit(
         "doc:1",
         "design_document",
         0.5,
@@ -409,11 +412,11 @@ def test_extract_trace_links_ignores_ungrounded():
         },
     )
 
-    links = extract_trace_links(row)
+    links = extract_trace_links(hit)
 
     assert len(links) == 1
-    assert links[0]["unit_id"] == "ir:repo"
-    assert links[0]["weight"] == 0.8
+    assert links[0].unit_id == "ir:repo"
+    assert links[0].weight == 0.8
 
 
 # ---------------------------------------------------------------------------
@@ -427,8 +430,8 @@ def test_fusion_params_determinism():
     kwargs = {
         "query": "test query",
         "query_info": {"intent": "code_search", "keywords": ["test"]},
-        "code_results": [_mk_row("c:1", "function", 0.7)],
-        "doc_results": [_mk_row("d:1", "design_document", 0.5)],
+        "code_results": [_mk_hit("c:1", "function", 0.7)],
+        "doc_results": [_mk_hit("d:1", "design_document", 0.5)],
         "config": config,
     }
     r1 = compute_adaptive_fusion_params(**kwargs)
@@ -450,7 +453,7 @@ def test_fusion_alpha_always_clamped():
         alpha, _, _ = compute_adaptive_fusion_params(
             query=q,
             query_info={},
-            code_results=[_mk_row("c:1", "function", 0.99)],
+            code_results=[_mk_hit("c:1", "function", 0.99)],
             doc_results=[],
             config=config,
         )
@@ -465,8 +468,8 @@ def test_fusion_k_always_in_range():
     _, k_code, k_doc = compute_adaptive_fusion_params(
         query="test",
         query_info={},
-        code_results=[_mk_row("c:1", "function", 0.5)],
-        doc_results=[_mk_row("d:1", "design_document", 0.5)],
+        code_results=[_mk_hit("c:1", "function", 0.5)],
+        doc_results=[_mk_hit("d:1", "design_document", 0.5)],
         config=config,
     )
     assert config.rrf_k_min <= k_code <= config.rrf_k_max
@@ -479,15 +482,15 @@ def test_more_code_strength_higher_alpha():
     alpha_low, _, _ = compute_adaptive_fusion_params(
         query="test",
         query_info={},
-        code_results=[_mk_row("c:1", "function", 0.3)],
-        doc_results=[_mk_row("d:1", "design_document", 0.8)],
+        code_results=[_mk_hit("c:1", "function", 0.3)],
+        doc_results=[_mk_hit("d:1", "design_document", 0.8)],
         config=config,
     )
     alpha_high, _, _ = compute_adaptive_fusion_params(
         query="test",
         query_info={},
-        code_results=[_mk_row("c:1", "function", 0.95)],
-        doc_results=[_mk_row("d:1", "design_document", 0.3)],
+        code_results=[_mk_hit("c:1", "function", 0.95)],
+        doc_results=[_mk_hit("d:1", "design_document", 0.3)],
         config=config,
     )
     assert alpha_high > alpha_low

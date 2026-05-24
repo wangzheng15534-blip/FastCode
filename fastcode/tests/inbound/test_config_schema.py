@@ -5,8 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-import fastcode.schemas.config as config_schema
-from fastcode.schemas.config import (
+from fastcode.inbound.config_schema import (
     FastCodeConfigDTO,
     StorageBackendDTO,
     VectorShardStorageDTO,
@@ -63,5 +62,9 @@ def test_config_dto_rejects_invalid_external_values() -> None:
 
 
 def test_config_dto_module_does_not_construct_runtime_contracts() -> None:
+    import importlib
+
+    config_schema = importlib.import_module("fastcode.inbound.config_schema")
+
     assert not hasattr(config_schema, "config_from_mapping")
     assert not hasattr(config_schema, "config_to_dict")

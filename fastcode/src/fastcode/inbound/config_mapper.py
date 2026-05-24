@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import fastcode.runtime.config as runtime_config
-from fastcode.schemas.config import (
+from fastcode.inbound.config_schema import (
     AgentConfigDTO,
     CacheConfigDTO,
     DocsIntegrationConfigDTO,

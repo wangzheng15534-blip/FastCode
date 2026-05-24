@@ -12,6 +12,7 @@ from fastcode.retrieval.agent_context import (
     ContextBundle,
     DistillationRecord,
     EvidenceRef,
+    HandoffArtifact,
     Hypothesis,
     RejectedHypothesisEntry,
     RiskState,
@@ -402,6 +403,68 @@ def working_memory_from_payload(
             _mapping(payload.get("acceptance_contract"))
         ),
         working_set=working_set_from_payload(_mapping(payload.get("working_set"))),
+        created_at=_float_value(payload.get("created_at")),
+    )
+
+
+def handoff_payload(record: HandoffArtifact) -> dict[str, Any]:
+    return {
+        "artifact_id": record.artifact_id,
+        "session_id": record.session_id,
+        "turn_number": record.turn_number,
+        "mode": record.mode,
+        "snapshot_id": record.snapshot_id,
+        "compiler_fingerprint": record.compiler_fingerprint,
+        "full_fcx": record.full_fcx,
+        "intent": turn_intent_payload(record.intent),
+        "acceptance_contract": acceptance_contract_payload(
+            record.acceptance_contract
+        ),
+        "accepted_facts": [
+            accepted_fact_payload(item) for item in record.accepted_facts
+        ],
+        "surviving_hypotheses": [
+            hypothesis_payload(item) for item in record.surviving_hypotheses
+        ],
+        "rejected_hypotheses": [
+            rejected_hypothesis_payload(item)
+            for item in record.rejected_hypotheses
+        ],
+        "unresolved_questions": list(record.unresolved_questions),
+        "keep_ids": list(record.keep_ids),
+        "recommended_action": record.recommended_action,
+        "created_at": record.created_at,
+    }
+
+
+def handoff_from_payload(payload: Mapping[str, Any]) -> HandoffArtifact:
+    return HandoffArtifact(
+        artifact_id=_string(payload.get("artifact_id")),
+        session_id=_string(payload.get("session_id")),
+        turn_number=_int_value(payload.get("turn_number")),
+        mode=_string(payload.get("mode")),
+        snapshot_id=_string_or_none(payload.get("snapshot_id")),
+        compiler_fingerprint=_string(payload.get("compiler_fingerprint")),
+        full_fcx=_string(payload.get("full_fcx")),
+        intent=turn_intent_from_payload(_mapping(payload.get("intent"))),
+        acceptance_contract=acceptance_contract_from_payload(
+            _mapping(payload.get("acceptance_contract"))
+        ),
+        accepted_facts=tuple(
+            accepted_fact_from_payload(item)
+            for item in _mapping_tuple(payload.get("accepted_facts"))
+        ),
+        surviving_hypotheses=tuple(
+            hypothesis_from_payload(item)
+            for item in _mapping_tuple(payload.get("surviving_hypotheses"))
+        ),
+        rejected_hypotheses=tuple(
+            rejected_hypothesis_from_payload(item)
+            for item in _mapping_tuple(payload.get("rejected_hypotheses"))
+        ),
+        unresolved_questions=_string_tuple(payload.get("unresolved_questions")),
+        keep_ids=_string_tuple(payload.get("keep_ids")),
+        recommended_action=_string(payload.get("recommended_action")),
         created_at=_float_value(payload.get("created_at")),
     )
 

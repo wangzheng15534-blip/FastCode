@@ -23,13 +23,18 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.main.fastcode import FastCode
+from fastcode.query.context_payloads import (
+    context_bundle_payload,
+    turn_journal_payload,
+    working_memory_from_payload,
+    working_memory_payload,
+)
 from fastcode.retrieval.agent_context import (
     AcceptedFact,
     EvidenceRef,
     Hypothesis,
     RiskState,
     TurnIntent,
-    WorkingMemoryArtifact,
 )
 from fastcode.retrieval.context_compiler import (
     build_context_bundle,
@@ -574,7 +579,7 @@ def _make_working_memory_record(
         artifact_key=artifact.artifact_key,
         compiler_fingerprint=artifact.compiler_fingerprint,
         payload_json=json.dumps(
-            artifact.to_dict(), separators=(",", ":"), sort_keys=True
+            working_memory_payload(artifact), separators=(",", ":"), sort_keys=True
         ),
         stable_fcx=artifact.stable_fcx,
         turn_fcx=artifact.turn_fcx,
@@ -582,7 +587,7 @@ def _make_working_memory_record(
         full_fcx=artifact.full_fcx,
         created_at=artifact.created_at,
     )
-    return record, artifact.to_dict()
+    return record, working_memory_payload(artifact)
 
 
 # --- Doc pipeline tests ---
@@ -1611,19 +1616,17 @@ def test_handoff_facade_persists_and_restores_typed_handoff_artifact() -> None:
 
 def test_context_bundle_facade_reads_renders_expands_and_activates() -> None:
     working_memory_record, artifact_payload = _make_working_memory_record()
-    working_memory = WorkingMemoryArtifact.from_dict(artifact_payload)
+    working_memory = working_memory_from_payload(artifact_payload)
     journal = build_turn_journal(
-        intent=TurnIntent.from_dict(
-            {
-                "session_id": working_memory.session_id,
-                "turn_number": working_memory.turn_number,
-                "question": "Where is auth handled?",
-                "kind": "debug",
-                "requested_outcome": "answer",
-                "snapshot_id": working_memory.snapshot_id,
-                "artifact_key": working_memory.artifact_key,
-                "repo_filter": ("repo",),
-            }
+        intent=TurnIntent(
+            session_id=working_memory.session_id,
+            turn_number=working_memory.turn_number,
+            question="Where is auth handled?",
+            kind="debug",
+            requested_outcome="answer",
+            snapshot_id=working_memory.snapshot_id,
+            artifact_key=working_memory.artifact_key,
+            repo_filter=("repo",),
         ),
         plan=build_turn_plan(
             risk_state=working_memory.risk_state,
@@ -1652,7 +1655,7 @@ def test_context_bundle_facade_reads_renders_expands_and_activates() -> None:
         artifact_key=bundle.artifact_key,
         compiler_fingerprint=bundle.compiler_fingerprint,
         payload_json=json.dumps(
-            bundle.to_dict(), separators=(",", ":"), sort_keys=True
+            context_bundle_payload(bundle), separators=(",", ":"), sort_keys=True
         ),
         invalidation_key=bundle.distillation.invalidation_key,
         created_at=bundle.created_at,
@@ -1664,7 +1667,7 @@ def test_context_bundle_facade_reads_renders_expands_and_activates() -> None:
         artifact_key=journal.artifact_key,
         compiler_fingerprint=journal.compiler_fingerprint,
         payload_json=json.dumps(
-            journal.to_dict(), separators=(",", ":"), sort_keys=True
+            turn_journal_payload(journal), separators=(",", ":"), sort_keys=True
         ),
         created_at=journal.created_at,
     )

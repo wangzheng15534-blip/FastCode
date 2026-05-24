@@ -12,7 +12,7 @@ import re
 import shutil
 import threading
 import time
-from collections.abc import Callable, Generator, Iterable, Mapping
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from importlib import util as importlib_util
@@ -47,6 +47,16 @@ from ..ir.element import (
 from ..ir.graph import IRGraphBuilder
 from ..ir.types import IRSnapshot, IRSymbol
 from ..query.answer import AnswerGenerator
+from ..query.context_payloads import (
+    activation_payload,
+    context_bundle_from_payload,
+    context_bundle_payload,
+    handoff_from_payload,
+    handoff_payload,
+    turn_journal_from_payload,
+    working_memory_from_payload,
+    working_memory_payload,
+)
 from ..query.handler import QueryPipeline
 from ..query.processor import QueryProcessor
 from ..query.retriever import HybridRetriever
@@ -67,6 +77,7 @@ from ..retrieval.context_compiler import (
 from ..retrieval.context_compiler import (
     render_context_bundle as render_context_bundle_artifact,
 )
+from ..retrieval.contracts import Hit, SourceCitation
 from ..runtime.config import FastCodeConfig
 from ..scip.global_builder import GlobalIndexBuilder
 from ..scip.module_resolver import ModuleResolver
@@ -1669,10 +1680,22 @@ class FastCode:
             )
 
     def _extract_sources_from_elements(
-        self, elements: list[dict[str, Any]]
+        self, elements: Sequence[Hit]
     ) -> list[dict[str, Any]]:
         """Extract source information from retrieved elements"""
-        return _snapshot.extract_sources_from_elements(elements)
+        sources = _snapshot.extract_sources_from_elements(elements)
+        return [self._source_citation_payload(source) for source in sources]
+
+    @staticmethod
+    def _source_citation_payload(source: SourceCitation) -> dict[str, Any]:
+        return {
+            "repository": source.repository,
+            "file": source.file,
+            "name": source.name,
+            "element_type": source.element_type,
+            "lines": source.lines,
+            "score": source.score,
+        }
 
     def get_repository_summary(self) -> str:
         """Get summary of the loaded repository"""
@@ -3231,28 +3254,28 @@ class FastCode:
         payload = json.loads(str(record.payload_json or "{}"))
         if not isinstance(payload, dict):
             raise RuntimeError("working memory payload is invalid")
-        return WorkingMemoryArtifact.from_dict(payload)
+        return working_memory_from_payload(payload)
 
     @staticmethod
     def _parse_handoff_record_payload(record: Any) -> HandoffArtifact:
         payload = json.loads(str(record.payload_json or "{}"))
         if not isinstance(payload, dict):
             raise RuntimeError("handoff artifact payload is invalid")
-        return HandoffArtifact.from_dict(payload)
+        return handoff_from_payload(payload)
 
     @staticmethod
     def _parse_turn_journal_record_payload(record: Any) -> TurnJournal:
         payload = json.loads(str(record.payload_json or "{}"))
         if not isinstance(payload, dict):
             raise RuntimeError("turn journal payload is invalid")
-        return TurnJournal.from_dict(payload)
+        return turn_journal_from_payload(payload)
 
     @staticmethod
     def _parse_context_bundle_record_payload(record: Any) -> ContextBundle:
         payload = json.loads(str(record.payload_json or "{}"))
         if not isinstance(payload, dict):
             raise RuntimeError("context bundle payload is invalid")
-        return ContextBundle.from_dict(payload)
+        return context_bundle_from_payload(payload)
 
     @staticmethod
     def _optional_string_tuple(
@@ -3341,7 +3364,7 @@ class FastCode:
             "distillation_id": bundle.distillation.distillation_id,
         }
         if format == "json":
-            response["bundle"] = bundle.to_dict()
+            response["bundle"] = context_bundle_payload(bundle)
             return response
         if format == "rendered":
             response["rendered"] = render_context_bundle_artifact(
@@ -3382,7 +3405,7 @@ class FastCode:
             response["full_fcx"] = record.full_fcx
             return response
         if format == "json":
-            response["artifact"] = artifact.to_dict()
+            response["artifact"] = working_memory_payload(artifact)
             return response
         raise RuntimeError("format must be one of: fcx, json")
 
@@ -3406,7 +3429,7 @@ class FastCode:
             mode=mode,
         )
         payload_json = json.dumps(
-            artifact.to_dict(),
+            handoff_payload(artifact),
             separators=(",", ":"),
             sort_keys=True,
         )
@@ -3423,13 +3446,13 @@ class FastCode:
                 created_at=artifact.created_at,
             )
         )
-        return artifact.to_dict()
+        return handoff_payload(artifact)
 
     def get_handoff_artifact(self, artifact_id: str) -> dict[str, Any]:
         record = self.cache_manager.get_handoff_artifact_record(artifact_id)
         if record is None:
             raise RuntimeError(f"handoff artifact not found: {artifact_id}")
-        return self._parse_handoff_record_payload(record).to_dict()
+        return handoff_payload(self._parse_handoff_record_payload(record))
 
     def get_context_bundle(
         self,
@@ -3505,7 +3528,7 @@ class FastCode:
             created_at=time.time(),
         )
         payload_json = json.dumps(
-            activation.to_dict(),
+            activation_payload(activation),
             separators=(",", ":"),
             sort_keys=True,
         )
@@ -3525,7 +3548,7 @@ class FastCode:
                 created_at=activation.created_at,
             )
         )
-        return activation.to_dict()
+        return activation_payload(activation)
 
     def expand_context_ref(
         self,

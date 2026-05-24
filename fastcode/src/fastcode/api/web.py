@@ -64,6 +64,8 @@ from fastcode.api.serialization import (
     serialize_status_response_record,
 )
 from fastcode.main.fastcode import FastCode
+from fastcode.runtime_support.health import readiness_health
+from fastcode.runtime_support.observability import configure_logging
 from fastcode.utils.archive import (
     UnsafeArchiveError,
     safe_extract_zip,
@@ -74,17 +76,14 @@ from fastcode.utils.archive import (
 fastcode_instance: FastCode | None = None
 
 # Setup logging
-# Create logs directory
 log_dir = Path("./logs")
-log_dir.mkdir(exist_ok=True)
-
-# Configure logging with both file and console handlers
-logging.basicConfig(
+logger = configure_logging(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler(log_dir / "web_app.log"), logging.StreamHandler()],
+    format_str="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    log_file=str(log_dir / "web_app.log"),
+    console=True,
+    logger_name=__name__,
 )
-logger = logging.getLogger(__name__)
 
 
 def _ensure_fastcode_initialized() -> FastCode:
@@ -335,11 +334,14 @@ async def health_check():
     if fastcode_instance is None:
         raise HTTPException(status_code=500, detail="FastCode not initialized")
 
+    health = readiness_health(
+        repo_loaded=fastcode_instance.repo_loaded,
+        repo_indexed=fastcode_instance.repo_indexed,
+        details={"multi_repo_mode": fastcode_instance.multi_repo_mode},
+    )
     return {
-        "status": "healthy",
-        "repo_loaded": fastcode_instance.repo_loaded,
-        "repo_indexed": fastcode_instance.repo_indexed,
-        "multi_repo_mode": fastcode_instance.multi_repo_mode,
+        "status": health.status,
+        **health.details,
     }
 
 

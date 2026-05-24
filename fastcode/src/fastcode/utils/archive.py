@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from ..foundation.byte_count import ByteCount
+from ..foundation.non_empty_string import NonEmptyString
 from ..foundation.positive_int import PositiveInt
 
 
@@ -57,7 +58,7 @@ def safe_repo_name_from_archive(filename: str) -> str:
             stem = stem[: -len(suffix)]
             break
     normalized = _SAFE_REPO_NAME_RE.sub("_", stem).strip("._-")
-    return normalized or "uploaded_repo"
+    return NonEmptyString.parse(normalized or "uploaded_repo").as_str()
 
 
 def _member_mode(info: zipfile.ZipInfo) -> int:

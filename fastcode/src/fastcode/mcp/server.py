@@ -26,7 +26,6 @@ MCP config example (for Claude Code / Cursor):
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
 import inspect
 import json
-import logging
 import os
 import uuid
 
@@ -41,19 +40,19 @@ from fastcode.mcp.graph_tools import (
     compute_leiden_clusters_for_snapshot,
     compute_steiner_path_for_snapshot,
 )
+from fastcode.runtime_support.observability import configure_logging
 
 # ---------------------------------------------------------------------------
 # Logging (file only – stdout is reserved for MCP JSON-RPC in stdio mode)
 # ---------------------------------------------------------------------------
 log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "logs")
-os.makedirs(log_dir, exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler(os.path.join(log_dir, "mcp_server.log"))],
+logger = configure_logging(
+    level="INFO",
+    format_str="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    log_file=os.path.join(log_dir, "mcp_server.log"),
+    console=False,
+    logger_name="fastcode.mcp",
 )
-logger = logging.getLogger("fastcode.mcp")
 
 # ---------------------------------------------------------------------------
 # Lazy FastCode singleton

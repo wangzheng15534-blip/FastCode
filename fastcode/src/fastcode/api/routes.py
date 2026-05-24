@@ -69,6 +69,8 @@ from fastcode.api.serialization import (
     serialize_status_response_record,
 )
 from fastcode.main.fastcode import FastCode
+from fastcode.runtime_support.health import readiness_health
+from fastcode.runtime_support.observability import configure_logging
 from fastcode.utils.archive import (
     UnsafeArchiveError,
     safe_extract_zip,
@@ -114,14 +116,13 @@ fastcode_instance: FastCode | None = None
 
 # Setup logging
 log_dir = Path("./logs")
-log_dir.mkdir(exist_ok=True)
-
-logging.basicConfig(
+logger = configure_logging(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler(log_dir / "api.log"), logging.StreamHandler()],
+    format_str="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    log_file=str(log_dir / "api.log"),
+    console=True,
+    logger_name=__name__,
 )
-logger = logging.getLogger(__name__)
 
 
 def _ensure_fastcode_initialized():
@@ -318,15 +319,20 @@ async def health_check():
             "repo_indexed": False,
         }
 
+    health = readiness_health(
+        repo_loaded=fastcode_instance.repo_loaded,
+        repo_indexed=fastcode_instance.repo_indexed,
+        details={
+            "multi_repo_mode": fastcode_instance.multi_repo_mode,
+            "storage_backend": fastcode_instance.snapshot_store.db_runtime.backend,
+            "retrieval_backend": fastcode_instance.config.get("retrieval", {}).get(
+                "retrieval_backend", "local"
+            ),
+        },
+    )
     return {
-        "status": "healthy",
-        "repo_loaded": fastcode_instance.repo_loaded,
-        "repo_indexed": fastcode_instance.repo_indexed,
-        "multi_repo_mode": fastcode_instance.multi_repo_mode,
-        "storage_backend": fastcode_instance.snapshot_store.db_runtime.backend,
-        "retrieval_backend": fastcode_instance.config.get("retrieval", {}).get(
-            "retrieval_backend", "local"
-        ),
+        "status": health.status,
+        **health.details,
     }
 
 
@@ -480,9 +486,7 @@ async def run_index_pipeline(request: IndexRunRequest):
             fastcode,
             fastcode.vector_store.invalidate_scan_cache,
         )
-        return serialize_index_run_response(
-            serialize_index_run_response_record(result)
-        )
+        return serialize_index_run_response(serialize_index_run_response_record(result))
     except Exception as e:
         logger.error(f"Index run failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

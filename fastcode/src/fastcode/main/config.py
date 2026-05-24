@@ -12,29 +12,12 @@ from dotenv import load_dotenv
 
 from fastcode.inbound.config_mapper import config_from_mapping, config_to_dict
 from fastcode.runtime.config import FastCodeConfig
+from fastcode.runtime_support.observability import setup_logging_from_config
 
 
 def setup_logging(config: dict[str, Any]) -> logging.Logger:
     """Set up process logging from runtime config."""
-    log_config = config.get("logging", {})
-    level = getattr(logging, log_config.get("level", "INFO"))
-    format_str = log_config.get(
-        "format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-
-    log_file: str = log_config.get("file", "./logs/fastcode.log")
-    log_dir = os.path.dirname(log_file)
-    if log_dir and not os.path.exists(log_dir):
-        os.makedirs(log_dir, exist_ok=True)
-
-    handlers: list[logging.Handler] = []
-    if log_config.get("console", True):
-        handlers.append(logging.StreamHandler())
-    if log_file:
-        handlers.append(logging.FileHandler(log_file))
-
-    logging.basicConfig(level=level, format=format_str, handlers=handlers)
-    return logging.getLogger("fastcode")
+    return setup_logging_from_config(config, logger_name="fastcode")
 
 
 def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:

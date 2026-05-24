@@ -11,10 +11,13 @@ It intentionally excludes cross-project design work. It also does not track
 broad cleanup, style issues, packaging, API hardening, or release process items
 unless they directly affect these three goals.
 
-## Audit Verdict - May 10, 2026
+## Audit Verdict - May 24, 2026
 
-FastCode has real partial passes, but the implementation is not yet
-performance-native end to end.
+FastCode has real partial passes. The implementation is closer to
+performance-native but three structural gaps remain open: P0.2 temporary
+artifact construction is hybrid (delta-first for embedding-only changes, full
+reconstruction for structural changes), P0.14 BM25 still rebuilds full corpus,
+and P0.18 semantic patching still copies whole collections at the list level.
 
 Implementation update through May 14, 2026:
 
@@ -104,30 +107,36 @@ Implementation update through May 14, 2026:
 
 - Incremental indexing can skip unchanged-file parse and embedding work, reuse
   changed-unit embeddings, merge changed AST IR with a previous snapshot, and
-  reuse persisted vector/BM25 and limited graph shards.
-- The active indexing path still rehydrates a full combined element list, builds
-  full temporary vector/BM25/legacy graph artifacts, loads the previous full IR
-  snapshot for merge, writes full snapshot JSON, and rebuilds whole IR graph
-  materializations. PostgreSQL relational facts use a changed-path delta only
-  for safe incremental plans; other paths still fall back to full publication.
-- Vector flow uses NumPy/FAISS/pgvector in important places, but old list-vector
-  paths, JSON/list embedding payloads, compression-vs-mmap tradeoffs, and
-  fallback materialization paths still exist.
-- `IRGraphView` uses `python-igraph`, but NetworkX remains in active hot paths:
-  legacy graph building, IR merge matching, projection transforms, and
-  compatibility/fallback graph surfaces.
-- Existing perf benchmarks are useful baselines, but they do not yet enforce
-  budgeted update cost, peak RSS, materialization count, bytes read/written, or
-  graph-engine selection criteria.
+  reuse persisted vector/BM25 and limited graph shards. The pipeline is hybrid:
+  delta-first for embedding-only changes, but `_full_elements_for_incremental_fallback()`
+  reconstructs full element lists on structural/API changes.
+- Vector flow uses NumPy/FAISS/pgvector in important places. Shard hardlinking
+  avoids loading unchanged shards (`store/vector.py:1994-2003`), mmap lazy
+  loading exists (`store/vector.py:1538-1543`). Compression-vs-mmap is now
+  config-controlled.
+- `IRGraphView` uses `python-igraph` for primary traversal. Projection
+  algorithms use a custom `_ProjectionGraph` with no NetworkX dependency.
+  IR merge uses custom bipartite matching with bucketed candidates. NetworkX
+  remains only for compatibility/export surfaces and `copy()`/`to_undirected()`
+  in `ir/graph.py:338-342`.
+- Snapshot persistence is manifest + shard based with lazy readers. Embedding
+  JSON lists are removed from active persistence (vectors stored as `.npy`
+  artifacts with `vector_ref`).
+- BM25 shard-native load still rebuilds full `BM25Okapi` corpus on query
+  (`query/retriever.py:2016`).
+- Semantic patching uses object-level structural sharing but still copies whole
+  collections at the list level (`patching.py:444-446`).
+- Materialization boundary guards, runtime counters, architecture tests, and
+  edit-class benchmarks are in place. Budget-enforcement gates are not yet
+  active.
 
 Stable performance claims should wait until the exit criteria in this file are
 met with benchmark output from representative repositories.
 
 ## Follow-Up Source Audit - May 11, 2026
 
-This audit checked current source paths for gaps not clearly recorded in the
-May 10 tracker. It excludes the agent-integration design track and focuses only
-on efficient update, copy-minimal native flow, and materialization.
+Reconciled with May 24, 2026 code audit. Items below retain their historical
+finding context. Updated exit criteria status is inline in each section.
 
 New or sharpened findings:
 
@@ -207,27 +216,37 @@ TODO:
 
 Exit criteria:
 
-- one file inventory is visible in pipeline metrics
+- one file inventory is visible in pipeline metrics — MET
 - unchanged files do not perform repeated content reads or hashes in a one-file
-  body edit benchmark
+  body edit benchmark — MET
 - file counts and total sizes are derived from the shared inventory, not a
-  second scan
+  second scan — PARTIAL: `_preloaded_file_inventory` caching exists
+  (`loader.py:73-74`), but multiple `scan_files()` calls still occur across
+  pipeline stages (`pipeline.py:354,375,3176`)
 
 ### P0.2 Replace Full Temporary Artifacts With Delta-First Builders
 
-**Gap:** shard reuse currently happens at publication time after full temporary
-objects have already been built.
+**Status:** HYBRID — delta-first for embedding-only changes, full reconstruction
+for structural/API changes. Temporary artifacts are now built from changed
+elements only (`pipeline.py:3323` returns `new_elements` not all elements), and
+`publish_delta()` functions exist for vector/BM25/graph shard reuse
+(`pipeline.py:5065-5164`). However, when non-embedding changes occur (API
+surface, edge changes), `_full_elements_for_incremental_fallback()` reconstructs
+the full element list (`pipeline.py:4407-4423`), and temporary artifacts lack
+reuse handles to reference previous unchanged shards.
 
 Evidence:
 
-- `_plan_incremental_elements()` reconstructs unchanged `CodeElement` objects
-  and returns `all_elements = unchanged_elements + new_elements`
-  (`fastcode/src/fastcode/indexing/pipeline.py:1633`).
-- `run_index_pipeline()` still materializes all elements into a temporary
-  vector store, builds a full legacy graph, and builds full BM25 over `elements`
-  (`fastcode/src/fastcode/indexing/pipeline.py:2528`).
-- Incremental vector/BM25/graph shard reuse happens later during artifact
-  persistence (`fastcode/src/fastcode/indexing/pipeline.py:3119`).
+- `_plan_incremental_elements()` returns `new_elements` (changed only), not
+  `unchanged + changed` (`pipeline.py:3323`).
+- Temporary `temp_store`, `temp_graph`, `temp_retriever` are built from changed
+  elements only (`pipeline.py:4389-4439`).
+- `publish_delta()` functions exist and accept `previous_name` +
+  `reusable_path_keys` for shard reuse (`pipeline.py:5065-5164`).
+- `_full_elements_for_incremental_fallback()` reconstructs full element list on
+  non-embedding changes (`pipeline.py:4407-4423`).
+- `artifact_shard_reuse` metrics track reused/linked shards
+  (`pipeline.py:5689-5691`).
 
 TODO:
 
@@ -243,6 +262,12 @@ TODO:
   paths and affected cross-file edges only.
 - [x] Keep a compatibility path for full rebuilds, but record degraded/full
   fallback reasons in metrics.
+- [ ] Eliminate `_full_elements_for_incremental_fallback()` reconstruction for
+  structural changes; instead pass shard reuse handles through to temporary
+  artifact builders so they reference previous unchanged shards directly.
+- [ ] Make temporary artifact builders (VectorStore, HybridRetriever,
+  CodeGraphBuilder) accept and carry previous shard handles so they can produce
+  delta outputs without needing the full element list even on fallback paths.
 
 Exit criteria:
 
@@ -428,11 +453,13 @@ TODO:
 
 Exit criteria:
 
-- metadata-only and cache-load flows do not load/probe embedding providers
+- metadata-only and cache-load flows do not load/probe embedding providers —
+  MET
 - Ollama indexing reports bounded concurrency for per-text fallback requests
   and reports fewer provider calls than texts when the `/api/embed` batch
-  endpoint is available
-- benchmarks separate provider time from local pipeline materialization time
+  endpoint is available — MET
+- benchmarks separate provider time from local pipeline materialization time —
+  OPEN: provider timing separation is not yet enforced by benchmark gates
 
 ### P0.7 Remove Legacy List-Vector Paths
 
@@ -498,7 +525,9 @@ TODO:
 Exit criteria:
 
 - unchanged vector shards can be linked into a new snapshot without loading
-  vectors into Python
+  vectors into Python — MET: `_copy_or_link_file()` hardlinks unchanged shards
+  (`store/vector.py:1994-2003`), `mmap_mode="r"` for lazy search
+  (`store/vector.py:1538-1543`)
 - changed vector shards write through contiguous matrix slices
 - peak allocation for vector load/save scales with changed rows, not full rows,
   in incremental update benchmarks
@@ -582,9 +611,13 @@ TODO:
 Exit criteria:
 
 - query-time graph expansion on compact IR graphs does not materialize a
-  NetworkX union graph
+  NetworkX union graph — MET on primary path
 - cutoff reachability cost scales with the requested frontier, not all nodes
-- NetworkX import locations are documented as compatibility boundaries
+  — MET
+- NetworkX import locations are documented as compatibility boundaries —
+  PARTIAL: `copy()` and `to_undirected()` in `ir/graph.py:338-342` still
+  materialize NetworkX via `to_networkx()`; these are compatibility surfaces
+  but should be documented as such or replaced
 
 ### P0.11 Rewrite Projection Graph Algorithms Around Native Graph Handles
 
@@ -711,6 +744,8 @@ TODO:
 Exit criteria:
 
 - loading lexical retrieval for a snapshot does not rebuild a full corpus object
+  — NOT MET: `reload_specific_repositories()` still calls
+  `BM25Okapi(all_bm25_corpus)` (`query/retriever.py:2016`)
 - one-file update changes only lexical shards for affected paths and global
   statistics
 - query benchmark reports lexical load time separately from ranking time
@@ -832,43 +867,50 @@ Exit criteria:
 - repeated local indexing of a large unchanged repository does not copy the
   whole working tree merely to discover that no indexed files changed
 - pipeline metrics distinguish scanned bytes, hashed bytes, copied bytes, and
-  linked bytes
+  linked bytes — PARTIAL: `copied_bytes` and `linked_bytes` tracked
+  (`loader.py:389-392`), but `scanned_bytes` and `hashed_bytes` metrics are
+  missing
 
 ### P0.18 Make Semantic Patch Application Delta-Native
 
-**Gap:** semantic resolver patches still copy whole snapshot collections before
-applying a usually small patch, although the generic dict round trips have been
-removed.
+**Status:** PARTIAL — object-level structural sharing works (unchanged objects
+reused by reference), but collection-level copying still occurs. The function
+creates `list(snapshot.units)`, `list(snapshot.supports)`, etc. for ALL items
+even when only a few changed (`patching.py:444-446`). Materialization counters
+exist (`patching.py:432-442, 533-537`). Generic dict round trips are removed.
+Patch-local serializers are in place.
 
 Evidence:
 
-- `apply_resolution_patch()` still clones all units, supports, embeddings, and
-  relations through explicit helper copies
-  (`fastcode/src/fastcode/semantic/resolvers/patching.py:41`,
-  `fastcode/src/fastcode/semantic/resolvers/patching.py:196`).
-- Patch metadata and unit metadata updates now pass through a patch-local
-  serializer, but this is still recursive metadata normalization during the
-  resolver hot path
-  (`fastcode/src/fastcode/semantic/resolvers/patching.py:37`).
+- `apply_resolution_patch()` creates new list containers for ALL collections
+  (`patching.py:444-446`), even though unchanged objects within those lists are
+  reused by reference (confirmed by test at
+  `tests/semantic/test_semantic_resolvers.py:421-513`).
+- `_clone_unit()`, `_clone_support()`, `_clone_relation()` exist as explicit
+  clone helpers (`patching.py:275-344`), used only for changed items.
+- Materialization counters track `preserved_object_count` and
+  `changed_object_count` separately.
 
 TODO:
 
-- [x] Replace full snapshot cloning with structural sharing or path/unit-scoped
-  copy-on-write updates for units, supports, relations, and embeddings.
-- [x] Avoid generic IR object clones and generic JSON conversion in resolver
+- [x] Replace generic IR object clones and generic JSON conversion in resolver
   patch application.
 - [x] Replace patch-local recursive metadata normalization with explicit
   metadata serializers for resolver patch payloads.
 - [x] Add runtime materialization counters around semantic patch application.
-- [x] Benchmark helper-backed semantic upgrade on unchanged, body-only,
-  signature/API, and inheritance-change edit classes.
+- [ ] Replace full snapshot cloning with structural sharing or path/unit-scoped
+  copy-on-write updates at the collection level, so the list containers
+  themselves do not copy all items.
+- [ ] Benchmark helper-backed semantic upgrade on unchanged, body-only,
+  signature/API, and inheritance-change edit classes specifically for
+  `apply_resolution_patch()` performance.
 
 Exit criteria:
 
 - applying a small resolver patch does not copy every unchanged IR unit and
-  relation
+  relation — NOT MET: list-level copy still occurs
 - materialization metrics report changed IR objects separately from preserved
-  objects
+  objects — MET
 
 ## P1 - Enforcement And Benchmark Evidence
 
@@ -953,10 +995,21 @@ Exit criteria:
 
 ## Do Not Count These As Done
 
-- Shard reuse after full temporary artifact construction does not satisfy
-  delta-first execution.
-- Compact graph persistence does not satisfy graph materialization minimization
-  if a later hot path converts back to NetworkX.
+Reconciled May 24, 2026:
+
+- P0.2: shard reuse after full temporary artifact construction does not satisfy
+  delta-first execution. The pipeline is hybrid: delta-first for embedding-only
+  changes, full reconstruction for structural changes via
+  `_full_elements_for_incremental_fallback()`.
+- P0.10: compact graph persistence does not satisfy graph materialization
+  minimization when `copy()` and `to_undirected()` still materialize NetworkX
+  via `to_networkx()` (`ir/graph.py:338-342`).
+- P0.14: BM25 shard-native load does not satisfy the exit criterion when
+  `reload_specific_repositories()` still calls `BM25Okapi(all_bm25_corpus)`
+  (`query/retriever.py:2016`).
+- P0.18: object-level structural sharing does not satisfy delta-native patching
+  when `list(snapshot.units)` copies all items into new containers
+  (`patching.py:444-446`).
 - Buffer-backed embedding cache entries do not satisfy zero-copy vector flow if
   active paths still create list vectors, JSON vector lists, or full stacked
   matrices for unchanged data.

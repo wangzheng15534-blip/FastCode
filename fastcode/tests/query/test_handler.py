@@ -37,7 +37,7 @@ from fastcode.retrieval.agent_context import (
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.store.cache_contracts import ContextDistillationRecord
 
-AGENT_CONTEXT_SERIALIZER_CLASSES = (
+AGENT_CONTEXT_RECORD_CLASSES = (
     EvidenceRef,
     ToolObservation,
     Hypothesis,
@@ -56,14 +56,10 @@ AGENT_CONTEXT_SERIALIZER_CLASSES = (
 )
 
 
-def _forbid_agent_context_to_dict(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _boom_to_dict(self: object) -> dict[str, Any]:
-        raise AssertionError(
-            f"query context persistence must not call {type(self).__name__}.to_dict()"
-        )
-
-    for cls in AGENT_CONTEXT_SERIALIZER_CLASSES:
-        monkeypatch.setattr(cls, "to_dict", _boom_to_dict)
+def _assert_agent_context_has_no_compat_serializers() -> None:
+    for cls in AGENT_CONTEXT_RECORD_CLASSES:
+        assert not hasattr(cls, "to_dict")
+        assert not hasattr(cls, "from_dict")
 
 
 def _processed_query(
@@ -420,10 +416,8 @@ def test_query_pipeline_skips_semantic_escalation_without_snapshot_scope() -> No
     assert "semantic_escalation" not in result
 
 
-def test_query_pipeline_compiles_context_and_persists_typed_records(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _forbid_agent_context_to_dict(monkeypatch)
+def test_query_pipeline_compiles_context_and_persists_typed_records() -> None:
+    _assert_agent_context_has_no_compat_serializers()
     processed_query = _processed_query(
         question="Where is auth handled?",
         filters={"snapshot_id": "snap:1", "artifact_key": "art:1"},
@@ -505,22 +499,8 @@ def test_query_pipeline_compiles_context_and_persists_typed_records(
     assert result["turn_number"] == 1
 
 
-def test_query_pipeline_reuses_context_distillation_when_sources_match(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _forbid_agent_context_to_dict(monkeypatch)
-
-    def _boom_from_dict(
-        cls: type[DistillationRecord],
-        data: dict[str, Any],
-    ) -> DistillationRecord:
-        raise AssertionError("query context load must not call DistillationRecord.from_dict()")
-
-    monkeypatch.setattr(
-        DistillationRecord,
-        "from_dict",
-        classmethod(_boom_from_dict),
-    )
+def test_query_pipeline_reuses_context_distillation_when_sources_match() -> None:
+    _assert_agent_context_has_no_compat_serializers()
     processed_query = _processed_query(
         question="Where is auth handled?",
         filters={"snapshot_id": "snap:1", "artifact_key": "art:1"},

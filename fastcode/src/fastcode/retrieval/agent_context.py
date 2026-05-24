@@ -1,52 +1,12 @@
 """Typed agent-context records and deterministic policy helpers.
 
-This module is pure: no I/O, no logging, no framework imports.
+This module is pure retrieval-domain code: no I/O, logging, framework imports,
+or persistence serializers.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
-
-
-def _string(value: Any) -> str:
-    return str(value or "")
-
-
-def _string_or_none(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value)
-    return text or None
-
-
-def _string_tuple(value: Any) -> tuple[str, ...]:
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        sequence = cast(Sequence[Any], value)
-        return tuple(str(item) for item in sequence)
-    if value is None:
-        return ()
-    return (str(value),)
-
-
-def _dict_value(value: Any) -> dict[str, Any]:
-    if not isinstance(value, Mapping):
-        return {}
-    mapping = cast(Mapping[Any, Any], value)
-    return {str(key): item for key, item in mapping.items()}
-
-
-def _dict_tuple(value: Any) -> tuple[dict[str, Any], ...]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-        return ()
-    items: list[dict[str, Any]] = []
-    sequence = cast(Sequence[Any], value)
-    for item in sequence:
-        if isinstance(item, Mapping):
-            mapping = cast(Mapping[Any, Any], item)
-            items.append({str(key): sub_item for key, sub_item in mapping.items()})
-    return tuple(items)
 
 
 @dataclass(frozen=True)
@@ -63,81 +23,19 @@ class EvidenceRef:
     source: str | None = None
     fresh: str = "unknown"
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "ref_id": self.ref_id,
-            "kind": self.kind,
-            "repo_name": self.repo_name,
-            "snapshot_id": self.snapshot_id,
-            "path": self.path,
-            "symbol_id": self.symbol_id,
-            "lines": self.lines,
-            "label": self.label,
-            "score": self.score,
-            "source": self.source,
-            "fresh": self.fresh,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> EvidenceRef:
-        score_value = data.get("score")
-        score = float(score_value) if isinstance(score_value, (int, float)) else None
-        return cls(
-            ref_id=_string(data.get("ref_id")),
-            kind=_string(data.get("kind")),
-            repo_name=_string_or_none(data.get("repo_name")),
-            snapshot_id=_string_or_none(data.get("snapshot_id")),
-            path=_string_or_none(data.get("path")),
-            symbol_id=_string_or_none(data.get("symbol_id")),
-            lines=_string_or_none(data.get("lines")),
-            label=_string_or_none(data.get("label")),
-            score=score,
-            source=_string_or_none(data.get("source")),
-            fresh=_string(data.get("fresh") or "unknown"),
-        )
-
 
 @dataclass(frozen=True)
 class ToolObservation:
     observation_id: str
     tool: str
     ok: bool
-    parameters: dict[str, Any]
+    parameters: dict[str, object]
     ref_ids: tuple[str, ...]
     cost: int = 0
     fresh: str = "unknown"
     warnings: tuple[str, ...] = ()
     round_number: int = 0
     summary: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "observation_id": self.observation_id,
-            "tool": self.tool,
-            "ok": self.ok,
-            "parameters": dict(self.parameters),
-            "ref_ids": list(self.ref_ids),
-            "cost": self.cost,
-            "fresh": self.fresh,
-            "warnings": list(self.warnings),
-            "round_number": self.round_number,
-            "summary": self.summary,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ToolObservation:
-        return cls(
-            observation_id=_string(data.get("observation_id")),
-            tool=_string(data.get("tool")),
-            ok=bool(data.get("ok", False)),
-            parameters=_dict_value(data.get("parameters")),
-            ref_ids=_string_tuple(data.get("ref_ids")),
-            cost=int(data.get("cost") or 0),
-            fresh=_string(data.get("fresh") or "unknown"),
-            warnings=_string_tuple(data.get("warnings")),
-            round_number=int(data.get("round_number") or 0),
-            summary=_string_or_none(data.get("summary")),
-        )
 
 
 @dataclass(frozen=True)
@@ -149,33 +47,6 @@ class Hypothesis:
     conflict_ref_ids: tuple[str, ...]
     state: str = "open"
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "hypothesis_id": self.hypothesis_id,
-            "statement": self.statement,
-            "confidence": self.confidence,
-            "support_ref_ids": list(self.support_ref_ids),
-            "conflict_ref_ids": list(self.conflict_ref_ids),
-            "state": self.state,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Hypothesis:
-        confidence_value = data.get("confidence")
-        confidence = (
-            float(confidence_value)
-            if isinstance(confidence_value, (int, float))
-            else 0.0
-        )
-        return cls(
-            hypothesis_id=_string(data.get("hypothesis_id")),
-            statement=_string(data.get("statement")),
-            confidence=confidence,
-            support_ref_ids=_string_tuple(data.get("support_ref_ids")),
-            conflict_ref_ids=_string_tuple(data.get("conflict_ref_ids")),
-            state=_string(data.get("state") or "open"),
-        )
-
 
 @dataclass(frozen=True)
 class RejectedHypothesisEntry:
@@ -186,27 +57,6 @@ class RejectedHypothesisEntry:
     snapshot_id: str | None = None
     reopen_condition: str = "-"
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "entry_id": self.entry_id,
-            "hypothesis_id": self.hypothesis_id,
-            "killed_by_ref_ids": list(self.killed_by_ref_ids),
-            "reason_code": self.reason_code,
-            "snapshot_id": self.snapshot_id,
-            "reopen_condition": self.reopen_condition,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> RejectedHypothesisEntry:
-        return cls(
-            entry_id=_string(data.get("entry_id")),
-            hypothesis_id=_string(data.get("hypothesis_id")),
-            killed_by_ref_ids=_string_tuple(data.get("killed_by_ref_ids")),
-            reason_code=_string(data.get("reason_code")),
-            snapshot_id=_string_or_none(data.get("snapshot_id")),
-            reopen_condition=_string(data.get("reopen_condition") or "-"),
-        )
-
 
 @dataclass(frozen=True)
 class AcceptedFact:
@@ -214,23 +64,6 @@ class AcceptedFact:
     statement: str
     ref_ids: tuple[str, ...]
     scope: str = "turn"
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "fact_id": self.fact_id,
-            "statement": self.statement,
-            "ref_ids": list(self.ref_ids),
-            "scope": self.scope,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AcceptedFact:
-        return cls(
-            fact_id=_string(data.get("fact_id")),
-            statement=_string(data.get("statement")),
-            ref_ids=_string_tuple(data.get("ref_ids")),
-            scope=_string(data.get("scope") or "turn"),
-        )
 
 
 @dataclass(frozen=True)
@@ -242,29 +75,6 @@ class RiskState:
     execution_risk: int
     verifier_status: str
     action_bias: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "evidence_gap": self.evidence_gap,
-            "conflict_level": self.conflict_level,
-            "freshness_risk": self.freshness_risk,
-            "requirement_ambiguity": self.requirement_ambiguity,
-            "execution_risk": self.execution_risk,
-            "verifier_status": self.verifier_status,
-            "action_bias": self.action_bias,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> RiskState:
-        return cls(
-            evidence_gap=int(data.get("evidence_gap") or 0),
-            conflict_level=int(data.get("conflict_level") or 0),
-            freshness_risk=int(data.get("freshness_risk") or 0),
-            requirement_ambiguity=int(data.get("requirement_ambiguity") or 0),
-            execution_risk=int(data.get("execution_risk") or 0),
-            verifier_status=_string(data.get("verifier_status") or "pending"),
-            action_bias=_string(data.get("action_bias") or "retrieve"),
-        )
 
 
 @dataclass(frozen=True)
@@ -278,31 +88,6 @@ class AcceptanceContract:
     must_ask_before: tuple[str, ...]
     must_abstain_when: tuple[str, ...]
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "requested_outcome": self.requested_outcome,
-            "required_evidence_kinds": list(self.required_evidence_kinds),
-            "required_verifiers": list(self.required_verifiers),
-            "allowed_tools": list(self.allowed_tools),
-            "allowed_write_scope": list(self.allowed_write_scope),
-            "done_condition": self.done_condition,
-            "must_ask_before": list(self.must_ask_before),
-            "must_abstain_when": list(self.must_abstain_when),
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AcceptanceContract:
-        return cls(
-            requested_outcome=_string(data.get("requested_outcome")),
-            required_evidence_kinds=_string_tuple(data.get("required_evidence_kinds")),
-            required_verifiers=_string_tuple(data.get("required_verifiers")),
-            allowed_tools=_string_tuple(data.get("allowed_tools")),
-            allowed_write_scope=_string_tuple(data.get("allowed_write_scope")),
-            done_condition=_string(data.get("done_condition")),
-            must_ask_before=_string_tuple(data.get("must_ask_before")),
-            must_abstain_when=_string_tuple(data.get("must_abstain_when")),
-        )
-
 
 @dataclass(frozen=True)
 class TurnIntent:
@@ -315,31 +100,6 @@ class TurnIntent:
     artifact_key: str | None = None
     repo_filter: tuple[str, ...] = ()
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "session_id": self.session_id,
-            "turn_number": self.turn_number,
-            "question": self.question,
-            "kind": self.kind,
-            "requested_outcome": self.requested_outcome,
-            "snapshot_id": self.snapshot_id,
-            "artifact_key": self.artifact_key,
-            "repo_filter": list(self.repo_filter),
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TurnIntent:
-        return cls(
-            session_id=_string(data.get("session_id")),
-            turn_number=int(data.get("turn_number") or 0),
-            question=_string(data.get("question")),
-            kind=_string(data.get("kind")),
-            requested_outcome=_string(data.get("requested_outcome")),
-            snapshot_id=_string_or_none(data.get("snapshot_id")),
-            artifact_key=_string_or_none(data.get("artifact_key")),
-            repo_filter=_string_tuple(data.get("repo_filter")),
-        )
-
 
 @dataclass(frozen=True)
 class TurnPlan:
@@ -351,31 +111,6 @@ class TurnPlan:
     allowed_tools: tuple[str, ...]
     remaining_budget: int | None = None
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "step": self.step,
-            "action": self.action,
-            "why": self.why,
-            "stop_condition": self.stop_condition,
-            "allowed_actions": list(self.allowed_actions),
-            "allowed_tools": list(self.allowed_tools),
-            "remaining_budget": self.remaining_budget,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TurnPlan:
-        budget_value = data.get("remaining_budget")
-        budget = int(budget_value) if isinstance(budget_value, int) else None
-        return cls(
-            step=int(data.get("step") or 0),
-            action=_string(data.get("action")),
-            why=_string(data.get("why")),
-            stop_condition=_string(data.get("stop_condition")),
-            allowed_actions=_string_tuple(data.get("allowed_actions")),
-            allowed_tools=_string_tuple(data.get("allowed_tools")),
-            remaining_budget=budget,
-        )
-
 
 @dataclass(frozen=True)
 class WorkingSet:
@@ -383,23 +118,6 @@ class WorkingSet:
     drop_ids: tuple[str, ...]
     protect_ids: tuple[str, ...]
     reason: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "keep_ids": list(self.keep_ids),
-            "drop_ids": list(self.drop_ids),
-            "protect_ids": list(self.protect_ids),
-            "reason": self.reason,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> WorkingSet:
-        return cls(
-            keep_ids=_string_tuple(data.get("keep_ids")),
-            drop_ids=_string_tuple(data.get("drop_ids")),
-            protect_ids=_string_tuple(data.get("protect_ids")),
-            reason=_string(data.get("reason")),
-        )
 
 
 @dataclass(frozen=True)
@@ -423,72 +141,6 @@ class WorkingMemoryArtifact:
     working_set: WorkingSet
     created_at: float
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "session_id": self.session_id,
-            "turn_number": self.turn_number,
-            "snapshot_id": self.snapshot_id,
-            "artifact_key": self.artifact_key,
-            "compiler_fingerprint": self.compiler_fingerprint,
-            "stable_fcx": self.stable_fcx,
-            "turn_fcx": self.turn_fcx,
-            "obs_fcx": self.obs_fcx,
-            "full_fcx": self.full_fcx,
-            "evidence_refs": [item.to_dict() for item in self.evidence_refs],
-            "accepted_facts": [item.to_dict() for item in self.accepted_facts],
-            "hypotheses": [item.to_dict() for item in self.hypotheses],
-            "rejected_hypotheses": [
-                item.to_dict() for item in self.rejected_hypotheses
-            ],
-            "unresolved_questions": list(self.unresolved_questions),
-            "risk_state": self.risk_state.to_dict(),
-            "acceptance_contract": self.acceptance_contract.to_dict(),
-            "working_set": self.working_set.to_dict(),
-            "created_at": self.created_at,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> WorkingMemoryArtifact:
-        created_at_value = data.get("created_at")
-        return cls(
-            session_id=_string(data.get("session_id")),
-            turn_number=int(data.get("turn_number") or 0),
-            snapshot_id=_string_or_none(data.get("snapshot_id")),
-            artifact_key=_string_or_none(data.get("artifact_key")),
-            compiler_fingerprint=_string(data.get("compiler_fingerprint")),
-            stable_fcx=_string(data.get("stable_fcx")),
-            turn_fcx=_string(data.get("turn_fcx")),
-            obs_fcx=_string(data.get("obs_fcx")),
-            full_fcx=_string(data.get("full_fcx")),
-            evidence_refs=tuple(
-                EvidenceRef.from_dict(item)
-                for item in _dict_tuple(data.get("evidence_refs"))
-            ),
-            accepted_facts=tuple(
-                AcceptedFact.from_dict(item)
-                for item in _dict_tuple(data.get("accepted_facts"))
-            ),
-            hypotheses=tuple(
-                Hypothesis.from_dict(item)
-                for item in _dict_tuple(data.get("hypotheses"))
-            ),
-            rejected_hypotheses=tuple(
-                RejectedHypothesisEntry.from_dict(item)
-                for item in _dict_tuple(data.get("rejected_hypotheses"))
-            ),
-            unresolved_questions=_string_tuple(data.get("unresolved_questions")),
-            risk_state=RiskState.from_dict(_dict_value(data.get("risk_state"))),
-            acceptance_contract=AcceptanceContract.from_dict(
-                _dict_value(data.get("acceptance_contract"))
-            ),
-            working_set=WorkingSet.from_dict(_dict_value(data.get("working_set"))),
-            created_at=(
-                float(created_at_value)
-                if isinstance(created_at_value, (int, float))
-                else 0.0
-            ),
-        )
-
 
 @dataclass(frozen=True)
 class HandoffArtifact:
@@ -508,67 +160,6 @@ class HandoffArtifact:
     keep_ids: tuple[str, ...]
     recommended_action: str
     created_at: float
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "artifact_id": self.artifact_id,
-            "session_id": self.session_id,
-            "turn_number": self.turn_number,
-            "mode": self.mode,
-            "snapshot_id": self.snapshot_id,
-            "compiler_fingerprint": self.compiler_fingerprint,
-            "full_fcx": self.full_fcx,
-            "intent": self.intent.to_dict(),
-            "acceptance_contract": self.acceptance_contract.to_dict(),
-            "accepted_facts": [item.to_dict() for item in self.accepted_facts],
-            "surviving_hypotheses": [
-                item.to_dict() for item in self.surviving_hypotheses
-            ],
-            "rejected_hypotheses": [
-                item.to_dict() for item in self.rejected_hypotheses
-            ],
-            "unresolved_questions": list(self.unresolved_questions),
-            "keep_ids": list(self.keep_ids),
-            "recommended_action": self.recommended_action,
-            "created_at": self.created_at,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> HandoffArtifact:
-        created_at_value = data.get("created_at")
-        return cls(
-            artifact_id=_string(data.get("artifact_id")),
-            session_id=_string(data.get("session_id")),
-            turn_number=int(data.get("turn_number") or 0),
-            mode=_string(data.get("mode")),
-            snapshot_id=_string_or_none(data.get("snapshot_id")),
-            compiler_fingerprint=_string(data.get("compiler_fingerprint")),
-            full_fcx=_string(data.get("full_fcx")),
-            intent=TurnIntent.from_dict(_dict_value(data.get("intent"))),
-            acceptance_contract=AcceptanceContract.from_dict(
-                _dict_value(data.get("acceptance_contract"))
-            ),
-            accepted_facts=tuple(
-                AcceptedFact.from_dict(item)
-                for item in _dict_tuple(data.get("accepted_facts"))
-            ),
-            surviving_hypotheses=tuple(
-                Hypothesis.from_dict(item)
-                for item in _dict_tuple(data.get("surviving_hypotheses"))
-            ),
-            rejected_hypotheses=tuple(
-                RejectedHypothesisEntry.from_dict(item)
-                for item in _dict_tuple(data.get("rejected_hypotheses"))
-            ),
-            unresolved_questions=_string_tuple(data.get("unresolved_questions")),
-            keep_ids=_string_tuple(data.get("keep_ids")),
-            recommended_action=_string(data.get("recommended_action")),
-            created_at=(
-                float(created_at_value)
-                if isinstance(created_at_value, (int, float))
-                else 0.0
-            ),
-        )
 
 
 @dataclass(frozen=True)
@@ -591,73 +182,6 @@ class TurnJournal:
     answer_summary: str | None
     created_at: float
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "session_id": self.session_id,
-            "turn_number": self.turn_number,
-            "snapshot_id": self.snapshot_id,
-            "artifact_key": self.artifact_key,
-            "compiler_fingerprint": self.compiler_fingerprint,
-            "intent": self.intent.to_dict(),
-            "plan": self.plan.to_dict(),
-            "observations": [item.to_dict() for item in self.observations],
-            "evidence_refs": [item.to_dict() for item in self.evidence_refs],
-            "risk_state": self.risk_state.to_dict(),
-            "acceptance_contract": self.acceptance_contract.to_dict(),
-            "hypotheses": [item.to_dict() for item in self.hypotheses],
-            "rejected_hypotheses": [
-                item.to_dict() for item in self.rejected_hypotheses
-            ],
-            "accepted_facts": [item.to_dict() for item in self.accepted_facts],
-            "working_set": self.working_set.to_dict(),
-            "answer_summary": self.answer_summary,
-            "created_at": self.created_at,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TurnJournal:
-        created_at_value = data.get("created_at")
-        return cls(
-            session_id=_string(data.get("session_id")),
-            turn_number=int(data.get("turn_number") or 0),
-            snapshot_id=_string_or_none(data.get("snapshot_id")),
-            artifact_key=_string_or_none(data.get("artifact_key")),
-            compiler_fingerprint=_string(data.get("compiler_fingerprint")),
-            intent=TurnIntent.from_dict(_dict_value(data.get("intent"))),
-            plan=TurnPlan.from_dict(_dict_value(data.get("plan"))),
-            observations=tuple(
-                ToolObservation.from_dict(item)
-                for item in _dict_tuple(data.get("observations"))
-            ),
-            evidence_refs=tuple(
-                EvidenceRef.from_dict(item)
-                for item in _dict_tuple(data.get("evidence_refs"))
-            ),
-            risk_state=RiskState.from_dict(_dict_value(data.get("risk_state"))),
-            acceptance_contract=AcceptanceContract.from_dict(
-                _dict_value(data.get("acceptance_contract"))
-            ),
-            hypotheses=tuple(
-                Hypothesis.from_dict(item)
-                for item in _dict_tuple(data.get("hypotheses"))
-            ),
-            rejected_hypotheses=tuple(
-                RejectedHypothesisEntry.from_dict(item)
-                for item in _dict_tuple(data.get("rejected_hypotheses"))
-            ),
-            accepted_facts=tuple(
-                AcceptedFact.from_dict(item)
-                for item in _dict_tuple(data.get("accepted_facts"))
-            ),
-            working_set=WorkingSet.from_dict(_dict_value(data.get("working_set"))),
-            answer_summary=_string_or_none(data.get("answer_summary")),
-            created_at=(
-                float(created_at_value)
-                if isinstance(created_at_value, (int, float))
-                else 0.0
-            ),
-        )
-
 
 @dataclass(frozen=True)
 class DistillationRecord:
@@ -678,70 +202,6 @@ class DistillationRecord:
     distillation_prompt_fingerprint: str = "distill:v1"
     budget_fingerprint: str = "budget:default"
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "distillation_id": self.distillation_id,
-            "session_id": self.session_id,
-            "turn_number": self.turn_number,
-            "snapshot_id": self.snapshot_id,
-            "compiler_fingerprint": self.compiler_fingerprint,
-            "summary": self.summary,
-            "source_refs": [item.to_dict() for item in self.source_refs],
-            "accepted_facts": [item.to_dict() for item in self.accepted_facts],
-            "reused_from_distillation_id": self.reused_from_distillation_id,
-            "invalidation_key": self.invalidation_key,
-            "created_at": self.created_at,
-            "projection_fingerprint": self.projection_fingerprint,
-            "embedding_fingerprint": self.embedding_fingerprint,
-            "retrieval_policy_fingerprint": self.retrieval_policy_fingerprint,
-            "distillation_prompt_fingerprint": (self.distillation_prompt_fingerprint),
-            "budget_fingerprint": self.budget_fingerprint,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> DistillationRecord:
-        created_at_value = data.get("created_at")
-        return cls(
-            distillation_id=_string(data.get("distillation_id")),
-            session_id=_string(data.get("session_id")),
-            turn_number=int(data.get("turn_number") or 0),
-            snapshot_id=_string_or_none(data.get("snapshot_id")),
-            compiler_fingerprint=_string(data.get("compiler_fingerprint")),
-            summary=_string(data.get("summary")),
-            source_refs=tuple(
-                EvidenceRef.from_dict(item)
-                for item in _dict_tuple(data.get("source_refs"))
-            ),
-            accepted_facts=tuple(
-                AcceptedFact.from_dict(item)
-                for item in _dict_tuple(data.get("accepted_facts"))
-            ),
-            reused_from_distillation_id=_string_or_none(
-                data.get("reused_from_distillation_id")
-            ),
-            invalidation_key=_string(data.get("invalidation_key")),
-            created_at=(
-                float(created_at_value)
-                if isinstance(created_at_value, (int, float))
-                else 0.0
-            ),
-            projection_fingerprint=_string(
-                data.get("projection_fingerprint") or "projection:none"
-            ),
-            embedding_fingerprint=_string(
-                data.get("embedding_fingerprint") or "embedding:unknown"
-            ),
-            retrieval_policy_fingerprint=_string(
-                data.get("retrieval_policy_fingerprint") or "retrieval:default"
-            ),
-            distillation_prompt_fingerprint=_string(
-                data.get("distillation_prompt_fingerprint") or "distill:v1"
-            ),
-            budget_fingerprint=_string(
-                data.get("budget_fingerprint") or "budget:default"
-            ),
-        )
-
 
 @dataclass(frozen=True)
 class ActivationRecord:
@@ -756,42 +216,6 @@ class ActivationRecord:
     active_hypothesis_ids: tuple[str, ...]
     reason: str
     created_at: float
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "activation_id": self.activation_id,
-            "bundle_id": self.bundle_id,
-            "session_id": self.session_id,
-            "turn_number": self.turn_number,
-            "snapshot_id": self.snapshot_id,
-            "compiler_fingerprint": self.compiler_fingerprint,
-            "active_ref_ids": list(self.active_ref_ids),
-            "active_fact_ids": list(self.active_fact_ids),
-            "active_hypothesis_ids": list(self.active_hypothesis_ids),
-            "reason": self.reason,
-            "created_at": self.created_at,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ActivationRecord:
-        created_at_value = data.get("created_at")
-        return cls(
-            activation_id=_string(data.get("activation_id")),
-            bundle_id=_string(data.get("bundle_id")),
-            session_id=_string(data.get("session_id")),
-            turn_number=int(data.get("turn_number") or 0),
-            snapshot_id=_string_or_none(data.get("snapshot_id")),
-            compiler_fingerprint=_string(data.get("compiler_fingerprint")),
-            active_ref_ids=_string_tuple(data.get("active_ref_ids")),
-            active_fact_ids=_string_tuple(data.get("active_fact_ids")),
-            active_hypothesis_ids=_string_tuple(data.get("active_hypothesis_ids")),
-            reason=_string(data.get("reason")),
-            created_at=(
-                float(created_at_value)
-                if isinstance(created_at_value, (int, float))
-                else 0.0
-            ),
-        )
 
 
 @dataclass(frozen=True)
@@ -812,66 +236,6 @@ class ContextBundle:
     retrieval_policy_fingerprint: str = "retrieval:default"
     distillation_prompt_fingerprint: str = "distill:v1"
     budget_fingerprint: str = "budget:default"
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "bundle_id": self.bundle_id,
-            "session_id": self.session_id,
-            "turn_number": self.turn_number,
-            "snapshot_id": self.snapshot_id,
-            "artifact_key": self.artifact_key,
-            "compiler_fingerprint": self.compiler_fingerprint,
-            "working_memory": self.working_memory.to_dict(),
-            "turn_journal": self.turn_journal.to_dict(),
-            "distillation": self.distillation.to_dict(),
-            "activation": self.activation.to_dict(),
-            "created_at": self.created_at,
-            "projection_fingerprint": self.projection_fingerprint,
-            "embedding_fingerprint": self.embedding_fingerprint,
-            "retrieval_policy_fingerprint": self.retrieval_policy_fingerprint,
-            "distillation_prompt_fingerprint": (self.distillation_prompt_fingerprint),
-            "budget_fingerprint": self.budget_fingerprint,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ContextBundle:
-        created_at_value = data.get("created_at")
-        return cls(
-            bundle_id=_string(data.get("bundle_id")),
-            session_id=_string(data.get("session_id")),
-            turn_number=int(data.get("turn_number") or 0),
-            snapshot_id=_string_or_none(data.get("snapshot_id")),
-            artifact_key=_string_or_none(data.get("artifact_key")),
-            compiler_fingerprint=_string(data.get("compiler_fingerprint")),
-            working_memory=WorkingMemoryArtifact.from_dict(
-                _dict_value(data.get("working_memory"))
-            ),
-            turn_journal=TurnJournal.from_dict(_dict_value(data.get("turn_journal"))),
-            distillation=DistillationRecord.from_dict(
-                _dict_value(data.get("distillation"))
-            ),
-            activation=ActivationRecord.from_dict(_dict_value(data.get("activation"))),
-            created_at=(
-                float(created_at_value)
-                if isinstance(created_at_value, (int, float))
-                else 0.0
-            ),
-            projection_fingerprint=_string(
-                data.get("projection_fingerprint") or "projection:none"
-            ),
-            embedding_fingerprint=_string(
-                data.get("embedding_fingerprint") or "embedding:unknown"
-            ),
-            retrieval_policy_fingerprint=_string(
-                data.get("retrieval_policy_fingerprint") or "retrieval:default"
-            ),
-            distillation_prompt_fingerprint=_string(
-                data.get("distillation_prompt_fingerprint") or "distill:v1"
-            ),
-            budget_fingerprint=_string(
-                data.get("budget_fingerprint") or "budget:default"
-            ),
-        )
 
 
 def build_acceptance_contract(
@@ -1006,7 +370,10 @@ def promote_observations(
         accepted.append(
             AcceptedFact(
                 fact_id="f1",
-                statement="The current answer should be grounded in retrieved repository evidence.",
+                statement=(
+                    "The current answer should be grounded in retrieved repository "
+                    "evidence."
+                ),
                 ref_ids=supported_refs,
                 scope="turn",
             )
@@ -1032,9 +399,11 @@ def build_handoff_artifact(
         intent=TurnIntent(
             session_id=working_memory.session_id,
             turn_number=working_memory.turn_number,
-            question=working_memory.unresolved_questions[0]
-            if working_memory.unresolved_questions
-            else "",
+            question=(
+                working_memory.unresolved_questions[0]
+                if working_memory.unresolved_questions
+                else ""
+            ),
             kind="research",
             requested_outcome=working_memory.acceptance_contract.requested_outcome,
             snapshot_id=working_memory.snapshot_id,

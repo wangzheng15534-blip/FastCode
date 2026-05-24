@@ -81,6 +81,19 @@ class _FakeFastCode:
         self.snapshot_store = snapshot_store
         self.manifest_store = ManifestStore(snapshot_store.db_runtime)
 
+    @staticmethod
+    def _manifest_payload(record: Any) -> dict[str, Any]:
+        return {
+            "manifest_id": record.manifest_id,
+            "repo_name": record.repo_name,
+            "ref_name": record.ref_name,
+            "snapshot_id": record.snapshot_id,
+            "index_run_id": record.index_run_id,
+            "published_at": record.published_at,
+            "previous_manifest_id": record.previous_manifest_id,
+            "status": record.status,
+        }
+
     def list_repo_refs(self, repo_name: str) -> list[dict[str, Any]]:
         return [
             {
@@ -104,10 +117,12 @@ class _FakeFastCode:
     def get_branch_manifest(
         self, repo_name: str, ref_name: str
     ) -> dict[str, Any] | None:
-        return self.manifest_store.get_branch_manifest(repo_name, ref_name)
+        record = self.manifest_store.get_branch_manifest_record(repo_name, ref_name)
+        return self._manifest_payload(record) if record is not None else None
 
     def get_snapshot_manifest(self, snapshot_id: str) -> dict[str, Any] | None:
-        return self.manifest_store.get_snapshot_manifest(snapshot_id)
+        record = self.manifest_store.get_snapshot_manifest_record(snapshot_id)
+        return self._manifest_payload(record) if record is not None else None
 
 
 class _NoDictSource:
@@ -306,7 +321,7 @@ class TestManifests:
         )
         store.save_snapshot(snap)
 
-        fake_fc.manifest_store.publish(
+        fake_fc.manifest_store.publish_record(
             repo_name="manifest-repo",
             ref_name="main",
             snapshot_id="snap:manifest-repo:m1",
@@ -330,7 +345,7 @@ class TestManifests:
 
         fake_fc = api.fastcode_instance
         assert fake_fc is not None
-        fake_fc.manifest_store.publish(
+        fake_fc.manifest_store.publish_record(
             repo_name="manifest-repo2",
             ref_name="develop",
             snapshot_id="snap:manifest-repo2:s1",

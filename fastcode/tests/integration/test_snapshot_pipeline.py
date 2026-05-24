@@ -83,13 +83,13 @@ def test_manifest_head_points_to_latest_publish():
         snapshot_store = _make_snapshot_store(tmp)
         manifest_store = ManifestStore(snapshot_store.db_runtime)
 
-        m1 = manifest_store.publish("repo", "main", "snap:repo:1", "run_1")
-        m2 = manifest_store.publish("repo", "main", "snap:repo:2", "run_2")
-        head = manifest_store.get_branch_manifest("repo", "main")
+        m1 = manifest_store.publish_record("repo", "main", "snap:repo:1", "run_1")
+        m2 = manifest_store.publish_record("repo", "main", "snap:repo:2", "run_2")
+        head = manifest_store.get_branch_manifest_record("repo", "main")
 
         assert head is not None
-        assert head["manifest_id"] == m2["manifest_id"]
-        assert head["previous_manifest_id"] == m1["manifest_id"]
+        assert head.manifest_id == m2.manifest_id
+        assert head.previous_manifest_id == m1.manifest_id
 
 
 def test_index_run_idempotency_key_reuses_run():
@@ -1210,7 +1210,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
                 },
             ],
         )
-        pipeline.manifest_store.publish(
+        pipeline.manifest_store.publish_record(
             repo_name="repo",
             ref_name="main",
             snapshot_id="snap:repo:prev",
@@ -1926,7 +1926,7 @@ def test_incremental_implementation_local_change_reuses_graph_shards() -> None:
         previous_record = pipeline.snapshot_store.save_snapshot(
             previous_snapshot, metadata={}
         )
-        pipeline.manifest_store.publish(
+        pipeline.manifest_store.publish_record(
             repo_name="repo",
             ref_name="main",
             snapshot_id="snap:repo:prev",
@@ -2411,7 +2411,7 @@ def test_incremental_no_change_reuses_artifacts_without_embedding_provider_calls
                 for rel_path in sorted(paths)
             ],
         )
-        pipeline.manifest_store.publish(
+        pipeline.manifest_store.publish_record(
             repo_name="repo",
             ref_name="main",
             snapshot_id="snap:repo:prev",
@@ -2790,7 +2790,7 @@ def test_incremental_prefilter_reuses_content_addressed_parsed_elements() -> Non
         previous_record = pipeline.snapshot_store.save_snapshot(
             previous_snapshot, metadata={}
         )
-        pipeline.manifest_store.publish(
+        pipeline.manifest_store.publish_record(
             repo_name="repo",
             ref_name="main",
             snapshot_id="snap:repo:prev",
@@ -3025,7 +3025,7 @@ def test_pipeline_incremental_prefilter_falls_back_on_compatibility_mismatch() -
         previous_record = pipeline.snapshot_store.save_snapshot(
             previous_snapshot, metadata={}
         )
-        pipeline.manifest_store.publish(
+        pipeline.manifest_store.publish_record(
             repo_name="repo",
             ref_name="main",
             snapshot_id="snap:repo:prev",
@@ -3242,7 +3242,7 @@ def test_plan_incremental_elements_disables_when_manifest_lacks_fingerprint() ->
         previous_record = pipeline.snapshot_store.save_snapshot(
             previous_snapshot, metadata={}
         )
-        pipeline.manifest_store.publish(
+        pipeline.manifest_store.publish_record(
             repo_name="repo",
             ref_name="main",
             snapshot_id="snap:repo:prev",
@@ -3318,7 +3318,7 @@ def test_plan_incremental_elements_reuses_changed_unit_embedding_when_text_hash_
         previous_record = pipeline.snapshot_store.save_snapshot(
             previous_snapshot, metadata={}
         )
-        pipeline.manifest_store.publish(
+        pipeline.manifest_store.publish_record(
             repo_name="repo",
             ref_name="main",
             snapshot_id="snap:repo:prev",
@@ -3491,7 +3491,7 @@ def test_reuse_changed_unit_embeddings_propagates_fingerprint_and_artifact_ref()
         previous_record = pipeline.snapshot_store.save_snapshot(
             previous_snapshot, metadata={}
         )
-        pipeline.manifest_store.publish(
+        pipeline.manifest_store.publish_record(
             repo_name="repo",
             ref_name="main",
             snapshot_id="snap:repo:prev",
@@ -3649,7 +3649,7 @@ def test_plan_incremental_elements_refuses_changed_unit_embedding_with_stale_fin
         previous_record = pipeline.snapshot_store.save_snapshot(
             previous_snapshot, metadata={}
         )
-        pipeline.manifest_store.publish(
+        pipeline.manifest_store.publish_record(
             repo_name="repo",
             ref_name="main",
             snapshot_id="snap:repo:prev",
@@ -3797,7 +3797,7 @@ def test_plan_incremental_elements_marks_package_scope_when_api_surface_changes(
         previous_record = pipeline.snapshot_store.save_snapshot(
             previous_snapshot, metadata={}
         )
-        pipeline.manifest_store.publish(
+        pipeline.manifest_store.publish_record(
             repo_name="repo",
             ref_name="main",
             snapshot_id="snap:repo:prev",

@@ -437,9 +437,9 @@ def test_e2e_indexing_sqlite_real_embeddings(
     assert total_edges >= 1
 
     # Manifest published.
-    head = fc.manifest_store.get_branch_manifest("test_repo", "main")
+    head = fc.manifest_store.get_branch_manifest_record("test_repo", "main")
     assert head is not None
-    assert head["snapshot_id"] == snapshot_id
+    assert head.snapshot_id == snapshot_id
 
     # Index run completed.
     run = fc.index_run_store.get_run_record(run_id)
@@ -510,9 +510,9 @@ def test_e2e_indexing_pg_real_embeddings(
     _verify_pg_search_documents(pg_dsn, snapshot_id)
 
     # Manifest published.
-    head = fc.manifest_store.get_branch_manifest("test_repo", "main")
+    head = fc.manifest_store.get_branch_manifest_record("test_repo", "main")
     assert head is not None
-    assert head["snapshot_id"] == snapshot_id
+    assert head.snapshot_id == snapshot_id
 
     # Clean up PG test data.
     _cleanup_pg_tables(pg_dsn)

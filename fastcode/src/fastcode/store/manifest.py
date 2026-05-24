@@ -102,23 +102,6 @@ class ManifestStore:
             )
             conn.commit()
 
-    def publish(
-        self,
-        repo_name: str,
-        ref_name: str,
-        snapshot_id: str,
-        index_run_id: str,
-        status: str = "published",
-    ) -> dict[str, Any]:
-        record = self.publish_record(
-            repo_name=repo_name,
-            ref_name=ref_name,
-            snapshot_id=snapshot_id,
-            index_run_id=index_run_id,
-            status=status,
-        )
-        return self._manifest_payload(record)
-
     def publish_record(
         self,
         repo_name: str,
@@ -186,12 +169,6 @@ class ManifestStore:
             status=status,
         )
 
-    def get_branch_manifest(
-        self, repo_name: str, ref_name: str
-    ) -> dict[str, Any] | None:
-        record = self.get_branch_manifest_record(repo_name, ref_name)
-        return self._manifest_payload(record) if record is not None else None
-
     def get_branch_manifest_record(
         self, repo_name: str, ref_name: str
     ) -> ManifestRecord | None:
@@ -206,10 +183,6 @@ class ManifestStore:
                 (repo_name, ref_name),
             ).fetchone()
         return self._row_to_manifest_record(row)
-
-    def get_snapshot_manifest(self, snapshot_id: str) -> dict[str, Any] | None:
-        record = self.get_snapshot_manifest_record(snapshot_id)
-        return self._manifest_payload(record) if record is not None else None
 
     def get_snapshot_manifest_record(self, snapshot_id: str) -> ManifestRecord | None:
         with self.db_runtime.connect() as conn:
@@ -262,10 +235,3 @@ class ManifestStore:
                 return row[index]
             except (IndexError, KeyError, TypeError):
                 return None
-
-    @classmethod
-    def _manifest_payload(cls, record: ManifestRecord) -> dict[str, Any]:
-        return {
-            field_name: getattr(record, field_name)
-            for field_name in cls._MANIFEST_FIELDS
-        }

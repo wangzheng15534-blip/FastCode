@@ -3356,11 +3356,13 @@ class IndexPipeline:
         current_files: list[dict[str, Any]] | None = None,
     ) -> tuple[list[CodeElement] | None, dict[str, Any] | None]:
         ref_name = snapshot_ref.get("branch") or ref or "HEAD"
-        previous_manifest = self.manifest_store.get_branch_manifest(repo_name, ref_name)
+        previous_manifest = self.manifest_store.get_branch_manifest_record(
+            repo_name, ref_name
+        )
         if not previous_manifest:
             return None, None
 
-        previous_snapshot_id = previous_manifest.get("snapshot_id")
+        previous_snapshot_id = previous_manifest.snapshot_id
         if not previous_snapshot_id or previous_snapshot_id == snapshot_id:
             return None, None
 
@@ -5071,11 +5073,11 @@ class IndexPipeline:
             # diff blob_oids and merge only changed file content.
             incremental_change_set = None
             ref_name_for_inc = snapshot_ref.get("branch") or ref or "HEAD"
-            prev_manifest = self.manifest_store.get_branch_manifest(
+            prev_manifest = self.manifest_store.get_branch_manifest_record(
                 repo_name, ref_name_for_inc
             )
             if prev_manifest:
-                prev_snap_id = prev_manifest.get("snapshot_id")
+                prev_snap_id = prev_manifest.snapshot_id
                 if prev_snap_id and prev_snap_id != snapshot_id:
                     prev_snapshot = self.snapshot_store.load_snapshot(prev_snap_id)
                     if prev_snapshot:
@@ -5807,7 +5809,7 @@ class IndexPipeline:
                     ref_name=ref_name,
                     current_snapshot_id=snapshot_id,
                 )
-                manifest = self.manifest_store.publish(
+                manifest = self.manifest_store.publish_record(
                     repo_name=repo_name,
                     ref_name=ref_name,
                     snapshot_id=snapshot_id,
@@ -5829,9 +5831,7 @@ class IndexPipeline:
                         self.index_run_store.enqueue_publish_retry(
                             run_id=run_id,
                             snapshot_id=snapshot_id,
-                            manifest_id=manifest.get("manifest_id")
-                            if manifest
-                            else None,
+                            manifest_id=manifest.manifest_id,
                             error_message=str(e),
                         )
                         status = "publish_pending"

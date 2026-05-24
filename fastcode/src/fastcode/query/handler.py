@@ -39,16 +39,25 @@ from ..retrieval.context_compiler import (
 )
 from ..semantic.symbol_index import SnapshotSymbolIndex
 from ..store.cache import CacheManager
-from ..store.manifest import ManifestStore
-from ..store.records import (
+from ..store.cache_contracts import (
     ContextActivationRecord,
     ContextBundleRecord,
     ContextDistillationRecord,
     TurnJournalRecord,
     WorkingMemoryRecord,
 )
+from ..store.manifest import ManifestStore
 from ..store.snapshot import SnapshotStore
 from .answer import AnswerGenerator
+from .boundary import processed_query_payload
+from .context_payloads import (
+    activation_payload,
+    context_bundle_payload,
+    distillation_from_payload,
+    distillation_payload,
+    turn_journal_payload,
+    working_memory_payload,
+)
 from .processor import QueryProcessor
 
 if TYPE_CHECKING:
@@ -450,7 +459,7 @@ class QueryPipeline:
                 result = self.answer_generator.generate(
                     question,
                     retrieved,
-                    query_info=processed_query.to_dict(),
+                    query_info=processed_query_payload(processed_query),
                     dialogue_history=self._get_full_dialogue_history(
                         session_id, enable_multi_turn or False
                     ),
@@ -643,7 +652,7 @@ class QueryPipeline:
             for chunk, metadata in self.answer_generator.generate_stream(
                 question,
                 retrieved,
-                query_info=processed_query.to_dict(),
+                query_info=processed_query_payload(processed_query),
                 dialogue_history=self._get_full_dialogue_history(
                     session_id, enable_multi_turn or False
                 ),
@@ -745,7 +754,7 @@ class QueryPipeline:
             return None
         if not isinstance(payload, dict):
             return None
-        return DistillationRecord.from_dict(cast(dict[str, Any], payload))
+        return distillation_from_payload(cast(dict[str, Any], payload))
 
     @staticmethod
     def _resolve_snapshot_scope(
@@ -1117,7 +1126,9 @@ class QueryPipeline:
             snapshot_id=working_memory.snapshot_id,
             artifact_key=working_memory.artifact_key,
             compiler_fingerprint=working_memory.compiler_fingerprint,
-            payload_json=self._encode_payload_json(working_memory.to_dict()),
+            payload_json=self._encode_payload_json(
+                working_memory_payload(working_memory)
+            ),
             stable_fcx=working_memory.stable_fcx,
             turn_fcx=working_memory.turn_fcx,
             obs_fcx=working_memory.obs_fcx,
@@ -1130,7 +1141,7 @@ class QueryPipeline:
             snapshot_id=journal.snapshot_id,
             artifact_key=journal.artifact_key,
             compiler_fingerprint=COMPILER_FINGERPRINT,
-            payload_json=self._encode_payload_json(journal.to_dict()),
+            payload_json=self._encode_payload_json(turn_journal_payload(journal)),
             created_at=journal.created_at,
         )
         invalidation_key = build_context_invalidation_key(
@@ -1161,7 +1172,9 @@ class QueryPipeline:
             snapshot_id=context_bundle.snapshot_id,
             artifact_key=context_bundle.artifact_key,
             compiler_fingerprint=context_bundle.compiler_fingerprint,
-            payload_json=self._encode_payload_json(context_bundle.to_dict()),
+            payload_json=self._encode_payload_json(
+                context_bundle_payload(context_bundle)
+            ),
             invalidation_key=context_bundle.distillation.invalidation_key,
             created_at=context_bundle.created_at,
             projection_fingerprint=context_bundle.projection_fingerprint,
@@ -1180,7 +1193,7 @@ class QueryPipeline:
             compiler_fingerprint=context_bundle.distillation.compiler_fingerprint,
             summary=context_bundle.distillation.summary,
             payload_json=self._encode_payload_json(
-                context_bundle.distillation.to_dict()
+                distillation_payload(context_bundle.distillation)
             ),
             invalidation_key=context_bundle.distillation.invalidation_key,
             source_ref_ids=tuple(
@@ -1211,7 +1224,9 @@ class QueryPipeline:
             active_fact_ids=context_bundle.activation.active_fact_ids,
             active_hypothesis_ids=context_bundle.activation.active_hypothesis_ids,
             reason=context_bundle.activation.reason,
-            payload_json=self._encode_payload_json(context_bundle.activation.to_dict()),
+            payload_json=self._encode_payload_json(
+                activation_payload(context_bundle.activation)
+            ),
             created_at=context_bundle.activation.created_at,
         )
         self.cache_manager.save_working_memory_record(working_memory_record)

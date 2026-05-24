@@ -4,38 +4,49 @@ Query Processor - Process and enhance user queries with LLM-based understanding
 
 import logging
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from anthropic import Anthropic
 from openai import OpenAI
 
+from .boundary import QueryEnhancementDTO, query_enhancement_from_dto
+from .contracts import QueryEnhancement
 from .llm import openai_chat_completion
 
 
-@dataclass
+@dataclass(frozen=True)
 class ProcessedQuery:
     """Processed query with extracted information"""
 
     original: str
     expanded: str
-    keywords: list[str]
+    keywords: Sequence[str]
     intent: str  # 'how', 'what', 'where', 'debug', 'explain', 'find', 'implement'
-    subqueries: list[str]
-    filters: dict[str, Any]
+    subqueries: Sequence[str]
+    filters: Mapping[str, Any]
     rewritten_query: str | None = None  # LLM-rewritten query for semantic search
     # repo_matching_terms: Optional[List[str]] = None  # Terms specifically for matching repository overviews/summaries
     pseudocode_hints: str | None = None  # Pseudocode for implementation queries
     search_strategy: str | None = None  # Recommended search strategy
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "keywords", tuple(str(k) for k in self.keywords))
+        object.__setattr__(
+            self, "subqueries", tuple(str(s) for s in self.subqueries)
+        )
+        object.__setattr__(self, "filters", MappingProxyType(dict(self.filters)))
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "original": self.original,
             "expanded": self.expanded,
-            "keywords": self.keywords,
+            "keywords": list(self.keywords),
             "intent": self.intent,
-            "subqueries": self.subqueries,
-            "filters": self.filters,
+            "subqueries": list(self.subqueries),
+            "filters": dict(self.filters),
             "rewritten_query": self.rewritten_query,
             # "repo_matching_terms": self.repo_matching_terms,
             "pseudocode_hints": self.pseudocode_hints,
@@ -232,33 +243,33 @@ class QueryProcessor:
 
         if should_use_llm and self._should_use_llm_enhancement(query, intent):
             try:
-                llm_enhancements = self._enhance_with_llm(
+                llm_enhancement = self._enhance_with_llm(
                     query, intent, keywords, filters
                 )
-                rewritten_query = llm_enhancements.get("rewritten_query")
+                rewritten_query = llm_enhancement.rewritten_query
                 # repo_matching_terms = llm_enhancements.get("repo_matching_terms") if llm_enhancements.get("repo_matching_terms") else []
-                pseudocode_hints = llm_enhancements.get("pseudocode_hints")
-                search_strategy = llm_enhancements.get("search_strategy")
+                pseudocode_hints = llm_enhancement.pseudocode_hints
+                search_strategy = llm_enhancement.search_strategy
 
                 self.logger.info(f"rewritten_query: {rewritten_query}")
                 # self.logger.info(f"Repo matching terms: {repo_matching_terms}")
                 self.logger.info(f"pseudocode_hints: {pseudocode_hints}")
                 self.logger.info(f"search_strategy: {search_strategy}")
                 self.logger.info(
-                    f"refined_intent: {llm_enhancements.get('refined_intent')}"
+                    f"refined_intent: {llm_enhancement.refined_intent}"
                 )
                 self.logger.info(
-                    f"selected_keywords: {llm_enhancements.get('selected_keywords')}"
+                    f"selected_keywords: {llm_enhancement.selected_keywords}"
                 )
                 self.logger.info(f"query: {query}")
                 self.logger.info(f"keywords: {keywords}")
 
                 # Refine intent if LLM provides better classification
-                if llm_enhancements.get("refined_intent"):
-                    intent = llm_enhancements["refined_intent"]
+                if llm_enhancement.refined_intent:
+                    intent = llm_enhancement.refined_intent
 
                 # Enhance keywords with LLM-suggested terms
-                selected_keywords = llm_enhancements["selected_keywords"]
+                selected_keywords = list(llm_enhancement.selected_keywords)
                 if selected_keywords:
                     if len(selected_keywords) > 2:
                         keywords = selected_keywords
@@ -632,7 +643,7 @@ class QueryProcessor:
 
     def _enhance_with_llm(
         self, query: str, intent: str, keywords: list[str], filters: dict[str, Any]
-    ) -> dict[str, Any]:
+    ) -> QueryEnhancement:
         """
         Use LLM to enhance query understanding and expansion
 
@@ -653,16 +664,14 @@ class QueryProcessor:
             elif self.provider == "anthropic":
                 response = self._call_anthropic(prompt)
             else:
-                return {}
-
-            print(f"LLM response of _enhance_with_llm: {response}")
+                return QueryEnhancement()
 
             # Parse LLM response
             return self._parse_llm_response(response, intent)
 
         except Exception as e:
             self.logger.error(f"LLM enhancement error: {e}")
-            return {}
+            return QueryEnhancement()
 
     def _build_enhancement_prompt(
         self, query: str, intent: str, keywords: list[str], filters: dict[str, Any]
@@ -733,7 +742,7 @@ Be concise and focus on improving code retrieval accuracy."""
 
     def _parse_llm_response(
         self, response: str, original_intent: str
-    ) -> dict[str, Any]:
+    ) -> QueryEnhancement:
         """
         Parse LLM response to extract enhancements
 
@@ -742,7 +751,7 @@ Be concise and focus on improving code retrieval accuracy."""
             original_intent: Original detected intent (fallback)
 
         Returns:
-            Dictionary with parsed enhancements
+            Frozen record with parsed enhancements
         """
         enhancements: dict[str, Any] = {}
 
@@ -877,7 +886,8 @@ Be concise and focus on improving code retrieval accuracy."""
         except Exception as e:
             self.logger.warning(f"Error parsing LLM response: {e}")
 
-        return enhancements
+        dto = QueryEnhancementDTO.model_validate(enhancements)
+        return query_enhancement_from_dto(dto)
 
     def _resolve_references_and_rewrite(
         self, query: str, dialogue_history: list[dict[str, Any]]

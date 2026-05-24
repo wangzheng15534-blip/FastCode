@@ -13,12 +13,58 @@ from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs
 from fastcode.ir.types import IRSnapshot
 from fastcode.main.fastcode import FastCode
+from fastcode.query.context_payloads import distillation_payload
 from fastcode.query.handler import QueryPipeline
 from fastcode.query.processor import ProcessedQuery
 from fastcode.query.retriever import HybridRetriever
-from fastcode.retrieval.agent_context import DistillationRecord, EvidenceRef
+from fastcode.retrieval.agent_context import (
+    AcceptanceContract,
+    AcceptedFact,
+    ActivationRecord,
+    ContextBundle,
+    DistillationRecord,
+    EvidenceRef,
+    Hypothesis,
+    RejectedHypothesisEntry,
+    RiskState,
+    ToolObservation,
+    TurnIntent,
+    TurnJournal,
+    TurnPlan,
+    WorkingMemoryArtifact,
+    WorkingSet,
+)
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
-from fastcode.store.records import ContextDistillationRecord
+from fastcode.store.cache_contracts import ContextDistillationRecord
+
+
+AGENT_CONTEXT_SERIALIZER_CLASSES = (
+    EvidenceRef,
+    ToolObservation,
+    Hypothesis,
+    RejectedHypothesisEntry,
+    AcceptedFact,
+    RiskState,
+    AcceptanceContract,
+    TurnIntent,
+    TurnPlan,
+    WorkingSet,
+    WorkingMemoryArtifact,
+    TurnJournal,
+    DistillationRecord,
+    ActivationRecord,
+    ContextBundle,
+)
+
+
+def _forbid_agent_context_to_dict(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom_to_dict(self: object) -> dict[str, Any]:
+        raise AssertionError(
+            f"query context persistence must not call {type(self).__name__}.to_dict()"
+        )
+
+    for cls in AGENT_CONTEXT_SERIALIZER_CLASSES:
+        monkeypatch.setattr(cls, "to_dict", _boom_to_dict)
 
 
 def _processed_query(
@@ -174,6 +220,76 @@ def test_streaming_agency_mode_uses_detected_intent() -> None:
     assert chunks[-1][1]["status"] == "complete"
 
 
+def test_query_uses_explicit_processed_query_payload() -> None:
+    processed_query = _processed_query(
+        question="Where is auth handled?",
+        intent="where",
+        filters={"snapshot_id": "snap:1"},
+    )
+    pipeline = _query_pipeline()
+    pipeline.query_processor.process.return_value = processed_query
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        def _boom_to_dict(self: ProcessedQuery) -> dict[str, Any]:
+            raise AssertionError("query pipeline must not call ProcessedQuery.to_dict()")
+
+        monkeypatch.setattr(ProcessedQuery, "to_dict", _boom_to_dict)
+        result = pipeline.query(
+            "Where is auth handled?",
+            filters={"snapshot_id": "snap:1"},
+        )
+
+    assert result["answer"] == "ok"
+    query_info = pipeline.answer_generator.generate.call_args.kwargs["query_info"]
+    assert query_info == {
+        "original": "Where is auth handled?",
+        "expanded": "Where is auth handled?",
+        "keywords": [],
+        "intent": "where",
+        "subqueries": [],
+        "filters": {"snapshot_id": "snap:1"},
+        "rewritten_query": None,
+        "pseudocode_hints": None,
+        "search_strategy": None,
+    }
+
+
+def test_query_stream_uses_explicit_processed_query_payload() -> None:
+    processed_query = _processed_query(
+        question="Where is auth handled?",
+        intent="where",
+        filters={"snapshot_id": "snap:1"},
+    )
+    pipeline = _query_pipeline()
+    pipeline.query_processor.process.return_value = processed_query
+    pipeline.answer_generator.generate_stream.return_value = [
+        (None, {"sources": []}),
+        ("ok", None),
+        (None, {"complete": True}),
+    ]
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        def _boom_to_dict(self: ProcessedQuery) -> dict[str, Any]:
+            raise AssertionError(
+                "query stream must not call ProcessedQuery.to_dict()"
+            )
+
+        monkeypatch.setattr(ProcessedQuery, "to_dict", _boom_to_dict)
+        chunks = list(
+            pipeline.query_stream(
+                "Where is auth handled?",
+                filters={"snapshot_id": "snap:1"},
+            )
+        )
+
+    assert chunks[-1][1]["status"] == "complete"
+    query_info = pipeline.answer_generator.generate_stream.call_args.kwargs[
+        "query_info"
+    ]
+    assert query_info["intent"] == "where"
+    assert query_info["filters"] == {"snapshot_id": "snap:1"}
+
+
 def test_query_pipeline_reruns_retrieval_after_semantic_escalation() -> None:
     processed_query = _processed_query(
         question="How does auth reach the token store?",
@@ -305,7 +421,10 @@ def test_query_pipeline_skips_semantic_escalation_without_snapshot_scope() -> No
     assert "semantic_escalation" not in result
 
 
-def test_query_pipeline_compiles_context_and_persists_typed_records() -> None:
+def test_query_pipeline_compiles_context_and_persists_typed_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _forbid_agent_context_to_dict(monkeypatch)
     processed_query = _processed_query(
         question="Where is auth handled?",
         filters={"snapshot_id": "snap:1", "artifact_key": "art:1"},
@@ -387,7 +506,22 @@ def test_query_pipeline_compiles_context_and_persists_typed_records() -> None:
     assert result["turn_number"] == 1
 
 
-def test_query_pipeline_reuses_context_distillation_when_sources_match() -> None:
+def test_query_pipeline_reuses_context_distillation_when_sources_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _forbid_agent_context_to_dict(monkeypatch)
+
+    def _boom_from_dict(
+        cls: type[DistillationRecord],
+        data: dict[str, Any],
+    ) -> DistillationRecord:
+        raise AssertionError("query context load must not call DistillationRecord.from_dict()")
+
+    monkeypatch.setattr(
+        DistillationRecord,
+        "from_dict",
+        classmethod(_boom_from_dict),
+    )
     processed_query = _processed_query(
         question="Where is auth handled?",
         filters={"snapshot_id": "snap:1", "artifact_key": "art:1"},
@@ -460,7 +594,7 @@ def test_query_pipeline_reuses_context_distillation_when_sources_match() -> None
             compiler_fingerprint=reused.compiler_fingerprint,
             summary=reused.summary,
             payload_json=json.dumps(
-                reused.to_dict(), separators=(",", ":"), sort_keys=True
+                distillation_payload(reused), separators=(",", ":"), sort_keys=True
             ),
             invalidation_key=invalidation_key,
             source_ref_ids=("e1",),
@@ -761,7 +895,7 @@ def test_escalate_query_semantics_returns_degraded_when_warnings_present() -> No
         *,
         snapshot: object,
         elements: object,
-        legacy_graph_builder: object,
+        graph_context: object,
         target_paths: object,
         warnings: list[str],
         budget: str,
@@ -853,6 +987,9 @@ def test_concurrent_query_snapshot_sequential_artifact_loading() -> None:
     pipeline.vector_store = slow_vector_store
     pipeline.retriever = MagicMock()
     pipeline.graph_builder = MagicMock()
+    pipeline.graph_artifact_store = SimpleNamespace(
+        load=lambda _builder, _artifact_key: True
+    )
     pipeline.snapshot_store = MagicMock()
     pipeline.snapshot_store.find_by_artifact_key.return_value = None
     pipeline._set_repo_indexed = MagicMock()

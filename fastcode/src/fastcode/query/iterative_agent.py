@@ -12,6 +12,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from anthropic import Anthropic
+from pydantic import ValidationError
 
 if TYPE_CHECKING:
     from ..ir.element import CodeElement
@@ -21,7 +22,7 @@ import fastcode.retrieval.iteration as _iteration
 import fastcode.retrieval.prompts as _prompts
 
 from ..ir.element import serialize_code_element
-from ..retrieval.contracts import IterationConfig
+from ..retrieval.contracts import Hit, IterationConfig, ToolHistoryEntry
 from ..utils.json import (
     extract_json_from_response,
     remove_json_comments,
@@ -30,12 +31,30 @@ from ..utils.json import (
 )
 from ..utils.path_utils import PathUtils
 from .agent_tools import AgentTools
+from .boundary import (
+    ElementSelectionResponseDTO,
+    QueryEnhancementDTO,
+    RoundNResponseDTO,
+    RoundOneResponseDTO,
+    element_selection_from_dto,
+    query_enhancement_from_dto,
+    round_n_from_dto,
+    round_one_from_dto,
+)
+from .contracts import (
+    AgentRoundResult,
+    ElementSelectionRecord,
+    QueryEnhancement,
+    agent_round_result_payload,
+    element_selection_payload,
+)
 from .llm import openai_chat_completion
 
 # Type alias for iteration history entries
 IterationEntry = dict[str, Any]
-# Type alias for tool call history entries
-ToolCallEntry = dict[str, Any]
+
+def _hit_records_from_rows(rows: list[dict[str, Any]]) -> tuple[Hit, ...]:
+    return tuple(Hit.from_retrieval_row(row) for row in rows)
 
 
 class IterativeAgent:
@@ -112,7 +131,7 @@ class IterativeAgent:
 
         # Iteration history
         self.iteration_history: list[IterationEntry] = []
-        self.tool_call_history: list[ToolCallEntry] = []
+        self.tool_call_history: list[ToolHistoryEntry] = []
 
         # Dialogue history (set per query)
         self.dialogue_history: list[dict[str, Any]] | None = None
@@ -545,7 +564,7 @@ class IterativeAgent:
         response = self._call_llm(prompt)
 
         # Parse response
-        result = self._parse_round_one_response(response)
+        result = agent_round_result_payload(self._parse_round_one_response(response))
 
         return result
 
@@ -679,27 +698,19 @@ If confidence < 95:
 
         return prompt
 
-    def _parse_round_one_response(self, response: str) -> dict[str, Any]:
+    def _parse_round_one_response(self, response: str) -> AgentRoundResult:
         """Parse LLM response from round 1"""
         try:
             json_str = self._extract_json_from_response(response)
             data = self._robust_json_parse(json_str)
 
-            confidence = data.get("confidence", 0)
-            should_answer_directly = confidence >= self.confidence_threshold
-
-            result = {
-                "confidence": confidence,
-                "reasoning": data.get("reasoning", ""),
-                "should_answer_directly": should_answer_directly,
-            }
-
-            if not should_answer_directly:
-                result["query_complexity"] = data.get("query_complexity", 50)
+            payload = data if isinstance(data, dict) else {}
+            dto_payload = dict(payload)
+            fallback_enhancement = self._parse_query_enhancement_fallback(response)
+            if int(dto_payload.get("confidence", 0) or 0) < self.confidence_threshold:
                 query_enhancement = self._normalize_query_enhancement(
-                    data.get("query_enhancement", {})
+                    dto_payload.get("query_enhancement", {})
                 )
-                fallback_enhancement = self._parse_query_enhancement_fallback(response)
                 for key, value in fallback_enhancement.items():
                     if not query_enhancement.get(key):
                         query_enhancement[key] = value
@@ -713,52 +724,63 @@ If confidence < 95:
                             "pseudocode_hints",
                         )
                     )
-                result["query_enhancement"] = query_enhancement
-                result["tool_calls"] = data.get("tool_calls", [])
+                dto_payload["query_enhancement"] = query_enhancement
 
-                # DEBUG: Log tool calls to verify LLM prompt compliance
-                if result["tool_calls"]:
-                    self.logger.debug(
-                        f"[DEBUG] Round 1 LLM tool_calls ({len(result['tool_calls'])} calls):"
-                    )
-                    for idx, tc in enumerate(result["tool_calls"]):
-                        tool_name = tc.get("tool", "unknown")
-                        params = tc.get("parameters", {})
-                        self.logger.info(f"  [{idx + 1}] {tool_name}: {params}")
-                        # Check prompt compliance for path format
-                        if tool_name == "list_directory":
-                            path = params.get("path", "")
-                            self.logger.info(
-                                f"    -> list_directory path='{path}' (check if repo prefix included for multi-repo)"
-                            )
-                        elif tool_name == "search_codebase":
-                            root_path = params.get("root_path", "not_specified")
-                            search_term = params.get("search_term", "")
-                            self.logger.info(
-                                f"    -> search_codebase root_path='{root_path}', search_term='{search_term}'"
-                            )
+            dto = RoundOneResponseDTO.model_validate(dto_payload)
+            result = round_one_from_dto(
+                dto,
+                confidence_threshold=self.confidence_threshold,
+            )
+
+            if result.tool_calls:
+                self.logger.debug(
+                    f"[DEBUG] Round 1 LLM tool_calls ({len(result.tool_calls)} calls):"
+                )
+                for idx, tc in enumerate(result.tool_calls):
+                    tool_name = tc.tool
+                    params = tc.parameters
+                    self.logger.info(f"  [{idx + 1}] {tool_name}: {params}")
+                    # Check prompt compliance for path format
+                    if tool_name == "list_directory":
+                        path = params.get("path", "")
+                        self.logger.info(
+                            f"    -> list_directory path='{path}' (check if repo prefix included for multi-repo)"
+                        )
+                    elif tool_name == "search_codebase":
+                        root_path = params.get("root_path", "not_specified")
+                        search_term = params.get("search_term", "")
+                        self.logger.info(
+                            f"    -> search_codebase root_path='{root_path}', search_term='{search_term}'"
+                        )
 
             self.logger.info(
-                f"Round 1 parsed: confidence={confidence}, tool_calls={len(result.get('tool_calls', []))}, should_answer_directly={should_answer_directly}"
+                f"Round 1 parsed: confidence={result.confidence}, tool_calls={len(result.tool_calls)}, should_answer_directly={result.should_answer_directly}"
             )
 
             return result
 
+        except ValidationError:
+            raise
         except Exception as e:
             self.logger.error(f"Failed to parse round 1 response: {e}")
             self.logger.debug(f"Response content (first 500 chars): {response[:500]}")
             # Fallback: assume low confidence, no enhancement
-            fallback_enhancement = self._parse_query_enhancement_fallback(response)
-            if fallback_enhancement and "needed" not in fallback_enhancement:
-                fallback_enhancement["needed"] = True
-            return {
-                "confidence": 50,
-                "query_complexity": 50,
-                "reasoning": "Parse error",
-                "should_answer_directly": False,
-                "query_enhancement": fallback_enhancement or {"needed": False},
-                "tool_calls": [],
-            }
+            fallback_enhancement = self._fallback_query_enhancement_record(response)
+            return AgentRoundResult(
+                confidence=50,
+                query_complexity=50,
+                reasoning="Parse error",
+                should_answer_directly=False,
+                query_enhancement=fallback_enhancement,
+                tool_calls=(),
+            )
+
+    def _fallback_query_enhancement_record(self, response: str) -> QueryEnhancement:
+        fallback = self._parse_query_enhancement_fallback(response)
+        if fallback and "needed" not in fallback:
+            fallback["needed"] = True
+        dto = QueryEnhancementDTO.model_validate(fallback or {"needed": False})
+        return query_enhancement_from_dto(dto)
 
     def _normalize_query_enhancement(self, query_enhancement: Any) -> dict[str, Any]:
         """Normalize query enhancement payload to a consistent dict format."""
@@ -930,7 +952,9 @@ If confidence < 95:
             )
 
         keywords: list[str] = (
-            processed_query.keywords if hasattr(processed_query, "keywords") else []
+            list(processed_query.keywords)
+            if hasattr(processed_query, "keywords")
+            else []
         )
         pseudocode = (
             processed_query.pseudocode_hints
@@ -1177,7 +1201,10 @@ If confidence < 95:
 
         try:
             response = self._call_llm(prompt)
-            selected_items = self._parse_element_selection_response(response)
+            selection_records = self._parse_element_selection_response(response)
+            selected_items = [
+                element_selection_payload(item) for item in selection_records
+            ]
 
             self.logger.info(f"LLM selected elements: {selected_items}")
 
@@ -1280,16 +1307,23 @@ If confidence < 95:
 
         return "\n".join(lines)
 
-    def _parse_element_selection_response(self, response: str) -> list[dict[str, Any]]:
+    def _parse_element_selection_response(
+        self, response: str
+    ) -> tuple[ElementSelectionRecord, ...]:
         """Parse LLM response for element selections"""
         try:
             json_str = self._extract_json_from_response(response)
             data = self._robust_json_parse(json_str)
-            return data.get("selected_elements", [])
+            dto = ElementSelectionResponseDTO.model_validate(data)
+            return tuple(
+                element_selection_from_dto(item) for item in dto.selected_elements
+            )
+        except ValidationError:
+            raise
         except Exception as e:
             self.logger.error(f"Failed to parse element selection: {e}")
             self.logger.debug(f"Response content (first 500 chars): {response[:500]}")
-            return []
+            return ()
 
     def _convert_selections_to_elements(
         self, selections: list[dict[str, Any]], candidates: list[dict[str, Any]]
@@ -1584,7 +1618,7 @@ If confidence < 95:
             response = self._call_llm(prompt)
 
             # Parse response
-            result = self._parse_round_n_response(response)
+            result = agent_round_result_payload(self._parse_round_n_response(response))
 
             return result
 
@@ -1816,11 +1850,11 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             # remove _resolved_repo from parameters before recording, it's only for internal use
             resolved_parameters.pop("_resolved_repo", None)
 
-            tool_call_record = {
-                "round": round_num,
-                "tool": tool_name,
-                "parameters": resolved_parameters,
-            }
+            tool_call_record = ToolHistoryEntry(
+                round=round_num,
+                tool=tool_name,
+                parameters=resolved_parameters,
+            )
 
             self.logger.debug(
                 f"[TOOL CALL RECORD] Final tool call record to append: {tool_call_record}"
@@ -2010,10 +2044,16 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         self.logger.debug(f"[RESOLVE] Final resolved parameters: {resolved}")
         return resolved
 
-    def _normalize_tool_call(self, tool_call: dict[str, Any]) -> str:
+    def _normalize_tool_call(
+        self, tool_call: ToolHistoryEntry | dict[str, Any]
+    ) -> str:
         """Normalize a tool call for deduplication."""
-        tool_name = tool_call.get("tool", "")
-        parameters = tool_call.get("parameters", {})
+        if isinstance(tool_call, ToolHistoryEntry):
+            tool_name = tool_call.tool
+            parameters = tool_call.parameters
+        else:
+            tool_name = tool_call.get("tool", "")
+            parameters = tool_call.get("parameters", {})
         try:
             params_text = json.dumps(
                 parameters, ensure_ascii=True, sort_keys=True, separators=(",", ":")
@@ -2044,7 +2084,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         prior_calls: set[str] = {
             self._normalize_tool_call(entry)
             for entry in self.tool_call_history
-            if entry.get("round", 0) < round_num
+            if entry.round < round_num
         }
         seen_current: set[str] = set()
         filtered: list[dict[str, Any]] = []
@@ -2083,33 +2123,31 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
 
     def _format_tool_call_history(self, current_round: int) -> str:
         """Format tool call history up to the previous round."""
-        return _prompts.format_tool_call_history(self.tool_call_history, current_round)
+        return _prompts.format_tool_call_history(
+            tuple(self.tool_call_history), current_round
+        )
 
     def _format_elements_with_metadata(self, elements: list[dict[str, Any]]) -> str:
         """Format elements with metadata for round N prompt"""
-        return _prompts.format_elements_with_metadata(elements)
+        return _prompts.format_elements_with_metadata(_hit_records_from_rows(elements))
 
-    def _parse_round_n_response(self, response: str) -> dict[str, Any]:
+    def _parse_round_n_response(self, response: str) -> AgentRoundResult:
         """Parse LLM response from round N"""
         try:
             json_str = self._extract_json_from_response(response)
             data = self._robust_json_parse(json_str)
 
-            result = {
-                "keep_files": data.get("keep_files", []),
-                "confidence": data.get("confidence", 50),
-                "reasoning": data.get("reasoning", ""),
-                "tool_calls": data.get("tool_calls", []),
-            }
+            dto = RoundNResponseDTO.model_validate(data)
+            result = round_n_from_dto(dto)
 
             # DEBUG: Log tool calls to verify LLM prompt compliance
-            if result["tool_calls"]:
+            if result.tool_calls:
                 self.logger.debug(
-                    f"[DEBUG] Round N LLM tool_calls ({len(result['tool_calls'])} calls):"
+                    f"[DEBUG] Round N LLM tool_calls ({len(result.tool_calls)} calls):"
                 )
-                for idx, tc in enumerate(result["tool_calls"]):
-                    tool_name = tc.get("tool", "unknown")
-                    params = tc.get("parameters", {})
+                for idx, tc in enumerate(result.tool_calls):
+                    tool_name = tc.tool
+                    params = tc.parameters
                     self.logger.info(f"  [{idx + 1}] {tool_name}: {params}")
                     # Check prompt compliance for path format
                     if tool_name == "list_directory":
@@ -2125,23 +2163,25 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
                         )
 
             # DEBUG: Log keep_files decision
-            if result["keep_files"]:
+            if result.keep_files:
                 self.logger.debug(
-                    f"[DEBUG] Round N keep_files ({len(result['keep_files'])} files): {result['keep_files']}..."
+                    f"[DEBUG] Round N keep_files ({len(result.keep_files)} files): {list(result.keep_files)}..."
                 )
 
             return result
 
+        except ValidationError:
+            raise
         except Exception as e:
             self.logger.error(f"Failed to parse round N response: {e}")
             self.logger.debug(f"Response content (first 500 chars): {response[:500]}")
             # Fallback: keep all files, medium confidence
-            return {
-                "keep_files": [],
-                "confidence": 50,
-                "reasoning": "Parse error",
-                "tool_calls": [],
-            }
+            return AgentRoundResult(
+                keep_files=(),
+                confidence=50,
+                reasoning="Parse error",
+                tool_calls=(),
+            )
 
     def _filter_elements_by_keep_files(
         self, elements: list[dict[str, Any]], keep_files: list[str]

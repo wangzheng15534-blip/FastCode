@@ -4,7 +4,11 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+from pydantic import ValidationError
+
 from fastcode.ir.element import CodeElement
+from fastcode.query.contracts import AgentRoundResult, ElementSelectionRecord
 from fastcode.query.iterative_agent import IterativeAgent
 from fastcode.query.processor import ProcessedQuery
 
@@ -221,6 +225,126 @@ def test_convert_selections_to_elements_avoids_code_element_to_dict() -> None:
         "is_method": False,
     }
     assert results[0]["selection_granularity"] == "function"
+
+
+def test_round_one_response_parses_to_frozen_record() -> None:
+    agent = IterativeAgent.__new__(IterativeAgent)
+    agent.confidence_threshold = 95
+    agent.logger = SimpleNamespace(
+        debug=lambda *a, **kw: None,
+        info=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+    )
+
+    result = agent._parse_round_one_response(
+        """
+        {
+          "confidence": 62,
+          "query_complexity": 71,
+          "reasoning": "Needs code inspection",
+          "query_enhancement": {
+            "rewritten_query": "auth token storage flow",
+            "selected_keywords": ["auth", "token"]
+          },
+          "tool_calls": [
+            {"tool": "search_codebase", "parameters": {"search_term": "token"}}
+          ]
+        }
+        """
+    )
+
+    assert isinstance(result, AgentRoundResult)
+    assert result.confidence == 62
+    assert result.query_complexity == 71
+    assert result.should_answer_directly is False
+    assert result.query_enhancement is not None
+    assert result.query_enhancement.rewritten_query == "auth token storage flow"
+    assert result.tool_calls[0].tool == "search_codebase"
+
+
+def test_round_one_response_rejects_invalid_llm_payload() -> None:
+    agent = IterativeAgent.__new__(IterativeAgent)
+    agent.confidence_threshold = 95
+    agent.logger = SimpleNamespace(debug=lambda *a, **kw: None)
+
+    with pytest.raises(ValidationError):
+        agent._parse_round_one_response(
+            '{"confidence": 150, "reasoning": "invalid confidence"}'
+        )
+
+
+def test_round_n_response_parses_to_frozen_record() -> None:
+    agent = IterativeAgent.__new__(IterativeAgent)
+    agent.logger = SimpleNamespace(
+        debug=lambda *a, **kw: None,
+        info=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+    )
+
+    result = agent._parse_round_n_response(
+        """
+        {
+          "confidence": 81,
+          "reasoning": "Need one more file",
+          "keep_files": ["src/auth.py"],
+          "tool_calls": [
+            {"tool": "list_directory", "parameters": {"path": "repo/src"}}
+          ]
+        }
+        """
+    )
+
+    assert isinstance(result, AgentRoundResult)
+    assert result.confidence == 81
+    assert result.keep_files == ("src/auth.py",)
+    assert result.tool_calls[0].parameters == {"path": "repo/src"}
+
+
+def test_round_n_response_rejects_invalid_llm_payload() -> None:
+    agent = IterativeAgent.__new__(IterativeAgent)
+    agent.logger = SimpleNamespace(debug=lambda *a, **kw: None)
+
+    with pytest.raises(ValidationError):
+        agent._parse_round_n_response('{"confidence": -1, "reasoning": "bad"}')
+
+
+def test_element_selection_response_parses_to_frozen_records() -> None:
+    agent = IterativeAgent.__new__(IterativeAgent)
+    agent.logger = SimpleNamespace(debug=lambda *a, **kw: None, error=lambda *a, **kw: None)
+
+    result = agent._parse_element_selection_response(
+        """
+        {
+          "selected_elements": [
+            {
+              "file_path": "src/service.py",
+              "type": "function",
+              "name": "load_config",
+              "repo_name": "repo"
+            }
+          ]
+        }
+        """
+    )
+
+    assert result == (
+        ElementSelectionRecord(
+            file_path="src/service.py",
+            element_type="function",
+            name="load_config",
+            repo_name="repo",
+        ),
+    )
+
+
+def test_element_selection_response_rejects_invalid_llm_payload() -> None:
+    agent = IterativeAgent.__new__(IterativeAgent)
+    agent.logger = SimpleNamespace(debug=lambda *a, **kw: None)
+
+    with pytest.raises(ValidationError):
+        agent._parse_element_selection_response(
+            '{"selected_elements": [{"type": "file", "repo_name": "repo"}]}'
+        )
 
 
 def test_round_prompts_include_compiled_context() -> None:

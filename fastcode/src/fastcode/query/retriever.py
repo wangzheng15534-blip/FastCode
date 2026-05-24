@@ -15,7 +15,7 @@ import os
 import pickle
 import shutil
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -29,7 +29,6 @@ import fastcode.retrieval.fusion as _fusion
 import fastcode.retrieval.scoring as _scoring
 
 from ..graph.build import CodeGraphBuilder
-from ..indexing.embedder import CodeEmbedder
 from ..ir.element import (
     CodeElement,
     CodeElementMeta,
@@ -37,15 +36,47 @@ from ..ir.element import (
     serialize_code_element,
 )
 from ..ir.graph import IRGraphs, IRGraphView
+from ..ports.embedding import EmbeddingProvider
+from ..ports.retrieval import (
+    HybridRetrievalStore,
+    VectorSearchStore,
+    VectorSearchStoreFactory,
+)
 from ..query.processor import ProcessedQuery
 from ..query.selector import RepositorySelector
-from ..retrieval.contracts import FusionConfig
-from ..store.pg_retrieval import PgRetrievalStore
-from ..store.vector import VectorStore
+from ..retrieval.contracts import (
+    DocProjectionPriors,
+    ElementFilter,
+    FusionConfig,
+    Hit,
+    ProjectionEvidence,
+    TraceLink,
+)
 from ..utils.filesystem import ensure_dir
 from .iterative_agent import IterativeAgent
 
 _BM25_SHARD_STORAGE_VERSION = 1
+
+
+def _hit_rows_from_records(hits: list[Hit]) -> list[dict[str, Any]]:
+    return [hit.to_retrieval_row() for hit in hits]
+
+
+def _hit_records_from_rows(rows: list[dict[str, Any]]) -> list[Hit]:
+    return [Hit.from_retrieval_row(row) for row in rows]
+
+
+def _element_filter_from_payload(filters: dict[str, Any]) -> ElementFilter:
+    raw_language = filters.get("language")
+    raw_type = filters.get("type")
+    raw_file_path = filters.get("file_path")
+    raw_snapshot_id = filters.get("snapshot_id")
+    return ElementFilter(
+        language=str(raw_language) if raw_language is not None else None,
+        element_type=str(raw_type) if raw_type is not None else None,
+        file_path=str(raw_file_path) if raw_file_path is not None else None,
+        snapshot_id=str(raw_snapshot_id) if raw_snapshot_id is not None else None,
+    )
 
 
 def _float_config_value(
@@ -88,6 +119,49 @@ def _fusion_config_from_runtime(config: dict[str, Any]) -> FusionConfig:
     )
 
 
+def _trace_link_payload(link: TraceLink) -> dict[str, Any]:
+    return {
+        "unit_id": link.unit_id,
+        "weight": link.weight,
+        "evidence_type": link.evidence_type,
+        "chunk_id": link.chunk_id,
+        "symbol_name": link.symbol_name,
+        "confidence": link.confidence,
+    }
+
+
+def _projection_evidence_payload(evidence: ProjectionEvidence) -> dict[str, Any]:
+    payload = _trace_link_payload(evidence.link)
+    payload.update(
+        {
+            "doc_id": evidence.doc_id,
+            "doc_score": evidence.doc_score,
+            "contribution": evidence.contribution,
+        }
+    )
+    return payload
+
+
+def _doc_projection_priors_payload(record: DocProjectionPriors) -> dict[str, Any]:
+    return {
+        "p_doc": record.p_doc,
+        "beta": record.beta,
+        "priors": dict(record.priors),
+        "evidence": {
+            unit_id: [_projection_evidence_payload(item) for item in items]
+            for unit_id, items in record.evidence.items()
+        },
+    }
+
+
+def _projected_hit_row(hit: Hit) -> dict[str, Any]:
+    row = hit.to_retrieval_row()
+    row["traceability"] = [
+        _projection_evidence_payload(item) for item in hit.traceability
+    ]
+    return row
+
+
 @dataclass
 class RetrievalChannelOutput:
     collection: str
@@ -103,18 +177,20 @@ class HybridRetriever:
     def __init__(
         self,
         config: dict[str, Any],
-        vector_store: VectorStore,
-        embedder: CodeEmbedder,
+        vector_store: VectorSearchStore,
+        embedder: EmbeddingProvider,
         graph_builder: CodeGraphBuilder,
         repo_root: str | None = None,
+        vector_store_factory: VectorSearchStoreFactory | None = None,
     ):
         self.config: dict[str, Any] = config
         self.retrieval_config: dict[str, Any] = config.get("retrieval", {})
         self.logger: logging.Logger = logging.getLogger(__name__)
 
-        self.vector_store: VectorStore = vector_store
-        self.embedder: CodeEmbedder = embedder
+        self.vector_store: VectorSearchStore = vector_store
+        self.embedder: EmbeddingProvider = embedder
         self.graph_builder: CodeGraphBuilder = graph_builder
+        self._vector_store_factory = vector_store_factory
 
         # Weights for hybrid search
         self.semantic_weight: float = self.retrieval_config.get("semantic_weight", 0.6)
@@ -188,7 +264,7 @@ class HybridRetriever:
         self._bm25_shard_manifest: dict[str, Any] | None = None
 
         # Filtered vector store for selected repositories
-        self.filtered_vector_store: VectorStore | None = None
+        self.filtered_vector_store: VectorSearchStore | None = None
 
         # Repository selector for LLM-based file selection
         self.repo_selector: RepositorySelector = RepositorySelector(config)
@@ -222,7 +298,7 @@ class HybridRetriever:
         self.ir_snapshot_id: str | None = None
         self._ir_graph_loader: Callable[[str], Any | None] | None = None
         self._ir_union_graph: Any | None = None
-        self.pg_retrieval_store: PgRetrievalStore | None = None
+        self.pg_retrieval_store: HybridRetrievalStore | None = None
         self._active_snapshot_id: str | None = None
         self._last_fusion_debug: dict[str, Any] | None = None
         self.last_iteration_metadata: dict[str, Any] | None = None
@@ -231,26 +307,10 @@ class HybridRetriever:
         self.last_reset_recommended: bool = False
 
     def _query_embedding_fingerprint(self) -> dict[str, Any] | None:
-        fingerprint_record = getattr(
-            self.embedder, "embedding_fingerprint_record", None
-        )
-        fingerprint = getattr(self.embedder, "embedding_fingerprint", None)
-        payload: Any = None
-        if callable(fingerprint_record):
-            try:
-                record = fingerprint_record(resolve_dimension=True)
-            except TypeError:
-                record = fingerprint_record()
-            to_payload = getattr(record, "to_payload", None)
-            payload = to_payload() if callable(to_payload) else record
-        elif callable(fingerprint):
-            try:
-                payload = fingerprint(resolve_dimension=True)
-            except TypeError:
-                payload = fingerprint()
-        if isinstance(payload, Mapping):
-            return dict(cast(Mapping[str, Any], payload))
-        return None
+        return dict(self.embedder.fingerprint(resolve_dimension=True))
+
+    def _embed_query_text(self, text: str) -> Any:
+        return self.embedder.embed_many((text,))[0]
 
     def index_for_bm25(self, elements: list[CodeElement]):
         """
@@ -397,7 +457,7 @@ class HybridRetriever:
         self._ir_union_graph = graph
         return graph
 
-    def set_pg_retrieval_store(self, store: PgRetrievalStore | None) -> None:
+    def set_pg_retrieval_store(self, store: HybridRetrievalStore | None) -> None:
         self.pg_retrieval_store = store
         if store and store.is_active():
             self.logger.info("PG hybrid retrieval backend enabled")
@@ -552,33 +612,10 @@ class HybridRetriever:
         return _scoring.trace_confidence_weight(confidence)
 
     def _extract_trace_links(self, row: dict[str, Any]) -> list[dict[str, Any]]:
-        elem = row.get("element") or {}
-        meta = elem.get("metadata") or {}
-        raw_links = meta.get("trace_links") or meta.get("mentions") or []
-        links: list[dict[str, Any]] = []
-        for link in raw_links:
-            if not isinstance(link, dict):
-                continue
-            unit_id = (
-                link.get("unit_id") or link.get("symbol_id") or link.get("ir_symbol_id")
-            )
-            if not unit_id:
-                continue
-            weight = float(
-                link.get("weight")
-                or self._trace_confidence_weight(link.get("confidence"))
-            )
-            links.append(
-                {
-                    "unit_id": str(unit_id),
-                    "weight": max(0.0, min(1.0, weight)),
-                    "evidence_type": link.get("evidence_type") or "trace_link",
-                    "chunk_id": link.get("chunk_id") or elem.get("id"),
-                    "symbol_name": link.get("symbol_name"),
-                    "confidence": link.get("confidence"),
-                }
-            )
-        return links
+        return [
+            _trace_link_payload(link)
+            for link in _fusion.extract_trace_links(Hit.from_retrieval_row(row))
+        ]
 
     def _project_doc_priors(
         self,
@@ -587,15 +624,16 @@ class HybridRetriever:
         query_info: dict[str, Any],
         doc_results: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        return _fusion.project_doc_priors(
+        record = _fusion.project_doc_priors(
             query=query,
             query_info=query_info,
-            doc_results=doc_results,
+            doc_results=_hit_records_from_rows(doc_results),
             config=_fusion_config_from_runtime(self.adaptive_fusion_cfg),
             doc_projection_beta_max=float(
                 self.retrieval_config.get("doc_projection_beta_max", 0.35)
             ),
         )
+        return _doc_projection_priors_payload(record)
 
     def _active_bm25_elements(self) -> list[CodeElement]:
         return (
@@ -633,11 +671,11 @@ class HybridRetriever:
             if self.filtered_bm25_elements
             else self.full_bm25_elements
         )
-        return _fusion.apply_doc_projection_to_code(
+        hits = _fusion.apply_doc_projection_to_code(
             query=query,
             query_info=query_info,
-            code_results=code_results,
-            doc_results=doc_results,
+            code_results=_hit_records_from_rows(code_results),
+            doc_results=_hit_records_from_rows(doc_results),
             config=_fusion_config_from_runtime(self.adaptive_fusion_cfg),
             doc_projection_beta_max=float(
                 self.retrieval_config.get("doc_projection_beta_max", 0.35)
@@ -646,6 +684,7 @@ class HybridRetriever:
             repo_filter=repo_filter,
             debug=self._last_fusion_debug,
         )
+        return [_projected_hit_row(hit) for hit in hits]
 
     def retrieve(
         self,
@@ -689,8 +728,8 @@ class HybridRetriever:
                 "intent": processed_query.intent
                 if hasattr(processed_query, "intent")
                 else "unknown",
-                "keywords": processed_query.keywords,
-                "filters": processed_query.filters,
+                "keywords": list(processed_query.keywords),
+                "filters": dict(processed_query.filters),
                 "expanded": processed_query.expanded,
                 "rewritten_query": processed_query.rewritten_query,
                 "pseudocode_hints": processed_query.pseudocode_hints,
@@ -704,12 +743,12 @@ class HybridRetriever:
                 search_text4repo_selection = processed_query.original
                 search_text4semantic = processed_query.original
 
-            keywords = processed_query.keywords
+            keywords = list(processed_query.keywords)
             pseudocode = processed_query.pseudocode_hints
 
             # Merge filters
             if filters is None:
-                filters = processed_query.filters
+                filters = dict(processed_query.filters)
             else:
                 filters = {**processed_query.filters, **filters}
 
@@ -952,7 +991,7 @@ class HybridRetriever:
             semantic_query_text = query
 
         # Stage 1: Semantic search on repository overviews (use separate storage)
-        query_embedding = self.embedder.embed_text(semantic_query_text)
+        query_embedding = self._embed_query_text(semantic_query_text)
         query_embedding_fingerprint = self._query_embedding_fingerprint()
         semantic_results = self.vector_store.search_repository_overviews(
             query_embedding,
@@ -1300,14 +1339,15 @@ class HybridRetriever:
         code_results: list[dict[str, Any]],
         doc_results: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        return _fusion.adaptive_fuse_channels(
+        hits = _fusion.adaptive_fuse_channels(
             query=query,
             query_info=query_info,
-            code_results=code_results,
-            doc_results=doc_results,
+            code_results=_hit_records_from_rows(code_results),
+            doc_results=_hit_records_from_rows(doc_results),
             config=_fusion_config_from_runtime(self.adaptive_fusion_cfg),
             debug=self._last_fusion_debug,
         )
+        return _hit_rows_from_records(hits)
 
     @staticmethod
     def _new_fused_entry(element: dict[str, Any]) -> dict[str, Any]:
@@ -1363,8 +1403,8 @@ class HybridRetriever:
         return _fusion.compute_adaptive_fusion_params(
             query=query,
             query_info=query_info,
-            code_results=code_results,
-            doc_results=doc_results,
+            code_results=_hit_records_from_rows(code_results),
+            doc_results=_hit_records_from_rows(doc_results),
             config=_fusion_config_from_runtime(self.adaptive_fusion_cfg),
         )
 
@@ -1380,7 +1420,7 @@ class HybridRetriever:
         Uses filtered_vector_store if available, otherwise uses full vector_store
         """
         # Embed query
-        query_embedding = self.embedder.embed_text(query)
+        query_embedding = self._embed_query_text(query)
         query_embedding_fingerprint = self._query_embedding_fingerprint()
 
         if (
@@ -1638,13 +1678,14 @@ class HybridRetriever:
         pseudocode_results: list[tuple[CodeElementMeta, float]] | None = None,
     ) -> list[dict[str, Any]]:
         """Combine semantic, keyword, and pseudocode search results"""
-        return _combination.combine_results(
+        hits = _combination.combine_results(
             semantic_results,
             keyword_results,
             pseudocode_results,
             semantic_weight=self.semantic_weight,
             keyword_weight=self.keyword_weight,
         )
+        return _hit_rows_from_records(hits)
 
     def _expand_with_graph(
         self, results: list[dict[str, Any]], max_hops: int = 2
@@ -1801,17 +1842,25 @@ class HybridRetriever:
         self, query: str, results: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Re-rank results based on additional factors"""
-        return _filtering.rerank(results)
+        hits = _filtering.rerank(_hit_records_from_rows(results))
+        return _hit_rows_from_records(hits)
 
     def _apply_filters(
         self, results: list[dict[str, Any]], filters: dict[str, Any]
     ) -> list[dict[str, Any]]:
         """Apply filters to results"""
-        return _filtering.apply_filters(results, filters)
+        hits = _filtering.apply_filters(
+            _hit_records_from_rows(results),
+            _element_filter_from_payload(filters),
+        )
+        return _hit_rows_from_records(hits)
 
     def _diversify(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Diversify results to avoid too many similar elements"""
-        return _filtering.diversify(results, self.diversity_penalty)
+        hits = _filtering.diversify(
+            _hit_records_from_rows(results), self.diversity_penalty
+        )
+        return _hit_rows_from_records(hits)
 
     def _final_repo_filter(
         self, results: list[dict[str, Any]], repo_filter: list[str]
@@ -1827,16 +1876,15 @@ class HybridRetriever:
         Returns:
             Filtered results containing only elements from allowed repositories
         """
-        filtered, count = cast(
-            tuple[list[dict[str, Any]], int],
-            _filtering.final_repo_filter(results, repo_filter, return_count=True),
+        filtered, count = _filtering.final_repo_filter(
+            _hit_records_from_rows(results), repo_filter, return_count=True
         )
         if count > 0:
             self.logger.warning(
                 f"Final repo filter removed {count} elements from unexpected repositories. "
                 f"This indicates a potential issue in the retrieval pipeline."
             )
-        return filtered
+        return _hit_rows_from_records(filtered)
 
     def retrieve_by_file(self, file_path: str) -> list[dict[str, Any]]:
         """Retrieve all elements from a specific file"""
@@ -1911,7 +1959,15 @@ class HybridRetriever:
         try:
             # Create/clear filtered vector store (separate from main vector store)
             if self.filtered_vector_store is None:
-                self.filtered_vector_store = VectorStore(self.config)
+                if self._vector_store_factory is None:
+                    self.logger.error(
+                        "Cannot reload repository-specific vector indexes without "
+                        "a vector store factory"
+                    )
+                    return False
+                self.filtered_vector_store = (
+                    self._vector_store_factory.create_vector_search_store()
+                )
                 self.filtered_vector_store.initialize(self.embedder.embedding_dim)
             else:
                 self.filtered_vector_store.clear()

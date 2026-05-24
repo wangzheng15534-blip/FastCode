@@ -12,9 +12,55 @@ from openai import OpenAI
 
 import fastcode.retrieval.context as _context
 import fastcode.retrieval.summary as _summary
+from fastcode.retrieval.contracts import AnswerDisplayResult, Hit, SourceCitation
 
 from .llm import openai_chat_completion
 from .tokens import count_tokens, truncate_to_tokens
+
+
+def _hits_from_rows(rows: list[dict[str, Any]]) -> tuple[Hit, ...]:
+    return tuple(Hit.from_retrieval_row(row) for row in rows)
+
+
+def _source_citation_payload(source: SourceCitation) -> dict[str, Any]:
+    return {
+        "repository": source.repository,
+        "file": source.file,
+        "name": source.name,
+        "type": source.element_type,
+        "lines": source.lines,
+        "score": source.score,
+    }
+
+
+def _source_citation_from_payload(source: dict[str, Any]) -> SourceCitation:
+    return SourceCitation(
+        repository=str(source.get("repository") or ""),
+        file=str(source.get("file") or ""),
+        name=str(source.get("name") or ""),
+        element_type=str(source.get("type") or ""),
+        lines=str(source.get("lines") or ""),
+        score=float(source.get("score") or 0.0),
+    )
+
+
+def _answer_display_result_from_payload(result: dict[str, Any]) -> AnswerDisplayResult:
+    raw_sources = result.get("sources")
+    sources: list[SourceCitation] = []
+    if isinstance(raw_sources, list):
+        for source in raw_sources:
+            if isinstance(source, SourceCitation):
+                sources.append(source)
+            elif isinstance(source, dict):
+                sources.append(_source_citation_from_payload(source))
+    prompt_tokens_raw = result.get("prompt_tokens")
+    prompt_tokens = int(prompt_tokens_raw) if prompt_tokens_raw is not None else None
+    return AnswerDisplayResult(
+        answer=str(result.get("answer") or ""),
+        sources=tuple(sources),
+        prompt_tokens=prompt_tokens,
+        context_elements=int(result.get("context_elements") or 0),
+    )
 
 
 class AnswerGenerator:
@@ -792,12 +838,17 @@ Symbol Mappings:
         self, query: str, answer: str, retrieved_elements: list[dict[str, Any]]
     ) -> str:
         """Generate a fallback summary when LLM doesn't produce one."""
-        return _summary.generate_fallback_summary(query, answer, retrieved_elements)
+        return _summary.generate_fallback_summary(
+            query, answer, _hits_from_rows(retrieved_elements)
+        )
 
     def _extract_sources(self, elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Extract source information from elements."""
-        return _summary.extract_sources(elements)
+        sources = _summary.extract_sources(_hits_from_rows(elements))
+        return [_source_citation_payload(source) for source in sources]
 
     def format_answer_with_sources(self, result: dict[str, Any]) -> str:
         """Format answer with sources for display."""
-        return _summary.format_answer_with_sources(result)
+        return _summary.format_answer_with_sources(
+            _answer_display_result_from_payload(result)
+        )

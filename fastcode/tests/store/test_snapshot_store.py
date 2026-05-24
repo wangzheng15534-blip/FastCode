@@ -26,14 +26,15 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.scip.models import SCIPArtifactRef
-from fastcode.store.records import (
+from fastcode.store.infrastructure.runtime import DBRuntime
+from fastcode.store.snapshot import SnapshotStore
+from fastcode.store.snapshot_contracts import (
     OutboxEventRecord,
     RedoTaskRecord,
     SCIPArtifactRecord,
     SnapshotRecord,
     SnapshotRefRecord,
 )
-from fastcode.store.snapshot import SnapshotStore
 
 # --- Strategies ---
 
@@ -283,7 +284,28 @@ def connected_snapshot_st(
 
 def _make_store() -> SnapshotStore:
     tmpdir = tempfile.mkdtemp(prefix="snap_prop_")
-    return SnapshotStore(tmpdir)
+    return _make_store_for_dir(tmpdir)
+
+
+def _make_store_for_dir(tmpdir: str) -> SnapshotStore:
+    return SnapshotStore(
+        tmpdir,
+        db_runtime=DBRuntime(
+            backend="sqlite",
+            sqlite_path=os.path.join(os.path.abspath(tmpdir), "lineage.db"),
+        ),
+    )
+
+
+def test_constructor_requires_injected_database_runtime() -> None:
+    tmpdir = tempfile.mkdtemp(prefix="snap_di_")
+    runtime = DBRuntime(
+        backend="sqlite", sqlite_path=os.path.join(tmpdir, "lineage.db")
+    )
+
+    store = SnapshotStore(tmpdir, db_runtime=runtime)
+
+    assert store.db_runtime is runtime
 
 
 class _FakeCursor:

@@ -10,9 +10,8 @@ import json
 import logging
 import os
 import shutil
-import uuid
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, cast
 
 import numpy as np
@@ -29,9 +28,11 @@ from ..ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from ..utils.clock import utc_now
+from ..ports.runtime import Clock, IdGenerator
+from ..ports.storage import StoreDatabaseRuntime
+from ..utils.clock import SystemClock, utc_now
 from ..utils.filesystem import ensure_dir, normalize_path
-from ..utils.json import safe_jsonable
+from ..utils.ids import PrefixedIdGenerator
 from ..utils.materialization import (
     BOUNDARY_GRAPH_FULL_LOAD,
     BOUNDARY_JSON_DECODE,
@@ -40,8 +41,43 @@ from ..utils.materialization import (
     BOUNDARY_SNAPSHOT_FULL_LOAD,
     increment_materialization_boundary,
 )
-from .infrastructure.runtime import DBRuntime
-from .records import (
+from ._snapshot_ir_payloads import (
+    _attachment_payload,
+    _code_unit_from_payload,
+    _code_unit_payload,
+    _document_payload,
+    _edge_payload,
+    _embedding_from_sharded_payload,
+    _embedding_payload_without_vector,
+    _float_or_default,
+    _int_or_none,
+    _json_list_payload,
+    _json_mapping_payload,
+    _load_snapshot_shard_rows,
+    _occurrence_payload,
+    _ordered_sharded_rows,
+    _payload_mapping,
+    _payload_with_sequence,
+    _relation_from_payload,
+    _relation_payload,
+    _required_text,
+    _sequence_items,
+    _snapshot_from_payload,
+    _snapshot_from_sharded_payload,
+    _string_list_payload,
+    _string_or_none,
+    _string_set_payload,
+    _symbol_payload,
+    _unit_support_from_payload,
+    _unit_support_payload,
+)
+from ._snapshot_queue_payloads import (
+    _outbox_event_payload,
+    _redo_task_payload,
+    _row_to_outbox_event_record,
+    _row_to_redo_task_record,
+)
+from .snapshot_contracts import (
     OutboxEventRecord,
     RedoTaskRecord,
     SCIPArtifactRecord,
@@ -121,263 +157,50 @@ class SnapshotStore:
         "last_attempt_at",
         "error_message",
     )
+    _document_payload = staticmethod(_document_payload)
+    _symbol_payload = staticmethod(_symbol_payload)
+    _occurrence_payload = staticmethod(_occurrence_payload)
+    _edge_payload = staticmethod(_edge_payload)
+    _attachment_payload = staticmethod(_attachment_payload)
+    _code_unit_payload = staticmethod(_code_unit_payload)
+    _unit_support_payload = staticmethod(_unit_support_payload)
+    _relation_payload = staticmethod(_relation_payload)
+    _embedding_payload_without_vector = staticmethod(_embedding_payload_without_vector)
+    _required_text = staticmethod(_required_text)
+    _string_or_none = staticmethod(_string_or_none)
+    _int_or_none = staticmethod(_int_or_none)
+    _float_or_default = staticmethod(_float_or_default)
+    _string_set_payload = staticmethod(_string_set_payload)
+    _json_list_payload = staticmethod(_json_list_payload)
+    _ordered_sharded_rows = staticmethod(_ordered_sharded_rows)
 
     def __init__(
-        self, persist_dir: str, storage_cfg: dict[str, Any] | None = None
+        self,
+        persist_dir: str,
+        *,
+        db_runtime: StoreDatabaseRuntime,
+        clock: Clock | None = None,
+        id_generator: IdGenerator | None = None,
     ) -> None:
         self.persist_dir = os.path.abspath(persist_dir)
         self.snapshot_root = os.path.join(self.persist_dir, "snapshots")
         ensure_dir(self.persist_dir)
         ensure_dir(self.snapshot_root)
+        self.clock = clock or SystemClock()
+        self.id_generator = id_generator or PrefixedIdGenerator()
         self.db_path = os.path.join(self.persist_dir, "lineage.db")
-        self.db_runtime = DBRuntime.from_storage_config(
-            sqlite_path=self.db_path, storage_cfg=storage_cfg
-        )
+        self.db_runtime = db_runtime
         self._init_db()
 
-    @staticmethod
-    def _source_set_payload(values: set[str]) -> list[str]:
-        return sorted(value for value in values if value)
+    def _utc_now(self) -> str:
+        clock = getattr(self, "clock", None)
+        return clock.utc_now() if clock is not None else utc_now()
 
-    @classmethod
-    def _document_payload(cls, doc: IRDocument) -> dict[str, Any]:
-        return {
-            "doc_id": doc.doc_id,
-            "path": doc.path,
-            "language": doc.language,
-            "blob_oid": doc.blob_oid,
-            "content_hash": doc.content_hash,
-            "source_set": cls._source_set_payload(doc.source_set),
-        }
-
-    @classmethod
-    def _symbol_payload(cls, sym: IRSymbol) -> dict[str, Any]:
-        return {
-            "symbol_id": sym.symbol_id,
-            "external_symbol_id": sym.external_symbol_id,
-            "path": sym.path,
-            "display_name": sym.display_name,
-            "kind": sym.kind,
-            "language": sym.language,
-            "qualified_name": sym.qualified_name,
-            "signature": sym.signature,
-            "start_line": sym.start_line,
-            "start_col": sym.start_col,
-            "end_line": sym.end_line,
-            "end_col": sym.end_col,
-            "source_priority": sym.source_priority,
-            "source_set": cls._source_set_payload(sym.source_set),
-            "metadata": dict(sym.metadata) if sym.metadata else {},
-        }
-
-    @staticmethod
-    def _occurrence_payload(occ: IROccurrence) -> dict[str, Any]:
-        return {
-            "occurrence_id": occ.occurrence_id,
-            "symbol_id": occ.symbol_id,
-            "doc_id": occ.doc_id,
-            "role": occ.role,
-            "start_line": occ.start_line,
-            "start_col": occ.start_col,
-            "end_line": occ.end_line,
-            "end_col": occ.end_col,
-            "source": occ.source,
-            "metadata": dict(occ.metadata) if occ.metadata else {},
-        }
-
-    @staticmethod
-    def _edge_payload(edge: IREdge) -> dict[str, Any]:
-        return {
-            "edge_id": edge.edge_id,
-            "src_id": edge.src_id,
-            "dst_id": edge.dst_id,
-            "edge_type": edge.edge_type,
-            "source": edge.source,
-            "confidence": edge.confidence,
-            "doc_id": edge.doc_id,
-            "metadata": dict(edge.metadata) if edge.metadata else {},
-        }
-
-    @staticmethod
-    def _attachment_payload(attachment: IRAttachment) -> dict[str, Any]:
-        return {
-            "attachment_id": attachment.attachment_id,
-            "target_id": attachment.target_id,
-            "target_type": attachment.target_type,
-            "attachment_type": attachment.attachment_type,
-            "source": attachment.source,
-            "confidence": attachment.confidence,
-            "payload": dict(attachment.payload) if attachment.payload else {},
-            "metadata": dict(attachment.metadata) if attachment.metadata else {},
-        }
-
-    @staticmethod
-    def _payload_mapping(value: Any) -> Mapping[str, Any]:
-        if isinstance(value, Mapping):
-            return value
-        return {}
-
-    @staticmethod
-    def _required_text(payload: Mapping[str, Any], field_name: str) -> str:
-        value = payload.get(field_name)
-        if value is None:
-            raise KeyError(field_name)
-        return str(value)
-
-    @staticmethod
-    def _string_or_none(value: Any) -> str | None:
-        if value is None:
-            return None
-        return str(value)
-
-    @staticmethod
-    def _int_or_none(value: Any) -> int | None:
-        if value is None or isinstance(value, bool):
-            return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _float_or_default(value: Any, *, default: float = 0.0) -> float:
-        if value is None or isinstance(value, bool):
-            return default
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
-    def _sequence_items(value: Any) -> Sequence[Any]:
-        if isinstance(value, Sequence) and not isinstance(
-            value, (str, bytes, bytearray, memoryview)
-        ):
-            return value
-        if isinstance(value, (set, frozenset)):
-            return tuple(value)
-        return ()
-
-    @classmethod
-    def _string_list_payload(cls, values: Any) -> list[str]:
-        return [str(value) for value in cls._sequence_items(values) if value]
-
-    @classmethod
-    def _string_set_payload(cls, values: Any) -> set[str]:
-        return {str(value) for value in cls._sequence_items(values) if value}
-
-    @staticmethod
-    def _json_mapping_payload(value: Any) -> dict[str, Any]:
-        if not isinstance(value, Mapping):
-            return {}
-        normalized = {str(key): nested for key, nested in value.items()}
-        jsonable = safe_jsonable(normalized)
-        return jsonable if isinstance(jsonable, dict) else {}
-
-    @staticmethod
-    def _json_list_payload(value: Any) -> list[Any] | None:
-        if value is None:
-            return None
-        jsonable = safe_jsonable(value)
-        return jsonable if isinstance(jsonable, list) else None
-
-    @classmethod
-    def _code_unit_payload(cls, unit: IRCodeUnit) -> dict[str, Any]:
-        return {
-            "unit_id": unit.unit_id,
-            "kind": unit.kind,
-            "path": unit.path,
-            "language": unit.language,
-            "display_name": unit.display_name,
-            "qualified_name": unit.qualified_name,
-            "signature": unit.signature,
-            "docstring": unit.docstring,
-            "summary": unit.summary,
-            "start_line": unit.start_line,
-            "start_col": unit.start_col,
-            "end_line": unit.end_line,
-            "end_col": unit.end_col,
-            "parent_unit_id": unit.parent_unit_id,
-            "primary_anchor_symbol_id": unit.primary_anchor_symbol_id,
-            "anchor_symbol_ids": cls._string_list_payload(unit.anchor_symbol_ids),
-            "candidate_anchor_symbol_ids": cls._string_list_payload(
-                unit.candidate_anchor_symbol_ids
-            ),
-            "anchor_coverage": float(unit.anchor_coverage),
-            "source_set": cls._source_set_payload(unit.source_set),
-            "metadata": cls._json_mapping_payload(unit.metadata),
-        }
-
-    @classmethod
-    def _unit_support_payload(cls, support: IRUnitSupport) -> dict[str, Any]:
-        return {
-            "support_id": support.support_id,
-            "unit_id": support.unit_id,
-            "source": support.source,
-            "support_kind": support.support_kind,
-            "external_id": support.external_id,
-            "role": support.role,
-            "path": support.path,
-            "display_name": support.display_name,
-            "qualified_name": support.qualified_name,
-            "signature": support.signature,
-            "enclosing_external_id": support.enclosing_external_id,
-            "start_line": support.start_line,
-            "start_col": support.start_col,
-            "end_line": support.end_line,
-            "end_col": support.end_col,
-            "metadata": cls._json_mapping_payload(support.metadata),
-        }
-
-    @classmethod
-    def _relation_payload(cls, relation: IRRelation) -> dict[str, Any]:
-        return {
-            "relation_id": relation.relation_id,
-            "src_unit_id": relation.src_unit_id,
-            "dst_unit_id": relation.dst_unit_id,
-            "relation_type": relation.relation_type,
-            "resolution_state": relation.resolution_state,
-            "support_sources": cls._source_set_payload(relation.support_sources),
-            "support_ids": cls._string_list_payload(relation.support_ids),
-            "pending_capabilities": cls._source_set_payload(
-                relation.pending_capabilities
-            ),
-            "metadata": cls._json_mapping_payload(relation.metadata),
-        }
-
-    @classmethod
-    def _embedding_payload(cls, embedding: IRUnitEmbedding) -> dict[str, Any]:
-        return {
-            "embedding_id": embedding.embedding_id,
-            "unit_id": embedding.unit_id,
-            "source": embedding.source,
-            "vector": cls._json_list_payload(embedding.vector),
-            "embedding_text": embedding.embedding_text,
-            "model_id": embedding.model_id,
-            "metadata": cls._json_mapping_payload(embedding.metadata),
-        }
-
-    @classmethod
-    def _snapshot_file_payload(cls, snapshot: IRSnapshot) -> dict[str, Any]:
-        return {
-            "schema_version": "ir.v2",
-            "repo_name": snapshot.repo_name,
-            "snapshot_id": snapshot.snapshot_id,
-            "branch": snapshot.branch,
-            "commit_id": snapshot.commit_id,
-            "tree_id": snapshot.tree_id,
-            "units": [cls._code_unit_payload(unit) for unit in snapshot.units],
-            "supports": [
-                cls._unit_support_payload(support) for support in snapshot.supports
-            ],
-            "relations": [
-                cls._relation_payload(relation) for relation in snapshot.relations
-            ],
-            "embeddings": [
-                cls._embedding_payload(embedding) for embedding in snapshot.embeddings
-            ],
-            "metadata": cls._json_mapping_payload(snapshot.metadata),
-        }
+    def _new_id(self, prefix: str) -> str:
+        id_generator = getattr(self, "id_generator", None)
+        if id_generator is not None:
+            return id_generator.new_id(prefix)
+        return PrefixedIdGenerator().new_id(prefix)
 
     @staticmethod
     def _snapshot_shard_file_stem(path_key: str) -> str:
@@ -420,21 +243,6 @@ class SnapshotStore:
         return str(path) if path else f"__pathless__:{fallback}"
 
     @classmethod
-    def _embedding_payload_without_vector(
-        cls,
-        embedding: IRUnitEmbedding,
-        *,
-        vector_ref: str | None,
-    ) -> dict[str, Any]:
-        payload = cls._embedding_payload(embedding)
-        payload["vector"] = None
-        if vector_ref is not None:
-            metadata = cls._json_mapping_payload(payload.get("metadata"))
-            metadata["vector_ref"] = vector_ref
-            payload["metadata"] = metadata
-        return payload
-
-    @classmethod
     def _write_json_atomic(cls, path: str, payload: Any) -> None:
         tmp_path = f"{path}.tmp"
         with open(tmp_path, "w", encoding="utf-8") as handle:
@@ -463,28 +271,6 @@ class SnapshotStore:
             ).hexdigest(),
         }
 
-    @staticmethod
-    def _payload_with_sequence(
-        payload: dict[str, Any],
-        sequence_no: int,
-    ) -> dict[str, Any]:
-        row = dict(payload)
-        row["_sequence_no"] = sequence_no
-        return row
-
-    @staticmethod
-    def _ordered_sharded_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        def sequence_key(item: tuple[int, dict[str, Any]]) -> tuple[int, int]:
-            index, row = item
-            raw_sequence = row.get("_sequence_no")
-            return (
-                (int(raw_sequence), index)
-                if isinstance(raw_sequence, int)
-                else (index, index)
-            )
-
-        return [row for _index, row in sorted(enumerate(rows), key=sequence_key)]
-
     @classmethod
     def file_ir_shard_payloads(
         cls,
@@ -512,9 +298,9 @@ class SnapshotStore:
                 continue
             unit_payload = cls._code_unit_payload(unit)
             units_by_path.setdefault(path_key, []).append(
-                cls._payload_with_sequence(unit_payload, sequence_no)
+                _payload_with_sequence(unit_payload, sequence_no)
             )
-            metadata = cls._json_mapping_payload(unit.metadata)
+            metadata = _json_mapping_payload(unit.metadata)
             content_hash = metadata.get("content_hash") or metadata.get("blob_oid")
             if unit.kind == "file" and content_hash is not None:
                 content_hash_by_path[path_key] = str(content_hash)
@@ -530,7 +316,7 @@ class SnapshotStore:
             if not include_path(path_key):
                 continue
             supports_by_path.setdefault(path_key, []).append(
-                cls._payload_with_sequence(
+                _payload_with_sequence(
                     cls._unit_support_payload(support),
                     sequence_no,
                 )
@@ -548,7 +334,7 @@ class SnapshotStore:
             if not include_path(path_key):
                 continue
             relations_by_path.setdefault(path_key, []).append(
-                cls._payload_with_sequence(
+                _payload_with_sequence(
                     cls._relation_payload(relation),
                     sequence_no,
                 )
@@ -565,7 +351,7 @@ class SnapshotStore:
             if not include_path(path_key):
                 continue
             embeddings_by_path.setdefault(path_key, []).append(
-                cls._payload_with_sequence(
+                _payload_with_sequence(
                     cls._embedding_payload_without_vector(
                         embedding,
                         vector_ref=None,
@@ -667,7 +453,7 @@ class SnapshotStore:
             path_key = self._snapshot_path_key(unit.path, unit.unit_id)
             unit_path_by_id[unit.unit_id] = path_key
             units_by_path.setdefault(path_key, []).append(
-                self._payload_with_sequence(
+                _payload_with_sequence(
                     self._code_unit_payload(unit),
                     sequence_no,
                 )
@@ -680,7 +466,7 @@ class SnapshotStore:
                 support.support_id,
             )
             supports_by_path.setdefault(path_key, []).append(
-                self._payload_with_sequence(
+                _payload_with_sequence(
                     self._unit_support_payload(support),
                     sequence_no,
                 )
@@ -694,7 +480,7 @@ class SnapshotStore:
                 relation.relation_id,
             )
             relations_by_path.setdefault(path_key, []).append(
-                self._payload_with_sequence(
+                _payload_with_sequence(
                     self._relation_payload(relation),
                     sequence_no,
                 )
@@ -722,7 +508,7 @@ class SnapshotStore:
                 vector_ref = os.path.join("embedding_vectors", vector_file)
                 active_vector_files.add(vector_file)
             embeddings_by_path.setdefault(path_key, []).append(
-                self._payload_with_sequence(
+                _payload_with_sequence(
                     self._embedding_payload_without_vector(
                         embedding,
                         vector_ref=vector_ref,
@@ -776,7 +562,7 @@ class SnapshotStore:
             "branch": snapshot.branch,
             "commit_id": snapshot.commit_id,
             "tree_id": snapshot.tree_id,
-            "metadata": self._json_mapping_payload(snapshot.metadata),
+            "metadata": _json_mapping_payload(snapshot.metadata),
             "units": unit_shards,
             "supports": support_shards,
             "relations": relation_shards,
@@ -915,7 +701,7 @@ class SnapshotStore:
             if path_key not in changed_keys:
                 continue
             units_by_path.setdefault(path_key, []).append(
-                self._payload_with_sequence(
+                _payload_with_sequence(
                     self._code_unit_payload(unit),
                     sequence_no,
                 )
@@ -930,7 +716,7 @@ class SnapshotStore:
             if path_key not in changed_keys:
                 continue
             supports_by_path.setdefault(path_key, []).append(
-                self._payload_with_sequence(
+                _payload_with_sequence(
                     self._unit_support_payload(support),
                     sequence_no,
                 )
@@ -954,7 +740,7 @@ class SnapshotStore:
                 continue
             relation_rewrite_keys.add(path_key)
             relations_by_path.setdefault(path_key, []).append(
-                self._payload_with_sequence(
+                _payload_with_sequence(
                     self._relation_payload(relation),
                     sequence_no,
                 )
@@ -984,7 +770,7 @@ class SnapshotStore:
                 vector_ref = os.path.join("embedding_vectors", vector_file)
                 changed_vector_files.add(vector_file)
             embeddings_by_path.setdefault(path_key, []).append(
-                self._payload_with_sequence(
+                _payload_with_sequence(
                     self._embedding_payload_without_vector(
                         embedding,
                         vector_ref=vector_ref,
@@ -1132,7 +918,7 @@ class SnapshotStore:
             "branch": snapshot.branch,
             "commit_id": snapshot.commit_id,
             "tree_id": snapshot.tree_id,
-            "metadata": self._json_mapping_payload(snapshot.metadata),
+            "metadata": _json_mapping_payload(snapshot.metadata),
             "units": unit_shards,
             "supports": support_shards,
             "relations": relation_shards,
@@ -1170,7 +956,7 @@ class SnapshotStore:
 
     @classmethod
     def _code_unit_from_payload(cls, data: Any) -> IRCodeUnit:
-        payload = cls._payload_mapping(data)
+        payload = _payload_mapping(data)
         return IRCodeUnit(
             unit_id=cls._required_text(payload, "unit_id"),
             kind=cls._required_text(payload, "kind"),
@@ -1189,20 +975,20 @@ class SnapshotStore:
             primary_anchor_symbol_id=cls._string_or_none(
                 payload.get("primary_anchor_symbol_id")
             ),
-            anchor_symbol_ids=cls._string_list_payload(
+            anchor_symbol_ids=_string_list_payload(
                 payload.get("anchor_symbol_ids")
             ),
-            candidate_anchor_symbol_ids=cls._string_list_payload(
+            candidate_anchor_symbol_ids=_string_list_payload(
                 payload.get("candidate_anchor_symbol_ids")
             ),
             anchor_coverage=cls._float_or_default(payload.get("anchor_coverage")),
             source_set=cls._string_set_payload(payload.get("source_set")),
-            metadata=cls._json_mapping_payload(payload.get("metadata")),
+            metadata=_json_mapping_payload(payload.get("metadata")),
         )
 
     @classmethod
     def _unit_support_from_payload(cls, data: Any) -> IRUnitSupport:
-        payload = cls._payload_mapping(data)
+        payload = _payload_mapping(data)
         return IRUnitSupport(
             support_id=cls._required_text(payload, "support_id"),
             unit_id=cls._required_text(payload, "unit_id"),
@@ -1221,12 +1007,12 @@ class SnapshotStore:
             start_col=cls._int_or_none(payload.get("start_col")),
             end_line=cls._int_or_none(payload.get("end_line")),
             end_col=cls._int_or_none(payload.get("end_col")),
-            metadata=cls._json_mapping_payload(payload.get("metadata")),
+            metadata=_json_mapping_payload(payload.get("metadata")),
         )
 
     @classmethod
     def _relation_from_payload(cls, data: Any) -> IRRelation:
-        payload = cls._payload_mapping(data)
+        payload = _payload_mapping(data)
         return IRRelation(
             relation_id=cls._required_text(payload, "relation_id"),
             src_unit_id=cls._required_text(payload, "src_unit_id"),
@@ -1234,16 +1020,16 @@ class SnapshotStore:
             relation_type=cls._required_text(payload, "relation_type"),
             resolution_state=cls._required_text(payload, "resolution_state"),
             support_sources=cls._string_set_payload(payload.get("support_sources")),
-            support_ids=cls._string_list_payload(payload.get("support_ids")),
+            support_ids=_string_list_payload(payload.get("support_ids")),
             pending_capabilities=cls._string_set_payload(
                 payload.get("pending_capabilities")
             ),
-            metadata=cls._json_mapping_payload(payload.get("metadata")),
+            metadata=_json_mapping_payload(payload.get("metadata")),
         )
 
     @classmethod
     def _embedding_from_payload(cls, data: Any) -> IRUnitEmbedding:
-        payload = cls._payload_mapping(data)
+        payload = _payload_mapping(data)
         return IRUnitEmbedding(
             embedding_id=cls._required_text(payload, "embedding_id"),
             unit_id=cls._required_text(payload, "unit_id"),
@@ -1251,12 +1037,12 @@ class SnapshotStore:
             vector=cls._json_list_payload(payload.get("vector")),
             embedding_text=cls._string_or_none(payload.get("embedding_text")),
             model_id=cls._string_or_none(payload.get("model_id")),
-            metadata=cls._json_mapping_payload(payload.get("metadata")),
+            metadata=_json_mapping_payload(payload.get("metadata")),
         )
 
     @classmethod
     def _document_from_payload(cls, data: Any) -> IRDocument:
-        payload = cls._payload_mapping(data)
+        payload = _payload_mapping(data)
         return IRDocument(
             doc_id=cls._required_text(payload, "doc_id"),
             path=cls._required_text(payload, "path"),
@@ -1268,7 +1054,7 @@ class SnapshotStore:
 
     @classmethod
     def _symbol_from_payload(cls, data: Any) -> IRSymbol:
-        payload = cls._payload_mapping(data)
+        payload = _payload_mapping(data)
         return IRSymbol(
             symbol_id=cls._required_text(payload, "symbol_id"),
             external_symbol_id=cls._string_or_none(payload.get("external_symbol_id")),
@@ -1284,12 +1070,12 @@ class SnapshotStore:
             end_col=cls._int_or_none(payload.get("end_col")),
             source_priority=cls._int_or_none(payload.get("source_priority")) or 0,
             source_set=cls._string_set_payload(payload.get("source_set")),
-            metadata=cls._json_mapping_payload(payload.get("metadata")),
+            metadata=_json_mapping_payload(payload.get("metadata")),
         )
 
     @classmethod
     def _occurrence_from_payload(cls, data: Any) -> IROccurrence:
-        payload = cls._payload_mapping(data)
+        payload = _payload_mapping(data)
         return IROccurrence(
             occurrence_id=cls._required_text(payload, "occurrence_id"),
             symbol_id=cls._required_text(payload, "symbol_id"),
@@ -1300,12 +1086,12 @@ class SnapshotStore:
             end_line=cls._int_or_none(payload.get("end_line")) or 0,
             end_col=cls._int_or_none(payload.get("end_col")) or 0,
             source=cls._required_text(payload, "source"),
-            metadata=cls._json_mapping_payload(payload.get("metadata")),
+            metadata=_json_mapping_payload(payload.get("metadata")),
         )
 
     @classmethod
     def _edge_from_payload(cls, data: Any) -> IREdge:
-        payload = cls._payload_mapping(data)
+        payload = _payload_mapping(data)
         return IREdge(
             edge_id=cls._required_text(payload, "edge_id"),
             src_id=cls._required_text(payload, "src_id"),
@@ -1314,12 +1100,12 @@ class SnapshotStore:
             source=cls._required_text(payload, "source"),
             confidence=cls._required_text(payload, "confidence"),
             doc_id=cls._string_or_none(payload.get("doc_id")),
-            metadata=cls._json_mapping_payload(payload.get("metadata")),
+            metadata=_json_mapping_payload(payload.get("metadata")),
         )
 
     @classmethod
     def _attachment_from_payload(cls, data: Any) -> IRAttachment:
-        payload = cls._payload_mapping(data)
+        payload = _payload_mapping(data)
         return IRAttachment(
             attachment_id=cls._required_text(payload, "attachment_id"),
             target_id=cls._required_text(payload, "target_id"),
@@ -1327,19 +1113,19 @@ class SnapshotStore:
             attachment_type=cls._required_text(payload, "attachment_type"),
             source=cls._required_text(payload, "source"),
             confidence=cls._required_text(payload, "confidence"),
-            payload=cls._json_mapping_payload(payload.get("payload")),
-            metadata=cls._json_mapping_payload(payload.get("metadata")),
+            payload=_json_mapping_payload(payload.get("payload")),
+            metadata=_json_mapping_payload(payload.get("metadata")),
         )
 
     @classmethod
     def _snapshot_from_payload(cls, data: Any) -> IRSnapshot:
-        payload = cls._payload_mapping(data)
+        payload = _payload_mapping(data)
         repo_name = cls._required_text(payload, "repo_name")
         snapshot_id = cls._required_text(payload, "snapshot_id")
         branch = cls._string_or_none(payload.get("branch"))
         commit_id = cls._string_or_none(payload.get("commit_id"))
         tree_id = cls._string_or_none(payload.get("tree_id"))
-        metadata = cls._json_mapping_payload(payload.get("metadata"))
+        metadata = _json_mapping_payload(payload.get("metadata"))
         if payload.get("units") is not None or payload.get("supports") is not None:
             return IRSnapshot(
                 repo_name=repo_name,
@@ -1348,20 +1134,20 @@ class SnapshotStore:
                 commit_id=commit_id,
                 tree_id=tree_id,
                 units=[
-                    cls._code_unit_from_payload(unit)
-                    for unit in cls._sequence_items(payload.get("units"))
+                    _code_unit_from_payload(unit)
+                    for unit in _sequence_items(payload.get("units"))
                 ],
                 supports=[
-                    cls._unit_support_from_payload(support)
-                    for support in cls._sequence_items(payload.get("supports"))
+                    _unit_support_from_payload(support)
+                    for support in _sequence_items(payload.get("supports"))
                 ],
                 relations=[
-                    cls._relation_from_payload(relation)
-                    for relation in cls._sequence_items(payload.get("relations"))
+                    _relation_from_payload(relation)
+                    for relation in _sequence_items(payload.get("relations"))
                 ],
                 embeddings=[
                     cls._embedding_from_payload(embedding)
-                    for embedding in cls._sequence_items(payload.get("embeddings"))
+                    for embedding in _sequence_items(payload.get("embeddings"))
                 ],
                 metadata=metadata,
             )
@@ -1373,23 +1159,23 @@ class SnapshotStore:
             tree_id=tree_id,
             documents=[
                 cls._document_from_payload(document)
-                for document in cls._sequence_items(payload.get("documents"))
+                for document in _sequence_items(payload.get("documents"))
             ],
             symbols=[
                 cls._symbol_from_payload(symbol)
-                for symbol in cls._sequence_items(payload.get("symbols"))
+                for symbol in _sequence_items(payload.get("symbols"))
             ],
             occurrences=[
                 cls._occurrence_from_payload(occurrence)
-                for occurrence in cls._sequence_items(payload.get("occurrences"))
+                for occurrence in _sequence_items(payload.get("occurrences"))
             ],
             edges=[
                 cls._edge_from_payload(edge)
-                for edge in cls._sequence_items(payload.get("edges"))
+                for edge in _sequence_items(payload.get("edges"))
             ],
             attachments=[
                 cls._attachment_from_payload(attachment)
-                for attachment in cls._sequence_items(payload.get("attachments"))
+                for attachment in _sequence_items(payload.get("attachments"))
             ],
             metadata=metadata,
         )
@@ -1403,7 +1189,7 @@ class SnapshotStore:
         shards: Any,
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
-        for entry in cls._sequence_items(shards):
+        for entry in _sequence_items(shards):
             if not isinstance(entry, Mapping):
                 continue
             shard_file = entry.get("shard_file")
@@ -1429,7 +1215,7 @@ class SnapshotStore:
         data: Mapping[str, Any],
     ) -> IRUnitEmbedding:
         payload = dict(data)
-        metadata = cls._json_mapping_payload(payload.get("metadata"))
+        metadata = _json_mapping_payload(payload.get("metadata"))
         vector_ref = metadata.get("vector_ref")
         if payload.get("vector") is None and vector_ref:
             vector_path = os.path.join(snap_dir, str(vector_ref))
@@ -1451,38 +1237,38 @@ class SnapshotStore:
         manifest: Mapping[str, Any],
     ) -> IRSnapshot:
         unit_rows = cls._ordered_sharded_rows(
-            cls._load_snapshot_shard_rows(
+            _load_snapshot_shard_rows(
                 snap_dir=snap_dir,
                 subdir="units",
                 shards=manifest.get("units"),
             )
         )
         support_rows = cls._ordered_sharded_rows(
-            cls._load_snapshot_shard_rows(
+            _load_snapshot_shard_rows(
                 snap_dir=snap_dir,
                 subdir="supports",
                 shards=manifest.get("supports"),
             )
         )
         relation_rows = cls._ordered_sharded_rows(
-            cls._load_snapshot_shard_rows(
+            _load_snapshot_shard_rows(
                 snap_dir=snap_dir,
                 subdir="relations",
                 shards=manifest.get("relations"),
             )
         )
         embedding_rows = cls._ordered_sharded_rows(
-            cls._load_snapshot_shard_rows(
+            _load_snapshot_shard_rows(
                 snap_dir=snap_dir,
                 subdir="embeddings",
                 shards=manifest.get("embeddings"),
             )
         )
-        units = [cls._code_unit_from_payload(row) for row in unit_rows]
-        supports = [cls._unit_support_from_payload(row) for row in support_rows]
-        relations = [cls._relation_from_payload(row) for row in relation_rows]
+        units = [_code_unit_from_payload(row) for row in unit_rows]
+        supports = [_unit_support_from_payload(row) for row in support_rows]
+        relations = [_relation_from_payload(row) for row in relation_rows]
         embeddings = [
-            cls._embedding_from_sharded_payload(snap_dir=snap_dir, data=row)
+            _embedding_from_sharded_payload(snap_dir=snap_dir, data=row)
             for row in embedding_rows
         ]
         return IRSnapshot(
@@ -1495,7 +1281,7 @@ class SnapshotStore:
             supports=supports,
             relations=relations,
             embeddings=embeddings,
-            metadata=cls._json_mapping_payload(manifest.get("metadata")),
+            metadata=_json_mapping_payload(manifest.get("metadata")),
         )
 
     @classmethod
@@ -1602,7 +1388,7 @@ class SnapshotStore:
                 VALUES (?, ?, ?)
                 ON CONFLICT(component, version) DO NOTHING
                 """,
-                ("core_metadata", "v1", utc_now()),
+                ("core_metadata", "v1", self._utc_now()),
             )
             if self.db_runtime.backend == "postgres":
                 # Git backbone
@@ -1859,7 +1645,7 @@ class SnapshotStore:
                     VALUES (?, ?, ?)
                     ON CONFLICT(component, version) DO NOTHING
                     """,
-                    ("pg_full_spec_alignment", "v1", utc_now()),
+                    ("pg_full_spec_alignment", "v1", self._utc_now()),
                 )
             conn.commit()
 
@@ -1911,14 +1697,14 @@ class SnapshotStore:
             canonical = unit.unit_id
             if not canonical:
                 continue
-            metadata = cls._json_mapping_payload(unit.metadata)
+            metadata = _json_mapping_payload(unit.metadata)
             aliases = {canonical}
             if unit.primary_anchor_symbol_id:
                 aliases.add(unit.primary_anchor_symbol_id)
-            aliases.update(cls._string_list_payload(unit.anchor_symbol_ids))
-            aliases.update(cls._string_list_payload(unit.candidate_anchor_symbol_ids))
+            aliases.update(_string_list_payload(unit.anchor_symbol_ids))
+            aliases.update(_string_list_payload(unit.candidate_anchor_symbol_ids))
             metadata_aliases = metadata.get("aliases")
-            aliases.update(cls._string_list_payload(metadata_aliases))
+            aliases.update(_string_list_payload(metadata_aliases))
 
             names = list(
                 dict.fromkeys(
@@ -1994,12 +1780,12 @@ class SnapshotStore:
             record.setdefault("language", self._row_value(row, 5, "language"))
             records[symbol_id] = {str(key): value for key, value in record.items()}
 
-            metadata = self._json_mapping_payload(record.get("metadata"))
+            metadata = _json_mapping_payload(record.get("metadata"))
             aliases = {symbol_id}
             external_symbol_id = record.get("external_symbol_id")
             if external_symbol_id:
                 aliases.add(str(external_symbol_id))
-            aliases.update(self._string_list_payload(metadata.get("aliases")))
+            aliases.update(_string_list_payload(metadata.get("aliases")))
             names = list(
                 dict.fromkeys(
                     name
@@ -2087,7 +1873,7 @@ class SnapshotStore:
                     snapshot.tree_id,
                     artifact_key,
                     ir_path,
-                    utc_now(),
+                    self._utc_now(),
                     metadata_json,
                 ),
             )
@@ -2105,7 +1891,7 @@ class SnapshotStore:
                     snapshot.commit_id,
                     snapshot.tree_id,
                     snapshot.snapshot_id,
-                    utc_now(),
+                    self._utc_now(),
                 ),
             )
             conn.commit()
@@ -2119,7 +1905,7 @@ class SnapshotStore:
             artifact_key=artifact_key,
             ir_path=ir_path,
             ir_graphs_path=None,
-            created_at=utc_now(),
+            created_at=self._utc_now(),
             metadata_json=metadata_json,
         )
 
@@ -2179,7 +1965,7 @@ class SnapshotStore:
                     snapshot.tree_id,
                     artifact_key,
                     ir_path,
-                    utc_now(),
+                    self._utc_now(),
                     metadata_json,
                 ),
             )
@@ -2197,7 +1983,7 @@ class SnapshotStore:
                     snapshot.commit_id,
                     snapshot.tree_id,
                     snapshot.snapshot_id,
-                    utc_now(),
+                    self._utc_now(),
                 ),
             )
             conn.commit()
@@ -2211,7 +1997,7 @@ class SnapshotStore:
             artifact_key=artifact_key,
             ir_path=ir_path,
             ir_graphs_path=None,
-            created_at=utc_now(),
+            created_at=self._utc_now(),
             metadata_json=metadata_json,
         )
 
@@ -2236,10 +2022,10 @@ class SnapshotStore:
                     "snapshot symbol index at %s is not valid JSON, skipping", path
                 )
                 return None
-        payload = self._payload_mapping(data)
+        payload = _payload_mapping(data)
         if payload.get("snapshot_id") != snapshot_id:
             return None
-        symbols = self._sequence_items(payload.get("symbols"))
+        symbols = _sequence_items(payload.get("symbols"))
         raw_records = payload.get("records")
         records: dict[str, Mapping[str, Any]] = {}
         if isinstance(raw_records, Mapping):
@@ -2801,11 +2587,11 @@ class SnapshotStore:
             isinstance(data, Mapping)
             and data.get("schema_version") == self.SNAPSHOT_SHARD_SCHEMA_VERSION
         ):
-            return self._snapshot_from_sharded_payload(
+            return _snapshot_from_sharded_payload(
                 snap_dir=os.path.dirname(ir_path),
                 manifest=data,
             )
-        return self._snapshot_from_payload(data)
+        return _snapshot_from_payload(data)
 
     def load_snapshot_metadata(self, snapshot_id: str) -> dict[str, Any] | None:
         record = self.get_snapshot_record(snapshot_id)
@@ -2822,8 +2608,8 @@ class SnapshotStore:
             "branch": payload.get("branch"),
             "commit_id": payload.get("commit_id"),
             "tree_id": payload.get("tree_id"),
-            "metadata": self._json_mapping_payload(payload.get("metadata")),
-            "counts": self._json_mapping_payload(payload.get("counts")),
+            "metadata": _json_mapping_payload(payload.get("metadata")),
+            "counts": _json_mapping_payload(payload.get("counts")),
             "schema_version": payload.get("schema_version"),
         }
 
@@ -2850,19 +2636,19 @@ class SnapshotStore:
             ]
         wanted = {str(path) for path in paths}
         rows: list[dict[str, Any]] = []
-        for entry in self._sequence_items(manifest.get("units")):
+        for entry in _sequence_items(manifest.get("units")):
             if not isinstance(entry, Mapping):
                 continue
             if str(entry.get("path_key") or "") not in wanted:
                 continue
             rows.extend(
-                self._load_snapshot_shard_rows(
+                _load_snapshot_shard_rows(
                     snap_dir=os.path.dirname(record.ir_path),
                     subdir="units",
                     shards=[entry],
                 )
             )
-        return [self._code_unit_from_payload(row) for row in rows]
+        return [_code_unit_from_payload(row) for row in rows]
 
     def load_snapshot_relations_for_paths(
         self,
@@ -2891,19 +2677,19 @@ class SnapshotStore:
             ]
         wanted = {str(path) for path in paths}
         rows: list[dict[str, Any]] = []
-        for entry in self._sequence_items(manifest.get("relations")):
+        for entry in _sequence_items(manifest.get("relations")):
             if not isinstance(entry, Mapping):
                 continue
             if str(entry.get("path_key") or "") not in wanted:
                 continue
             rows.extend(
-                self._load_snapshot_shard_rows(
+                _load_snapshot_shard_rows(
                     snap_dir=os.path.dirname(record.ir_path),
                     subdir="relations",
                     shards=[entry],
                 )
             )
-        return [self._relation_from_payload(row) for row in rows]
+        return [_relation_from_payload(row) for row in rows]
 
     def load_snapshot_supports_for_paths(
         self,
@@ -2931,19 +2717,19 @@ class SnapshotStore:
             ]
         wanted = {str(path) for path in paths}
         rows: list[dict[str, Any]] = []
-        for entry in self._sequence_items(manifest.get("supports")):
+        for entry in _sequence_items(manifest.get("supports")):
             if not isinstance(entry, Mapping):
                 continue
             if str(entry.get("path_key") or "") not in wanted:
                 continue
             rows.extend(
-                self._load_snapshot_shard_rows(
+                _load_snapshot_shard_rows(
                     snap_dir=os.path.dirname(record.ir_path),
                     subdir="supports",
                     shards=[entry],
                 )
             )
-        return [self._unit_support_from_payload(row) for row in rows]
+        return [_unit_support_from_payload(row) for row in rows]
 
     def load_snapshot_embeddings_for_paths(
         self,
@@ -2972,20 +2758,20 @@ class SnapshotStore:
         wanted = {str(path) for path in paths}
         rows: list[dict[str, Any]] = []
         snap_dir = os.path.dirname(record.ir_path)
-        for entry in self._sequence_items(manifest.get("embeddings")):
+        for entry in _sequence_items(manifest.get("embeddings")):
             if not isinstance(entry, Mapping):
                 continue
             if str(entry.get("path_key") or "") not in wanted:
                 continue
             rows.extend(
-                self._load_snapshot_shard_rows(
+                _load_snapshot_shard_rows(
                     snap_dir=snap_dir,
                     subdir="embeddings",
                     shards=[entry],
                 )
             )
         return [
-            self._embedding_from_sharded_payload(snap_dir=snap_dir, data=row)
+            _embedding_from_sharded_payload(snap_dir=snap_dir, data=row)
             for row in rows
         ]
 
@@ -3124,7 +2910,7 @@ class SnapshotStore:
         if not artifacts:
             return []
 
-        created_at = utc_now()
+        created_at = self._utc_now()
         normalized_artifacts: list[SCIPArtifactRecord] = []
         for sequence_no, artifact in enumerate(artifacts):
             metadata = self._scip_metadata_mapping(artifact)
@@ -3495,7 +3281,7 @@ class SnapshotStore:
             return
         git_meta = git_meta or {}
         repo_id = snapshot.repo_name
-        now = utc_now()
+        now = self._utc_now()
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,
@@ -4079,7 +3865,7 @@ class SnapshotStore:
     def stage_snapshot(
         self, snapshot: IRSnapshot, metadata: dict[str, Any] | None = None
     ) -> str:
-        stage_id = f"stage_{uuid.uuid4().hex[:16]}"
+        stage_id = self._new_id("stage")
         if self.db_runtime.backend != "postgres":
             return stage_id
         with self.db_runtime.connect() as conn:
@@ -4094,7 +3880,7 @@ class SnapshotStore:
                     stage_id,
                     snapshot.snapshot_id,
                     json.dumps(metadata or {}, ensure_ascii=False),
-                    utc_now(),
+                    self._utc_now(),
                 ),
             )
             conn.commit()
@@ -4111,7 +3897,7 @@ class SnapshotStore:
                 SET status='published', promoted_at=?
                 WHERE stage_id=? AND snapshot_id=?
                 """,
-                (utc_now(), stage_id, snapshot_id),
+                (self._utc_now(), stage_id, snapshot_id),
             )
             conn.commit()
 
@@ -4120,10 +3906,9 @@ class SnapshotStore:
     ) -> int | None:
         if self.db_runtime.backend != "postgres":
             return 1
-        now = datetime.now(UTC)
-        expires_at = now.timestamp() + ttl_seconds
-        expires_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
-        now_iso = now.isoformat()
+        now_iso = self._utc_now()
+        now = datetime.fromisoformat(now_iso)
+        expires_iso = (now + timedelta(seconds=ttl_seconds)).isoformat()
         with self.db_runtime.connect() as conn:
             # Atomic compare-and-swap: INSERT or UPDATE only if expired or same owner
             row = self.db_runtime.execute(
@@ -4143,7 +3928,7 @@ class SnapshotStore:
                 WHERE resource_locks.expires_at < ? OR resource_locks.owner_id = ?
                 RETURNING fencing_token
                 """,
-                (lock_name, owner_id, expires_iso, utc_now(), now_iso, owner_id),
+                (lock_name, owner_id, expires_iso, now_iso, now_iso, owner_id),
             ).fetchone()
             conn.commit()
         if row is None:
@@ -4177,10 +3962,10 @@ class SnapshotStore:
     def enqueue_redo_task(
         self, task_type: str, payload: dict[str, Any], error: str | None = None
     ) -> str:
-        task_id = f"redo_{uuid.uuid4().hex[:16]}"
+        task_id = self._new_id("redo")
         if self.db_runtime.backend != "postgres":
             return task_id
-        now = utc_now()
+        now = self._utc_now()
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,
@@ -4303,7 +4088,7 @@ class SnapshotStore:
     def claim_redo_task_record(self) -> RedoTaskRecord | None:
         if self.db_runtime.backend != "postgres":
             return None
-        now = utc_now()
+        now = self._utc_now()
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -4320,7 +4105,7 @@ class SnapshotStore:
             if not row:
                 conn.commit()
                 return None
-            task_record = self._row_to_redo_task_record(row)
+            task_record = _row_to_redo_task_record(row)
             if task_record is None:
                 conn.commit()
                 return None
@@ -4348,7 +4133,7 @@ class SnapshotStore:
 
     def claim_redo_task(self) -> dict[str, Any] | None:
         record = self.claim_redo_task_record()
-        return self._redo_task_payload(record) if record is not None else None
+        return _redo_task_payload(record) if record is not None else None
 
     def mark_redo_task_done(self, task_id: str) -> None:
         if self.db_runtime.backend != "postgres":
@@ -4361,7 +4146,7 @@ class SnapshotStore:
                 SET status='completed', updated_at=?
                 WHERE task_id=?
                 """,
-                (utc_now(), task_id),
+                (self._utc_now(), task_id),
             )
             conn.commit()
 
@@ -4385,12 +4170,13 @@ class SnapshotStore:
                     SET status='dead', last_error=?, updated_at=?
                     WHERE task_id=?
                     """,
-                    (error, utc_now(), task_id),
+                    (error, self._utc_now(), task_id),
                 )
             else:
                 backoff_seconds = max(1, 2**attempts)
                 next_attempt_at = (
-                    datetime.now(UTC) + timedelta(seconds=backoff_seconds)
+                    datetime.fromisoformat(self._utc_now())
+                    + timedelta(seconds=backoff_seconds)
                 ).isoformat()
                 self.db_runtime.execute(
                     conn,
@@ -4399,7 +4185,7 @@ class SnapshotStore:
                     SET status='pending', last_error=?, next_attempt_at=?, updated_at=?
                     WHERE task_id=?
                     """,
-                    (error, next_attempt_at, utc_now(), task_id),
+                    (error, next_attempt_at, self._utc_now(), task_id),
                 )
             conn.commit()
 
@@ -4426,7 +4212,14 @@ class SnapshotStore:
                 ) VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)
                 ON CONFLICT(event_id) DO NOTHING
                 """,
-                (event_id, event_type, payload, snapshot_id, max_attempts, utc_now()),
+                (
+                    event_id,
+                    event_type,
+                    payload,
+                    snapshot_id,
+                    max_attempts,
+                    self._utc_now(),
+                ),
             )
             conn.commit()
         return int(getattr(cursor, "rowcount", 0) or 0) > 0
@@ -4435,7 +4228,7 @@ class SnapshotStore:
         """Claim pending or retryable failed events from the outbox."""
         if self.db_runtime.backend != "postgres":
             return []
-        now = utc_now()
+        now = self._utc_now()
         with self.db_runtime.connect() as conn:
             rows = self.db_runtime.execute(
                 conn,
@@ -4454,7 +4247,7 @@ class SnapshotStore:
                 return []
             claimed: list[OutboxEventRecord] = []
             for row in rows:
-                event_record = self._row_to_outbox_event_record(row)
+                event_record = _row_to_outbox_event_record(row)
                 if event_record is None:
                     continue
                 self.db_runtime.execute(
@@ -4486,7 +4279,7 @@ class SnapshotStore:
     def claim_outbox_event(self, limit: int = 10) -> list[dict[str, Any]]:
         """Claim pending or retryable failed events from the outbox."""
         return [
-            self._outbox_event_payload(record)
+            _outbox_event_payload(record)
             for record in self.claim_outbox_event_records(limit=limit)
         ]
 
@@ -4554,84 +4347,3 @@ class SnapshotStore:
                 """,
             ).fetchone()
         return int(self._row_value(row, 0, "cnt") or 0)
-
-    def _row_to_redo_task_record(self, row: Any) -> RedoTaskRecord | None:
-        task_id = self._row_value(row, 0, "task_id")
-        if task_id is None:
-            return None
-        return RedoTaskRecord(
-            task_id=str(task_id),
-            task_type=str(self._row_value(row, 1, "task_type") or ""),
-            payload_json=str(self._row_value(row, 2, "payload_json") or ""),
-            status=str(self._row_value(row, 3, "status") or ""),
-            attempts=int(self._row_value(row, 4, "attempts") or 0),
-            last_error=(
-                str(last_error)
-                if (last_error := self._row_value(row, 5, "last_error")) is not None
-                else None
-            ),
-            next_attempt_at=(
-                str(next_attempt_at)
-                if (next_attempt_at := self._row_value(row, 6, "next_attempt_at"))
-                is not None
-                else None
-            ),
-            created_at=str(self._row_value(row, 7, "created_at") or ""),
-            updated_at=str(self._row_value(row, 8, "updated_at") or ""),
-        )
-
-    @staticmethod
-    def _redo_task_payload(record: RedoTaskRecord) -> dict[str, Any]:
-        return {
-            "task_id": record.task_id,
-            "task_type": record.task_type,
-            "payload_json": record.payload_json,
-            "status": record.status,
-            "attempts": record.attempts,
-            "last_error": record.last_error,
-            "next_attempt_at": record.next_attempt_at,
-            "created_at": record.created_at,
-            "updated_at": record.updated_at,
-        }
-
-    def _row_to_outbox_event_record(self, row: Any) -> OutboxEventRecord | None:
-        event_id = self._row_value(row, 0, "event_id")
-        if event_id is None:
-            return None
-        return OutboxEventRecord(
-            event_id=str(event_id),
-            event_type=str(self._row_value(row, 1, "event_type") or ""),
-            payload=str(self._row_value(row, 2, "payload") or ""),
-            snapshot_id=str(self._row_value(row, 3, "snapshot_id") or ""),
-            status=str(self._row_value(row, 4, "status") or ""),
-            attempts=int(self._row_value(row, 5, "attempts") or 0),
-            max_attempts=int(self._row_value(row, 6, "max_attempts") or 0),
-            created_at=str(self._row_value(row, 7, "created_at") or ""),
-            last_attempt_at=(
-                str(last_attempt_at)
-                if (last_attempt_at := self._row_value(row, 8, "last_attempt_at"))
-                is not None
-                else None
-            ),
-            error_message=(
-                str(error_message)
-                if (error_message := self._row_value(row, 9, "error_message"))
-                is not None
-                else None
-            ),
-        )
-
-    @staticmethod
-    def _outbox_event_payload(record: OutboxEventRecord) -> dict[str, Any]:
-        return {
-            "event_id": record.event_id,
-            "event_type": record.event_type,
-            "payload": record.payload,
-            "snapshot_id": record.snapshot_id,
-            "status": record.status,
-            "attempts": record.attempts,
-            "max_attempts": record.max_attempts,
-            "created_at": record.created_at,
-            "last_attempt_at": record.last_attempt_at,
-            "error_message": record.error_message,
-        }

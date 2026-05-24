@@ -9,6 +9,8 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from ..store.projection_contracts import ProjectionBuildRecord
+
 if TYPE_CHECKING:
     from ..ir.projection import ProjectionScope
     from ..store.manifest import ManifestStore
@@ -85,6 +87,29 @@ class ProjectionService:
             "chunks": result.chunks,
             "warnings": list(result.warnings),
             "created_at": result.created_at,
+        }
+
+    @staticmethod
+    def _projection_build_record_payload(
+        record: ProjectionBuildRecord | None,
+    ) -> dict[str, Any] | None:
+        if record is None:
+            return None
+        return {
+            "projection_id": record.projection_id,
+            "snapshot_id": record.snapshot_id,
+            "scope_kind": record.scope_kind,
+            "scope_key": record.scope_key,
+            "params_hash": record.params_hash,
+            "status": record.status,
+            "warnings": list(record.warnings),
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+            "query": record.query,
+            "target_id": record.target_id,
+            "filters": dict(record.filters),
+            "coverage_paths": list(record.coverage_paths),
+            "coverage_nodes": list(record.coverage_nodes),
         }
 
     def _resolve_snapshot_id(
@@ -270,18 +295,13 @@ class ProjectionService:
         return payload
 
     def rebuild_dirty_projections(self, snapshot_id: str) -> dict[str, Any]:
-        list_dirty = getattr(self.projection_store, "list_dirty_scopes", None)
-        list_builds = getattr(self.projection_store, "list_builds_for_snapshot", None)
-        if not callable(list_dirty) or not callable(list_builds):
-            return {"snapshot_id": snapshot_id, "rebuilt": 0, "skipped": 0}
-
-        dirty_scopes = cast(list[dict[str, Any]], list_dirty(snapshot_id))
+        dirty_scopes = self.projection_store.list_dirty_scope_records(snapshot_id)
         if not dirty_scopes:
             return {"snapshot_id": snapshot_id, "rebuilt": 0, "skipped": 0}
 
-        builds = cast(list[dict[str, Any]], list_builds(snapshot_id))
+        builds = self.projection_store.list_build_records_for_snapshot(snapshot_id)
         builds_by_scope = {
-            (str(build.get("scope_kind")), str(build.get("scope_key"))): build
+            (build.scope_kind, build.scope_key): build
             for build in builds
         }
         rebuilt: list[str] = []
@@ -289,8 +309,8 @@ class ProjectionService:
         seen: set[tuple[str, str]] = set()
         rebuilt_all_marker = False
         for dirty in dirty_scopes:
-            dirty_kind = str(dirty.get("scope_kind") or "")
-            dirty_key = str(dirty.get("scope_key") or "")
+            dirty_kind = dirty.scope_kind
+            dirty_key = dirty.scope_key
             if dirty_kind == "all" and dirty_key == "*":
                 targets = list(builds_by_scope.values())
                 rebuilt_all_marker = bool(targets) or rebuilt_all_marker
@@ -304,16 +324,16 @@ class ProjectionService:
                 if not build:
                     skipped += 1
                     continue
-                key = (str(build.get("scope_kind")), str(build.get("scope_key")))
+                key = (build.scope_kind, build.scope_key)
                 if key in seen:
                     continue
                 seen.add(key)
                 result = self.build_projection(
                     scope_kind=key[0],
                     snapshot_id=snapshot_id,
-                    query=build.get("query"),
-                    target_id=build.get("target_id"),
-                    filters=build.get("filters") or {},
+                    query=build.query,
+                    target_id=build.target_id,
+                    filters=build.filters or {},
                     force=True,
                 )
                 rebuilt.append(str(result.get("projection_id")))
@@ -336,7 +356,9 @@ class ProjectionService:
         layer_payload = self.projection_store.get_layer(projection_id, layer)
         if not layer_payload:
             raise RuntimeError(f"projection layer not found: {projection_id}:{layer}")
-        build = self.projection_store.get_build(projection_id)
+        build = self._projection_build_record_payload(
+            self.projection_store.get_build_record(projection_id)
+        )
         return {
             "projection_id": projection_id,
             "layer": layer.upper(),
@@ -354,7 +376,9 @@ class ProjectionService:
             raise RuntimeError(
                 f"projection chunk not found: {projection_id}:{chunk_id}"
             )
-        build = self.projection_store.get_build(projection_id)
+        build = self._projection_build_record_payload(
+            self.projection_store.get_build_record(projection_id)
+        )
         return {
             "projection_id": projection_id,
             "chunk_id": chunk_id,

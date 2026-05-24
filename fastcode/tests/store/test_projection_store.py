@@ -108,13 +108,13 @@ def test_dirty_scope_helpers_use_explicit_serializers(
 
     monkeypatch.setattr(ProjectionDirtyScopeRecord, "to_dict", _boom)
 
-    dirty = store.get_dirty_scope("snap:1", "query", "scope:1")
-    listed = store.list_dirty_scopes("snap:1")
+    dirty = store.get_dirty_scope_record("snap:1", "query", "scope:1")
+    listed = store.list_dirty_scope_records("snap:1")
 
     assert dirty is not None
-    assert dirty["dirty_paths"] == ["pkg/a.py"]
-    assert dirty["dirty_units"] == ["unit:a"]
-    assert dirty["dirty_package_roots"] == []
+    assert dirty.dirty_paths == ["pkg/a.py"]
+    assert dirty.dirty_units == ["unit:a"]
+    assert dirty.dirty_package_roots == []
     assert listed == [dirty]
 
 
@@ -208,15 +208,22 @@ def test_build_helpers_use_explicit_serializers(
 
     monkeypatch.setattr(ProjectionBuildRecord, "to_dict", _boom)
 
-    build = store.get_build("proj_1")
-    builds = store.list_builds_for_snapshot("snap:1")
+    build = store.get_build_record("proj_1")
+    builds = store.list_build_records_for_snapshot("snap:1")
 
     assert build is not None
-    assert build["warnings"] == ["warn1"]
-    assert build["filters"] == {"language": "python"}
-    assert build["coverage_paths"] == ["pkg/a.py"]
-    assert build["coverage_nodes"] == ["unit:a"]
+    assert build.warnings == ["warn1"]
+    assert build.filters == {"language": "python"}
+    assert build.coverage_paths == ["pkg/a.py"]
+    assert build.coverage_nodes == ["unit:a"]
     assert builds == [build]
+
+
+def test_projection_store_exposes_typed_record_accessors_only() -> None:
+    assert not hasattr(ProjectionStore, "get_dirty_scope")
+    assert not hasattr(ProjectionStore, "list_dirty_scopes")
+    assert not hasattr(ProjectionStore, "get_build")
+    assert not hasattr(ProjectionStore, "list_builds_for_snapshot")
 
 
 def test_save_prunes_stale_chunks_before_upserting_current_chunk_set(

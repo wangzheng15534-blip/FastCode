@@ -260,12 +260,6 @@ class ProjectionStore:
             )
             return self._row_to_dirty_scope_record(cur.fetchone())
 
-    def get_dirty_scope(
-        self, snapshot_id: str, scope_kind: str, scope_key: str
-    ) -> dict[str, Any] | None:
-        record = self.get_dirty_scope_record(snapshot_id, scope_kind, scope_key)
-        return self._dirty_scope_payload(record) if record is not None else None
-
     def is_dirty(self, snapshot_id: str, scope_kind: str, scope_key: str) -> bool:
         return bool(
             self.get_dirty_scope_record(snapshot_id, scope_kind, scope_key)
@@ -292,12 +286,6 @@ class ProjectionStore:
                 for row in cur.fetchall()
                 if (record := self._row_to_dirty_scope_record(row)) is not None
             ]
-
-    def list_dirty_scopes(self, snapshot_id: str) -> list[dict[str, Any]]:
-        return [
-            self._dirty_scope_payload(record)
-            for record in self.list_dirty_scope_records(snapshot_id)
-        ]
 
     def clear_dirty(self, snapshot_id: str, scope_kind: str, scope_key: str) -> None:
         with self._connect() as conn:
@@ -454,12 +442,6 @@ class ProjectionStore:
                 for row in cur.fetchall()
                 if (record := self._row_to_build_record(row)) is not None
             ]
-
-    def list_builds_for_snapshot(self, snapshot_id: str) -> list[dict[str, Any]]:
-        return [
-            self._build_payload(record)
-            for record in self.list_build_records_for_snapshot(snapshot_id)
-        ]
 
     def find_cached_projection_id(
         self, scope: ProjectionScope, params_hash: str
@@ -640,10 +622,6 @@ class ProjectionStore:
             )
             row = cur.fetchone()
             return row[0] if row else None
-
-    def get_build(self, projection_id: str) -> dict[str, Any] | None:
-        record = self.get_build_record(projection_id)
-        return self._build_payload(record) if record is not None else None
 
     def get_build_record(self, projection_id: str) -> ProjectionBuildRecord | None:
         with self._connect() as conn, conn.cursor() as cur:

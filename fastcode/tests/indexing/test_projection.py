@@ -16,6 +16,10 @@ from fastcode.indexing.projection import ProjectionService
 from fastcode.ir.projection import ProjectionBuildResult, ProjectionScope
 from fastcode.ir.types import IRCodeUnit, IRSnapshot
 from fastcode.main.fastcode import FastCode
+from fastcode.store.projection_contracts import (
+    ProjectionBuildRecord,
+    ProjectionDirtyScopeRecord,
+)
 
 pytestmark = [pytest.mark.test_double]
 
@@ -26,7 +30,7 @@ class _FakeProjectionStore:
     def __init__(self, enabled: bool = True) -> None:
         self.enabled = enabled
         self._layers: dict[str, dict[str, dict[str, Any]]] = {}
-        self._builds: dict[str, dict[str, Any]] = {}
+        self._builds: dict[str, ProjectionBuildRecord] = {}
         # When find_by_snapshot is called, return these projection_ids
         self._snapshot_to_projection: dict[str, str | None] = {}
         self.cached_id: str | None = None
@@ -40,7 +44,7 @@ class _FakeProjectionStore:
     def get_layer(self, projection_id: str, layer: str) -> dict[str, Any] | None:
         return self._layers.get(projection_id, {}).get(layer.upper())
 
-    def get_build(self, projection_id: str) -> dict[str, Any] | None:
+    def get_build_record(self, projection_id: str) -> ProjectionBuildRecord | None:
         return self._builds.get(projection_id)
 
     def find_cached_projection_id(self, _scope: Any, _params_hash: str) -> str | None:
@@ -53,22 +57,32 @@ class _FakeProjectionStore:
         self.cleared.append((snapshot_id, scope_kind, scope_key))
         self.dirty_scopes.discard((snapshot_id, scope_kind, scope_key))
 
-    def list_dirty_scopes(self, snapshot_id: str) -> list[dict[str, Any]]:
+    def list_dirty_scope_records(
+        self, snapshot_id: str
+    ) -> list[ProjectionDirtyScopeRecord]:
         return [
-            {
-                "snapshot_id": dirty_snapshot_id,
-                "scope_kind": scope_kind,
-                "scope_key": scope_key,
-            }
+            ProjectionDirtyScopeRecord(
+                snapshot_id=dirty_snapshot_id,
+                scope_kind=scope_kind,
+                scope_key=scope_key,
+                dirty_paths=[],
+                dirty_units=[],
+                dirty_package_roots=[],
+                dirty_reason="test",
+                created_at="2026-05-05T00:00:00+00:00",
+                updated_at="2026-05-05T00:00:00+00:00",
+            )
             for dirty_snapshot_id, scope_kind, scope_key in sorted(self.dirty_scopes)
             if dirty_snapshot_id == snapshot_id
         ]
 
-    def list_builds_for_snapshot(self, snapshot_id: str) -> list[dict[str, Any]]:
+    def list_build_records_for_snapshot(
+        self, snapshot_id: str
+    ) -> list[ProjectionBuildRecord]:
         return [
             build
             for build in self._builds.values()
-            if build.get("snapshot_id") == snapshot_id
+            if build.snapshot_id == snapshot_id
         ]
 
     def save(
@@ -80,17 +94,22 @@ class _FakeProjectionStore:
         coverage_paths: list[str] | None = None,
     ) -> None:
         self.saved.append((result, params_hash))
-        self._builds[result.projection_id] = {
-            "projection_id": result.projection_id,
-            "snapshot_id": result.snapshot_id,
-            "scope_kind": result.scope_kind,
-            "scope_key": result.scope_key,
-            "status": "ready",
-            "query": getattr(scope, "query", None),
-            "target_id": getattr(scope, "target_id", None),
-            "filters": getattr(scope, "filters", {}) or {},
-            "coverage_paths": coverage_paths or [],
-        }
+        self._builds[result.projection_id] = ProjectionBuildRecord(
+            projection_id=result.projection_id,
+            snapshot_id=result.snapshot_id,
+            scope_kind=result.scope_kind,
+            scope_key=result.scope_key,
+            params_hash=params_hash,
+            status="ready",
+            warnings=list(result.warnings),
+            created_at=result.created_at,
+            updated_at=result.created_at,
+            query=getattr(scope, "query", None),
+            target_id=getattr(scope, "target_id", None),
+            filters=getattr(scope, "filters", {}) or {},
+            coverage_paths=coverage_paths or [],
+            coverage_nodes=[],
+        )
         self.set_layer(result.projection_id, "L0", result.l0)
         self.set_layer(result.projection_id, "L1", result.l1)
         self.set_layer(result.projection_id, "L2", result.l2_index)
@@ -309,7 +328,9 @@ def test_build_projection_saves_coverage_paths_double():
         result = service.build_projection("snapshot", snapshot_id="snap:projection")
 
         assert result["status"] == "built"
-        assert store._builds[result["projection_id"]]["coverage_paths"] == ["pkg/a.py"]
+        assert (
+            store._builds[result["projection_id"]].coverage_paths == ["pkg/a.py"]
+        )
 
 
 def test_mirror_projection_artifacts_prunes_stale_chunk_files(
@@ -564,18 +585,31 @@ def test_api_prefix_endpoint_existing_layer_route_unaffected_double():
         l1_data={"layer": "L1", "summary": "Existing L1"},
     )
 
-    store._builds["proj_exist123"] = {
-        "projection_id": "proj_exist123",
-        "snapshot_id": "snap:repo:existing",
-        "status": "ready",
-    }
+    store._builds["proj_exist123"] = ProjectionBuildRecord(
+        projection_id="proj_exist123",
+        snapshot_id="snap:repo:existing",
+        scope_kind="snapshot",
+        scope_key="snapshot:*",
+        params_hash="hash",
+        status="ready",
+        warnings=[],
+        created_at="2026-05-05T00:00:00+00:00",
+        updated_at="2026-05-05T00:00:00+00:00",
+        query=None,
+        target_id=None,
+        filters={},
+        coverage_paths=[],
+        coverage_nodes=[],
+    )
 
     def fake_get_projection_layer(projection_id: str, layer: str) -> dict[str, Any]:
         return {
             "projection_id": projection_id,
             "layer": layer.upper(),
             "node": store.get_layer(projection_id, layer),
-            "build": store.get_build(projection_id),
+            "build": ProjectionService._projection_build_record_payload(
+                store.get_build_record(projection_id)
+            ),
         }
 
     fc.get_projection_layer = fake_get_projection_layer

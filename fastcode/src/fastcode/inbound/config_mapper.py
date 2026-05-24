@@ -379,18 +379,14 @@ def config_to_dict(config: runtime_config.FastCodeConfig) -> dict[str, Any]:
             "keyword_weight": config.retrieval.keyword_weight,
             "graph_weight": config.retrieval.graph_weight,
             "retrieval_backend": config.retrieval.retrieval_backend.value,
-            "graph_expansion_backend": (
-                config.retrieval.graph_expansion_backend.value
-            ),
+            "graph_expansion_backend": (config.retrieval.graph_expansion_backend.value),
             "allow_graph_builder_fallback": (
                 config.retrieval.allow_graph_builder_fallback
             ),
             "min_similarity": config.retrieval.min_similarity,
             "max_results": config.retrieval.max_results,
             "diversity_penalty": config.retrieval.diversity_penalty,
-            "enable_two_stage_retrieval": (
-                config.retrieval.enable_two_stage_retrieval
-            ),
+            "enable_two_stage_retrieval": (config.retrieval.enable_two_stage_retrieval),
             "select_repos_by_overview": config.retrieval.select_repos_by_overview,
             "repo_selection_method": config.retrieval.repo_selection_method,
             "top_repos_to_search": config.retrieval.top_repos_to_search,
@@ -453,9 +449,7 @@ def config_to_dict(config: runtime_config.FastCodeConfig) -> dict[str, Any]:
         "agent": {
             "iterative": {
                 "max_iterations": config.agent.iterative.max_iterations,
-                "confidence_threshold": (
-                    config.agent.iterative.confidence_threshold
-                ),
+                "confidence_threshold": (config.agent.iterative.confidence_threshold),
                 "min_confidence_gain": config.agent.iterative.min_confidence_gain,
                 "max_total_lines": config.agent.iterative.max_total_lines,
                 "temperature_agent": config.agent.iterative.temperature_agent,

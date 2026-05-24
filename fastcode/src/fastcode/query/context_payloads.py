@@ -47,9 +47,7 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
 def _mapping(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
-    return {
-        str(key): item for key, item in cast(Mapping[Any, Any], value).items()
-    }
+    return {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
 
 
 def _mapping_tuple(value: Any) -> tuple[dict[str, Any], ...]:
@@ -255,9 +253,7 @@ def acceptance_contract_from_payload(
 ) -> AcceptanceContract:
     return AcceptanceContract(
         requested_outcome=_string(payload.get("requested_outcome")),
-        required_evidence_kinds=_string_tuple(
-            payload.get("required_evidence_kinds")
-        ),
+        required_evidence_kinds=_string_tuple(payload.get("required_evidence_kinds")),
         required_verifiers=_string_tuple(payload.get("required_verifiers")),
         allowed_tools=_string_tuple(payload.get("allowed_tools")),
         allowed_write_scope=_string_tuple(payload.get("allowed_write_scope")),
@@ -347,22 +343,17 @@ def working_memory_payload(record: WorkingMemoryArtifact) -> dict[str, Any]:
         "turn_fcx": record.turn_fcx,
         "obs_fcx": record.obs_fcx,
         "full_fcx": record.full_fcx,
-        "evidence_refs": [
-            evidence_ref_payload(item) for item in record.evidence_refs
-        ],
+        "evidence_refs": [evidence_ref_payload(item) for item in record.evidence_refs],
         "accepted_facts": [
             accepted_fact_payload(item) for item in record.accepted_facts
         ],
         "hypotheses": [hypothesis_payload(item) for item in record.hypotheses],
         "rejected_hypotheses": [
-            rejected_hypothesis_payload(item)
-            for item in record.rejected_hypotheses
+            rejected_hypothesis_payload(item) for item in record.rejected_hypotheses
         ],
         "unresolved_questions": list(record.unresolved_questions),
         "risk_state": risk_state_payload(record.risk_state),
-        "acceptance_contract": acceptance_contract_payload(
-            record.acceptance_contract
-        ),
+        "acceptance_contract": acceptance_contract_payload(record.acceptance_contract),
         "working_set": working_set_payload(record.working_set),
         "created_at": record.created_at,
     }
@@ -417,9 +408,7 @@ def handoff_payload(record: HandoffArtifact) -> dict[str, Any]:
         "compiler_fingerprint": record.compiler_fingerprint,
         "full_fcx": record.full_fcx,
         "intent": turn_intent_payload(record.intent),
-        "acceptance_contract": acceptance_contract_payload(
-            record.acceptance_contract
-        ),
+        "acceptance_contract": acceptance_contract_payload(record.acceptance_contract),
         "accepted_facts": [
             accepted_fact_payload(item) for item in record.accepted_facts
         ],
@@ -427,8 +416,7 @@ def handoff_payload(record: HandoffArtifact) -> dict[str, Any]:
             hypothesis_payload(item) for item in record.surviving_hypotheses
         ],
         "rejected_hypotheses": [
-            rejected_hypothesis_payload(item)
-            for item in record.rejected_hypotheses
+            rejected_hypothesis_payload(item) for item in record.rejected_hypotheses
         ],
         "unresolved_questions": list(record.unresolved_questions),
         "keep_ids": list(record.keep_ids),
@@ -481,17 +469,12 @@ def turn_journal_payload(record: TurnJournal) -> dict[str, Any]:
         "observations": [
             tool_observation_payload(item) for item in record.observations
         ],
-        "evidence_refs": [
-            evidence_ref_payload(item) for item in record.evidence_refs
-        ],
+        "evidence_refs": [evidence_ref_payload(item) for item in record.evidence_refs],
         "risk_state": risk_state_payload(record.risk_state),
-        "acceptance_contract": acceptance_contract_payload(
-            record.acceptance_contract
-        ),
+        "acceptance_contract": acceptance_contract_payload(record.acceptance_contract),
         "hypotheses": [hypothesis_payload(item) for item in record.hypotheses],
         "rejected_hypotheses": [
-            rejected_hypothesis_payload(item)
-            for item in record.rejected_hypotheses
+            rejected_hypothesis_payload(item) for item in record.rejected_hypotheses
         ],
         "accepted_facts": [
             accepted_fact_payload(item) for item in record.accepted_facts
@@ -549,9 +532,7 @@ def distillation_payload(record: DistillationRecord) -> dict[str, Any]:
         "snapshot_id": record.snapshot_id,
         "compiler_fingerprint": record.compiler_fingerprint,
         "summary": record.summary,
-        "source_refs": [
-            evidence_ref_payload(item) for item in record.source_refs
-        ],
+        "source_refs": [evidence_ref_payload(item) for item in record.source_refs],
         "accepted_facts": [
             accepted_fact_payload(item) for item in record.accepted_facts
         ],
@@ -561,9 +542,7 @@ def distillation_payload(record: DistillationRecord) -> dict[str, Any]:
         "projection_fingerprint": record.projection_fingerprint,
         "embedding_fingerprint": record.embedding_fingerprint,
         "retrieval_policy_fingerprint": record.retrieval_policy_fingerprint,
-        "distillation_prompt_fingerprint": (
-            record.distillation_prompt_fingerprint
-        ),
+        "distillation_prompt_fingerprint": (record.distillation_prompt_fingerprint),
         "budget_fingerprint": record.budget_fingerprint,
     }
 
@@ -655,9 +634,7 @@ def context_bundle_payload(record: ContextBundle) -> dict[str, Any]:
         "projection_fingerprint": record.projection_fingerprint,
         "embedding_fingerprint": record.embedding_fingerprint,
         "retrieval_policy_fingerprint": record.retrieval_policy_fingerprint,
-        "distillation_prompt_fingerprint": (
-            record.distillation_prompt_fingerprint
-        ),
+        "distillation_prompt_fingerprint": (record.distillation_prompt_fingerprint),
         "budget_fingerprint": record.budget_fingerprint,
     }
 

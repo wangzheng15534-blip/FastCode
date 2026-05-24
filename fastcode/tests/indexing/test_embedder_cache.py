@@ -9,11 +9,8 @@ from typing import Any
 
 import numpy as np
 
-from fastcode.indexing.embedder import (
-    CodeEmbedder,
-    EmbeddingFingerprint,
-    EmbeddingService,
-)
+from fastcode.indexing.embedder import CodeEmbedder, EmbeddingFingerprint
+from fastcode.ports.embedding import EmbeddingProvider
 
 
 class _MemoryCache:
@@ -373,7 +370,7 @@ def test_code_embedder_satisfies_embedding_service_boundary() -> None:
     prepared_text = embedder.prepare_text(element)
     embedding = embedder.embed_many([prepared_text])
 
-    assert isinstance(embedder, EmbeddingService)
+    assert isinstance(embedder, EmbeddingProvider)
     assert prepared_text == embedder._prepare_code_text(element)
     assert embedder.fingerprint() == embedder.embedding_fingerprint()
     assert embedding.shape == (1, 3)

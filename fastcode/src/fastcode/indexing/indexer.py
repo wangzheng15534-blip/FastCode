@@ -13,9 +13,9 @@ from typing import Any
 from tqdm import tqdm
 
 from ..ir.element import CodeElement, CodeElementMeta
+from ..ports.embedding import EmbeddingProvider
 from ..store.vector import VectorStore
 from ..utils.filesystem import normalize_path
-from .embedder import EmbeddingService
 from .loader import RepositoryLoader
 from .overview import RepositoryOverviewGenerator
 from .parser import CodeParser, FileParseResult, ImportInfo
@@ -29,7 +29,7 @@ class CodeIndexer:
         config: dict[str, Any],
         loader: RepositoryLoader,
         parser: CodeParser,
-        embedder: EmbeddingService,
+        embedder: EmbeddingProvider,
         vector_store: VectorStore | None = None,
     ) -> None:
         self.config = config

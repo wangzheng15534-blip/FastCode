@@ -9,9 +9,8 @@ import logging
 import os
 from typing import Any, cast
 
-import fastcode.retrieval.scip_transform as _scip_transform
-
 from .models import SCIPIndex
+from .transform import scip_kind_to_str, symbol_role_to_str
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +101,8 @@ def _protobuf_to_scip_index(pb_index: Any) -> SCIPIndex:
 
 
 def _symbol_role_to_str(roles: Any) -> str:
-    return _scip_transform.symbol_role_to_str(int(roles))
+    return symbol_role_to_str(int(roles))
 
 
 def _scip_kind_to_str(kind_value: Any) -> str:
-    return _scip_transform.scip_kind_to_str(int(kind_value))
+    return scip_kind_to_str(int(kind_value))

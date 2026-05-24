@@ -11,10 +11,19 @@ import networkx as nx
 
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.ir.element import CodeElement
+from fastcode.store.graph_artifacts import GraphArtifactStore
+
+
+def _config(tmp_path: Path) -> dict[str, Any]:
+    return {"vector_store": {"persist_directory": str(tmp_path)}}
 
 
 def _builder(tmp_path: Path) -> CodeGraphBuilder:
-    return CodeGraphBuilder({"vector_store": {"persist_directory": str(tmp_path)}})
+    return CodeGraphBuilder(_config(tmp_path))
+
+
+def _store(tmp_path: Path) -> GraphArtifactStore:
+    return GraphArtifactStore(_config(tmp_path))
 
 
 def _element(
@@ -58,7 +67,8 @@ def _graph_payload(
     }
 
 
-def test_graph_save_avoids_code_element_to_dict(tmp_path: Path) -> None:
+def test_graph_artifact_save_avoids_code_element_to_dict(tmp_path: Path) -> None:
+    store = _store(tmp_path)
     builder = _builder(tmp_path)
     elem = _element("func:one", "load_config")
     builder.element_by_name = {elem.name: elem}
@@ -71,19 +81,21 @@ def test_graph_save_avoids_code_element_to_dict(tmp_path: Path) -> None:
         autospec=True,
         side_effect=AssertionError("graph save must not call CodeElement.to_dict()"),
     ):
-        assert builder.save("repo") is True
+        assert store.save(builder, "repo") is True
 
     assert (tmp_path / "repo_graph_manifest.json").exists()
     assert (tmp_path / "repo_graph_shards").is_dir()
     assert not (tmp_path / "repo_graphs.pkl").exists()
 
-    assert builder.load("repo") is True
+    loaded = _builder(tmp_path)
+    assert store.load(loaded, "repo") is True
 
-    assert builder.element_by_id[elem.id].id == elem.id
-    assert builder.element_by_id[elem.id].metadata == elem.metadata
+    assert loaded.element_by_id[elem.id].id == elem.id
+    assert loaded.element_by_id[elem.id].metadata == elem.metadata
 
 
-def test_graph_save_reuses_unchanged_shards(tmp_path: Path) -> None:
+def test_graph_artifact_save_reuses_unchanged_shards(tmp_path: Path) -> None:
+    store = _store(tmp_path)
     builder = _builder(tmp_path)
     elem_a = _element("func:a", "load_a", relative_path="src/a.py")
     elem_b = _element("func:b", "load_b", relative_path="src/b.py")
@@ -91,7 +103,7 @@ def test_graph_save_reuses_unchanged_shards(tmp_path: Path) -> None:
     builder.element_by_id = {elem_a.id: elem_a, elem_b.id: elem_b}
     builder.call_graph.add_edge(elem_a.id, elem_b.id, type="calls")
 
-    assert builder.save("repo") is True
+    assert store.save(builder, "repo") is True
     manifest = json.loads(
         (tmp_path / "repo_graph_manifest.json").read_text(encoding="utf-8")
     )
@@ -107,7 +119,7 @@ def test_graph_save_reuses_unchanged_shards(tmp_path: Path) -> None:
     elem_b_v2.metadata["refreshed"] = True
     builder.element_by_name = {elem_a.name: elem_a, elem_b_v2.name: elem_b_v2}
     builder.element_by_id = {elem_a.id: elem_a, elem_b_v2.id: elem_b_v2}
-    assert builder.save("repo") is True
+    assert store.save(builder, "repo") is True
 
     a_after = shards_by_path["src/a.py"].stat().st_mtime_ns
     b_after = shards_by_path["src/b.py"].stat().st_mtime_ns
@@ -115,9 +127,10 @@ def test_graph_save_reuses_unchanged_shards(tmp_path: Path) -> None:
     assert b_after > b_before
 
 
-def test_graph_save_incremental_reuses_previous_artifact_shards(
+def test_graph_artifact_save_incremental_reuses_previous_shards(
     tmp_path: Path,
 ) -> None:
+    store = _store(tmp_path)
     previous = _builder(tmp_path)
     elem_a = _element("func:a", "load_a", relative_path="src/a.py")
     elem_b = _element("func:b", "load_b", relative_path="src/b.py")
@@ -125,7 +138,7 @@ def test_graph_save_incremental_reuses_previous_artifact_shards(
     previous.element_by_id = {elem_a.id: elem_a, elem_b.id: elem_b}
     previous.call_graph.add_edge(elem_a.id, elem_b.id, type="calls")
 
-    assert previous.save("prev") is True
+    assert store.save(previous, "prev") is True
     prev_manifest = json.loads(
         (tmp_path / "prev_graph_manifest.json").read_text(encoding="utf-8")
     )
@@ -141,7 +154,8 @@ def test_graph_save_incremental_reuses_previous_artifact_shards(
     current.element_by_id = {elem_a.id: elem_a, elem_b_v2.id: elem_b_v2}
     current.call_graph.add_edge(elem_a.id, elem_b_v2.id, type="calls")
 
-    stats = current.save_incremental(
+    stats = store.save_incremental(
+        current,
         "next",
         previous_name="prev",
         reusable_path_keys={"src/a.py"},
@@ -159,19 +173,72 @@ def test_graph_save_incremental_reuses_previous_artifact_shards(
     assert next_shards["src/b.py"].read_bytes() != prev_shards["src/b.py"].read_bytes()
 
     loaded = _builder(tmp_path)
-    assert loaded.load("next") is True
+    assert store.load(loaded, "next") is True
     assert loaded.get_related_elements(elem_a.id, max_hops=1) == {elem_a.id, elem_b.id}
 
 
-def test_graph_save_incremental_refuses_incompatible_manifest(
+def test_graph_artifact_publish_delta_carries_reusable_shards_without_full_builder(
     tmp_path: Path,
 ) -> None:
+    store = _store(tmp_path)
+    previous = _builder(tmp_path)
+    elem_a = _element("func:a", "load_a", relative_path="src/a.py")
+    elem_b = _element("func:b", "load_b", relative_path="src/b.py")
+    previous.element_by_name = {elem_a.name: elem_a, elem_b.name: elem_b}
+    previous.element_by_id = {elem_a.id: elem_a, elem_b.id: elem_b}
+    previous.call_graph.add_edge(elem_a.id, elem_b.id, type="calls")
+
+    assert store.save(previous, "prev") is True
+    prev_manifest = json.loads(
+        (tmp_path / "prev_graph_manifest.json").read_text(encoding="utf-8")
+    )
+    prev_shards = {
+        entry["path_key"]: tmp_path / "prev_graph_shards" / entry["shard_file"]
+        for entry in prev_manifest["shards"]
+    }
+
+    current_delta = _builder(tmp_path)
+    elem_b_v2 = _element("func:b", "load_b", relative_path="src/b.py")
+    elem_b_v2.metadata["refreshed"] = True
+    current_delta.element_by_name = {elem_b_v2.name: elem_b_v2}
+    current_delta.element_by_id = {elem_b_v2.id: elem_b_v2}
+
+    stats = store.publish_delta(
+        current_delta,
+        "next",
+        previous_name="prev",
+        reusable_path_keys={"src/a.py"},
+    )
+
+    assert stats["fallback_reason"] is None
+    assert stats["graph_shards_reused"] == 1
+    assert stats["graph_shards_written"] == 1
+    next_manifest = json.loads(
+        (tmp_path / "next_graph_manifest.json").read_text(encoding="utf-8")
+    )
+    next_shards = {
+        entry["path_key"]: tmp_path / "next_graph_shards" / entry["shard_file"]
+        for entry in next_manifest["shards"]
+    }
+    assert set(next_shards) == {"src/a.py", "src/b.py"}
+    assert next_shards["src/a.py"].read_bytes() == prev_shards["src/a.py"].read_bytes()
+    assert next_shards["src/b.py"].read_bytes() != prev_shards["src/b.py"].read_bytes()
+
+    loaded = _builder(tmp_path)
+    assert store.load(loaded, "next") is True
+    assert loaded.get_related_elements(elem_a.id, max_hops=1) == {elem_a.id, elem_b.id}
+
+
+def test_graph_artifact_save_incremental_refuses_incompatible_manifest(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
     previous = _builder(tmp_path)
     elem_a = _element("func:a", "load_a", relative_path="src/a.py")
     previous.element_by_name = {elem_a.name: elem_a}
     previous.element_by_id = {elem_a.id: elem_a}
 
-    assert previous.save("prev") is True
+    assert store.save(previous, "prev") is True
     manifest_path = tmp_path / "prev_graph_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["version"] = 0
@@ -183,7 +250,8 @@ def test_graph_save_incremental_refuses_incompatible_manifest(
     current.element_by_name = {elem_a_v2.name: elem_a_v2}
     current.element_by_id = {elem_a_v2.id: elem_a_v2}
 
-    stats = current.save_incremental(
+    stats = store.save_incremental(
+        current,
         "next",
         previous_name="prev",
         reusable_path_keys={"src/a.py"},
@@ -193,7 +261,8 @@ def test_graph_save_incremental_refuses_incompatible_manifest(
     assert stats["graph_shards_written"] == 1
 
 
-def test_graph_sharded_load_keeps_lazy_adjacency_until_needed(tmp_path: Path) -> None:
+def test_graph_artifact_sharded_load_keeps_lazy_adjacency(tmp_path: Path) -> None:
+    store = _store(tmp_path)
     builder = _builder(tmp_path)
     elem_a = _element("func:a", "load_a", relative_path="src/a.py")
     elem_b = _element("func:b", "load_b", relative_path="src/b.py")
@@ -201,10 +270,10 @@ def test_graph_sharded_load_keeps_lazy_adjacency_until_needed(tmp_path: Path) ->
     builder.element_by_id = {elem_a.id: elem_a, elem_b.id: elem_b}
     builder.call_graph.add_edge(elem_a.id, elem_b.id, type="calls")
 
-    assert builder.save("repo") is True
+    assert store.save(builder, "repo") is True
 
     loaded = _builder(tmp_path)
-    assert loaded.load("repo") is True
+    assert store.load(loaded, "repo") is True
     assert loaded.call_graph.number_of_nodes() == 0
 
     related = loaded.get_related_elements(elem_a.id, max_hops=1)
@@ -218,7 +287,8 @@ def test_graph_sharded_load_keeps_lazy_adjacency_until_needed(tmp_path: Path) ->
     assert loaded.call_graph.number_of_nodes() == 2
 
 
-def test_graph_load_uses_explicit_deserializer(tmp_path: Path) -> None:
+def test_graph_artifact_load_uses_explicit_deserializer(tmp_path: Path) -> None:
+    store = _store(tmp_path)
     builder = _builder(tmp_path)
     payload_a = {
         "id": "func:a",
@@ -262,10 +332,10 @@ def test_graph_load_uses_explicit_deserializer(tmp_path: Path) -> None:
         )
 
     with patch(
-        "fastcode.graph.build.deserialize_code_element",
+        "fastcode.store._graph_artifact_payloads.deserialize_code_element",
         side_effect=_deserialize,
     ) as mock_deserialize:
-        assert builder.load("repo") is True
+        assert store.load(builder, "repo") is True
 
     assert mock_deserialize.call_count == 2
     assert calls == [payload_a, payload_b]
@@ -273,7 +343,8 @@ def test_graph_load_uses_explicit_deserializer(tmp_path: Path) -> None:
     assert builder.element_by_name["shared_name"].id == "func:b"
 
 
-def test_graph_merge_uses_explicit_deserializer(tmp_path: Path) -> None:
+def test_graph_artifact_merge_uses_explicit_deserializer(tmp_path: Path) -> None:
+    store = _store(tmp_path)
     builder = _builder(tmp_path)
     existing = _element("func:existing", "load_config")
     builder.element_by_name = {existing.name: existing}
@@ -333,10 +404,10 @@ def test_graph_merge_uses_explicit_deserializer(tmp_path: Path) -> None:
         )
 
     with patch(
-        "fastcode.graph.build.deserialize_code_element",
+        "fastcode.store._graph_artifact_payloads.deserialize_code_element",
         side_effect=_deserialize,
     ) as mock_deserialize:
-        assert builder.merge_from_file("other") is True
+        assert store.merge(builder, "other") is True
 
     assert mock_deserialize.call_count == 2
     assert calls == [payload_existing, payload_new]

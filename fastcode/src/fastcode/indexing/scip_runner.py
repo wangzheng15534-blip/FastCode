@@ -6,12 +6,59 @@ import logging
 import os
 import shutil
 import subprocess
+from collections.abc import Sequence
 
-from ..scip.indexers import get_indexer_command, get_scip_indexer_profile
+from ..ports.execution import ScipFileInfoView, ScipIndexerProfileView
+from ..scip.indexers import (
+    detect_scip_languages_from_file_infos,
+    detect_scip_languages_in_paths,
+    get_indexer_command,
+    get_scip_indexer_profile,
+)
 from ..scip.loader import load_scip_artifact
 from ..scip.models import SCIPIndex
 
 logger = logging.getLogger(__name__)
+
+
+class SubprocessScipIndexerRuntime:
+    """Subprocess-backed SCIP indexer runtime adapter."""
+
+    def get_profile(self, language: str) -> ScipIndexerProfileView | None:
+        return get_scip_indexer_profile(language)
+
+    def detect_languages_from_file_infos(
+        self,
+        file_infos: Sequence[ScipFileInfoView],
+    ) -> tuple[str, ...]:
+        payload = [
+            {
+                "language": file_info.get("language"),
+                "extension": file_info.get("extension"),
+                "relative_path": file_info.get("relative_path"),
+                "path": file_info.get("path"),
+            }
+            for file_info in file_infos
+        ]
+        return tuple(detect_scip_languages_from_file_infos(payload))
+
+    def detect_languages_in_paths(
+        self,
+        repo_path: str,
+        relative_paths: Sequence[str],
+    ) -> tuple[str, ...]:
+        return tuple(detect_scip_languages_in_paths(repo_path, list(relative_paths)))
+
+    def run_indexer(
+        self,
+        language: str,
+        repo_path: str,
+        output_path: str,
+    ) -> str:
+        return run_scip_indexer(language, repo_path, output_path)
+
+    def load_artifact(self, path: str) -> SCIPIndex:
+        return load_scip_artifact(path)
 
 
 def run_scip_indexer(

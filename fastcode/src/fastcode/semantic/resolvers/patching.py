@@ -17,7 +17,7 @@ from ...utils.materialization import (
     BOUNDARY_SEMANTIC_PATCH_PRESERVED_OBJECTS,
     increment_materialization_boundary,
 )
-from .base import ResolutionPatch, ResolutionTier
+from ..resolution import ResolutionPatch, ResolutionTier
 
 JSONScalar = bool | int | float | str | None
 

@@ -13,6 +13,7 @@ import pytest
 from git import Repo
 
 from fastcode.indexing.pipeline import IndexPipeline
+from fastcode.indexing.scip_runner import SubprocessScipIndexerRuntime
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import (
     IRAttachment,
@@ -22,7 +23,9 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.scip.models import SCIPDocument, SCIPIndex
+from fastcode.store.file_artifacts import FileArtifactStore
 from fastcode.store.index_run import IndexRunStore
+from fastcode.store.infrastructure.runtime import DBRuntime
 from fastcode.store.manifest import ManifestStore
 from fastcode.store.snapshot import SnapshotStore
 from fastcode.store.unit_artifacts import UnitArtifactStore
@@ -32,9 +35,19 @@ from fastcode.utils.materialization import (
 )
 
 
+def _make_snapshot_store(tmp: str) -> SnapshotStore:
+    return SnapshotStore(
+        tmp,
+        db_runtime=DBRuntime(
+            backend="sqlite",
+            sqlite_path=os.path.join(os.path.abspath(tmp), "lineage.db"),
+        ),
+    )
+
+
 def test_snapshot_store_persists_and_loads_snapshot():
     with tempfile.TemporaryDirectory(prefix="fc_snap_test_") as tmp:
-        store = SnapshotStore(tmp)
+        store = _make_snapshot_store(tmp)
         snap = IRSnapshot(
             repo_name="repo",
             snapshot_id="snap:repo:abc",
@@ -67,8 +80,8 @@ def test_snapshot_store_persists_and_loads_snapshot():
 
 def test_manifest_head_points_to_latest_publish():
     with tempfile.TemporaryDirectory(prefix="fc_manifest_test_") as tmp:
-        snapshot_store = SnapshotStore(tmp)
-        manifest_store = ManifestStore(snapshot_store.db_path)
+        snapshot_store = _make_snapshot_store(tmp)
+        manifest_store = ManifestStore(snapshot_store.db_runtime)
 
         m1 = manifest_store.publish("repo", "main", "snap:repo:1", "run_1")
         m2 = manifest_store.publish("repo", "main", "snap:repo:2", "run_2")
@@ -81,8 +94,8 @@ def test_manifest_head_points_to_latest_publish():
 
 def test_index_run_idempotency_key_reuses_run():
     with tempfile.TemporaryDirectory(prefix="fc_run_test_") as tmp:
-        snapshot_store = SnapshotStore(tmp)
-        run_store = IndexRunStore(snapshot_store.db_path)
+        snapshot_store = _make_snapshot_store(tmp)
+        run_store = IndexRunStore(snapshot_store.db_runtime)
 
         run_1 = run_store.create_run(
             "repo", "snap:repo:1", "main", "c1", idempotency_key="k1"
@@ -96,7 +109,7 @@ def test_index_run_idempotency_key_reuses_run():
 
 def test_snapshot_store_persists_scip_artifact_ref():
     with tempfile.TemporaryDirectory(prefix="fc_scip_artifact_test_") as tmp:
-        store = SnapshotStore(tmp)
+        store = _make_snapshot_store(tmp)
         artifact = store.save_scip_artifact_ref(
             snapshot_id="snap:repo:abc",
             indexer_name="scip-python",
@@ -113,7 +126,7 @@ def test_snapshot_store_persists_scip_artifact_ref():
 def test_snapshot_store_save_scip_artifact_ref_defaults():
     """Verify that save_scip_artifact_ref uses defaults when optional args are omitted."""
     with tempfile.TemporaryDirectory(prefix="fc_scip_defaults_test_") as tmp:
-        store = SnapshotStore(tmp)
+        store = _make_snapshot_store(tmp)
         # Only pass the required snapshot_id; everything else should use defaults
         artifact = store.save_scip_artifact_ref(snapshot_id="snap:repo:defaults")
         assert artifact["snapshot_id"] == "snap:repo:defaults"
@@ -133,7 +146,7 @@ def test_snapshot_store_save_scip_artifact_ref_defaults():
 def test_snapshot_store_save_scip_artifact_ref_upsert():
     """Verify that calling save_scip_artifact_ref twice with the same snapshot_id upserts."""
     with tempfile.TemporaryDirectory(prefix="fc_scip_upsert_test_") as tmp:
-        store = SnapshotStore(tmp)
+        store = _make_snapshot_store(tmp)
         store.save_scip_artifact_ref(
             snapshot_id="snap:repo:upsert",
             indexer_name="scip-python",
@@ -159,7 +172,7 @@ def test_snapshot_store_save_scip_artifact_ref_upsert():
 
 def test_snapshot_store_persists_multiple_scip_artifact_refs():
     with tempfile.TemporaryDirectory(prefix="fc_scip_multi_test_") as tmp:
-        store = SnapshotStore(tmp)
+        store = _make_snapshot_store(tmp)
         artifacts = store.save_scip_artifact_refs(
             "snap:repo:multi",
             artifacts=[
@@ -198,7 +211,7 @@ def test_snapshot_store_persists_multiple_scip_artifact_refs():
 
 def test_snapshot_store_lock_api_returns_fencing_token_shape():
     with tempfile.TemporaryDirectory(prefix="fc_lock_test_") as tmp:
-        store = SnapshotStore(tmp)
+        store = _make_snapshot_store(tmp)
         token = store.acquire_lock("index:snap:repo:1", owner_id="run1", ttl_seconds=60)
         assert token == 1
         assert store.validate_fencing_token("index:snap:repo:1", expected_token=token)
@@ -207,7 +220,7 @@ def test_snapshot_store_lock_api_returns_fencing_token_shape():
 def test_sqlite_fencing_token_always_one():
     """SQLite lock implementation returns token=1 for all acquire calls (no PG-style increment)."""
     with tempfile.TemporaryDirectory(prefix="fc_fence_") as tmp:
-        store = SnapshotStore(tmp)
+        store = _make_snapshot_store(tmp)
         token1 = store.acquire_lock(
             "index:snap:repo:1", owner_id="run1", ttl_seconds=60
         )
@@ -221,7 +234,7 @@ def test_sqlite_fencing_token_always_one():
 def test_sqlite_lock_release_does_not_raise():
     """SQLite release_lock and validate_fencing_token are no-ops but must not crash."""
     with tempfile.TemporaryDirectory(prefix="fc_fence_") as tmp:
-        store = SnapshotStore(tmp)
+        store = _make_snapshot_store(tmp)
         store.acquire_lock("index:snap:repo:1", owner_id="run1", ttl_seconds=60)
         store.release_lock("index:snap:repo:1", owner_id="run1")
         # validate on nonexistent lock also returns True (SQLite no-op)
@@ -309,7 +322,7 @@ def test_postgres_lock_reacquire_by_same_owner_preserves_fencing_token():
 
 def test_enqueue_redo_task_returns_id():
     with tempfile.TemporaryDirectory(prefix="fc_redo_") as tmp:
-        store = SnapshotStore(tmp)
+        store = _make_snapshot_store(tmp)
         task_id = store.enqueue_redo_task(
             task_type="index_run_recovery",
             payload={"run_id": "run1", "source": "/tmp/repo"},
@@ -321,14 +334,16 @@ def test_enqueue_redo_task_returns_id():
 def test_sqlite_redo_task_noops_do_not_raise():
     """SQLite redo task methods (claim, mark_done, mark_failed) are no-ops but must not crash."""
     with tempfile.TemporaryDirectory(prefix="fc_redo_") as tmp:
-        store = SnapshotStore(tmp)
+        store = _make_snapshot_store(tmp)
         assert store.claim_redo_task() is None
         store.mark_redo_task_done("redo_fake")
         store.mark_redo_task_failed(task_id="redo_fake", error="test error")
 
 
 def _make_minimal_pipeline(tmp: str) -> IndexPipeline:
-    store = SnapshotStore(tmp)
+    store = _make_snapshot_store(tmp)
+    unit_artifact_store = UnitArtifactStore(store.db_runtime)
+    file_artifact_store = FileArtifactStore(store.db_runtime)
     registry = SimpleNamespace(
         applicable=lambda **kwargs: [],
         applicable_for_capabilities=lambda **kwargs: [],
@@ -346,7 +361,8 @@ def _make_minimal_pipeline(tmp: str) -> IndexPipeline:
         snapshot_store=store,
         manifest_store=ManifestStore(store.db_runtime),
         index_run_store=IndexRunStore(store.db_runtime),
-        unit_artifact_store=UnitArtifactStore(store.db_runtime),
+        unit_artifact_store=unit_artifact_store,
+        file_artifact_store=file_artifact_store,
         snapshot_symbol_index=SimpleNamespace(register_snapshot=lambda snapshot: None),
         vector_store=SimpleNamespace(persist_dir=tmp, load=lambda artifact_key: True),
         embedder=SimpleNamespace(embedding_dim=3),
@@ -356,7 +372,7 @@ def _make_minimal_pipeline(tmp: str) -> IndexPipeline:
             set_ir_graphs=lambda *a, **kw: None,
             build_repo_overview_bm25=lambda: None,
         ),
-        graph_builder=SimpleNamespace(load=lambda artifact_key: True),
+        graph_builder=SimpleNamespace(build_graphs=lambda *a, **kw: None),
         ir_graph_builder=SimpleNamespace(
             build_graphs=lambda snapshot: SimpleNamespace()
         ),
@@ -367,6 +383,12 @@ def _make_minimal_pipeline(tmp: str) -> IndexPipeline:
         set_repo_indexed=lambda v: None,
         set_repo_loaded=lambda v: None,
         set_repo_info=lambda v: None,
+        scip_indexer_runtime=SubprocessScipIndexerRuntime(),
+        graph_artifact_store=SimpleNamespace(
+            load=lambda _builder, _artifact_key: True,
+            save=lambda _builder, _artifact_key: None,
+            merge=lambda _builder, _artifact_key: True,
+        ),
     )
 
 
@@ -440,7 +462,6 @@ def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
                 number_of_nodes=lambda: 0, number_of_edges=lambda: 0
             ),
             build_graphs=lambda elements, module_resolver, symbol_resolver: None,
-            save=lambda artifact_key: None,
         )
         temp_retriever = SimpleNamespace(
             index_for_bm25=lambda elements: None,
@@ -667,7 +688,10 @@ def test_snapshot_artifact_handle_cache_metrics_track_hits_and_misses() -> None:
             "snap:repo:handle"
         )
         vector_store = SimpleNamespace(load=lambda key: True, metadata=[])
-        graph_builder = SimpleNamespace(load=lambda key: True)
+        graph_builder = SimpleNamespace(build_graphs=lambda *a, **kw: None)
+        graph_artifact_store = SimpleNamespace(
+            load=lambda _builder, _key: True,
+        )
         retriever = SimpleNamespace(
             set_pg_retrieval_store=lambda store: None,
             load_bm25=lambda key: True,
@@ -681,6 +705,7 @@ def test_snapshot_artifact_handle_cache_metrics_track_hits_and_misses() -> None:
                 "fastcode.indexing.pipeline.CodeGraphBuilder",
                 return_value=graph_builder,
             ),
+            patch.object(pipeline, "graph_artifact_store", graph_artifact_store),
             patch(
                 "fastcode.indexing.pipeline.HybridRetriever",
                 return_value=retriever,
@@ -966,7 +991,6 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
                 number_of_nodes=lambda: 0, number_of_edges=lambda: 0
             ),
             build_graphs=lambda elements, module_resolver, symbol_resolver: None,
-            save=lambda artifact_key: None,
         )
         temp_retriever = SimpleNamespace(
             index_for_bm25=lambda elements: None,
@@ -1033,9 +1057,8 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
                 )
             )
             stack.enter_context(
-                patch(
-                    "fastcode.indexing.pipeline.run_scip_for_language",
-                    side_effect=_fake_run_scip,
+                patch.object(
+                    pipeline, "_run_scip_for_language", side_effect=_fake_run_scip
                 )
             )
             stack.enter_context(
@@ -1369,6 +1392,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
         temp_store_metadata: list[dict[str, Any]] = []
         vector_incremental_calls: list[dict[str, Any]] = []
         bm25_incremental_calls: list[dict[str, Any]] = []
+        graph_delta_calls: list[dict[str, Any]] = []
 
         def _save_vector_incremental(
             artifact_key: str,
@@ -1402,6 +1426,25 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             )
             return {"bm25_shards_reused": len(reusable_path_keys)}
 
+        def _publish_graph_delta(
+            _builder: Any,
+            artifact_key: str,
+            *,
+            previous_name: str,
+            reusable_path_keys: set[str],
+        ) -> dict[str, int]:
+            graph_delta_calls.append(
+                {
+                    "artifact_key": artifact_key,
+                    "previous_name": previous_name,
+                    "reusable_path_keys": sorted(reusable_path_keys),
+                }
+            )
+            return {
+                "graph_shards_reused": len(reusable_path_keys),
+                "graph_shards_written": 1,
+            }
+
         temp_store = SimpleNamespace(
             metadata=temp_store_metadata,
             initialize=lambda dim: None,
@@ -1420,13 +1463,17 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
                 number_of_nodes=lambda: 0, number_of_edges=lambda: 0
             ),
             build_graphs=lambda elements, module_resolver, symbol_resolver: None,
-            save=lambda artifact_key: None,
         )
         temp_retriever = SimpleNamespace(
             index_for_bm25=lambda elements: None,
             build_repo_overview_bm25=lambda: None,
             save_bm25=lambda artifact_key: None,
             publish_bm25_delta=_save_bm25_incremental,
+        )
+        pipeline.graph_artifact_store = SimpleNamespace(
+            load=lambda _builder, _artifact_key: True,
+            save=lambda _builder, _artifact_key: None,
+            publish_delta=_publish_graph_delta,
         )
 
         pipeline.loader.scan_files = lambda: [
@@ -1595,6 +1642,7 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             }
         ]
         assert bm25_incremental_calls == vector_incremental_calls
+        assert graph_delta_calls == vector_incremental_calls
         file_ir_persistence = result["unit_artifact_persistence"]["file_ir_shards"]
         assert {
             key: file_ir_persistence[key]
@@ -1701,7 +1749,6 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
             "removed_paths": [],
             "unchanged_paths": ["a.py"],
             "changed_paths": ["b.py"],
-            "artifact_delta_graph_fallback_reason": "edge_surface_changed",
             "ast_ir_rebuilt_elements": 1,
             "ast_ir_reused_files": 1,
             "reused_elements": 1,
@@ -1755,8 +1802,11 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
         assert prefilter["artifact_shard_reuse"] == {
             "vector_shards_reused": 1,
             "bm25_shards_reused": 1,
-            "graph_fallback_reason": "edge_or_delete_frontier_requires_full_graph",
+            "graph_shards_reused": 1,
+            "graph_shards_written": 1,
         }
+        assert "artifact_delta_graph_fallback_reason" not in prefilter
+        assert "graph_fallback_reason" not in prefilter["artifact_shard_reuse"]
         assert prefilter["interface_digest_changed_paths"] == ["b.py"]
         assert prefilter["interface_digests"]["b.py"].startswith("iface:")
         assert prefilter["dependency_frontier"] == {
@@ -2097,8 +2147,15 @@ def test_incremental_implementation_local_change_reuses_graph_shards() -> None:
                 number_of_nodes=lambda: 0, number_of_edges=lambda: 0
             ),
             build_graphs=lambda elements, module_resolver, symbol_resolver: None,
-            save=lambda artifact_key: None,
-            publish_delta=_publish_graph_delta,
+        )
+        pipeline.graph_artifact_store = SimpleNamespace(
+            load=lambda _builder, _artifact_key: True,
+            save=lambda _builder, _artifact_key: None,
+            publish_delta=lambda _builder, artifact_key, **kwargs: _publish_graph_delta(
+                artifact_key,
+                previous_name=kwargs["previous_name"],
+                reusable_path_keys=kwargs["reusable_path_keys"],
+            ),
         )
         temp_retriever = SimpleNamespace(
             index_for_bm25=lambda elements: None,
@@ -2494,8 +2551,15 @@ def test_incremental_no_change_reuses_artifacts_without_embedding_provider_calls
             build_graphs=lambda elements, module_resolver, symbol_resolver: (
                 graph_build_inputs.append([element.id for element in elements])
             ),
-            save=lambda artifact_key: None,
-            publish_delta=_publish_graph_delta,
+        )
+        pipeline.graph_artifact_store = SimpleNamespace(
+            load=lambda _builder, _artifact_key: True,
+            save=lambda _builder, _artifact_key: None,
+            publish_delta=lambda _builder, artifact_key, **kwargs: _publish_graph_delta(
+                artifact_key,
+                previous_name=kwargs["previous_name"],
+                reusable_path_keys=kwargs["reusable_path_keys"],
+            ),
         )
         temp_retriever = SimpleNamespace(
             index_for_bm25=lambda elements: bm25_inputs.append(
@@ -3909,7 +3973,7 @@ def test_scoped_scip_frontier_uses_repo_root_mode_and_cache() -> None:
             return scip_index
 
         with (
-            patch("fastcode.indexing.pipeline.run_scip_for_language", _run_scip),
+            patch.object(pipeline, "_run_scip_for_language", side_effect=_run_scip),
             patch.object(
                 pipeline,
                 "_copy_scope_root",
@@ -4190,10 +4254,7 @@ def test_run_semantic_repair_frontier_uses_package_scope_paths() -> None:
                 },
             ],
         )
-        with patch(
-            "fastcode.indexing.pipeline.run_scip_for_language",
-            return_value=None,
-        ):
+        with patch.object(pipeline, "_run_scip_for_language", return_value=None):
             result = pipeline.run_semantic_repair_frontier(
                 snapshot_id=record.snapshot_id,
                 scope_kind="package",
@@ -4358,10 +4419,7 @@ def test_run_semantic_repair_frontier_refresh_drops_missing_target_units() -> No
             ],
         )
 
-        with patch(
-            "fastcode.indexing.pipeline.run_scip_for_language",
-            return_value=None,
-        ):
+        with patch.object(pipeline, "_run_scip_for_language", return_value=None):
             result = pipeline.run_semantic_repair_frontier(
                 snapshot_id=record.snapshot_id,
                 scope_kind="package",
@@ -4495,8 +4553,9 @@ def test_run_semantic_repair_frontier_records_scoped_scip_failed_degraded_reason
     with tempfile.TemporaryDirectory(prefix="fc_pipeline_repair_degraded_") as tmp:
         pipeline, record = _setup_repair_pipeline_with_one_changed_path(tmp)
 
-        with patch(
-            "fastcode.indexing.pipeline.run_scip_for_language",
+        with patch.object(
+            pipeline,
+            "_run_scip_for_language",
             side_effect=RuntimeError("indexer crashed"),
         ):
             result = pipeline.run_semantic_repair_frontier(
@@ -4689,7 +4748,6 @@ def test_stale_fencing_token_writes_no_artifact_files() -> None:
                 number_of_nodes=lambda: 0, number_of_edges=lambda: 0
             ),
             build_graphs=lambda elements, module_resolver, symbol_resolver: None,
-            save=lambda key: artifact_save_calls.append(f"graph:{key}"),
         )
         temp_retriever = SimpleNamespace(
             index_for_bm25=lambda elements: None,
@@ -4698,6 +4756,11 @@ def test_stale_fencing_token_writes_no_artifact_files() -> None:
         )
 
         pipeline = _make_minimal_pipeline(tmp)
+        pipeline.graph_artifact_store = SimpleNamespace(
+            load=lambda _builder, _key: True,
+            save=lambda _builder, key: artifact_save_calls.append(f"graph:{key}"),
+            merge=lambda _builder, _key: True,
+        )
 
         with ExitStack() as stack:
             stack.enter_context(

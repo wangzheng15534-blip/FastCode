@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import ResolverSpec, SemanticCapability
+from ..resolution import ResolverSpec, SemanticCapability
 from .graph_backed import GraphBackedSemanticResolver
 from .helper_backed import HelperBackedSemanticResolver
 

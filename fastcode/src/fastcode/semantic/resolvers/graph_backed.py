@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
-import shutil
 from typing import Any
 
 from ...ir.element import CodeElement
 from ...ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
-from ._utils import _hash_id
-from .base import ResolutionPatch, ResolutionTier, SemanticResolver, ToolDiagnostic
+from ..contracts import SemanticGraphContext
+from ..resolution import (
+    ResolutionPatch,
+    ResolutionTier,
+    SemanticResolver,
+    ToolDiagnostic,
+)
+from ._resolver_support import _hash_id
 
 
 class GraphBackedSemanticResolver(SemanticResolver):
-    """Resolver that upgrades canonical IR from compatibility graph edges."""
+    """Resolver that upgrades canonical IR from structural graph edges."""
 
     source_name: str
     extractor_name: str
@@ -36,7 +41,7 @@ class GraphBackedSemanticResolver(SemanticResolver):
                 ),
             )
             for tool in self.required_tools
-            if shutil.which(tool) is None
+            if self.find_executable(tool) is None
         ]
 
     def resolve(
@@ -45,12 +50,12 @@ class GraphBackedSemanticResolver(SemanticResolver):
         snapshot: IRSnapshot,
         elements: list[CodeElement],
         target_paths: set[str],
-        legacy_graph_builder: Any | None,
+        graph_context: SemanticGraphContext | None,
     ) -> ResolutionPatch:
-        if legacy_graph_builder is None:
+        if graph_context is None:
             return ResolutionPatch(
                 warnings=[
-                    f"{self.language}_resolver_skipped: legacy graph unavailable"
+                    f"{self.language}_resolver_skipped: graph context unavailable"
                 ],
                 stats={"language": self.language, "skipped": True},
             )
@@ -88,7 +93,7 @@ class GraphBackedSemanticResolver(SemanticResolver):
         skipped_edges = 0
 
         for relation_type, graph_name in self.graph_specs:
-            graph = getattr(legacy_graph_builder, graph_name, None)
+            graph = getattr(graph_context, graph_name, None)
             if graph is None:
                 continue
             for src_id, dst_id, data in graph.edges(data=True):

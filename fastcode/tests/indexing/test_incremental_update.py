@@ -6,6 +6,8 @@ Each test is self-contained with its own factory functions.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from fastcode.indexing.incremental import (
@@ -340,7 +342,7 @@ class TestApplyIncrementalUpdate:
         self,
     ) -> None:
         class _ExplodingList(list[object]):
-            def __iter__(self) -> object:
+            def __iter__(self) -> Iterator[object]:
                 raise AssertionError("component stream should stay lazy until access")
 
         old = _build_simple_snapshot(

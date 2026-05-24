@@ -1,13 +1,14 @@
-"""Base types for semantic resolver plugins."""
+"""Semantic resolver domain types and patch application contracts."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
-from ...ir.element import CodeElement
-from ...ir.types import IRRelation, IRSnapshot, IRUnitSupport
+from ..ir.element import CodeElement
+from ..ir.types import IRRelation, IRSnapshot, IRUnitSupport
+from .contracts import SemanticGraphContext
 
 
 def _empty_tool_context() -> dict[str, Any]:
@@ -42,18 +43,8 @@ def _empty_stats() -> dict[str, Any]:
     return {}
 
 
-# ---------------------------------------------------------------------------
-# Semantic capability constants
-# ---------------------------------------------------------------------------
-
-
 class SemanticCapability:
-    """Well-known capability identifiers for resolver advertisements.
-
-    Resolvers declare which of these they can satisfy.  Relations carry
-    ``pending_capabilities`` when none of the active resolvers could fulfil
-    a given slot, keeping the system honest about uncertainty.
-    """
+    """Well-known capability identifiers for resolver advertisements."""
 
     RESOLVE_CALLS = "resolve_calls"
     RESOLVE_IMPORTS = "resolve_imports"
@@ -66,46 +57,23 @@ class SemanticCapability:
     RESOLVE_INCLUDES = "resolve_includes"
 
 
-# ---------------------------------------------------------------------------
-# Resolution tier - distinguishes structural fallback from compiler facts
-# ---------------------------------------------------------------------------
-
-
 class ResolutionTier:
-    """Resolution evidence quality tier.
-
-    Attached to relation metadata so downstream consumers can distinguish
-    graph-backed structural evidence from compiler-confirmed facts.
-    """
+    """Resolution evidence quality tier."""
 
     STRUCTURAL_FALLBACK = "structural_fallback"
     COMPILER_CONFIRMED = "compiler_confirmed"
     ANCHORED = "anchored"
 
 
-# ---------------------------------------------------------------------------
-# Typed resolver request (immutable input for resolvers)
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class SemanticResolutionRequest:
-    """Immutable input for a semantic resolver invocation.
-
-    Encapsulates everything a resolver needs so it never reaches into global
-    state, stores, or the graph builder directly.
-    """
+    """Immutable input for a semantic resolver invocation."""
 
     snapshot_id: str
     target_paths: frozenset[str]
     budget: str = "changed_files"
     repo_root: str = ""
     tool_context: dict[str, Any] = field(default_factory=_empty_tool_context)
-
-
-# ---------------------------------------------------------------------------
-# Diagnostics
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -124,11 +92,6 @@ class ToolDiagnostic:
             "code": self.code,
             "message": self.message,
         }
-
-
-# ---------------------------------------------------------------------------
-# Resolver spec (frozen metadata)
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -155,11 +118,6 @@ class ResolverSpec:
         }
 
 
-# ---------------------------------------------------------------------------
-# Resolution patch (mutable output from resolvers)
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class ResolutionPatch:
     """Patch emitted by a semantic resolver.
@@ -181,7 +139,7 @@ class ResolutionPatch:
 
 
 class SemanticResolver(ABC):
-    """Abstract semantic resolver interface."""
+    """Domain polymorphism interface for semantic resolver implementations."""
 
     language: str
     capabilities: frozenset[str]
@@ -190,6 +148,18 @@ class SemanticResolver(ABC):
     extractor_name: str = ""
     frontend_kind: str = "structural"
     required_tools: tuple[str, ...] = ()
+
+    def set_tool_runtime(self, tool_runtime: Any | None) -> None:
+        """Inject shell-side tool lookup capability."""
+        self._tool_runtime = tool_runtime
+
+    def find_executable(self, executable: str) -> str | None:
+        """Resolve a required tool through the injected runtime capability."""
+        tool_runtime = getattr(self, "_tool_runtime", None)
+        find_executable = getattr(tool_runtime, "find_executable", None)
+        if not callable(find_executable):
+            return None
+        return cast(str | None, find_executable(executable))
 
     @property
     def spec(self) -> ResolverSpec:
@@ -226,6 +196,6 @@ class SemanticResolver(ABC):
         snapshot: IRSnapshot,
         elements: list[CodeElement],
         target_paths: set[str],
-        legacy_graph_builder: Any | None,
+        graph_context: SemanticGraphContext | None,
     ) -> ResolutionPatch:
         """Emit a patch against an existing canonical snapshot."""

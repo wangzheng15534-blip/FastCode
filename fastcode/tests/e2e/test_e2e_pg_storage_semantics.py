@@ -203,23 +203,17 @@ def test_e2e_postgres_storage_semantics_gate(
     try:
         store = SnapshotStore(
             str(tmp_path / "snapshots"),
-            storage_cfg={
-                "backend": "postgres",
-                "postgres_dsn": dsn,
-                "pool_min": 1,
-                "pool_max": 2,
-            },
+            db_runtime=runtime,
         )
         # Re-instantiation must be migration/idempotency-safe on an existing DB.
-        SnapshotStore(
-            str(tmp_path / "snapshots_again"),
-            storage_cfg={
-                "backend": "postgres",
-                "postgres_dsn": dsn,
-                "pool_min": 1,
-                "pool_max": 2,
-            },
-        ).db_runtime.close()
+        runtime_again = _postgres_runtime(dsn)
+        try:
+            SnapshotStore(
+                str(tmp_path / "snapshots_again"),
+                db_runtime=runtime_again,
+            )
+        finally:
+            runtime_again.close()
         manifest_store = ManifestStore(runtime)
         ManifestStore(runtime)
 

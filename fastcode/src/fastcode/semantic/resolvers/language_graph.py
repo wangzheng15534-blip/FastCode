@@ -9,7 +9,7 @@ facts.
 
 from __future__ import annotations
 
-from .base import SemanticCapability
+from ..resolution import SemanticCapability
 from .graph_backed import GraphBackedSemanticResolver
 
 

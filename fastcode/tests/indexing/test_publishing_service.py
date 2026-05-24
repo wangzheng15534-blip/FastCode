@@ -9,7 +9,7 @@ import pytest
 
 from fastcode.indexing.publishing import PublishingService
 from fastcode.ir.types import IRSnapshot
-from fastcode.store.records import IndexRunRecord
+from fastcode.store.index_run_contracts import IndexRunRecord
 
 
 class NoDictSnapshot(IRSnapshot):

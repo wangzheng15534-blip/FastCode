@@ -41,6 +41,7 @@ from ..ir.graph import IRGraphBuilder, IRGraphs
 from ..ir.merge import merge_ir
 from ..ir.types import IRRelation, IRSnapshot, IRUnitSupport
 from ..ir.validate import validate_snapshot
+from ..kernel.identifiers import RepoName, SnapshotId
 from ..ports.artifacts import (
     FileArtifactStore as FileArtifactStorePort,
 )
@@ -119,6 +120,15 @@ class ScopedSCIPCacheEntry:
     key: str
     path: str
     payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class IncrementalGraphDeltaContext:
+    elements: list[CodeElement]
+    affected_path_keys: set[str]
+    reusable_path_keys: set[str]
+    loaded_affected_path_keys: set[str]
+    missing_affected_path_keys: set[str]
 
 
 class IndexPipeline:
@@ -268,6 +278,21 @@ class IndexPipeline:
     def _run_scip_python_index(self, repo_path: str, output_path: str) -> str:
         return self._run_scip_indexer("python", repo_path, output_path)
 
+    def _load_graph_artifact_into(
+        self,
+        builder: CodeGraphBuilder,
+        artifact_key: str,
+    ) -> bool:
+        graph_artifact_store = getattr(self, "graph_artifact_store", None)
+        load_graph_artifact = getattr(graph_artifact_store, "load", None)
+        if callable(load_graph_artifact):
+            return bool(load_graph_artifact(builder, artifact_key))
+
+        legacy_load = getattr(builder, "load", None)
+        if callable(legacy_load):
+            return bool(legacy_load(artifact_key))
+        return False
+
     # ------------------------------------------------------------------
     # URL inference (pure static utility)
     # ------------------------------------------------------------------
@@ -366,7 +391,10 @@ class IndexPipeline:
                     dirty_suffix = f":dirty:{working_tree_hash}"
             except Exception:
                 dirty_suffix = ""
-            snapshot_id = f"snap:{repo_name}:{commit_id}{dirty_suffix}"
+            snapshot_id = SnapshotId.build(
+                RepoName.parse(repo_name).as_str(),
+                f"{commit_id}{dirty_suffix}",
+            ).as_str()
             return {
                 "repo_name": repo_name,
                 "branch": branch,
@@ -394,7 +422,10 @@ class IndexPipeline:
                 "branch": requested_ref,
                 "commit_id": requested_commit,
                 "tree_id": synthetic,
-                "snapshot_id": f"snap:{repo_name}:{synthetic}",
+                "snapshot_id": SnapshotId.build(
+                    RepoName.parse(repo_name).as_str(),
+                    synthetic,
+                ).as_str(),
             }
 
     def _build_git_meta(self, snapshot_ref: dict[str, Any]) -> dict[str, Any]:
@@ -542,7 +573,7 @@ class IndexPipeline:
             return None
 
         graph_builder = CodeGraphBuilder(self.config)
-        graph_loaded = self.graph_artifact_store.load(graph_builder, artifact_key)
+        graph_loaded = self._load_graph_artifact_into(graph_builder, artifact_key)
         retriever = HybridRetriever(
             self.config,
             vector_store,
@@ -585,7 +616,7 @@ class IndexPipeline:
             return False
 
         bm25_loaded = self.retriever.load_bm25(artifact_key)
-        graph_loaded = self.graph_artifact_store.load(self.graph_builder, artifact_key)
+        graph_loaded = self._load_graph_artifact_into(self.graph_builder, artifact_key)
         if artifact_key.startswith("snap_"):
             snapshot_id = self._snapshot_id_for_artifact_key(artifact_key)
             self._configure_retriever_ir_graph_backend(
@@ -2080,6 +2111,186 @@ class IndexPipeline:
             if elem is not None:
                 unchanged_elements.append(elem)
         return unchanged_elements + list(changed_elements)
+
+    def _incremental_graph_delta_context(
+        self,
+        *,
+        changed_elements: Sequence[CodeElement],
+        incremental_plan: Mapping[str, Any],
+        current_files: Sequence[Mapping[str, Any]],
+        repo_name: str,
+        repo_url: str,
+    ) -> IncrementalGraphDeltaContext:
+        previous_key = str(incremental_plan.get("previous_artifact_key") or "")
+        changed_path_keys = {
+            normalize_path(str(path))
+            for path in incremental_plan.get("changed_paths", [])
+            if path
+        }
+        removed_path_keys = {
+            normalize_path(str(path))
+            for path in incremental_plan.get("removed_paths", [])
+            if path
+        }
+        unchanged_path_keys = {
+            normalize_path(str(path))
+            for path in incremental_plan.get("unchanged_paths", [])
+            if path
+        }
+        affected_path_keys = set(changed_path_keys) | set(removed_path_keys)
+        affected_loader = getattr(
+            self.graph_artifact_store, "affected_path_keys_for_delta", None
+        )
+        if callable(affected_loader) and previous_key:
+            try:
+                affected_path_keys = {
+                    normalize_path(str(path))
+                    for path in cast(
+                        set[str],
+                        affected_loader(
+                            previous_key,
+                            changed_path_keys=changed_path_keys,
+                            removed_path_keys=removed_path_keys,
+                        ),
+                    )
+                    if path
+                }
+            except Exception as exc:
+                self.logger.warning(
+                    "graph affected-path detection failed for %s: %s",
+                    previous_key,
+                    exc,
+                )
+
+        affected_unchanged_path_keys = sorted(
+            (affected_path_keys & unchanged_path_keys) - removed_path_keys
+        )
+        graph_elements = list(changed_elements)
+        loaded_affected_path_keys: set[str] = set()
+        if affected_unchanged_path_keys:
+            reused_elements, hit_paths, _reuse_stats = (
+                self._reuse_parsed_element_content_artifacts(
+                    repo_name=repo_name,
+                    current_files=current_files,
+                    paths=affected_unchanged_path_keys,
+                )
+            )
+            graph_elements.extend(reused_elements)
+            loaded_affected_path_keys.update(hit_paths)
+
+            missing_paths = [
+                path
+                for path in affected_unchanged_path_keys
+                if path not in loaded_affected_path_keys
+            ]
+            previous_manifest = self._load_file_manifest(previous_key)
+            if previous_manifest is not None and missing_paths:
+                existing_metadata = self._load_existing_metadata(previous_key)
+                unchanged_metadata, _expected_ids = self._collect_unchanged_metadata(
+                    previous_manifest,
+                    missing_paths,
+                    existing_metadata,
+                )
+                current_lookup = self._file_info_by_relative_path(current_files)
+                for meta in unchanged_metadata:
+                    rel_path = normalize_path(
+                        str(meta.get("relative_path") or meta.get("file_path") or "")
+                    )
+                    if not rel_path or rel_path in loaded_affected_path_keys:
+                        continue
+                    file_info = current_lookup.get(rel_path)
+                    elem = self._reconstruct_code_element(
+                        meta,
+                        file_info=dict(file_info)
+                        if isinstance(file_info, Mapping)
+                        else None,
+                        repo_name=repo_name,
+                        repo_url=repo_url,
+                    )
+                    if elem is not None:
+                        graph_elements.append(elem)
+                        loaded_affected_path_keys.add(rel_path)
+
+        missing_affected_path_keys = (
+            set(affected_unchanged_path_keys) - loaded_affected_path_keys
+        )
+        reusable_path_keys = unchanged_path_keys - set(affected_unchanged_path_keys)
+        reusable_path_keys -= removed_path_keys
+        return IncrementalGraphDeltaContext(
+            elements=graph_elements,
+            affected_path_keys=affected_path_keys,
+            reusable_path_keys=reusable_path_keys,
+            loaded_affected_path_keys=loaded_affected_path_keys,
+            missing_affected_path_keys=missing_affected_path_keys,
+        )
+
+    def _build_incremental_graph_resolver_index(
+        self,
+        *,
+        graph_elements: Sequence[CodeElement],
+        incremental_plan: Mapping[str, Any] | None,
+        excluded_path_keys: set[str],
+        repo_root: str,
+    ) -> GlobalIndexBuilder:
+        gib = GlobalIndexBuilder(self.config)
+        previous_key = (
+            str(incremental_plan.get("previous_artifact_key") or "")
+            if incremental_plan is not None
+            else ""
+        )
+        resolver_loader = getattr(
+            self.graph_artifact_store, "load_resolver_index", None
+        )
+        if callable(resolver_loader) and previous_key:
+            try:
+                resolver_payload = resolver_loader(
+                    previous_key,
+                    excluded_path_keys=excluded_path_keys,
+                    repo_root=repo_root,
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "graph resolver-index load failed for %s: %s",
+                    previous_key,
+                    exc,
+                )
+                resolver_payload = None
+            if isinstance(resolver_payload, Mapping):
+                file_map = resolver_payload.get("file_map")
+                module_map = resolver_payload.get("module_map")
+                export_map = resolver_payload.get("export_map")
+                if isinstance(file_map, Mapping):
+                    gib.file_map.update(
+                        {str(key): str(value) for key, value in file_map.items()}
+                    )
+                if isinstance(module_map, Mapping):
+                    gib.module_map.update(
+                        {str(key): str(value) for key, value in module_map.items()}
+                    )
+                if isinstance(export_map, Mapping):
+                    for module_path, symbols in export_map.items():
+                        if not isinstance(symbols, Mapping):
+                            continue
+                        gib.export_map[str(module_path)] = {
+                            str(name): str(symbol_id)
+                            for name, symbol_id in symbols.items()
+                        }
+
+        overlay = GlobalIndexBuilder(self.config)
+        overlay.build_maps(list(graph_elements), repo_root)
+        gib.file_map.update(overlay.file_map)
+        gib.module_map.update(overlay.module_map)
+        for module_path, symbols in overlay.export_map.items():
+            gib.export_map.setdefault(module_path, {}).update(symbols)
+        gib.stats = {
+            "files_processed": len(gib.file_map),
+            "modules_created": len(gib.module_map),
+            "symbols_exported": sum(
+                len(symbols) for symbols in gib.export_map.values()
+            ),
+            "errors": 0,
+        }
+        return gib
 
     def _reuse_file_ir_content_artifacts(
         self,
@@ -4379,6 +4590,49 @@ class IndexPipeline:
             artifact_delta_mode = incremental_plan is not None and bool(
                 incremental_plan.get("artifact_delta_mode")
             )
+            graph_delta_context: IncrementalGraphDeltaContext | None = None
+            graph_elements = elements
+            if artifact_delta_mode and incremental_plan is not None:
+                graph_delta_context = self._incremental_graph_delta_context(
+                    changed_elements=elements,
+                    incremental_plan=incremental_plan,
+                    current_files=current_files,
+                    repo_name=repo_name,
+                    repo_url=repo_url,
+                )
+                graph_elements = graph_delta_context.elements
+                incremental_plan["graph_affected_paths"] = sorted(
+                    graph_delta_context.affected_path_keys
+                )
+                incremental_plan["graph_reusable_paths"] = sorted(
+                    graph_delta_context.reusable_path_keys
+                )
+                plan_changes_payload = incremental_plan.get("plan_changes")
+                if isinstance(plan_changes_payload, dict):
+                    frontier_payload = plan_changes_payload.get("frontier")
+                    if isinstance(frontier_payload, dict):
+                        frontier_payload["graph_affected_paths"] = sorted(
+                            graph_delta_context.affected_path_keys
+                        )
+                        frontier_payload["graph_reusable_paths"] = sorted(
+                            graph_delta_context.reusable_path_keys
+                        )
+                if graph_delta_context.missing_affected_path_keys:
+                    incremental_plan["graph_delta_degraded_reason"] = (
+                        "missing_affected_graph_elements"
+                    )
+                    incremental_plan["graph_delta_missing_affected_paths"] = sorted(
+                        graph_delta_context.missing_affected_path_keys
+                    )
+                    if isinstance(plan_changes_payload, dict):
+                        frontier_payload = plan_changes_payload.get("frontier")
+                        if isinstance(frontier_payload, dict):
+                            frontier_payload["graph_delta_degraded_reason"] = (
+                                "missing_affected_graph_elements"
+                            )
+                            frontier_payload["graph_delta_missing_affected_paths"] = (
+                                sorted(graph_delta_context.missing_affected_path_keys)
+                            )
             temp_store = VectorStore(self.config)
             temp_store.initialize(self.embedder.embedding_dim)
             vectors, metadata, all_elem_payloads = (
@@ -4395,31 +4649,34 @@ class IndexPipeline:
             module_resolver = None
             symbol_resolver = None
             try:
-                gib = GlobalIndexBuilder(self.config)
-                resolver_elements = elements
+                repo_root = self.loader.repo_path or ""
                 if artifact_delta_mode and incremental_plan is not None:
-                    change_kinds_for_resolver = set(
-                        incremental_plan.get("change_kinds", []) or []
-                    )
-                    if change_kinds_for_resolver - {"embedding_text_hash"}:
-                        resolver_elements = (
-                            self._full_elements_for_incremental_fallback(
-                                changed_elements=elements,
-                                incremental_plan=incremental_plan,
-                                current_files=current_files,
-                                repo_name=repo_name,
-                                repo_url=repo_url,
+                    excluded_path_keys = (
+                        set(graph_delta_context.affected_path_keys)
+                        if graph_delta_context is not None
+                        else {
+                            normalize_path(str(path))
+                            for path in (
+                                list(incremental_plan.get("changed_paths", []) or [])
+                                + list(incremental_plan.get("removed_paths", []) or [])
                             )
-                        )
-                        incremental_plan["artifact_delta_graph_fallback_reason"] = (
-                            "edge_surface_changed"
-                        )
-                gib.build_maps(resolver_elements, self.loader.repo_path or "")
+                            if path
+                        }
+                    )
+                    gib = self._build_incremental_graph_resolver_index(
+                        graph_elements=graph_elements,
+                        incremental_plan=incremental_plan,
+                        excluded_path_keys=excluded_path_keys,
+                        repo_root=repo_root,
+                    )
+                else:
+                    gib = GlobalIndexBuilder(self.config)
+                    gib.build_maps(graph_elements, repo_root)
                 module_resolver = ModuleResolver(gib)
                 symbol_resolver = SymbolResolver(gib, module_resolver)
             except Exception as e:
                 warnings.append(f"resolver_init_failed: {e}")
-            temp_graph.build_graphs(elements, module_resolver, symbol_resolver)
+            temp_graph.build_graphs(graph_elements, module_resolver, symbol_resolver)
 
             temp_retriever = HybridRetriever(
                 self.config,
@@ -4438,6 +4695,7 @@ class IndexPipeline:
                 layer1,
                 extra_metrics={
                     "elements": len(elements),
+                    "graph_elements": len(graph_elements),
                     "embedded_elements": len(vectors),
                     "bm25_indexed": len(elements),
                     "dependency_graph_nodes": temp_graph.dependency_graph.number_of_nodes(),
@@ -4600,9 +4858,7 @@ class IndexPipeline:
                                 )
                             )
                             experimental_scip_languages = (
-                                self._experimental_scip_languages(
-                                    detected_languages
-                                )
+                                self._experimental_scip_languages(detected_languages)
                             )
                             if experimental_scip_languages:
                                 warning = "experimental_scip_languages: " + ", ".join(
@@ -5051,8 +5307,7 @@ class IndexPipeline:
                 str | None, getattr(self.graph_artifact_store, "persist_dir", None)
             )
             if (
-                reusable_path_keys
-                and incremental_previous_artifact_key
+                incremental_previous_artifact_key
                 and active_incremental_plan is not None
             ):
                 publish_vector_delta = getattr(temp_store, "publish_delta", None)
@@ -5117,70 +5372,47 @@ class IndexPipeline:
                     else:
                         temp_retriever.save_bm25(artifact_key)
                 graph_reuse_path_keys = (
-                    reusable_path_keys
-                    if int(active_incremental_plan.get("removed", 0) or 0) == 0
-                    and set(active_incremental_plan.get("change_kinds", []) or [])
-                    <= {"embedding_text_hash"}
-                    else set()
+                    set(graph_delta_context.reusable_path_keys)
+                    if graph_delta_context is not None
+                    else set(reusable_path_keys)
                 )
-                if graph_reuse_path_keys:
-                    publish_graph_delta = getattr(
-                        self.graph_artifact_store, "publish_delta", None
-                    )
-                    save_graph_incremental = getattr(
-                        self.graph_artifact_store, "save_incremental", None
-                    )
-                    with self._profile_store_surface(
-                        pipeline_profile, "graph", graph_persist_dir
-                    ):
-                        if callable(publish_graph_delta):
-                            artifact_reuse_stats.update(
-                                cast(
-                                    dict[str, Any],
-                                    publish_graph_delta(
-                                        temp_graph,
-                                        artifact_key,
-                                        previous_name=incremental_previous_artifact_key,
-                                        reusable_path_keys=graph_reuse_path_keys,
-                                    ),
-                                )
-                            )
-                        elif callable(save_graph_incremental):
-                            artifact_reuse_stats.update(
-                                cast(
-                                    dict[str, Any],
-                                    save_graph_incremental(
-                                        temp_graph,
-                                        artifact_key,
-                                        previous_name=incremental_previous_artifact_key,
-                                        reusable_path_keys=graph_reuse_path_keys,
-                                    ),
-                                )
-                            )
-                        else:
-                            self.graph_artifact_store.save(temp_graph, artifact_key)
-                else:
-                    with self._profile_store_surface(
-                        pipeline_profile, "graph", graph_persist_dir
-                    ):
-                        fallback_elements = (
-                            self._full_elements_for_incremental_fallback(
-                                changed_elements=elements,
-                                incremental_plan=active_incremental_plan,
-                                current_files=current_files,
-                                repo_name=repo_name,
-                                repo_url=repo_url,
+                publish_graph_delta = getattr(
+                    self.graph_artifact_store, "publish_delta", None
+                )
+                save_graph_incremental = getattr(
+                    self.graph_artifact_store, "save_incremental", None
+                )
+                with self._profile_store_surface(
+                    pipeline_profile, "graph", graph_persist_dir
+                ):
+                    if callable(publish_graph_delta):
+                        artifact_reuse_stats.update(
+                            cast(
+                                dict[str, Any],
+                                publish_graph_delta(
+                                    temp_graph,
+                                    artifact_key,
+                                    previous_name=incremental_previous_artifact_key,
+                                    reusable_path_keys=graph_reuse_path_keys,
+                                ),
                             )
                         )
-                        fallback_graph = CodeGraphBuilder(self.config)
-                        fallback_graph.build_graphs(
-                            fallback_elements,
-                            module_resolver,
-                            symbol_resolver,
+                    elif callable(save_graph_incremental):
+                        artifact_reuse_stats.update(
+                            cast(
+                                dict[str, Any],
+                                save_graph_incremental(
+                                    temp_graph,
+                                    artifact_key,
+                                    previous_name=incremental_previous_artifact_key,
+                                    reusable_path_keys=graph_reuse_path_keys,
+                                ),
+                            )
                         )
-                        self.graph_artifact_store.save(fallback_graph, artifact_key)
+                    else:
+                        self.graph_artifact_store.save(temp_graph, artifact_key)
                         artifact_reuse_stats["graph_fallback_reason"] = (
-                            "edge_or_delete_frontier_requires_full_graph"
+                            "graph_delta_api_unavailable"
                         )
             else:
                 with self._profile_store_surface(

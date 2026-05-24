@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from fastcode.query.handler import QueryPipeline
-from fastcode.store.records import SnapshotRecord
+from fastcode.store.snapshot_contracts import SnapshotRecord
 
 
 class _NoOpContext:

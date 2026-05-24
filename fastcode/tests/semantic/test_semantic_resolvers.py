@@ -22,12 +22,15 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.main.fastcode import FastCode
-from fastcode.semantic.resolvers._utils import (
+from fastcode.semantic.resolution import ResolutionPatch
+from fastcode.semantic.resolvers._helper_operations import (
+    SemanticHelperInvocation,
+)
+from fastcode.semantic.resolvers._resolver_support import (
     _hash_id,
     _normalize_path,
     validate_helper_paths,
 )
-from fastcode.semantic.resolvers.base import ResolutionPatch
 from fastcode.semantic.resolvers.c_family import CppSemanticResolver, CSemanticResolver
 from fastcode.semantic.resolvers.csharp import CSharpCompilerResolver
 from fastcode.semantic.resolvers.fortran import FortranCompilerResolver
@@ -59,6 +62,25 @@ from fastcode.utils.materialization import (
     BOUNDARY_SEMANTIC_PATCH_PRESERVED_OBJECTS,
     collect_materialization_counters,
 )
+
+
+class _SemanticHelperRuntime:
+    def __init__(
+        self,
+        run_mock: Any | None = None,
+        *,
+        executable_paths: dict[str, str] | None = None,
+    ) -> None:
+        self.run_mock = run_mock
+        self.executable_paths = dict(executable_paths or {})
+
+    def find_executable(self, executable: str) -> str | None:
+        return self.executable_paths.get(executable)
+
+    def run(self, command: list[str], *, cwd: str, timeout: int) -> Any:
+        if self.run_mock is None:
+            raise AssertionError("unexpected helper runtime execution")
+        return self.run_mock(command, cwd=cwd, timeout=timeout)
 
 
 def _file_unit(path: str, *, language: str = "python") -> IRCodeUnit:
@@ -703,7 +725,7 @@ def test_python_resolver_emits_canonical_import_inherit_and_call_relations():
         snapshot=snapshot,
         elements=elements,
         target_paths={"a.py"},
-        legacy_graph_builder=graph_builder,
+        graph_context=graph_builder,
     )
 
     assert patch.stats["relations_emitted"] == {"import": 1, "inherit": 1, "call": 1}
@@ -782,7 +804,7 @@ def test_cpp_resolver_emits_include_and_inheritance_relations():
         snapshot=snapshot,
         elements=elements,
         target_paths={"include/derived.hpp"},
-        legacy_graph_builder=None,
+        graph_context=None,
     )
 
     assert patch.stats["relations_emitted"] == {"import": 1, "inherit": 1}
@@ -819,7 +841,7 @@ def test_c_resolver_emits_relative_include_relation():
         snapshot=snapshot,
         elements=elements,
         target_paths={"src/main.c"},
-        legacy_graph_builder=None,
+        graph_context=None,
     )
 
     assert patch.stats["relations_emitted"] == {"import": 1, "inherit": 0}
@@ -875,19 +897,16 @@ def test_graph_backed_language_resolver_records_missing_tool_diagnostics():
         )
     ]
 
-    with patch(
-        "fastcode.semantic.resolvers.graph_backed.shutil.which", return_value=None
-    ):
-        patch_result = resolver.resolve(
-            snapshot=snapshot,
-            elements=elements,
-            target_paths={"app.js"},
-            legacy_graph_builder=SimpleNamespace(
-                dependency_graph=nx.DiGraph(),
-                inheritance_graph=nx.DiGraph(),
-                call_graph=nx.DiGraph(),
-            ),
-        )
+    patch_result = resolver.resolve(
+        snapshot=snapshot,
+        elements=elements,
+        target_paths={"app.js"},
+        graph_context=SimpleNamespace(
+            dependency_graph=nx.DiGraph(),
+            inheritance_graph=nx.DiGraph(),
+            call_graph=nx.DiGraph(),
+        ),
+    )
 
     assert patch_result.diagnostics
     assert patch_result.stats["diagnostics"][0]["code"] == "required_tool_missing"
@@ -945,7 +964,7 @@ def test_fastcode_apply_semantic_resolvers_replaces_heuristic_import_relation():
     updated = fc._apply_semantic_resolvers(
         snapshot=snapshot,
         elements=elements,
-        legacy_graph_builder=graph_builder,
+        graph_context=graph_builder,
         target_paths={"a.py"},
         warnings=warnings,
     )
@@ -1029,7 +1048,7 @@ def test_target_paths_includes_all_languages_on_fresh_index():
     updated = fc._apply_semantic_resolvers(
         snapshot=snapshot,
         elements=elements,
-        legacy_graph_builder=None,
+        graph_context=None,
         target_paths={"main.cpp", "app.py"},
         warnings=warnings,
     )
@@ -1125,7 +1144,7 @@ def test_c_family_resolver_populates_doc_id_from_dict_lookup():
         snapshot=snapshot,
         elements=elements,
         target_paths={"src/main.c"},
-        legacy_graph_builder=None,
+        graph_context=None,
     )
 
     assert len(patch.relations) == 1
@@ -1170,7 +1189,7 @@ def test_resolver_failure_gracefully_degrades():
             snapshot: Any,
             elements: Any,
             target_paths: Any,
-            legacy_graph_builder: Any,
+            graph_context: Any,
         ) -> NoReturn:
             raise RuntimeError("resolver crashed")
 
@@ -1181,7 +1200,7 @@ def test_resolver_failure_gracefully_degrades():
     updated = fc._apply_semantic_resolvers(
         snapshot=snapshot,
         elements=elements,
-        legacy_graph_builder=None,
+        graph_context=None,
         target_paths={"fail.py"},
         warnings=warnings,
     )
@@ -1198,7 +1217,7 @@ def test_resolver_failure_gracefully_degrades():
 
 def test_semantic_capability_constants_are_strings():
     """SemanticCapability constants must be plain strings."""
-    from fastcode.semantic.resolvers.base import SemanticCapability
+    from fastcode.semantic.resolution import SemanticCapability
 
     caps = [
         SemanticCapability.RESOLVE_CALLS,
@@ -1217,7 +1236,7 @@ def test_semantic_capability_constants_are_strings():
 
 def test_resolution_tier_constants():
     """ResolutionTier constants must be plain strings."""
-    from fastcode.semantic.resolvers.base import ResolutionTier
+    from fastcode.semantic.resolution import ResolutionTier
 
     assert ResolutionTier.STRUCTURAL_FALLBACK == "structural_fallback"
     assert ResolutionTier.COMPILER_CONFIRMED == "compiler_confirmed"
@@ -1226,7 +1245,7 @@ def test_resolution_tier_constants():
 
 def test_semantic_resolution_request_is_frozen():
     """SemanticResolutionRequest must be an immutable dataclass."""
-    from fastcode.semantic.resolvers.base import SemanticResolutionRequest
+    from fastcode.semantic.resolution import SemanticResolutionRequest
 
     req = SemanticResolutionRequest(
         snapshot_id="snap:1",
@@ -1242,7 +1261,7 @@ def test_semantic_resolution_request_is_frozen():
 
 def test_resolution_patch_has_resolution_tier_default():
     """ResolutionPatch must default to structural_fallback tier."""
-    from fastcode.semantic.resolvers.base import ResolutionTier
+    from fastcode.semantic.resolution import ResolutionTier
 
     patch = ResolutionPatch()
     assert patch.resolution_tier == ResolutionTier.STRUCTURAL_FALLBACK
@@ -1264,7 +1283,7 @@ def test_resolution_patch_defaults_are_independent_per_instance():
 
 def test_semantic_resolution_request_tool_context_defaults_are_independent():
     """Mutable request tool_context must not be shared across instances."""
-    from fastcode.semantic.resolvers.base import SemanticResolutionRequest
+    from fastcode.semantic.resolution import SemanticResolutionRequest
 
     request_a = SemanticResolutionRequest(
         snapshot_id="snap:1",
@@ -1389,7 +1408,7 @@ def test_capability_gating_runs_all_when_no_pending_capabilities():
     updated = fc._apply_semantic_resolvers(
         snapshot=snapshot,
         elements=elements,
-        legacy_graph_builder=graph_builder,
+        graph_context=graph_builder,
         target_paths={"app.py", "b.py"},
         warnings=warnings,
     )
@@ -1405,7 +1424,7 @@ def test_graph_backed_relations_carry_resolution_tier_metadata():
     """Relations emitted by graph-backed resolvers must carry
     resolution_tier: structural_fallback in metadata.
     """
-    from fastcode.semantic.resolvers.base import ResolutionTier
+    from fastcode.semantic.resolution import ResolutionTier
 
     resolver = build_default_semantic_resolver_registry().all()[1]
     # Should be JS compiler resolver wrapping graph-backed
@@ -1442,20 +1461,12 @@ def test_graph_backed_relations_carry_resolution_tier_metadata():
         resolution_method="AST ModuleResolver",
     )
 
-    with (
-        patch(
-            "fastcode.semantic.resolvers.helper_backed.shutil.which", return_value=None
-        ),
-        patch(
-            "fastcode.semantic.resolvers.graph_backed.shutil.which", return_value=None
-        ),
-    ):
-        result = resolver.resolve(
-            snapshot=snapshot,
-            elements=elements,
-            target_paths={"app.js"},
-            legacy_graph_builder=graph_builder,
-        )
+    result = resolver.resolve(
+        snapshot=snapshot,
+        elements=elements,
+        target_paths={"app.js"},
+        graph_context=graph_builder,
+    )
 
     for relation in result.relations:
         assert (
@@ -1503,20 +1514,12 @@ def test_graph_backed_relations_carry_pending_capabilities_when_tools_missing():
         resolution_method="AST ModuleResolver",
     )
 
-    with (
-        patch(
-            "fastcode.semantic.resolvers.helper_backed.shutil.which", return_value=None
-        ),
-        patch(
-            "fastcode.semantic.resolvers.graph_backed.shutil.which", return_value=None
-        ),
-    ):
-        result = resolver.resolve(
-            snapshot=snapshot,
-            elements=elements,
-            target_paths={"app.js"},
-            legacy_graph_builder=graph_builder,
-        )
+    result = resolver.resolve(
+        snapshot=snapshot,
+        elements=elements,
+        target_paths={"app.js"},
+        graph_context=graph_builder,
+    )
 
     for relation in result.relations:
         assert len(relation.pending_capabilities) > 0, (
@@ -1579,22 +1582,16 @@ def test_compiler_resolver_emits_diagnostics_when_tools_missing(
         )
     ]
 
-    # Ensure all tool checks return None (not installed)
-    # _has_tools lives in HelperBackedSemanticResolver (helper_backed.py),
-    # so patch shutil.which there.
-    with patch(
-        "fastcode.semantic.resolvers.helper_backed.shutil.which", return_value=None
-    ):
-        result = resolver.resolve(
-            snapshot=snapshot,
-            elements=elements,
-            target_paths={f"test.{language}"},
-            legacy_graph_builder=SimpleNamespace(
-                dependency_graph=nx.DiGraph(),
-                inheritance_graph=nx.DiGraph(),
-                call_graph=nx.DiGraph(),
-            ),
-        )
+    result = resolver.resolve(
+        snapshot=snapshot,
+        elements=elements,
+        target_paths={f"test.{language}"},
+        graph_context=SimpleNamespace(
+            dependency_graph=nx.DiGraph(),
+            inheritance_graph=nx.DiGraph(),
+            call_graph=nx.DiGraph(),
+        ),
+    )
 
     assert result.diagnostics, (
         f"{resolver_cls} must emit ToolDiagnostic when tools are missing"
@@ -1723,17 +1720,23 @@ def test_typescript_compiler_facts_emit_semantic_relations():
     with (
         patch.object(resolver, "_has_tools", return_value=True),
         patch.object(
-            resolver,
-            "_target_files",
+            resolver._helper_ops,
+            "target_files",
             return_value=["src/app.ts", "src/lib.ts"],
         ),
-        patch.object(resolver, "_run_semantic_helper", return_value=payload),
+        patch.object(resolver._helper_ops, "load_cache", return_value=None),
+        patch.object(resolver._helper_ops, "save_cache", return_value=None),
+        patch.object(
+            resolver._helper_ops,
+            "run_helper",
+            return_value=SemanticHelperInvocation(payload=payload),
+        ),
     ):
         patch_result = resolver.resolve(
             snapshot=snapshot,
             elements=[],
             target_paths={"src/app.ts", "src/lib.ts"},
-            legacy_graph_builder=None,
+            graph_context=None,
         )
 
     assert patch_result.resolution_tier == "compiler_confirmed"
@@ -1769,8 +1772,10 @@ def test_typescript_target_files_use_repo_root_for_absolute_paths(
     target.parent.mkdir(parents=True)
     target.write_text("export const x = 1;", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    result = resolver._target_files(
-        {str(target), "src/missing.ts"}, repo_root=str(tmp_path)
+    result = resolver._helper_ops.target_files(
+        {str(target), "src/missing.ts"},
+        repo_root=str(tmp_path),
+        spec=resolver._helper_spec(),
     )
     assert str(target) in result
 
@@ -1852,17 +1857,23 @@ def test_go_compiler_facts_emit_semantic_relations():
     with (
         patch.object(resolver, "_has_tools", return_value=True),
         patch.object(
-            resolver,
-            "_target_files",
+            resolver._helper_ops,
+            "target_files",
             return_value=["main.go", "util.go"],
         ),
-        patch.object(resolver, "_run_semantic_helper", return_value=payload),
+        patch.object(resolver._helper_ops, "load_cache", return_value=None),
+        patch.object(resolver._helper_ops, "save_cache", return_value=None),
+        patch.object(
+            resolver._helper_ops,
+            "run_helper",
+            return_value=SemanticHelperInvocation(payload=payload),
+        ),
     ):
         patch_result = resolver.resolve(
             snapshot=snapshot,
             elements=[],
             target_paths={"main.go", "util.go"},
-            legacy_graph_builder=None,
+            graph_context=None,
         )
 
     assert patch_result.stats["relations_emitted"] == {
@@ -1889,26 +1900,27 @@ def test_go_target_files_use_repo_root_for_absolute_paths(
     target.parent.mkdir(parents=True)
     target.write_text("package main", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    result = resolver._target_files({str(target)}, repo_root=str(tmp_path))
+    result = resolver._helper_ops.target_files(
+        {str(target)}, repo_root=str(tmp_path), spec=resolver._helper_spec()
+    )
     assert result == [str(target)]
 
 
 def test_go_helper_command_uses_cached_binary_not_go_run(tmp_path: Path) -> None:
     resolver = GoCompilerResolver()
     binary = tmp_path / "go-helper"
+    resolver.set_helper_runtime(
+        _SemanticHelperRuntime(executable_paths={"go": "/usr/bin/go"})
+    )
 
-    with (
-        patch(
-            "fastcode.semantic.resolvers.helper_backed.shutil.which",
-            return_value="/usr/bin/go",
-        ),
-        patch.object(
-            resolver,
-            "_compiled_go_helper_command",
-            return_value=str(binary),
-        ) as compiled,
-    ):
-        command = resolver._helper_command(["/repo/main.go"])
+    with patch.object(
+        resolver._helper_ops,
+        "compiled_go_helper_command",
+        return_value=str(binary),
+    ) as compiled:
+        command = resolver._helper_ops.helper_command(
+            resolver._helper_spec(), ["/repo/main.go"]
+        )
 
     compiled.assert_called_once()
     assert command == [str(binary), "/repo/main.go"]
@@ -1916,17 +1928,22 @@ def test_go_helper_command_uses_cached_binary_not_go_run(tmp_path: Path) -> None
 
 def test_go_helper_command_falls_back_when_cached_binary_unavailable() -> None:
     resolver = GoCompilerResolver()
+    resolver.set_helper_runtime(
+        _SemanticHelperRuntime(executable_paths={"go": "/usr/bin/go"})
+    )
 
-    with (
-        patch(
-            "fastcode.semantic.resolvers.helper_backed.shutil.which",
-            return_value="/usr/bin/go",
-        ),
-        patch.object(resolver, "_compiled_go_helper_command", return_value=None),
+    with patch.object(
+        resolver._helper_ops, "compiled_go_helper_command", return_value=None
     ):
-        command = resolver._helper_command(["/repo/main.go"])
+        command = resolver._helper_ops.helper_command(
+            resolver._helper_spec(), ["/repo/main.go"]
+        )
 
-    assert command[:3] == ["/usr/bin/go", "run", str(resolver._helper_path())]
+    assert command[:3] == [
+        "/usr/bin/go",
+        "run",
+        str(resolver._helper_ops.helper_path(resolver._helper_spec())),
+    ]
     assert command[3:] == ["--", "/repo/main.go"]
 
 
@@ -1943,10 +1960,17 @@ def test_compiled_go_helper_command_builds_and_reuses_cached_binary(
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     run_mock = MagicMock(side_effect=_fake_build)
-    resolver.set_command_runner(run_mock)
-    with patch.object(resolver, "_go_helper_binary_path", return_value=binary):
-        first = resolver._compiled_go_helper_command("/usr/bin/go", helper)
-        second = resolver._compiled_go_helper_command("/usr/bin/go", helper)
+    resolver.set_helper_runtime(_SemanticHelperRuntime(run_mock))
+    with patch.object(
+        resolver._helper_ops, "go_helper_binary_path", return_value=binary
+    ):
+        spec = resolver._helper_spec()
+        first = resolver._helper_ops.compiled_go_helper_command(
+            spec, "/usr/bin/go", helper
+        )
+        second = resolver._helper_ops.compiled_go_helper_command(
+            spec, "/usr/bin/go", helper
+        )
 
     assert first == str(binary)
     assert second == str(binary)
@@ -2045,7 +2069,7 @@ def test_java_compiler_facts_emit_semantic_relations():
             snapshot=snapshot,
             elements=[],
             target_paths={"src/App.java", "src/Lib.java"},
-            legacy_graph_builder=None,
+            graph_context=None,
         )
 
     assert patch_result.stats["relations_emitted"] == {
@@ -2149,7 +2173,7 @@ def test_additional_compiler_resolvers_map_helper_facts(
             snapshot=snapshot,
             elements=[],
             target_paths={file_a, file_b},
-            legacy_graph_builder=None,
+            graph_context=None,
         )
 
     assert patch_result.stats["relations_emitted"]["import"] == 1
@@ -2181,9 +2205,9 @@ class _DummyFallbackResolver:
         snapshot: IRSnapshot,
         elements: list[CodeElement],
         target_paths: set[str],
-        legacy_graph_builder: Any,
+        graph_context: Any,
     ) -> ResolutionPatch:
-        del snapshot, elements, target_paths, legacy_graph_builder
+        del snapshot, elements, target_paths, graph_context
         relation = IRRelation(
             relation_id="rel:fallback",
             src_unit_id="unit:caller",
@@ -2285,7 +2309,7 @@ def test_helper_backed_resolver_records_helper_json_failure() -> None:
     run_mock = MagicMock(
         return_value=SimpleNamespace(returncode=0, stdout="{", stderr="")
     )
-    resolver.set_command_runner(run_mock)
+    resolver.set_helper_runtime(_SemanticHelperRuntime(run_mock))
     payload = resolver._run_semantic_helper(
         ["/tmp/a.py"], patch_result, repo_root="/tmp"
     )
@@ -2324,19 +2348,19 @@ def test_helper_backed_resolver_falls_back_on_helper_nonzero_exit(
         ),
         patch.object(resolver, "_has_tools", return_value=True),
         patch(
-            "fastcode.semantic.resolvers.helper_backed.os.getcwd",
+            "fastcode.utils.filesystem.os.getcwd",
             return_value=str(tmp_path),
         ),
     ):
         run_mock = MagicMock(
             return_value=SimpleNamespace(returncode=7, stdout="", stderr="boom")
         )
-        resolver.set_command_runner(run_mock)
+        resolver.set_helper_runtime(_SemanticHelperRuntime(run_mock))
         patch_result = resolver.resolve(
             snapshot=snapshot,
             elements=[element],
             target_paths={"a.py"},
-            legacy_graph_builder=None,
+            graph_context=None,
         )
 
     assert patch_result.resolution_tier == "structural_fallback"
@@ -2386,16 +2410,18 @@ def test_helper_backed_resolver_falls_back_on_helper_timeout(tmp_path: Path) -> 
     with (
         patch.object(resolver, "_has_tools", return_value=True),
         patch(
-            "fastcode.semantic.resolvers.helper_backed.os.getcwd",
+            "fastcode.utils.filesystem.os.getcwd",
             return_value=str(tmp_path),
         ),
     ):
-        resolver.set_command_runner(MagicMock(side_effect=TimeoutError("timeout")))
+        resolver.set_helper_runtime(
+            _SemanticHelperRuntime(MagicMock(side_effect=TimeoutError("timeout")))
+        )
         patch_result = resolver.resolve(
             snapshot=snapshot,
             elements=[element],
             target_paths={"a.py"},
-            legacy_graph_builder=None,
+            graph_context=None,
         )
 
     assert patch_result.resolution_tier == "structural_fallback"
@@ -2420,20 +2446,22 @@ def test_helper_backed_resolver_keeps_compiler_tier_on_valid_empty_payload(
     with (
         patch.object(resolver, "_has_tools", return_value=True),
         patch(
-            "fastcode.semantic.resolvers.helper_backed.os.getcwd",
+            "fastcode.utils.filesystem.os.getcwd",
             return_value=str(tmp_path),
         ),
     ):
-        resolver.set_command_runner(
-            MagicMock(
-                return_value=SimpleNamespace(returncode=0, stdout="{}", stderr="")
+        resolver.set_helper_runtime(
+            _SemanticHelperRuntime(
+                MagicMock(
+                    return_value=SimpleNamespace(returncode=0, stdout="{}", stderr="")
+                )
             )
         )
         patch_result = resolver.resolve(
             snapshot=snapshot,
             elements=[element],
             target_paths={"a.py"},
-            legacy_graph_builder=None,
+            graph_context=None,
         )
 
     assert patch_result.resolution_tier == "compiler_confirmed"
@@ -2520,19 +2548,19 @@ def test_helper_backed_resolver_uses_snapshot_repo_root_for_helper_execution(
     with (
         patch.object(resolver, "_has_tools", return_value=True),
         patch(
-            "fastcode.semantic.resolvers.helper_backed.os.getcwd",
+            "fastcode.utils.filesystem.os.getcwd",
             return_value=str(foreign_cwd),
         ),
     ):
         run_mock = MagicMock(
             return_value=SimpleNamespace(returncode=0, stdout="{}", stderr="")
         )
-        resolver.set_command_runner(run_mock)
+        resolver.set_helper_runtime(_SemanticHelperRuntime(run_mock))
         patch_result = resolver.resolve(
             snapshot=snapshot,
             elements=[element],
             target_paths={"a.py"},
-            legacy_graph_builder=None,
+            graph_context=None,
         )
 
     command = patch_result.stats["helper_command"]
@@ -2568,13 +2596,13 @@ def test_helper_backed_resolver_reuses_artifact_cache_on_unchanged_inputs(
             snapshot=snapshot,
             elements=[element],
             target_paths={"a.py"},
-            legacy_graph_builder=None,
+            graph_context=None,
         )
         second = resolver.resolve(
             snapshot=snapshot,
             elements=[element],
             target_paths={"a.py"},
-            legacy_graph_builder=None,
+            graph_context=None,
         )
 
     assert run_mock.call_count == 1
@@ -2829,7 +2857,7 @@ def test_helper_backed_resolver_degrades_gracefully_when_helper_file_missing(
     with (
         patch.object(resolver, "_has_tools", return_value=True),
         patch(
-            "fastcode.semantic.resolvers.helper_backed.os.getcwd",
+            "fastcode.utils.filesystem.os.getcwd",
             return_value=str(tmp_path),
         ),
     ):
@@ -2837,7 +2865,7 @@ def test_helper_backed_resolver_degrades_gracefully_when_helper_file_missing(
             snapshot=snapshot,
             elements=[element],
             target_paths={"a.py"},
-            legacy_graph_builder=None,
+            graph_context=None,
         )
 
     assert patch_result.resolution_tier in {"structural_fallback", "compiler_confirmed"}
@@ -2932,7 +2960,7 @@ def test_concurrent_resolve_uses_correct_repo_root_per_call(tmp_path: Path) -> N
                 snapshot=snapshot,
                 elements=elements,
                 target_paths={os.path.join(root, "a.py")},
-                legacy_graph_builder=None,
+                graph_context=None,
             )
 
     t_a = threading.Thread(target=_run_thread, args=("a", snap_a), name="thread_a")

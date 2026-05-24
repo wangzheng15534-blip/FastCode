@@ -35,7 +35,7 @@ from ..indexing.projection import ProjectionService
 from ..indexing.projection_transform import ProjectionTransformer
 from ..indexing.publishing import PublishingService
 from ..indexing.redo_worker import RedoWorker
-from ..indexing.semantic_helper_runner import run_helper_command
+from ..indexing.scip_runner import SubprocessScipIndexerRuntime
 from ..indexing.terminus import TerminusPublisher
 from ..ir.code_status import build_code_status_pack
 from ..ir.element import (
@@ -46,6 +46,7 @@ from ..ir.element import (
 )
 from ..ir.graph import IRGraphBuilder
 from ..ir.types import IRSnapshot, IRSymbol
+from ..ports.storage import DocumentGraphRuntime
 from ..query.answer import AnswerGenerator
 from ..query.context_payloads import (
     activation_payload,
@@ -85,21 +86,23 @@ from ..scip.symbol_resolver import SymbolResolver
 from ..semantic.resolvers.registry import build_default_semantic_resolver_registry
 from ..semantic.symbol_index import SnapshotSymbolIndex
 from ..store.cache import CacheManager
-from ..store.file_artifacts import FileArtifactStore
-from ..store.index_run import IndexRunStore
-from ..store.infrastructure.graph_runtime import LadybugGraphRuntime
-from ..store.manifest import ManifestStore
-from ..store.pg_retrieval import PgRetrievalStore
-from ..store.projection import ProjectionStore
-from ..store.records import (
+from ..store.cache_contracts import (
     ContextActivationRecord,
     HandoffArtifactRecord,
-    IndexRunRecord,
-    ManifestRecord,
-    SCIPArtifactRecord,
-    SnapshotRefRecord,
 )
+from ..store.file_artifacts import FileArtifactStore
+from ..store.graph_artifacts import GraphArtifactStore
+from ..store.index_run import IndexRunStore
+from ..store.index_run_contracts import IndexRunRecord
+from ..store.infrastructure.execution import SubprocessSemanticHelperRuntime
+from ..store.infrastructure.graph_runtime import LadybugGraphRuntime
+from ..store.infrastructure.runtime import DBRuntime
+from ..store.manifest import ManifestStore
+from ..store.manifest_contracts import ManifestRecord
+from ..store.pg_retrieval import PgRetrievalStore
+from ..store.projection import ProjectionStore
 from ..store.snapshot import SnapshotStore
+from ..store.snapshot_contracts import SCIPArtifactRecord, SnapshotRefRecord
 from ..store.unit_artifacts import UnitArtifactStore
 from ..store.vector import VectorStore
 from ..store.vector_math import as_float32_matrix
@@ -114,6 +117,17 @@ from .config import (
 )
 
 _STATE_LOCK_LOGGER = logging.getLogger(f"{__name__}.state_lock")
+
+
+class _VectorSearchStoreFactory:
+    """Composition-root factory for query-scoped temporary vector stores."""
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        self._config = config
+
+    def create_vector_search_store(self) -> VectorStore:
+        return VectorStore(self._config)
+
 
 _DIAGNOSTIC_PYTHON_DEPENDENCIES: tuple[tuple[str, str, str], ...] = (
     ("core", "numpy", "numpy"),
@@ -395,10 +409,12 @@ class FastCode:
         self.parser = CodeParser(self.config)
         self.embedder = CodeEmbedder(self.config)
         self.vector_store = VectorStore(self.config)
+        self.vector_store_factory = _VectorSearchStoreFactory(self.config)
         self.indexer = CodeIndexer(
             self.config, self.loader, self.parser, self.embedder, self.vector_store
         )
         self.graph_builder = CodeGraphBuilder(self.config)
+        self.graph_artifact_store = GraphArtifactStore(self.config)
         self.ir_graph_builder = IRGraphBuilder()
 
         # Get repo_root from config if available
@@ -413,28 +429,31 @@ class FastCode:
             self.embedder,
             self.graph_builder,
             repo_root=config_repo_root,
+            vector_store_factory=self.vector_store_factory,
         )
         self.query_processor = QueryProcessor(self.config)
         self.answer_generator = AnswerGenerator(self.config)
         self.cache_manager = CacheManager(self.config)
 
         persist_dir = self.vector_store.persist_dir
-        storage_cfg: dict[str, Any] = self.config.get("storage", {})
-        self.snapshot_store = SnapshotStore(persist_dir, storage_cfg=storage_cfg)
-        self.manifest_store = ManifestStore(self.snapshot_store.db_runtime)
-        self.index_run_store = IndexRunStore(self.snapshot_store.db_runtime)
-        self.unit_artifact_store = UnitArtifactStore(self.snapshot_store.db_runtime)
-        self.file_artifact_store = FileArtifactStore(self.snapshot_store.db_runtime)
+        storage_cfg: dict[str, Any] = self.config.get("storage", {}) or {}
+        db_runtime = DBRuntime.from_storage_config(
+            sqlite_path=os.path.join(os.path.abspath(persist_dir), "lineage.db"),
+            storage_cfg=storage_cfg,
+        )
+        self.snapshot_store = SnapshotStore(persist_dir, db_runtime=db_runtime)
+        self.manifest_store = ManifestStore(db_runtime)
+        self.index_run_store = IndexRunStore(db_runtime)
+        self.unit_artifact_store = UnitArtifactStore(db_runtime)
+        self.file_artifact_store = FileArtifactStore(db_runtime)
         self.terminus_publisher = TerminusPublisher(self.config)
         self.projection_transformer = ProjectionTransformer(self.config)
         self.projection_store = ProjectionStore(self.config)
         self.snapshot_symbol_index = SnapshotSymbolIndex()
-        self.pg_retrieval_store = PgRetrievalStore(
-            self.snapshot_store.db_runtime, self.config
-        )
+        self.pg_retrieval_store = PgRetrievalStore(db_runtime, self.config)
         self.retriever.set_pg_retrieval_store(self.pg_retrieval_store)
         self.doc_ingester = KeyDocIngester(self.config, self.embedder)
-        self.graph_runtime = None
+        self.graph_runtime: DocumentGraphRuntime | None = None
         try:
             self.graph_runtime = LadybugGraphRuntime(self.config)
         except ImportError:
@@ -443,14 +462,15 @@ class FastCode:
             )
 
         self._redo_worker: RedoWorker | None = None
-        if self.snapshot_store.db_runtime.backend == "postgres":
-            storage_cfg: dict[str, Any] = self.config.get("storage", {}) or {}
+        if db_runtime.backend == "postgres":
             poll_interval = int(storage_cfg.get("redo_poll_interval_seconds", 30))
             self._redo_worker = RedoWorker(self, poll_interval_seconds=poll_interval)
             self._redo_worker.start()
 
+        self.semantic_helper_runtime = SubprocessSemanticHelperRuntime()
+        self.scip_indexer_runtime = SubprocessScipIndexerRuntime()
         self.semantic_resolver_registry = build_default_semantic_resolver_registry(
-            command_runner=run_helper_command
+            semantic_helper_runtime=self.semantic_helper_runtime
         )
 
         # State (must exist before IndexPipeline wiring)
@@ -475,6 +495,7 @@ class FastCode:
             retriever=self.retriever,
             graph_builder=self.graph_builder,
             ir_graph_builder=self.ir_graph_builder,
+            graph_artifact_store=self.graph_artifact_store,
             pg_retrieval_store=self.pg_retrieval_store,
             terminus_publisher=self.terminus_publisher,
             doc_ingester=self.doc_ingester,
@@ -482,6 +503,8 @@ class FastCode:
             set_repo_indexed=lambda v: setattr(self, "repo_indexed", v),
             set_repo_loaded=lambda v: setattr(self, "repo_loaded", v),
             set_repo_info=lambda v: setattr(self, "repo_info", v),
+            semantic_helper_runtime=self.semantic_helper_runtime,
+            scip_indexer_runtime=self.scip_indexer_runtime,
         )
 
         # --- Services ---
@@ -785,7 +808,7 @@ class FastCode:
 
                 # Save BM25 and graph data
                 self.retriever.save_bm25(repo_name)
-                self.graph_builder.save(repo_name)
+                self.graph_artifact_store.save(self.graph_builder, repo_name)
                 self._save_file_manifest(
                     repo_name,
                     self._build_file_manifest(elements, self.loader.repo_path or "."),
@@ -873,7 +896,7 @@ class FastCode:
         *,
         snapshot: IRSnapshot,
         elements: list[CodeElement],
-        legacy_graph_builder: CodeGraphBuilder | None,
+        graph_context: CodeGraphBuilder | None,
         target_paths: set[str],
         warnings: list[str],
         budget: str = "changed_files",
@@ -881,7 +904,7 @@ class FastCode:
         return self.pipeline._apply_semantic_resolvers(
             snapshot=snapshot,
             elements=elements,
-            legacy_graph_builder=legacy_graph_builder,
+            graph_context=graph_context,
             target_paths=target_paths,
             warnings=warnings,
             budget=budget,
@@ -1575,7 +1598,7 @@ class FastCode:
         upgraded_snapshot = self._apply_semantic_resolvers(
             snapshot=snapshot,
             elements=elements,
-            legacy_graph_builder=active_graph_builder,
+            graph_context=active_graph_builder,
             target_paths=target_paths,
             warnings=warnings,
             budget=budget,
@@ -1737,7 +1760,9 @@ class FastCode:
                 self.retriever.build_repo_overview_bm25()
 
                 # Load graph data
-                graph_loaded = self.graph_builder.load(cache_name)
+                graph_loaded = self.graph_artifact_store.load(
+                    self.graph_builder, cache_name
+                )
                 if not graph_loaded:
                     self.logger.warning(
                         "Failed to load graph data, will need to rebuild"
@@ -2264,7 +2289,7 @@ class FastCode:
                     temp_graph_builder.build_graphs(
                         elements, temp_module_resolver, temp_symbol_resolver
                     )
-                    temp_graph_builder.save(repo_name)
+                    self.graph_artifact_store.save(temp_graph_builder, repo_name)
                     self.logger.info(f"Saved graph data for {repo_name}")
 
                     successfully_indexed.append(repo_name)
@@ -2877,11 +2902,11 @@ class FastCode:
                 # Load graph data (merge into main graph)
                 if not graphs_loaded:
                     # Load the first repository's graph as base
-                    if self.graph_builder.load(repo_name):
+                    if self.graph_artifact_store.load(self.graph_builder, repo_name):
                         graphs_loaded = True
                         self.logger.info(f"Loaded graph data from {repo_name} as base")
                 # Merge additional repository graphs
-                elif self.graph_builder.merge_from_file(repo_name):
+                elif self.graph_artifact_store.merge(self.graph_builder, repo_name):
                     self.logger.info(f"Merged graph data from {repo_name}")
                 else:
                     self.logger.warning(f"Failed to merge graph data from {repo_name}")
@@ -3055,7 +3080,7 @@ class FastCode:
             )
 
         graph_artifact_paths = getattr(
-            getattr(self, "graph_builder", None), "graph_artifact_paths", None
+            getattr(self, "graph_artifact_store", None), "graph_artifact_paths", None
         )
         if callable(graph_artifact_paths):
             artifact_paths.extend(cast(list[str], graph_artifact_paths(repo_name)))

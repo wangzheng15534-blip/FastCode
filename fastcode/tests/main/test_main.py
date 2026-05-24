@@ -45,16 +45,18 @@ from fastcode.retrieval.context_compiler import (
     compile_working_memory,
 )
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
-from fastcode.store.records import (
+from fastcode.store.cache_contracts import (
     ContextActivationRecord,
     ContextBundleRecord,
-    IndexRunRecord,
-    ManifestRecord,
+    TurnJournalRecord,
+    WorkingMemoryRecord,
+)
+from fastcode.store.index_run_contracts import IndexRunRecord
+from fastcode.store.manifest_contracts import ManifestRecord
+from fastcode.store.snapshot_contracts import (
     SCIPArtifactRecord,
     SnapshotRecord,
     SnapshotRefRecord,
-    TurnJournalRecord,
-    WorkingMemoryRecord,
 )
 
 # ---------------------------------------------------------------------------
@@ -1107,9 +1109,10 @@ def test_load_multi_repo_cache_uses_explicit_code_element_deserializer(
             "bm25_elements": [payload],
         },
     )
-    fc.graph_builder = SimpleNamespace(
-        load=lambda _repo_name: True,
-        merge_from_file=lambda _repo_name: True,
+    fc.graph_builder = SimpleNamespace()
+    fc.graph_artifact_store = SimpleNamespace(
+        load=lambda _builder, _repo_name: True,
+        merge=lambda _builder, _repo_name: True,
     )
     fc._reconstruct_elements_from_metadata = lambda: []
 
@@ -1191,7 +1194,7 @@ def test_remove_repository_removes_sharded_artifacts(tmp_path: Path) -> None:
             str(tmp_path / "repo_bm25_shards"),
         ],
     )
-    fc.graph_builder = SimpleNamespace(
+    fc.graph_artifact_store = SimpleNamespace(
         graph_artifact_paths=lambda _repo_name: [
             str(tmp_path / "repo_graph_manifest.json"),
             str(tmp_path / "repo_graph_shards"),
@@ -1760,10 +1763,6 @@ def _snapshot_artifact_handle_pipeline(
         def __init__(self, config: dict[str, Any]) -> None:
             self.config = config
 
-        def load(self, artifact_key: str) -> bool:
-            loads["graph"].append(artifact_key)
-            return True
-
     class FakeRetriever:
         def __init__(
             self,
@@ -1819,6 +1818,9 @@ def _snapshot_artifact_handle_pipeline(
         find_by_artifact_key=lambda artifact_key: {
             "snapshot_id": artifact_key.replace("art:", "snap:")
         },
+    )
+    pipeline.graph_artifact_store = SimpleNamespace(
+        load=lambda _builder, artifact_key: loads["graph"].append(artifact_key) is None,
     )
     pipeline.pg_retrieval_store = None
     pipeline._artifact_lock = threading.RLock()

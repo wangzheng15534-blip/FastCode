@@ -1,4 +1,4 @@
-"""Shared utilities for semantic resolver implementations."""
+"""Support helpers for semantic resolver implementations."""
 
 from __future__ import annotations
 

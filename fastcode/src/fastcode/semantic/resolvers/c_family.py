@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import posixpath
 import re
-import shutil
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
@@ -12,8 +11,9 @@ from typing import Any
 from ...ir.element import CodeElement
 from ...ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
 from ...utils.paths import infer_language_from_file_context
-from ._utils import _hash_id, _normalize_path
-from .base import ResolutionPatch, SemanticResolver, ToolDiagnostic
+from ..contracts import SemanticGraphContext
+from ..resolution import ResolutionPatch, SemanticResolver, ToolDiagnostic
+from ._resolver_support import _hash_id, _normalize_path
 
 HEADER_EXTENSIONS = (".h", ".hh", ".hpp", ".hxx", ".inl")
 SOURCE_EXTENSIONS = (".c", ".cc", ".cpp", ".cxx")
@@ -66,9 +66,9 @@ class CFamilySemanticResolver(SemanticResolver):
         snapshot: IRSnapshot,
         elements: list[CodeElement],
         target_paths: set[str],
-        legacy_graph_builder: Any | None,
+        graph_context: SemanticGraphContext | None,
     ) -> ResolutionPatch:
-        del legacy_graph_builder
+        del graph_context
         file_units_by_path = {
             unit.path: unit for unit in snapshot.units if unit.kind == "file"
         }
@@ -92,7 +92,7 @@ class CFamilySemanticResolver(SemanticResolver):
             }
         )
         for tool in self.required_tools:
-            if shutil.which(tool) is None:
+            if self.find_executable(tool) is None:
                 patch.diagnostics.append(
                     ToolDiagnostic(
                         language=self.language,

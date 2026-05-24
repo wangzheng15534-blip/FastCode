@@ -14,6 +14,7 @@ from typing import Any, cast
 import fastcode.retrieval.graph_build as _graph_build
 
 from ..ir.types import IRRelation, IRSnapshot
+from ..ports.publishing import EventSink, LineagePublisher
 from ..utils.hashing import deterministic_event_id
 
 
@@ -23,7 +24,7 @@ def _record_get(record: Any, field_name: str) -> Any:
     return getattr(record, field_name, None)
 
 
-class TerminusPublisher:
+class TerminusPublisher(LineagePublisher):
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ class TerminusPublisher:
         self,
         snapshot_id: str,
         payload: dict[str, Any],
-        snapshot_store: Any,
+        snapshot_store: EventSink,
         idempotency_key: str | None = None,
     ) -> str | None:
         """Enqueue a lineage publish event into the outbox instead of doing direct HTTP POST.
@@ -69,18 +70,31 @@ class TerminusPublisher:
         self.logger.info("Publish event %s already exists, skipping", event_id)
         return event_id
 
-    def flush_outbox(self, snapshot_store: Any, limit: int = 10) -> dict[str, int]:
+    @staticmethod
+    def _declares_method(target: object, method_name: str) -> bool:
+        return callable(getattr(type(target), method_name, None))
+
+    def _claim_outbox_events(
+        self, snapshot_store: EventSink, limit: int
+    ) -> Sequence[Any]:
+        if self._declares_method(snapshot_store, "claim_outbox_event_records"):
+            return snapshot_store.claim_outbox_event_records(limit=limit)
+        return snapshot_store.claim_outbox_event(limit=limit)
+
+    def flush_outbox(
+        self, snapshot_store: EventSink, limit: int = 10
+    ) -> dict[str, int]:
         """Flush pending outbox events by attempting HTTP POST for each.
 
         Returns {"processed": int, "succeeded": int, "failed": int}.
         """
         result = {"processed": 0, "succeeded": 0, "failed": 0}
-        events = snapshot_store.claim_outbox_event(limit=limit)
+        events = self._claim_outbox_events(snapshot_store, limit)
         if not events:
             return result
         for event in events:
-            event_id = event["event_id"]
-            payload_str = event["payload"]
+            event_id = str(_record_get(event, "event_id") or "")
+            payload_str = str(_record_get(event, "payload") or "")
             try:
                 payload = json.loads(payload_str)
             except (json.JSONDecodeError, ValueError):
@@ -108,7 +122,7 @@ class TerminusPublisher:
             result["processed"] += 1
         return result
 
-    def get_pending_count(self, snapshot_store: Any) -> int:
+    def get_pending_count(self, snapshot_store: EventSink) -> int:
         """Return count of pending + retryable failed outbox events."""
         return snapshot_store.get_outbox_pending_count()
 

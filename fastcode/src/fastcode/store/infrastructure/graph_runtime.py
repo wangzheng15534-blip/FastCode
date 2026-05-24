@@ -14,6 +14,8 @@ from collections.abc import Iterable
 from typing import Any, cast
 from urllib.parse import parse_qsl, unquote, urlparse
 
+from fastcode.ports.storage import DocumentGraphRuntime
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,7 +29,7 @@ def _esc(val: Any) -> str:
     return f'"{s}"'
 
 
-class LadybugGraphRuntime:
+class LadybugGraphRuntime(DocumentGraphRuntime):
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.logger = logging.getLogger(__name__)

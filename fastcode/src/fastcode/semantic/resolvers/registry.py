@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from ...ir.element import CodeElement
 from ...ir.types import IRSnapshot
-from .base import SemanticResolver
+from ..resolution import SemanticResolver
 from .c_family import CppSemanticResolver, CSemanticResolver
 from .csharp import CSharpCompilerResolver
 from .fortran import FortranCompilerResolver
@@ -93,7 +93,7 @@ class SemanticResolverRegistry:
 
 
 def build_default_semantic_resolver_registry(
-    command_runner: object | None = None,
+    semantic_helper_runtime: object | None = None,
 ) -> SemanticResolverRegistry:
     """Build the default resolver registry.
 
@@ -123,9 +123,10 @@ def build_default_semantic_resolver_registry(
             JuliaCompilerResolver(fallback=JuliaSemanticResolver()),
         ]
     )
-    if command_runner is not None:
+    if semantic_helper_runtime is not None:
         for resolver in registry.all():
-            setter = getattr(resolver, "set_command_runner", None)
+            resolver.set_tool_runtime(semantic_helper_runtime)
+            setter = getattr(resolver, "set_helper_runtime", None)
             if callable(setter):
-                setter(command_runner)
+                setter(semantic_helper_runtime)
     return registry

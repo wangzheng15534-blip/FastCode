@@ -507,7 +507,8 @@ def snapshot_store(tmp_path: pathlib.Path):
     """Create a SnapshotStore backed by a temp directory."""
     from fastcode.store.snapshot import SnapshotStore
 
-    return SnapshotStore(str(tmp_path))
+    db_runtime = DBRuntime(backend="sqlite", sqlite_path=str(tmp_path / "lineage.db"))
+    return SnapshotStore(str(tmp_path), db_runtime=db_runtime)
 
 
 @pytest.fixture

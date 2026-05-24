@@ -108,7 +108,7 @@ class TestHeaderClassification:
             snapshot=snapshot,
             elements=elements,
             target_paths={"src/main.c"},
-            legacy_graph_builder=None,
+            graph_context=None,
         )
 
         assert len(patch.relations) == 1
@@ -281,7 +281,7 @@ class TestCppIncludeOfDotHResolution:
             snapshot=snapshot,
             elements=[element],
             target_paths={"src/main.cpp"},
-            legacy_graph_builder=None,
+            graph_context=None,
         )
         assert len(patch.relations) == 1
         assert patch.relations[0].dst_unit_id == file_header.unit_id

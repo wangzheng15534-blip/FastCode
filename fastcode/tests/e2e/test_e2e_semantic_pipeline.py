@@ -48,6 +48,7 @@ from fastcode.semantic.resolvers.registry import (
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.store.index_run import IndexRunStore
 from fastcode.store.infrastructure.graph_runtime import LadybugGraphRuntime
+from fastcode.store.infrastructure.runtime import DBRuntime
 from fastcode.store.manifest import ManifestStore
 from fastcode.store.pg_retrieval import PgRetrievalStore
 from fastcode.store.snapshot import SnapshotStore
@@ -335,10 +336,14 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
     fc.cache_manager = CacheManager(fc.config)
 
     persist_dir = fc.vector_store.persist_dir
-    storage_cfg = fc.config.get("storage", {})
-    fc.snapshot_store = SnapshotStore(persist_dir, storage_cfg=storage_cfg)
-    fc.manifest_store = ManifestStore(fc.snapshot_store.db_runtime)
-    fc.index_run_store = IndexRunStore(fc.snapshot_store.db_runtime)
+    storage_cfg = fc.config.get("storage", {}) or {}
+    db_runtime = DBRuntime.from_storage_config(
+        sqlite_path=os.path.join(os.path.abspath(persist_dir), "lineage.db"),
+        storage_cfg=storage_cfg,
+    )
+    fc.snapshot_store = SnapshotStore(persist_dir, db_runtime=db_runtime)
+    fc.manifest_store = ManifestStore(db_runtime)
+    fc.index_run_store = IndexRunStore(db_runtime)
     fc.terminus_publisher = TerminusPublisher(fc.config)
 
     from fastcode.indexing.projection_transform import ProjectionTransformer
@@ -347,7 +352,7 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
     fc.projection_transformer = ProjectionTransformer(fc.config)
     fc.projection_store = ProjectionStore(fc.config)
     fc.snapshot_symbol_index = SnapshotSymbolIndex()
-    fc.pg_retrieval_store = PgRetrievalStore(fc.snapshot_store.db_runtime, fc.config)
+    fc.pg_retrieval_store = PgRetrievalStore(db_runtime, fc.config)
     fc.retriever.set_pg_retrieval_store(fc.pg_retrieval_store)
     fc.doc_ingester = KeyDocIngester(fc.config, fc.embedder)
     fc.graph_runtime = LadybugGraphRuntime(fc.config)

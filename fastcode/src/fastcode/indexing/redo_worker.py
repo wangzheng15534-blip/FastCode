@@ -8,7 +8,11 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
+
+from ..ports.jobs import RedoJobQueue
+from ..ports.publishing import EventSink
 
 
 class RedoWorker:
@@ -18,6 +22,28 @@ class RedoWorker:
         self.logger = logging.getLogger(__name__)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+
+    @staticmethod
+    def _declares_method(target: object, method_name: str) -> bool:
+        return callable(getattr(type(target), method_name, None))
+
+    @staticmethod
+    def _field(payload: Any, name: str) -> Any:
+        if isinstance(payload, Mapping):
+            return cast(Mapping[str, Any], payload).get(name)
+        return getattr(payload, name, None)
+
+    def _redo_queue(self) -> RedoJobQueue:
+        return cast(RedoJobQueue, self.fastcode.snapshot_store)
+
+    def _event_sink(self) -> EventSink:
+        return cast(EventSink, self.fastcode.snapshot_store)
+
+    def _claim_redo_task_record_or_payload(self) -> Any:
+        queue = self._redo_queue()
+        if self._declares_method(queue, "claim_redo_task_record"):
+            return queue.claim_redo_task_record()
+        return queue.claim_redo_task()
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -38,22 +64,20 @@ class RedoWorker:
         return self.process_once_status() == "succeeded"
 
     def process_once_status(self) -> str:
-        task = self.fastcode.snapshot_store.claim_redo_task()
+        task = self._claim_redo_task_record_or_payload()
         if not task:
             return "none"
-        task_id = str(task.get("task_id") or "")
+        task_id = str(self._field(task, "task_id") or "")
         if not task_id:
             self.logger.warning("Redo task claimed without task_id, skipping")
             return "none"
         try:
             self._dispatch_task(task)
-            self.fastcode.snapshot_store.mark_redo_task_done(task_id)
+            self._redo_queue().mark_redo_task_done(task_id)
             return "succeeded"
         except Exception as e:
             self.logger.exception("Redo task failed: %s", task_id)
-            self.fastcode.snapshot_store.mark_redo_task_failed(
-                task_id=task_id, error=str(e)
-            )
+            self._redo_queue().mark_redo_task_failed(task_id=task_id, error=str(e))
             return "failed"
 
     def _run_loop(self) -> None:
@@ -65,15 +89,17 @@ class RedoWorker:
                 self.logger.exception("Redo worker loop error")
             self._stop_event.wait(self.poll_interval_seconds)
 
-    def _dispatch_task(self, task: dict[str, Any]) -> None:
-        task_type = str(task.get("task_type") or "")
-        payload = task.get("payload_json")
+    def _dispatch_task(self, task: Any) -> None:
+        task_type = str(self._field(task, "task_type") or "")
+        payload = self._field(task, "payload_json")
         if isinstance(payload, str):
             try:
                 payload = json.loads(payload)
             except (json.JSONDecodeError, ValueError) as exc:
                 raise RuntimeError(
-                    f"redo task {task.get('task_id')!r} has malformed payload_json: {exc}"
+                    "redo task "
+                    f"{self._field(task, 'task_id')!r} "
+                    f"has malformed payload_json: {exc}"
                 ) from exc
         if not isinstance(payload, dict):
             payload = {}
@@ -159,7 +185,7 @@ class RedoWorker:
                 "TerminusDB publisher not configured, skipping outbox flush"
             )
             return
-        result = publisher.flush_outbox(self.fastcode.snapshot_store)
+        result = publisher.flush_outbox(self._event_sink())
         if result["processed"] > 0:
             self.logger.info(
                 "Outbox flush: processed=%d succeeded=%d failed=%d",

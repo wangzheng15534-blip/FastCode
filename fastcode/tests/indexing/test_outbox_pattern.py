@@ -13,6 +13,7 @@ import pytest
 
 from fastcode.indexing.redo_worker import RedoWorker
 from fastcode.indexing.terminus import TerminusPublisher
+from fastcode.store.infrastructure.runtime import DBRuntime
 from fastcode.store.snapshot import SnapshotStore
 
 pytestmark = [pytest.mark.test_double]
@@ -26,6 +27,16 @@ def _make_publisher(**overrides: Any) -> TerminusPublisher:
     cfg = {"terminus": {"endpoint": "http://localhost:6363/api/publish"}}
     cfg["terminus"].update(overrides)
     return TerminusPublisher(cfg)
+
+
+def _make_snapshot_store(tmpdir: str) -> SnapshotStore:
+    return SnapshotStore(
+        tmpdir,
+        db_runtime=DBRuntime(
+            backend="sqlite",
+            sqlite_path=f"{tmpdir}/lineage.db",
+        ),
+    )
 
 
 def _minimal_snapshot() -> dict[str, Any]:
@@ -344,7 +355,7 @@ class TestSnapshotStoreOutbox:
     def test_enqueue_outbox_event_non_postgres_double(self):
         """enqueue_outbox_event returns False for non-postgres."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = SnapshotStore(tmpdir)
+            store = _make_snapshot_store(tmpdir)
             assert store.db_runtime.backend == "sqlite"
             result = store.enqueue_outbox_event(
                 "evt1", "lineage_publish", "{}", "snap:1"
@@ -354,25 +365,25 @@ class TestSnapshotStoreOutbox:
     def test_claim_outbox_event_non_postgres_double(self):
         """claim_outbox_event returns empty list for non-postgres."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = SnapshotStore(tmpdir)
+            store = _make_snapshot_store(tmpdir)
             assert store.claim_outbox_event() == []
 
     def test_mark_outbox_event_done_non_postgres_double(self):
         """mark_outbox_event_done is no-op for non-postgres."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = SnapshotStore(tmpdir)
+            store = _make_snapshot_store(tmpdir)
             store.mark_outbox_event_done("evt1")  # should not raise
 
     def test_mark_outbox_event_failed_non_postgres_double(self):
         """mark_outbox_event_failed is no-op for non-postgres."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = SnapshotStore(tmpdir)
+            store = _make_snapshot_store(tmpdir)
             store.mark_outbox_event_failed("evt1", "error")  # should not raise
 
     def test_get_outbox_pending_count_non_postgres_double(self):
         """get_outbox_pending_count returns 0 for non-postgres."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = SnapshotStore(tmpdir)
+            store = _make_snapshot_store(tmpdir)
             assert store.get_outbox_pending_count() == 0
 
     def test_deterministic_event_id_stability_double(self):

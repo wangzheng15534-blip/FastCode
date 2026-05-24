@@ -14,28 +14,24 @@ Helpers emit relative repo paths so snapshots remain portable across machines.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import posixpath
-import shutil
-import sys
-import tempfile
 from collections import defaultdict
-from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
 from ...ir.element import CodeElement
 from ...ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
-from ._utils import _hash_id, _normalize_path, validate_helper_paths
-from .base import (
+from ..contracts import SemanticGraphContext
+from ..resolution import (
     ResolutionPatch,
     ResolutionTier,
     SemanticCapability,
     SemanticResolver,
     ToolDiagnostic,
 )
+from ._helper_operations import SemanticHelperOperations, SemanticHelperSpec
+from ._resolver_support import _hash_id, _normalize_path
 from .graph_backed import GraphBackedSemanticResolver
 
 logger = logging.getLogger(__name__)
@@ -58,14 +54,63 @@ class HelperBackedSemanticResolver(SemanticResolver):
     helper_timeout_seconds: int = 90
     file_extensions: tuple[str, ...] = ()
     extractor_name: str
-    _command_runner: Any | None = None
 
     def __init__(self, fallback: GraphBackedSemanticResolver | None = None) -> None:
         self._fallback = fallback
+        self._helper_ops = SemanticHelperOperations()
 
-    def set_command_runner(self, command_runner: Any | None) -> None:
-        """Inject the shell-side process runner used for helper execution."""
-        self._command_runner = command_runner
+    def set_helper_runtime(self, helper_runtime: Any | None) -> None:
+        """Inject the shell-side runtime used for helper execution."""
+        self.set_tool_runtime(helper_runtime)
+        self._helper_ops.set_runtime(helper_runtime)
+        if self._fallback is not None:
+            fallback_setter = getattr(self._fallback, "set_tool_runtime", None)
+            if callable(fallback_setter):
+                fallback_setter(helper_runtime)
+
+    def _helper_spec(self) -> SemanticHelperSpec:
+        return SemanticHelperSpec(
+            cache_version=self.helper_cache_version,
+            language=self.language,
+            source_name=self.source_name,
+            frontend_kind=self.frontend_kind,
+            extractor_name=self.extractor_name,
+            required_tools=self.required_tools,
+            helper_filename=self.helper_filename,
+            helper_runtime=self.helper_runtime,
+            helper_timeout_seconds=self.helper_timeout_seconds,
+            file_extensions=self.file_extensions,
+        )
+
+    def _target_files(self, target_paths: set[str], *, repo_root: str) -> list[str]:
+        return self._helper_ops.target_files(
+            target_paths,
+            repo_root=repo_root,
+            spec=self._helper_spec(),
+        )
+
+    def _helper_path(self) -> Path:
+        return self._helper_ops.helper_path(self._helper_spec())
+
+    def _helper_command(self, helper_files: list[str]) -> list[str]:
+        return self._helper_ops.helper_command(self._helper_spec(), helper_files)
+
+    def _run_semantic_helper(
+        self,
+        helper_files: list[str],
+        patch: ResolutionPatch,
+        *,
+        repo_root: str,
+    ) -> dict[str, Any]:
+        invocation = self._helper_ops.run_helper(
+            self._helper_spec(),
+            helper_files,
+            repo_root=repo_root,
+        )
+        patch.stats.update(invocation.stats)
+        patch.warnings.extend(invocation.warnings)
+        patch.diagnostics.extend(invocation.diagnostics)
+        return invocation.payload
 
     def resolve(
         self,
@@ -73,24 +118,26 @@ class HelperBackedSemanticResolver(SemanticResolver):
         snapshot: IRSnapshot,
         elements: list[CodeElement],
         target_paths: set[str],
-        legacy_graph_builder: Any,
+        graph_context: SemanticGraphContext | None,
     ) -> ResolutionPatch:
         snapshot_metadata = cast(dict[str, Any], snapshot.metadata or {})
-        repo_root = cast(str | None, snapshot_metadata.get("repo_root")) or os.getcwd()
+        repo_root = self._helper_ops.resolve_repo_root(
+            cast(str | None, snapshot_metadata.get("repo_root"))
+        )
         if self._has_tools():
             return self._resolve_via_helper(
                 snapshot=snapshot,
                 elements=elements,
                 target_paths=target_paths,
-                legacy_graph_builder=legacy_graph_builder,
-                repo_root=os.path.abspath(repo_root),
+                graph_context=graph_context,
+                repo_root=repo_root,
             )
 
         patch = self._fallback_patch(
             snapshot=snapshot,
             elements=elements,
             target_paths=target_paths,
-            legacy_graph_builder=legacy_graph_builder,
+            graph_context=graph_context,
         )
         patch.diagnostics.extend(self._missing_tool_diagnostics())
         return patch
@@ -101,14 +148,14 @@ class HelperBackedSemanticResolver(SemanticResolver):
         snapshot: IRSnapshot,
         elements: list[CodeElement],
         target_paths: set[str],
-        legacy_graph_builder: Any,
+        graph_context: SemanticGraphContext | None,
     ) -> ResolutionPatch:
         if self._fallback is not None:
             return self._fallback.resolve(
                 snapshot=snapshot,
                 elements=elements,
                 target_paths=target_paths,
-                legacy_graph_builder=legacy_graph_builder,
+                graph_context=graph_context,
             )
 
         return ResolutionPatch(
@@ -126,22 +173,10 @@ class HelperBackedSemanticResolver(SemanticResolver):
         )
 
     def _has_tools(self) -> bool:
-        return all(shutil.which(tool) is not None for tool in self.required_tools)
+        return self._helper_ops.has_tools(self._helper_spec())
 
     def _missing_tool_diagnostics(self) -> list[ToolDiagnostic]:
-        return [
-            ToolDiagnostic(
-                language=self.language,
-                tool=tool,
-                code="required_tool_missing",
-                message=(
-                    f"'{tool}' not found in PATH; {self.language} resolution is "
-                    "structural-only"
-                ),
-            )
-            for tool in self.required_tools
-            if shutil.which(tool) is None
-        ]
+        return self._helper_ops.missing_tool_diagnostics(self._helper_spec())
 
     def _resolve_via_helper(
         self,
@@ -149,7 +184,7 @@ class HelperBackedSemanticResolver(SemanticResolver):
         snapshot: IRSnapshot,
         elements: list[CodeElement],
         target_paths: set[str],
-        legacy_graph_builder: Any,
+        graph_context: SemanticGraphContext | None,
         repo_root: str,
     ) -> ResolutionPatch:
         patch = ResolutionPatch(
@@ -167,20 +202,25 @@ class HelperBackedSemanticResolver(SemanticResolver):
             resolution_tier=ResolutionTier.COMPILER_CONFIRMED,
         )
 
+        spec = self._helper_spec()
         helper_files = self._target_files(target_paths, repo_root=repo_root)
         patch.stats["helper_target_files"] = len(helper_files)
         if not helper_files:
             return patch
 
-        cache_entry = self._helper_cache_entry(helper_files, repo_root=repo_root)
+        cache_entry = self._helper_ops.cache_entry(
+            spec,
+            helper_files,
+            repo_root=repo_root,
+        )
         patch.stats.update(
             {
-                "helper_cache_key": cache_entry["key"],
-                "helper_cache_path": cache_entry["path"],
+                "helper_cache_key": cache_entry.key,
+                "helper_cache_path": cache_entry.path,
                 "helper_cache_target_files": len(helper_files),
             }
         )
-        payload = self._load_helper_cache(cache_entry)
+        payload = self._helper_ops.load_cache(cache_entry)
         if payload is not None:
             patch.stats["helper_cache_hit"] = True
             patch.stats["helper_cache_miss"] = False
@@ -188,7 +228,9 @@ class HelperBackedSemanticResolver(SemanticResolver):
             patch.stats["helper_cache_hit"] = False
             patch.stats["helper_cache_miss"] = True
             payload = self._run_semantic_helper(
-                helper_files, patch, repo_root=repo_root
+                helper_files,
+                patch,
+                repo_root=repo_root,
             )
         if self._helper_failed(patch):
             self._log_resolver_fallback(patch)
@@ -197,10 +239,10 @@ class HelperBackedSemanticResolver(SemanticResolver):
                 snapshot=snapshot,
                 elements=elements,
                 target_paths=target_paths,
-                legacy_graph_builder=legacy_graph_builder,
+                graph_context=graph_context,
             )
         if patch.stats.get("helper_cache_hit") is not True:
-            self._save_helper_cache(cache_entry, payload)
+            self._helper_ops.save_cache(cache_entry, payload)
         self._apply_semantic_facts(snapshot=snapshot, patch=patch, payload=payload)
         patch.metadata_updates["semantic_resolver_runs"][0]["stats"] = patch.stats
         return patch
@@ -241,13 +283,13 @@ class HelperBackedSemanticResolver(SemanticResolver):
         snapshot: IRSnapshot,
         elements: list[CodeElement],
         target_paths: set[str],
-        legacy_graph_builder: Any,
+        graph_context: SemanticGraphContext | None,
     ) -> ResolutionPatch:
         fallback_patch = self._fallback_patch(
             snapshot=snapshot,
             elements=elements,
             target_paths=target_paths,
-            legacy_graph_builder=legacy_graph_builder,
+            graph_context=graph_context,
         )
         fallback_patch.warnings = [*primary_patch.warnings, *fallback_patch.warnings]
         fallback_patch.diagnostics = [
@@ -274,283 +316,6 @@ class HelperBackedSemanticResolver(SemanticResolver):
             run["stats"] = fallback_patch.stats
             resolver_runs[0] = run
         return fallback_patch
-
-    def _target_files(self, target_paths: set[str], *, repo_root: str) -> list[str]:
-        raw: list[str] = []
-        for path in sorted(target_paths):
-            normalized = path if os.path.isabs(path) else os.path.join(repo_root, path)
-            if self.file_extensions and not normalized.endswith(self.file_extensions):
-                continue
-            raw.append(os.path.abspath(normalized))
-        safe, rejected = validate_helper_paths(raw, repo_root)
-        if rejected:
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "Rejected %d helper file paths (symlinks, missing, or outside repo)",
-                len(rejected),
-            )
-        return safe
-
-    def _helper_path(self) -> Path:
-        return Path(__file__).with_name(self.helper_filename)
-
-    def _helper_command(self, helper_files: list[str]) -> list[str]:
-        helper_path = str(self._helper_path())
-        if self.helper_runtime == "node":
-            node_path = shutil.which("node") or "node"
-            return [node_path, helper_path, *helper_files]
-        if self.helper_runtime == "go":
-            go_path = shutil.which("go") or "go"
-            compiled = self._compiled_go_helper_command(go_path, Path(helper_path))
-            if compiled:
-                return [compiled, *helper_files]
-            return [go_path, "run", helper_path, "--", *helper_files]
-        return [sys.executable, helper_path, *helper_files]
-
-    def _compiled_go_helper_command(
-        self, go_path: str, helper_path: Path
-    ) -> str | None:
-        if not helper_path.exists():
-            return None
-        binary_path = self._go_helper_binary_path(helper_path)
-        try:
-            if binary_path.exists():
-                return str(binary_path)
-            binary_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = binary_path.with_suffix(binary_path.suffix + ".tmp")
-            result = self._run_command(
-                [go_path, "build", "-o", str(tmp_path), str(helper_path)],
-                cwd=str(helper_path.parent),
-            )
-            if result.returncode != 0:
-                return None
-            os.replace(tmp_path, binary_path)
-            binary_path.chmod(0o755)
-            return str(binary_path)
-        except (OSError, RuntimeError, TimeoutError):
-            return None
-
-    @staticmethod
-    def _go_helper_binary_path(helper_path: Path) -> Path:
-        digest = sha256(helper_path.read_bytes()).hexdigest()[:16]
-        suffix = ".exe" if os.name == "nt" else ""
-        return (
-            Path(tempfile.gettempdir())
-            / "fastcode-helper-cache"
-            / f"{helper_path.stem}-{digest}{suffix}"
-        )
-
-    def _helper_cache_entry(
-        self,
-        helper_files: list[str],
-        *,
-        repo_root: str,
-    ) -> dict[str, Any]:
-        identity = {
-            "cache_version": self.helper_cache_version,
-            "language": self.language,
-            "source": self.source_name,
-            "frontend_kind": self.frontend_kind,
-            "extractor": self.extractor_name,
-            "repo_root": os.path.realpath(repo_root),
-            "helper": self._helper_identity(),
-            "tools": self._required_tool_identities(),
-            "targets": [
-                fingerprint
-                for helper_file in sorted(helper_files)
-                if (
-                    fingerprint := self._target_file_fingerprint(
-                        helper_file,
-                        repo_root=repo_root,
-                    )
-                )
-                is not None
-            ],
-        }
-        key = sha256(
-            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
-        cache_dir = self._helper_cache_dir(repo_root)
-        return {
-            "key": key,
-            "path": str(cache_dir / f"{key}.json"),
-            "identity": identity,
-        }
-
-    def _helper_cache_dir(self, repo_root: str) -> Path:
-        cache_dir = Path(repo_root) / ".fastcode" / "semantic_helper_cache"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        return cache_dir
-
-    def _helper_identity(self) -> dict[str, Any]:
-        helper_path = self._helper_path()
-        payload: dict[str, Any] = {
-            "filename": self.helper_filename,
-            "runtime": self.helper_runtime,
-            "path": str(helper_path),
-            "exists": helper_path.exists(),
-        }
-        if helper_path.exists():
-            try:
-                stat = helper_path.stat()
-                payload.update(
-                    {
-                        "size": int(stat.st_size),
-                        "content_hash": sha256(helper_path.read_bytes()).hexdigest(),
-                    }
-                )
-            except OSError:
-                payload["unreadable"] = True
-        return payload
-
-    def _required_tool_identities(self) -> list[dict[str, Any]]:
-        identities: list[dict[str, Any]] = []
-        for tool in sorted(self.required_tools):
-            tool_path = shutil.which(tool)
-            payload: dict[str, Any] = {
-                "tool": tool,
-                "available": tool_path is not None,
-                "path": tool_path,
-            }
-            if tool_path:
-                try:
-                    stat = os.stat(tool_path)
-                    payload["size"] = int(stat.st_size)
-                    payload["mtime_ns"] = int(stat.st_mtime_ns)
-                except OSError:
-                    payload["unreadable"] = True
-            identities.append(payload)
-        return identities
-
-    @staticmethod
-    def _target_file_fingerprint(
-        helper_file: str,
-        *,
-        repo_root: str,
-    ) -> dict[str, Any] | None:
-        try:
-            stat = os.stat(helper_file)
-            with open(helper_file, "rb") as handle:
-                digest = sha256(handle.read()).hexdigest()
-            rel_path = _normalize_path(os.path.relpath(helper_file, repo_root))
-            return {
-                "path": rel_path,
-                "size": int(stat.st_size),
-                "content_hash": digest,
-            }
-        except OSError:
-            return None
-
-    def _load_helper_cache(self, entry: dict[str, Any]) -> dict[str, Any] | None:
-        path = str(entry["path"])
-        if not os.path.exists(path):
-            return None
-        try:
-            with open(path, encoding="utf-8") as handle:
-                payload = json.load(handle)
-        except (OSError, json.JSONDecodeError):
-            return None
-        if not isinstance(payload, dict):
-            return None
-        if (
-            payload.get("key") != entry["key"]
-            or payload.get("identity") != entry["identity"]
-        ):
-            return None
-        helper_payload = payload.get("helper_payload")
-        return (
-            cast(dict[str, Any], helper_payload)
-            if isinstance(helper_payload, dict)
-            else None
-        )
-
-    def _save_helper_cache(
-        self,
-        entry: dict[str, Any],
-        helper_payload: dict[str, Any],
-    ) -> None:
-        payload = {
-            "key": entry["key"],
-            "identity": entry["identity"],
-            "helper_payload": helper_payload,
-        }
-        path = str(entry["path"])
-        tmp_path = f"{path}.tmp"
-        try:
-            with open(tmp_path, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
-            os.replace(tmp_path, path)
-        except OSError:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-
-    def _run_semantic_helper(
-        self,
-        helper_files: list[str],
-        patch: ResolutionPatch,
-        *,
-        repo_root: str,
-    ) -> dict[str, Any]:
-        command = self._helper_command(helper_files)
-        patch.stats["helper_command"] = command
-        try:
-            result = self._run_command(
-                command,
-                cwd=repo_root,
-            )
-        except (TimeoutError, FileNotFoundError, OSError, RuntimeError) as exc:
-            patch.warnings.append(f"{self.source_name}_helper_failed: {exc}")
-            patch.diagnostics.append(
-                ToolDiagnostic(
-                    language=self.language,
-                    tool=self.helper_filename,
-                    code="tool_invocation_failed",
-                    message=str(exc),
-                )
-            )
-            return {}
-
-        patch.stats["helper_exit_code"] = result.returncode
-        if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
-            if stderr:
-                patch.warnings.append(f"{self.source_name}_helper_error: {stderr}")
-            patch.diagnostics.append(
-                ToolDiagnostic(
-                    language=self.language,
-                    tool=self.helper_filename,
-                    code="helper_nonzero_exit",
-                    message=stderr or f"helper exited with code {result.returncode}",
-                )
-            )
-            return {}
-
-        if not result.stdout.strip():
-            return {}
-
-        try:
-            return json.loads(result.stdout)
-        except json.JSONDecodeError as exc:
-            patch.warnings.append(f"{self.source_name}_helper_invalid_json: {exc}")
-            patch.diagnostics.append(
-                ToolDiagnostic(
-                    language=self.language,
-                    tool=self.helper_filename,
-                    code="invalid_helper_json",
-                    message=str(exc),
-                )
-            )
-            return {}
-
-    def _run_command(self, command: list[str], *, cwd: str) -> Any:
-        if self._command_runner is None:
-            raise RuntimeError("semantic helper command runner is not configured")
-        return self._command_runner(
-            command,
-            cwd=cwd,
-            timeout=self.helper_timeout_seconds,
-        )
 
     def _apply_semantic_facts(
         self,

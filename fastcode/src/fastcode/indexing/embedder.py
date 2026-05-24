@@ -15,7 +15,9 @@ from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, cast
+
+from ..ports.embedding import EmbeddingProvider
 
 if TYPE_CHECKING:
     from ..ir.element import CodeElementMeta
@@ -28,7 +30,7 @@ _EMBEDDING_TEXT_SCHEMA_VERSION = 1
 
 @dataclass(frozen=True, slots=True)
 class EmbeddingFingerprint:
-    """Stable embedding model/config identity for reuse decisions."""
+    """Stable embedding implementation identity for reuse decisions."""
 
     version: int
     provider: str
@@ -57,24 +59,7 @@ class EmbeddingFingerprint:
         return json.dumps(self.to_payload(), sort_keys=True, separators=(",", ":"))
 
 
-@runtime_checkable
-class EmbeddingService(Protocol):
-    """Boundary contract for prepared-text embedding and reuse decisions."""
-
-    def prepare_text(self, element: CodeElementMeta) -> str: ...
-
-    def fingerprint(self, *, resolve_dimension: bool = False) -> dict[str, Any]: ...
-
-    def embed_many(self, texts: Sequence[str]) -> np.ndarray: ...
-
-    def embed_elements(
-        self,
-        elements: Sequence[CodeElementMeta],
-        reuse_index: Mapping[str, CodeElementMeta] | None = None,
-    ) -> list[CodeElementMeta]: ...
-
-
-class CodeEmbedder:
+class CodeEmbedder(EmbeddingProvider):
     """Generate embeddings for code using sentence transformers"""
 
     def __init__(self, config: dict[str, Any]) -> None:

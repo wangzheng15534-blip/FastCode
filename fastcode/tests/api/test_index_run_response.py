@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 import fastcode.api.routes as api
-from fastcode.api.contracts import DiagnosticBundleResponse, IndexRunResponse
+from fastcode.api.outbound import DiagnosticBundleResponse, IndexRunResponse
 
 
 class _FakeFastCode:
@@ -105,20 +105,20 @@ def test_index_run_promotes_pipeline_and_resolver_diagnostics(
         )
     )
 
-    assert body["status"] == "success"
-    assert body["result"]["status"] == "degraded"
-    assert body["index_status"] == "degraded"
-    assert body["run_id"] == "run_1"
-    assert body["repo_name"] == "repo"
-    assert body["snapshot_id"] == "snap:repo:1"
-    assert body["artifact_key"] == "art_1"
-    assert body["warnings"] == ["semantic_resolver_runs_without_graph_upgrade_signal"]
-    assert body["pipeline_layers"][1]["name"] == "language_specific_semantic_upgrade"
-    assert body["pipeline_metrics"]["warning_count"] == 1
-    assert body["pipeline_metrics"]["layer_statuses"] == {
+    assert body.status == "success"
+    assert body.result["status"] == "degraded"
+    assert body.index_status == "degraded"
+    assert body.run_id == "run_1"
+    assert body.repo_name == "repo"
+    assert body.snapshot_id == "snap:repo:1"
+    assert body.artifact_key == "art_1"
+    assert body.warnings == ["semantic_resolver_runs_without_graph_upgrade_signal"]
+    assert body.pipeline_layers[1]["name"] == "language_specific_semantic_upgrade"
+    assert body.pipeline_metrics["warning_count"] == 1
+    assert body.pipeline_metrics["layer_statuses"] == {
         "language_specific_semantic_upgrade": "degraded"
     }
-    assert body["resolver_diagnostics"] == [
+    assert [item.model_dump() for item in body.resolver_diagnostics] == [
         {
             "name": "language_specific_semantic_upgrade",
             "source": "language_specific_ast_resolvers",

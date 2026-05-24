@@ -33,7 +33,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from fastcode.api.contracts import (
+from fastcode.api.cors import cors_middleware_options
+from fastcode.api.inbound import (
     AgentContextHandoffRequest,
     ContextActivationRequest,
     DeleteReposRequest,
@@ -42,15 +43,25 @@ from fastcode.api.contracts import (
     IndexMultipleRequest,
     LoadRepositoriesRequest,
     LoadRepositoryRequest,
-    NewSessionResponse,
     QueryRequest,
+    map_load_repository_request,
+    map_repository_query_request,
+)
+from fastcode.api.outbound import (
+    ApiStatus,
+    NewSessionRecord,
+    NewSessionResponse,
     QueryResponse,
     StatusResponse,
 )
-from fastcode.api.cors import cors_middleware_options
 from fastcode.api.serialization import (
     serialize_dialogue_history,
+    serialize_new_session_response,
+    serialize_query_response,
+    serialize_query_response_record,
     serialize_query_sources,
+    serialize_status_response,
+    serialize_status_response_record,
 )
 from fastcode.main.fastcode import FastCode
 from fastcode.utils.archive import (
@@ -304,13 +315,17 @@ async def get_status(full_scan: bool = False):
     )
     loaded_repos = fastcode_instance.list_repositories()
 
-    return StatusResponse(
-        status="ready" if fastcode_instance.repo_indexed else "not_ready",
-        repo_loaded=fastcode_instance.repo_loaded,
-        repo_indexed=fastcode_instance.repo_indexed,
-        repo_info=fastcode_instance.repo_info,
-        available_repositories=available_repos,
-        loaded_repositories=loaded_repos,
+    return serialize_status_response(
+        serialize_status_response_record(
+            status=ApiStatus.READY
+            if fastcode_instance.repo_indexed
+            else ApiStatus.NOT_READY,
+            repo_loaded=fastcode_instance.repo_loaded,
+            repo_indexed=fastcode_instance.repo_indexed,
+            repo_info=fastcode_instance.repo_info,
+            available_repositories=available_repos,
+            loaded_repositories=loaded_repos,
+        )
     )
 
 
@@ -360,11 +375,12 @@ async def list_repositories(full_scan: bool = False):
 async def load_repository(request: LoadRepositoryRequest):
     """Load a repository"""
     fastcode = _ensure_fastcode_initialized()
+    command = map_load_repository_request(request)
 
     try:
-        logger.info(f"Loading repository: {request.source}")
+        logger.info(f"Loading repository: {command.source}")
         await asyncio.to_thread(
-            fastcode.load_repository, request.source, request.is_url
+            fastcode.load_repository, command.source, command.is_url
         )
 
         return {
@@ -422,10 +438,12 @@ async def index_multiple(request: IndexMultipleRequest):
             fastcode.load_multiple_repositories,
             [
                 {
-                    "source": source.source,
-                    "is_url": source.is_url,
+                    "source": command.source,
+                    "is_url": command.is_url,
                 }
-                for source in request.sources
+                for command in (
+                    map_load_repository_request(source) for source in request.sources
+                )
             ],
         )
 
@@ -450,15 +468,16 @@ async def index_multiple(request: IndexMultipleRequest):
 async def load_and_index(request: LoadRepositoryRequest, force: bool = False):
     """Load and index repository in one call"""
     fastcode = _ensure_fastcode_initialized()
+    command = map_load_repository_request(request)
 
     try:
-        logger.info(f"Loading repository: {request.source}")
+        logger.info(f"Loading repository: {command.source}")
         logger.info("Indexing repository")
         return await asyncio.to_thread(
             _load_and_index_sync,
             fastcode,
-            request.source,
-            request.is_url,
+            command.source,
+            command.is_url,
             force=force,
         )
 
@@ -562,49 +581,33 @@ async def upload_and_index(file: UploadFile = File(...), force: bool = False):
 async def query_repository(request: QueryRequest):
     """Query the repository"""
     fastcode = _ensure_fastcode_initialized()
+    query_request = map_repository_query_request(request)
 
     if not fastcode.repo_indexed:
         raise HTTPException(status_code=400, detail="Repository not indexed")
 
     try:
         # Derive session handling for both modes (single-turn keeps a session for history)
-        session_id = request.session_id or str(uuid.uuid4())[:8]
-        if request.multi_turn and not request.session_id:
+        session_id = query_request.session_id or str(uuid.uuid4())[:8]
+        if query_request.multi_turn and not query_request.session_id:
             logger.info(f"Generated new multi-turn session: {session_id}")
-        elif not request.session_id:
+        elif not query_request.session_id:
             logger.info(f"Generated session for single-turn request: {session_id}")
 
-        logger.info(f"Processing query: {request.question}")
+        logger.info(f"Processing query: {query_request.question}")
         result = await asyncio.to_thread(
             fastcode.query,
-            request.question,
-            request.filters,
-            repo_filter=request.repo_filter,
+            query_request.question,
+            dict(query_request.filters) if query_request.filters else None,
+            repo_filter=list(query_request.repo_filter) or None,
             session_id=session_id,
-            enable_multi_turn=request.multi_turn,
+            enable_multi_turn=query_request.multi_turn,
         )
-
-        # Extract token information
-        prompt_tokens = result.get("prompt_tokens")
-        completion_tokens = result.get("completion_tokens")
-        total_tokens = result.get("total_tokens")
-
-        # Calculate total if not provided
-        if total_tokens is None and prompt_tokens and completion_tokens:
-            total_tokens = prompt_tokens + completion_tokens
-
-        serialized_sources = serialize_query_sources(result.get("sources"))
-
-        return QueryResponse(
-            answer=result.get("answer", ""),
-            query=result.get("query", ""),
-            context_elements=result.get("context_elements", 0),
-            sources=serialized_sources,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            session_id=session_id,
-            turn_number=result.get("turn_number"),
+        return serialize_query_response(
+            serialize_query_response_record(
+                result,
+                session_id=session_id,
+            )
         )
 
     except Exception as e:
@@ -766,7 +769,7 @@ async def new_session(clear_session_id: str | None = None):
         fastcode_instance.delete_session(clear_session_id)
 
     session_id = str(uuid.uuid4())[:8]
-    return NewSessionResponse(session_id=session_id)
+    return serialize_new_session_response(NewSessionRecord(session_id=session_id))
 
 
 @app.get("/api/agent-context/session/{session_id}/latest")

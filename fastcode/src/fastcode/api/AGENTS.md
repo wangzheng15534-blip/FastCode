@@ -2,8 +2,8 @@
 
 HTTP-facing shell for FastCode.
 
-- Owns FastAPI/Flask route wiring, CORS policy, API contracts, and response
-  serialization.
+- Owns FastAPI/Flask route wiring, CORS policy, inbound/outbound API DTOs,
+  OpenAPI schema aggregation, and response serialization.
 - May use Pydantic boundary models and transport-specific error handling.
 - Do not put retrieval, graph, indexing, or storage algorithms here; call the
   `FastCode` composition root or explicit service functions.

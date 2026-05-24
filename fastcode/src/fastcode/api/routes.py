@@ -20,7 +20,7 @@ import shutil
 import tempfile
 import uuid
 import zipfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from contextlib import AbstractContextManager, asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -29,29 +29,44 @@ import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from fastcode.api.contracts import (
+from fastcode.api.cors import cors_middleware_options
+from fastcode.api.inbound import (
     AgentContextHandoffRequest,
     ContextActivationRequest,
     DeleteReposRequest,
-    DiagnosticBundleResponse,
     ExpandContextBundleRefRequest,
     ExpandContextRefRequest,
     IndexMultipleRequest,
     IndexRunRequest,
-    IndexRunResponse,
     LoadRepositoriesRequest,
     LoadRepositoryRequest,
-    NewSessionResponse,
     ProjectionBuildRequest,
     QueryRequest,
-    QueryResponse,
     QuerySnapshotRequest,
+    map_index_run_request,
+    map_load_repository_request,
+    map_snapshot_query_request,
+)
+from fastcode.api.outbound import (
+    ApiStatus,
+    DiagnosticBundleResponse,
+    IndexRunResponse,
+    NewSessionRecord,
+    NewSessionResponse,
+    QueryResponse,
     StatusResponse,
 )
-from fastcode.api.cors import cors_middleware_options
 from fastcode.api.serialization import (
+    serialize_diagnostic_bundle_record,
+    serialize_diagnostic_bundle_response,
     serialize_dialogue_history,
-    serialize_query_sources,
+    serialize_index_run_response,
+    serialize_index_run_response_record,
+    serialize_new_session_response,
+    serialize_query_response,
+    serialize_query_response_record,
+    serialize_status_response,
+    serialize_status_response_record,
 )
 from fastcode.main.fastcode import FastCode
 from fastcode.utils.archive import (
@@ -60,7 +75,7 @@ from fastcode.utils.archive import (
     safe_repo_name_from_archive,
 )
 
-# Shared request/response contracts live in fastcode.api.contracts.
+# HTTP schema boundaries live in fastcode.api.inbound and fastcode.api.outbound.
 
 # Initialize FastAPI app
 
@@ -141,87 +156,6 @@ def _call_with_service_lock(
         with cast(AbstractContextManager[Any], lock_fn()):
             return callback(*args, **kwargs)
     return callback(*args, **kwargs)
-
-
-def _mapping_payload(value: Any) -> dict[str, Any]:
-    if not isinstance(value, Mapping):
-        return {}
-    return {str(key): item for key, item in value.items()}
-
-
-def _dict_list_payload(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, (list, tuple)):
-        return []
-    payload: list[dict[str, Any]] = []
-    for item in value:
-        if isinstance(item, Mapping):
-            payload.append(_mapping_payload(item))
-    return payload
-
-
-def _string_list_payload(value: Any) -> list[str]:
-    if not isinstance(value, (list, tuple, set, frozenset)):
-        return []
-    return [str(item) for item in value if item is not None]
-
-
-def _resolver_diagnostics_payload(
-    pipeline_layers: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    diagnostics: list[dict[str, Any]] = []
-    for layer in pipeline_layers:
-        name = str(layer.get("name") or "")
-        source = str(layer.get("source") or "")
-        description = str(layer.get("description") or "")
-        searchable = f"{name} {source} {description}".lower()
-        if "resolver" not in searchable and "semantic" not in searchable:
-            continue
-        diagnostics.append(
-            {
-                "name": name,
-                "source": source,
-                "status": str(layer.get("status") or ""),
-                "reason": layer.get("reason"),
-                "warnings": _string_list_payload(layer.get("warnings")),
-                "metrics": _mapping_payload(layer.get("metrics")),
-            }
-        )
-    return diagnostics
-
-
-def _index_run_response_payload(result: Any) -> dict[str, Any]:
-    result_payload = _mapping_payload(result)
-    pipeline_layers = _dict_list_payload(result_payload.get("pipeline_layers"))
-    pipeline_metrics = _mapping_payload(result_payload.get("pipeline_metrics"))
-    return {
-        "status": "success",
-        "result": result_payload,
-        "index_status": (
-            str(result_payload["status"]) if result_payload.get("status") else None
-        ),
-        "run_id": str(result_payload["run_id"])
-        if result_payload.get("run_id")
-        else None,
-        "repo_name": (
-            str(result_payload["repo_name"])
-            if result_payload.get("repo_name")
-            else None
-        ),
-        "snapshot_id": (
-            str(result_payload["snapshot_id"])
-            if result_payload.get("snapshot_id")
-            else None
-        ),
-        "artifact_key": (
-            str(result_payload["artifact_key"])
-            if result_payload.get("artifact_key")
-            else None
-        ),
-        "warnings": _string_list_payload(result_payload.get("warnings")),
-        "pipeline_layers": pipeline_layers,
-        "pipeline_metrics": pipeline_metrics,
-        "resolver_diagnostics": _resolver_diagnostics_payload(pipeline_layers),
-    }
 
 
 def _refresh_index_cache_sync(fastcode: FastCode) -> list[dict[str, Any]]:
@@ -411,20 +345,22 @@ async def get_status(full_scan: bool = False):
     )
     loaded_repos = fastcode.list_repositories()
 
-    return StatusResponse(
-        status="ready" if fastcode.repo_indexed else "not_ready",
-        repo_loaded=fastcode.repo_loaded,
-        repo_indexed=fastcode.repo_indexed,
-        repo_info=fastcode.repo_info,
-        graph_expansion_backend=fastcode.config.get("retrieval", {}).get(
-            "graph_expansion_backend", "graph_builder"
-        ),
-        storage_backend=fastcode.snapshot_store.db_runtime.backend,
-        retrieval_backend=fastcode.config.get("retrieval", {}).get(
-            "retrieval_backend", "local"
-        ),
-        available_repositories=available_repos,
-        loaded_repositories=loaded_repos,
+    return serialize_status_response(
+        serialize_status_response_record(
+            status=ApiStatus.READY if fastcode.repo_indexed else ApiStatus.NOT_READY,
+            repo_loaded=fastcode.repo_loaded,
+            repo_indexed=fastcode.repo_indexed,
+            repo_info=fastcode.repo_info,
+            graph_expansion_backend=fastcode.config.get("retrieval", {}).get(
+                "graph_expansion_backend", "graph_builder"
+            ),
+            storage_backend=fastcode.snapshot_store.db_runtime.backend,
+            retrieval_backend=fastcode.config.get("retrieval", {}).get(
+                "retrieval_backend", "local"
+            ),
+            available_repositories=available_repos,
+            loaded_repositories=loaded_repos,
+        )
     )
 
 
@@ -434,7 +370,9 @@ async def get_diagnostics():
     fastcode = _ensure_fastcode_initialized()
     try:
         bundle = await asyncio.to_thread(fastcode.build_diagnostic_bundle)
-        return DiagnosticBundleResponse(status="success", bundle=bundle)
+        return serialize_diagnostic_bundle_response(
+            serialize_diagnostic_bundle_record(bundle)
+        )
     except Exception as e:
         logger.error(f"Failed to build diagnostic bundle: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -470,11 +408,12 @@ async def list_repositories(full_scan: bool = False):
 async def load_repository(request: LoadRepositoryRequest):
     """Load a repository"""
     fastcode = _ensure_fastcode_initialized()
+    command = map_load_repository_request(request)
 
     try:
-        logger.info(f"Loading repository: {request.source}")
+        logger.info(f"Loading repository: {command.source}")
         await asyncio.to_thread(
-            fastcode.load_repository, request.source, request.is_url
+            fastcode.load_repository, command.source, command.is_url
         )
 
         return {
@@ -523,24 +462,27 @@ async def index_repository(force: bool = False):
 async def run_index_pipeline(request: IndexRunRequest):
     """Run snapshot-based indexing pipeline."""
     fastcode = _ensure_fastcode_initialized()
+    command = map_index_run_request(request)
     try:
         result = await asyncio.to_thread(
             fastcode.run_index_pipeline,
-            source=request.source,
-            is_url=request.is_url,
-            ref=request.ref,
-            commit=request.commit,
-            force=request.force,
-            publish=request.publish,
-            scip_artifact_path=request.scip_artifact_path,
-            enable_scip=request.enable_scip,
+            source=command.source,
+            is_url=command.is_url,
+            ref=command.ref,
+            commit=command.commit,
+            force=command.force,
+            publish=command.publish,
+            scip_artifact_path=command.scip_artifact_path,
+            enable_scip=command.enable_scip,
         )
         await asyncio.to_thread(
             _call_with_service_lock,
             fastcode,
             fastcode.vector_store.invalidate_scan_cache,
         )
-        return _index_run_response_payload(result)
+        return serialize_index_run_response(
+            serialize_index_run_response_record(result)
+        )
     except Exception as e:
         logger.error(f"Index run failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -596,15 +538,16 @@ async def process_redo_tasks(limit: int = 10):
 async def load_and_index(request: LoadRepositoryRequest, force: bool = False):
     """Load and index repository in one call"""
     fastcode = _ensure_fastcode_initialized()
+    command = map_load_repository_request(request)
 
     try:
-        logger.info(f"Loading repository: {request.source}")
+        logger.info(f"Loading repository: {command.source}")
         logger.info("Indexing repository")
         return await asyncio.to_thread(
             _load_and_index_sync,
             fastcode,
-            request.source,
-            request.is_url,
+            command.source,
+            command.is_url,
             force=force,
         )
 
@@ -658,10 +601,12 @@ async def index_multiple(request: IndexMultipleRequest):
             fastcode.load_multiple_repositories,
             [
                 {
-                    "source": source.source,
-                    "is_url": source.is_url,
+                    "source": command.source,
+                    "is_url": command.is_url,
                 }
-                for source in request.sources
+                for command in (
+                    map_load_repository_request(source) for source in request.sources
+                )
             ],
         )
 
@@ -742,51 +687,40 @@ async def upload_and_index(file: UploadFile = File(...), force: bool = False):
 async def query_repository(request: QueryRequest):
     """Query by snapshot scope (snapshot_id or repo_name+ref_name)."""
     fastcode = _ensure_fastcode_initialized()
+    query_request = map_snapshot_query_request(request)
 
-    if not request.snapshot_id and not (request.repo_name and request.ref_name):
+    if not query_request.snapshot_id and not (
+        query_request.repo_name and query_request.ref_name
+    ):
         raise HTTPException(
             status_code=400,
             detail="Query requires snapshot_id or repo_name+ref_name",
         )
 
     try:
-        session_id = request.session_id or str(uuid.uuid4())[:8]
-        if request.multi_turn and not request.session_id:
+        session_id = query_request.session_id or str(uuid.uuid4())[:8]
+        if query_request.multi_turn and not query_request.session_id:
             logger.info(f"Generated new multi-turn session: {session_id}")
-        elif not request.session_id:
+        elif not query_request.session_id:
             logger.info(f"Generated session for single-turn request: {session_id}")
 
-        logger.info(f"Processing query: {request.question}")
+        logger.info(f"Processing query: {query_request.question}")
         result = await asyncio.to_thread(
             fastcode.query_snapshot,
-            question=request.question,
-            snapshot_id=request.snapshot_id,
-            repo_name=request.repo_name,
-            ref_name=request.ref_name,
-            filters=request.filters,
+            question=query_request.question,
+            snapshot_id=query_request.snapshot_id,
+            repo_name=query_request.repo_name,
+            ref_name=query_request.ref_name,
+            filters=dict(query_request.filters) if query_request.filters else None,
             session_id=session_id,
-            enable_multi_turn=request.multi_turn,
+            enable_multi_turn=query_request.multi_turn,
         )
 
-        prompt_tokens = result.get("prompt_tokens")
-        completion_tokens = result.get("completion_tokens")
-        total_tokens = result.get("total_tokens")
-
-        if total_tokens is None and prompt_tokens and completion_tokens:
-            total_tokens = prompt_tokens + completion_tokens
-
-        serialized_sources = serialize_query_sources(result.get("sources"))
-
-        return QueryResponse(
-            answer=result.get("answer", ""),
-            query=result.get("query", ""),
-            context_elements=result.get("context_elements", 0),
-            sources=serialized_sources,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            session_id=session_id,
-            turn_number=result.get("turn_number"),
+        return serialize_query_response(
+            serialize_query_response_record(
+                result,
+                session_id=session_id,
+            )
         )
 
     except Exception as e:
@@ -798,35 +732,24 @@ async def query_repository(request: QueryRequest):
 async def query_snapshot(request: QuerySnapshotRequest):
     """Query a specific snapshot or repo/ref manifest head."""
     fastcode = _ensure_fastcode_initialized()
+    query_request = map_snapshot_query_request(request)
     try:
-        session_id = request.session_id or str(uuid.uuid4())[:8]
+        session_id = query_request.session_id or str(uuid.uuid4())[:8]
         result = await asyncio.to_thread(
             fastcode.query_snapshot,
-            question=request.question,
-            repo_name=request.repo_name,
-            ref_name=request.ref_name,
-            snapshot_id=request.snapshot_id,
-            filters=request.filters,
+            question=query_request.question,
+            repo_name=query_request.repo_name,
+            ref_name=query_request.ref_name,
+            snapshot_id=query_request.snapshot_id,
+            filters=dict(query_request.filters) if query_request.filters else None,
             session_id=session_id,
-            enable_multi_turn=request.multi_turn,
+            enable_multi_turn=query_request.multi_turn,
         )
-
-        prompt_tokens = result.get("prompt_tokens")
-        completion_tokens = result.get("completion_tokens")
-        total_tokens = result.get("total_tokens")
-        if total_tokens is None and prompt_tokens and completion_tokens:
-            total_tokens = prompt_tokens + completion_tokens
-
-        return QueryResponse(
-            answer=result.get("answer", ""),
-            query=result.get("query", ""),
-            context_elements=result.get("context_elements", 0),
-            sources=serialize_query_sources(result.get("sources")),
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            session_id=session_id,
-            turn_number=result.get("turn_number"),
+        return serialize_query_response(
+            serialize_query_response_record(
+                result,
+                session_id=session_id,
+            )
         )
     except Exception as e:
         logger.error(f"Snapshot query failed: {e}")
@@ -1280,7 +1203,7 @@ async def new_session(clear_session_id: str | None = None):
         fastcode.delete_session(clear_session_id)
 
     session_id = str(uuid.uuid4())[:8]
-    return NewSessionResponse(session_id=session_id)
+    return serialize_new_session_response(NewSessionRecord(session_id=session_id))
 
 
 @app.get("/sessions")

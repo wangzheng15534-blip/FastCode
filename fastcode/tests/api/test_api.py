@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 
 import fastcode.api.routes as api
 from fastcode.ir.types import IRSnapshot
+from fastcode.store.infrastructure.runtime import DBRuntime
 from fastcode.store.manifest import ManifestStore
 from fastcode.store.snapshot import SnapshotStore
 
@@ -54,6 +55,17 @@ def _make_minimal_snapshot(
         branch=branch,
         commit_id=commit_id,
         tree_id="tree_001",
+    )
+
+
+def _make_snapshot_store(tmp_path: Any) -> SnapshotStore:
+    store_dir = tmp_path / "store"
+    return SnapshotStore(
+        str(store_dir),
+        db_runtime=DBRuntime(
+            backend="sqlite",
+            sqlite_path=str(store_dir / "lineage.db"),
+        ),
     )
 
 
@@ -156,7 +168,7 @@ def inline_to_thread(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def stores(tmp_path: Any) -> Any:
     """Yield real storage wired into the module-global FastCode handle."""
-    store = SnapshotStore(str(tmp_path / "store"))
+    store = _make_snapshot_store(tmp_path)
     fake = _FakeFastCode(store)
     original = api.fastcode_instance
     api.fastcode_instance = fake
@@ -392,13 +404,13 @@ class TestSchemaDefaults:
 
     def test_status_response_default_lists_are_not_shared(self) -> None:
         first = api.StatusResponse(
-            status="ok",
+            status=api.ApiStatus.READY,
             repo_loaded=False,
             repo_indexed=False,
             repo_info={},
         )
         second = api.StatusResponse(
-            status="ok",
+            status=api.ApiStatus.READY,
             repo_loaded=False,
             repo_indexed=False,
             repo_info={},
@@ -650,7 +662,7 @@ class TestApiSerializationBoundaries:
                 )
             )
 
-        assert result.sources == [
+        assert [source.model_dump() for source in result.sources] == [
             {
                 "repository": "repo",
                 "repo": "repo",

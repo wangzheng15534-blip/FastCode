@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastcode.api.contracts import QuerySourceRecord
+from fastcode.api.outbound import QuerySourceRecord
 from fastcode.api.serialization import (
     serialize_dialogue_history,
     serialize_query_source,

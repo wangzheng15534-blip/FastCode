@@ -1,37 +1,25 @@
-"""HTTP request/response schemas for FastCode API and web surfaces."""
+"""HTTP inbound request DTOs for FastCode API surfaces."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-def _empty_repo_records() -> list[dict[str, Any]]:
-    return []
+def _mapping_proxy_or_none(value: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    if value is None:
+        return None
+    return MappingProxyType({str(key): item for key, item in value.items()})
 
 
-def _empty_dict_records() -> list[dict[str, Any]]:
-    return []
-
-
-def _empty_payload() -> dict[str, Any]:
-    return {}
-
-
-@dataclass(frozen=True)
-class QuerySourceRecord:
-    """Typed source citation record used at API/query response boundaries."""
-
-    repository: str
-    file: str
-    name: str
-    source_type: str
-    lines: str
-    start_line: int
-    end_line: int
-    score: float
+def _string_tuple(value: Sequence[str] | None) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    return tuple(str(item) for item in value)
 
 
 class LoadRepositoryRequest(BaseModel):
@@ -54,22 +42,6 @@ class IndexRunRequest(BaseModel):
     enable_scip: bool = Field(True, description="Enable SCIP extraction path")
     scip_artifact_path: str | None = Field(
         None, description="Optional pre-built SCIP artifact path"
-    )
-
-
-class IndexRunResponse(BaseModel):
-    status: str
-    result: dict[str, Any] = Field(default_factory=_empty_payload)
-    index_status: str | None = None
-    run_id: str | None = None
-    repo_name: str | None = None
-    snapshot_id: str | None = None
-    artifact_key: str | None = None
-    warnings: list[str] = Field(default_factory=list)
-    pipeline_layers: list[dict[str, Any]] = Field(default_factory=_empty_dict_records)
-    pipeline_metrics: dict[str, Any] = Field(default_factory=_empty_payload)
-    resolver_diagnostics: list[dict[str, Any]] = Field(
-        default_factory=_empty_dict_records
     )
 
 
@@ -131,18 +103,6 @@ class ProjectionBuildRequest(BaseModel):
     force: bool = Field(False, description="Force regeneration even when cached")
 
 
-class QueryResponse(BaseModel):
-    answer: str
-    query: str
-    context_elements: int
-    sources: list[dict[str, Any]]
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
-    session_id: str | None = None
-    turn_number: int | None = None
-
-
 class AgentContextHandoffRequest(BaseModel):
     session_id: str = Field(..., description="Session ID containing working memory")
     turn_number: int | None = Field(
@@ -197,10 +157,6 @@ class IndexMultipleRequest(BaseModel):
     )
 
 
-class NewSessionResponse(BaseModel):
-    session_id: str
-
-
 class DeleteReposRequest(BaseModel):
     repo_names: list[str] = Field(..., description="Repository names to delete")
     delete_source: bool = Field(
@@ -208,22 +164,98 @@ class DeleteReposRequest(BaseModel):
     )
 
 
-class StatusResponse(BaseModel):
-    status: str
-    repo_loaded: bool
-    repo_indexed: bool
-    repo_info: dict[str, Any]
-    graph_expansion_backend: str | None = None
-    storage_backend: str | None = None
-    retrieval_backend: str | None = None
-    available_repositories: list[dict[str, Any]] = Field(
-        default_factory=_empty_repo_records
-    )
-    loaded_repositories: list[dict[str, Any]] = Field(
-        default_factory=_empty_repo_records
+@dataclass(frozen=True)
+class LoadRepositoryCommand:
+    source: str
+    is_url: bool | None = None
+
+
+@dataclass(frozen=True)
+class IndexRunCommand:
+    source: str
+    is_url: bool | None = None
+    ref: str | None = None
+    commit: str | None = None
+    force: bool = False
+    publish: bool = True
+    enable_scip: bool = True
+    scip_artifact_path: str | None = None
+
+
+@dataclass(frozen=True)
+class RepositoryQueryRequestRecord:
+    question: str
+    filters: Mapping[str, Any] | None = None
+    repo_filter: tuple[str, ...] = ()
+    multi_turn: bool = False
+    session_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "filters", _mapping_proxy_or_none(self.filters))
+        object.__setattr__(self, "repo_filter", _string_tuple(self.repo_filter))
+
+
+@dataclass(frozen=True)
+class SnapshotQueryRequestRecord:
+    question: str
+    snapshot_id: str | None = None
+    repo_name: str | None = None
+    ref_name: str | None = None
+    filters: Mapping[str, Any] | None = None
+    repo_filter: tuple[str, ...] = ()
+    multi_turn: bool = False
+    session_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "filters", _mapping_proxy_or_none(self.filters))
+        object.__setattr__(self, "repo_filter", _string_tuple(self.repo_filter))
+
+
+def map_load_repository_request(request: LoadRepositoryRequest) -> LoadRepositoryCommand:
+    return LoadRepositoryCommand(
+        source=request.source,
+        is_url=request.is_url,
     )
 
 
-class DiagnosticBundleResponse(BaseModel):
-    status: str
-    bundle: dict[str, Any] = Field(default_factory=_empty_payload)
+def map_index_run_request(request: IndexRunRequest) -> IndexRunCommand:
+    return IndexRunCommand(
+        source=request.source,
+        is_url=request.is_url,
+        ref=request.ref,
+        commit=request.commit,
+        force=request.force,
+        publish=request.publish,
+        enable_scip=request.enable_scip,
+        scip_artifact_path=request.scip_artifact_path,
+    )
+
+
+def map_repository_query_request(
+    request: QueryRequest,
+) -> RepositoryQueryRequestRecord:
+    return RepositoryQueryRequestRecord(
+        question=request.question,
+        filters=request.filters,
+        repo_filter=tuple(request.repo_filter or ()),
+        multi_turn=request.multi_turn,
+        session_id=request.session_id,
+    )
+
+
+def map_snapshot_query_request(
+    request: QueryRequest | QuerySnapshotRequest,
+) -> SnapshotQueryRequestRecord:
+    repo_filter: Sequence[str] | None = None
+    if isinstance(request, QueryRequest):
+        repo_filter = request.repo_filter
+    return SnapshotQueryRequestRecord(
+        question=request.question,
+        snapshot_id=request.snapshot_id,
+        repo_name=request.repo_name,
+        ref_name=request.ref_name,
+        filters=request.filters,
+        repo_filter=tuple(repo_filter or ()),
+        multi_turn=request.multi_turn,
+        session_id=request.session_id,
+    )

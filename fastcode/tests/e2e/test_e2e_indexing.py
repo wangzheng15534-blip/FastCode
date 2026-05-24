@@ -442,9 +442,9 @@ def test_e2e_indexing_sqlite_real_embeddings(
     assert head["snapshot_id"] == snapshot_id
 
     # Index run completed.
-    run = fc.index_run_store.get_run(run_id)
+    run = fc.index_run_store.get_run_record(run_id)
     assert run is not None
-    assert run["status"] in ("succeeded", "degraded")
+    assert run.status in ("succeeded", "degraded")
 
 
 # ---------------------------------------------------------------------------

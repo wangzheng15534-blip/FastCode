@@ -308,10 +308,6 @@ class IndexRunStore:
             updated_at=now,
         )
 
-    def claim_next_publish_task(self) -> dict[str, Any] | None:
-        task = self.claim_next_publish_task_record()
-        return self._publish_task_payload(task) if task is not None else None
-
     def mark_publish_task_failed(self, task_id: str, error: str) -> None:
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
@@ -332,10 +328,6 @@ class IndexRunStore:
             ).fetchone()
         return self._row_to_run_record(row)
 
-    def get_run(self, run_id: str) -> dict[str, Any] | None:
-        record = self.get_run_record(run_id)
-        return self._run_payload(record) if record is not None else None
-
     def get_latest_run_record(self) -> IndexRunRecord | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
@@ -347,10 +339,6 @@ class IndexRunStore:
                 """,
             ).fetchone()
         return self._row_to_run_record(row)
-
-    def get_latest_run(self) -> dict[str, Any] | None:
-        record = self.get_latest_run_record()
-        return self._run_payload(record) if record is not None else None
 
     _ALLOWED_RUN_FIELDS = frozenset(
         {
@@ -459,34 +447,3 @@ class IndexRunStore:
             created_at=cls._string_value(cls._row_value(row, 7, "created_at")),
             updated_at=cls._string_value(cls._row_value(row, 8, "updated_at")),
         )
-
-    @staticmethod
-    def _run_payload(record: IndexRunRecord) -> dict[str, Any]:
-        return {
-            "run_id": record.run_id,
-            "repo_name": record.repo_name,
-            "snapshot_id": record.snapshot_id,
-            "branch": record.branch,
-            "commit_id": record.commit_id,
-            "idempotency_key": record.idempotency_key,
-            "status": record.status,
-            "error_message": record.error_message,
-            "warnings_json": record.warnings_json,
-            "created_at": record.created_at,
-            "started_at": record.started_at,
-            "completed_at": record.completed_at,
-        }
-
-    @staticmethod
-    def _publish_task_payload(record: PublishTaskRecord) -> dict[str, Any]:
-        return {
-            "task_id": record.task_id,
-            "run_id": record.run_id,
-            "snapshot_id": record.snapshot_id,
-            "manifest_id": record.manifest_id,
-            "status": record.status,
-            "attempts": record.attempts,
-            "last_error": record.last_error,
-            "created_at": record.created_at,
-            "updated_at": record.updated_at,
-        }

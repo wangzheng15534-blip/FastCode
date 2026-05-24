@@ -781,10 +781,10 @@ def test_pipeline_reused_result_keeps_existing_behavior_without_fake_layer_claim
             commit_id="c1",
             idempotency_key="reuse-key",
         )
-        run = pipeline.index_run_store.get_run(run_id)
+        run = pipeline.index_run_store.get_run_record(run_id)
         assert run is not None
         pipeline.index_run_store.mark_completed(
-            run["run_id"], status="succeeded", warnings=[]
+            run.run_id, status="succeeded", warnings=[]
         )
 
         with (

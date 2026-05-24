@@ -5,15 +5,22 @@ from typing import Any
 
 import pytest
 
+from fastcode.store.file_artifact_contracts import FileArtifactRecord
 from fastcode.store.file_artifacts import FileArtifactStore
-from fastcode.store.records import FileArtifactRecord
+from fastcode.store.infrastructure.runtime import DBRuntime
+
+
+def _make_store(tmp: str) -> FileArtifactStore:
+    return FileArtifactStore(
+        DBRuntime(backend="sqlite", sqlite_path=f"{tmp}/file_artifacts.db")
+    )
 
 
 def test_file_artifact_store_upserts_and_loads_file_ir_by_content_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="fc_file_artifacts_") as tmp:
-        store = FileArtifactStore(f"{tmp}/file_artifacts.db")
+        store = _make_store(tmp)
 
         summary, records = store.upsert_file_ir_shards(
             repo_name="repo",
@@ -91,7 +98,7 @@ def test_file_artifact_store_upserts_and_loads_file_ir_by_content_identity(
 
 def test_file_artifact_store_prefers_blob_oid_identity() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_file_artifacts_blob_") as tmp:
-        store = FileArtifactStore(f"{tmp}/file_artifacts.db")
+        store = _make_store(tmp)
         store.upsert_file_ir_shards(
             repo_name="repo",
             shards=[
@@ -125,7 +132,7 @@ def test_file_artifact_store_upserts_parsed_elements_without_embeddings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="fc_parsed_elements_") as tmp:
-        store = FileArtifactStore(f"{tmp}/file_artifacts.db")
+        store = _make_store(tmp)
 
         summary, records = store.upsert_parsed_elements(
             repo_name="repo",
@@ -194,7 +201,7 @@ def test_file_artifact_store_upserts_embedding_refs_by_content_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="fc_embedding_refs_") as tmp:
-        store = FileArtifactStore(f"{tmp}/file_artifacts.db")
+        store = _make_store(tmp)
 
         summary, records = store.upsert_embedding_refs(
             repo_name="repo",
@@ -276,7 +283,7 @@ def test_file_artifact_store_upserts_semantic_facts_by_content_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="fc_semantic_facts_") as tmp:
-        store = FileArtifactStore(f"{tmp}/file_artifacts.db")
+        store = _make_store(tmp)
 
         summary, records = store.upsert_semantic_fact_shards(
             repo_name="repo",

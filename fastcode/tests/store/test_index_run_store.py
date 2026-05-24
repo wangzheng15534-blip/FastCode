@@ -5,11 +5,14 @@ from pathlib import Path
 import pytest
 
 from fastcode.store.index_run import IndexRunStore
-from fastcode.store.records import IndexRunRecord, PublishTaskRecord
+from fastcode.store.index_run_contracts import IndexRunRecord, PublishTaskRecord
+from fastcode.store.infrastructure.runtime import DBRuntime
 
 
 def _make_store(tmp_path: Path) -> IndexRunStore:
-    return IndexRunStore(str(tmp_path / "index_runs.db"))
+    return IndexRunStore(
+        DBRuntime(backend="sqlite", sqlite_path=str(tmp_path / "index_runs.db"))
+    )
 
 
 def test_get_run_avoids_generic_row_to_dict(
@@ -194,8 +197,18 @@ def test_index_run_payload_helpers_do_not_call_record_to_dict(
             "publish task payload helper must not call PublishTaskRecord.to_dict()"
         )
 
+    def _boom_from_dict(
+        cls: type[IndexRunRecord] | type[PublishTaskRecord],
+        _: dict[str, object],
+    ) -> IndexRunRecord | PublishTaskRecord:
+        raise AssertionError(
+            f"index run store must not call {cls.__name__}.from_dict()"
+        )
+
     monkeypatch.setattr(IndexRunRecord, "to_dict", _boom_run)
     monkeypatch.setattr(PublishTaskRecord, "to_dict", _boom_task)
+    monkeypatch.setattr(IndexRunRecord, "from_dict", classmethod(_boom_from_dict))
+    monkeypatch.setattr(PublishTaskRecord, "from_dict", classmethod(_boom_from_dict))
 
     run = store.get_run(run_id)
     task = store.claim_next_publish_task()

@@ -11,8 +11,8 @@ from typing import Any, cast
 
 import numpy as np
 
-from .infrastructure.runtime import DBRuntime, pgvector_adapter_available
-from .records import PgRetrievalElementRecord, PgRetrievalResultRecord
+from ..ports.storage import StoreDatabaseRuntime
+from .pg_retrieval_contracts import PgRetrievalElementRecord, PgRetrievalResultRecord
 from .vector_math import as_float32_matrix, as_float32_vector
 
 
@@ -47,7 +47,9 @@ class PgRetrievalStore:
         "api_surface_hash",
     )
 
-    def __init__(self, db_runtime: DBRuntime, config: dict[str, Any]) -> None:
+    def __init__(
+        self, db_runtime: StoreDatabaseRuntime, config: dict[str, Any]
+    ) -> None:
         self.db_runtime = db_runtime
         self.config = config
         self.logger = logging.getLogger(__name__)
@@ -155,14 +157,13 @@ class PgRetrievalStore:
             raise ValueError("Cannot create vector literal from empty sequence")
         return cls._vector_literal_from_array(array)
 
-    @staticmethod
-    def _vector_parameter(vec: np.ndarray | None) -> np.ndarray | str | None:
+    def _vector_parameter(self, vec: np.ndarray | None) -> np.ndarray | str | None:
         if vec is None:
             return None
         array = as_float32_vector(vec, copy_policy="contiguous")
         if array is None:
             return None
-        if not pgvector_adapter_available():
+        if not self.db_runtime.supports_pgvector_adapter():
             return PgRetrievalStore._vector_literal_from_array(array)
         return array
 

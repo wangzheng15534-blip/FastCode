@@ -11,8 +11,9 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..ir.projection import ProjectionBuildResult, ProjectionScope
-from ..utils.clock import utc_now
-from .records import ProjectionBuildRecord, ProjectionDirtyScopeRecord
+from ..ports.runtime import Clock
+from ..utils.clock import SystemClock, utc_now
+from .projection_contracts import ProjectionBuildRecord, ProjectionDirtyScopeRecord
 
 try:
     import psycopg
@@ -26,8 +27,14 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 class ProjectionStore:
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any],
+        *,
+        clock: Clock | None = None,
+    ) -> None:
         self.logger = logging.getLogger(__name__)
+        self.clock = clock or SystemClock()
         proj_cfg = config.get("projection", {})
         storage_cfg = config.get("storage", {})
         self.dsn = proj_cfg.get("postgres_dsn") or storage_cfg.get("postgres_dsn") or ""
@@ -48,6 +55,10 @@ class ProjectionStore:
                     kwargs={"autocommit": False},
                 )
             self._init_db()
+
+    def _utc_now(self) -> str:
+        clock = getattr(self, "clock", None)
+        return clock.utc_now() if clock is not None else utc_now()
 
     def _connect(self) -> Any:
         if not self.enabled:
@@ -151,7 +162,7 @@ class ProjectionStore:
                     VALUES (%s, %s, %s)
                     ON CONFLICT(component, version) DO NOTHING
                     """,
-                    ("projection_store", "v1", utc_now()),
+                    ("projection_store", "v1", self._utc_now()),
                 )
             conn.commit()
 
@@ -311,7 +322,7 @@ class ProjectionStore:
         dirty_units: list[str] | None = None,
         dirty_package_roots: list[str] | None = None,
     ) -> None:
-        now = utc_now()
+        now = self._utc_now()
         existing = self.get_dirty_scope_record(snapshot_id, scope_kind, scope_key)
         paths = sorted(set(dirty_paths) | set(existing.dirty_paths if existing else []))
         units = sorted(
@@ -489,7 +500,7 @@ class ProjectionStore:
         scope: ProjectionScope,
         coverage_paths: list[str] | None = None,
     ) -> None:
-        now = utc_now()
+        now = self._utc_now()
         coverage_nodes = self._coverage_nodes(result)
         chunk_ids = sorted(
             {

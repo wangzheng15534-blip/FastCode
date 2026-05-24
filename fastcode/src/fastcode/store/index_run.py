@@ -5,12 +5,13 @@ Index run tracking and publish retry queue.
 from __future__ import annotations
 
 import json
-import uuid
 from typing import Any, cast
 
-from ..utils.clock import utc_now
-from .infrastructure.runtime import DBRuntime
-from .records import IndexRunRecord, PublishTaskRecord
+from ..ports.runtime import Clock, IdGenerator
+from ..ports.storage import StoreDatabaseRuntime
+from ..utils.clock import SystemClock
+from ..utils.ids import PrefixedIdGenerator
+from .index_run_contracts import IndexRunRecord, PublishTaskRecord
 
 
 class IndexRunStore:
@@ -40,14 +41,23 @@ class IndexRunStore:
         "updated_at",
     )
 
-    def __init__(self, db_path_or_runtime: str | DBRuntime) -> None:
-        if isinstance(db_path_or_runtime, DBRuntime):
-            self.db_runtime = db_path_or_runtime
-        else:
-            self.db_runtime = DBRuntime(
-                backend="sqlite", sqlite_path=db_path_or_runtime
-            )
+    def __init__(
+        self,
+        db_runtime: StoreDatabaseRuntime,
+        *,
+        clock: Clock | None = None,
+        id_generator: IdGenerator | None = None,
+    ) -> None:
+        self.db_runtime = db_runtime
+        self.clock = clock or SystemClock()
+        self.id_generator = id_generator or PrefixedIdGenerator()
         self._init_db()
+
+    def _utc_now(self) -> str:
+        return self.clock.utc_now()
+
+    def _new_id(self, prefix: str) -> str:
+        return self.id_generator.new_id(prefix)
 
     def _init_db(self) -> None:
         with self.db_runtime.connect() as conn:
@@ -105,7 +115,7 @@ class IndexRunStore:
                 VALUES (?, ?, ?)
                 ON CONFLICT(component, version) DO NOTHING
                 """,
-                ("index_run_store", "v1", utc_now()),
+                ("index_run_store", "v1", self._utc_now()),
             )
             conn.commit()
 
@@ -127,7 +137,7 @@ class IndexRunStore:
                 if existing:
                     return existing["run_id"]
 
-        run_id = f"run_{uuid.uuid4().hex[:16]}"
+        run_id = self._new_id("run")
         with self.db_runtime.connect() as conn:
             self.db_runtime.execute(
                 conn,
@@ -144,14 +154,14 @@ class IndexRunStore:
                     commit_id,
                     idempotency_key,
                     "queued",
-                    utc_now(),
+                    self._utc_now(),
                 ),
             )
             conn.commit()
         return run_id
 
     def mark_started(self, run_id: str) -> None:
-        self._set_run_fields(run_id, status="running", started_at=utc_now())
+        self._set_run_fields(run_id, status="running", started_at=self._utc_now())
 
     def mark_status(self, run_id: str, status: str) -> None:
         self._set_run_fields(run_id, status=status)
@@ -162,13 +172,16 @@ class IndexRunStore:
         self._set_run_fields(
             run_id,
             status=status,
-            completed_at=utc_now(),
+            completed_at=self._utc_now(),
             warnings_json=json.dumps(warnings or [], ensure_ascii=False),
         )
 
     def mark_failed(self, run_id: str, error_message: str) -> None:
         self._set_run_fields(
-            run_id, status="failed", error_message=error_message, completed_at=utc_now()
+            run_id,
+            status="failed",
+            error_message=error_message,
+            completed_at=self._utc_now(),
         )
 
     def enqueue_publish_retry(
@@ -178,7 +191,7 @@ class IndexRunStore:
         manifest_id: str | None,
         error_message: str,
     ) -> str:
-        now = utc_now()
+        now = self._utc_now()
         with self.db_runtime.connect() as conn:
             existing = self.db_runtime.execute(
                 conn,
@@ -206,7 +219,7 @@ class IndexRunStore:
                 self._set_run_fields(run_id, status="publish_pending")
                 return existing["task_id"]
 
-            task_id = f"pub_{uuid.uuid4().hex[:16]}"
+            task_id = self._new_id("pub")
             self.db_runtime.execute(
                 conn,
                 """
@@ -240,7 +253,7 @@ class IndexRunStore:
                 SET status='completed', updated_at=?
                 WHERE task_id=?
                 """,
-                (utc_now(), task_id),
+                (self._utc_now(), task_id),
             )
             conn.commit()
 
@@ -272,7 +285,7 @@ class IndexRunStore:
             task = self._row_to_publish_task_record(row)
             if task is None:
                 return None
-            now = utc_now()
+            now = self._utc_now()
             self.db_runtime.execute(
                 conn,
                 """
@@ -308,7 +321,7 @@ class IndexRunStore:
                 SET status='pending', last_error=?, updated_at=?
                 WHERE task_id=?
                 """,
-                (error, utc_now(), task_id),
+                (error, self._utc_now(), task_id),
             )
             conn.commit()
 
@@ -379,28 +392,73 @@ class IndexRunStore:
             except (IndexError, KeyError, TypeError):
                 return None
 
-    @classmethod
-    def _payload_from_row(
-        cls, row: Any, fields: tuple[str, ...]
-    ) -> dict[str, Any] | None:
-        if row is None:
+    @staticmethod
+    def _string_value(value: Any) -> str:
+        return str(value or "")
+
+    @staticmethod
+    def _optional_string_value(value: Any) -> str | None:
+        if value is None:
             return None
-        payload = {
-            field_name: cls._row_value(row, index, field_name)
-            for index, field_name in enumerate(fields)
-        }
-        first_field = fields[0]
-        return payload if payload.get(first_field) is not None else None
+        return str(value)
+
+    @staticmethod
+    def _int_value(value: Any) -> int:
+        if value is None or isinstance(value, bool):
+            return 0
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
 
     @classmethod
     def _row_to_run_record(cls, row: Any) -> IndexRunRecord | None:
-        payload = cls._payload_from_row(row, cls._RUN_FIELDS)
-        return IndexRunRecord.from_dict(payload) if payload is not None else None
+        raw_run_id = cls._row_value(row, 0, "run_id")
+        if raw_run_id is None:
+            return None
+        return IndexRunRecord(
+            run_id=cls._string_value(raw_run_id),
+            repo_name=cls._string_value(cls._row_value(row, 1, "repo_name")),
+            snapshot_id=cls._string_value(cls._row_value(row, 2, "snapshot_id")),
+            branch=cls._optional_string_value(cls._row_value(row, 3, "branch")),
+            commit_id=cls._optional_string_value(cls._row_value(row, 4, "commit_id")),
+            idempotency_key=cls._optional_string_value(
+                cls._row_value(row, 5, "idempotency_key")
+            ),
+            status=cls._string_value(cls._row_value(row, 6, "status")),
+            error_message=cls._optional_string_value(
+                cls._row_value(row, 7, "error_message")
+            ),
+            warnings_json=cls._optional_string_value(
+                cls._row_value(row, 8, "warnings_json")
+            ),
+            created_at=cls._string_value(cls._row_value(row, 9, "created_at")),
+            started_at=cls._optional_string_value(
+                cls._row_value(row, 10, "started_at")
+            ),
+            completed_at=cls._optional_string_value(
+                cls._row_value(row, 11, "completed_at")
+            ),
+        )
 
     @classmethod
     def _row_to_publish_task_record(cls, row: Any) -> PublishTaskRecord | None:
-        payload = cls._payload_from_row(row, cls._PUBLISH_TASK_FIELDS)
-        return PublishTaskRecord.from_dict(payload) if payload is not None else None
+        raw_task_id = cls._row_value(row, 0, "task_id")
+        if raw_task_id is None:
+            return None
+        return PublishTaskRecord(
+            task_id=cls._string_value(raw_task_id),
+            run_id=cls._string_value(cls._row_value(row, 1, "run_id")),
+            snapshot_id=cls._string_value(cls._row_value(row, 2, "snapshot_id")),
+            manifest_id=cls._optional_string_value(
+                cls._row_value(row, 3, "manifest_id")
+            ),
+            status=cls._string_value(cls._row_value(row, 4, "status")),
+            attempts=cls._int_value(cls._row_value(row, 5, "attempts")),
+            last_error=cls._optional_string_value(cls._row_value(row, 6, "last_error")),
+            created_at=cls._string_value(cls._row_value(row, 7, "created_at")),
+            updated_at=cls._string_value(cls._row_value(row, 8, "updated_at")),
+        )
 
     @staticmethod
     def _run_payload(record: IndexRunRecord) -> dict[str, Any]:

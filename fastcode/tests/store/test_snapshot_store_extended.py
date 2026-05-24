@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from typing import Any
 
@@ -18,6 +19,7 @@ from fastcode.ir.types import (
     IRSnapshot,
     IRSymbol,
 )
+from fastcode.store.infrastructure.runtime import DBRuntime
 from fastcode.store.snapshot import SnapshotStore
 
 # --- Strategies (self-contained) ---
@@ -58,7 +60,17 @@ _metadata_val_st = st.one_of(
 
 def _make_store() -> SnapshotStore:
     tmpdir = tempfile.mkdtemp(prefix="ss_ext_prop_")
-    return SnapshotStore(tmpdir)
+    return _make_store_for_dir(tmpdir)
+
+
+def _make_store_for_dir(tmpdir: str) -> SnapshotStore:
+    return SnapshotStore(
+        tmpdir,
+        db_runtime=DBRuntime(
+            backend="sqlite",
+            sqlite_path=os.path.join(os.path.abspath(tmpdir), "lineage.db"),
+        ),
+    )
 
 
 def _build_snapshot(
@@ -1298,7 +1310,7 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
     def __init__(self) -> None:
         super().__init__()
         self.tmpdir = tempfile.mkdtemp(prefix="ss_stateful_")
-        self.store = SnapshotStore(self.tmpdir)
+        self.store = _make_store_for_dir(self.tmpdir)
         self.saved_snapshots: dict[str, IRSnapshot] = {}
         self.saved_refs: dict[str, dict[str, Any]] = {}
         self.metadata_state: dict[str, dict[str, Any]] = {}
@@ -1452,7 +1464,7 @@ class TestSnapshotStoreUpsert:
     ):
         """HAPPY: saving the same snapshot twice uses upsert (last wins)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = SnapshotStore(tmpdir)
+            store = _make_store_for_dir(tmpdir)
             snap_id = f"snap:{repo}:{commit}"
             snap1 = _build_connected_snapshot(repo, snap_id, branch, commit)
 
@@ -1477,7 +1489,7 @@ class TestSnapshotStoreUpsert:
     ):
         """EDGE: saving SCIP artifact ref twice uses upsert (last wins)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = SnapshotStore(tmpdir)
+            store = _make_store_for_dir(tmpdir)
             snap_id = f"snap:{repo}:{commit}"
             snap = _build_connected_snapshot(repo, snap_id, branch, commit)
             store.save_snapshot(snap)
@@ -1506,7 +1518,7 @@ class TestSnapshotStoreUpsert:
     ):
         """EDGE: loading a never-saved snapshot_id returns None."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = SnapshotStore(tmpdir)
+            store = _make_store_for_dir(tmpdir)
             result = store.load_snapshot("snap:nonexistent:0000000")
             assert result is None
 
@@ -1521,7 +1533,7 @@ class TestSnapshotStoreUpsert:
     ):
         """EDGE: querying unknown repo+commit returns None."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = SnapshotStore(tmpdir)
+            store = _make_store_for_dir(tmpdir)
             result = store.find_by_repo_commit(repo, commit)
             assert result is None
 
@@ -1533,7 +1545,7 @@ class TestSnapshotStoreUpsert:
     def test_get_scip_artifact_ref_unknown_returns_none_property(self, snap_id: str):
         """EDGE: getting SCIP artifact ref for unknown snapshot returns None."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = SnapshotStore(tmpdir)
+            store = _make_store_for_dir(tmpdir)
             result = store.get_scip_artifact_ref(snap_id)
             assert result is None
 
@@ -1541,7 +1553,7 @@ class TestSnapshotStoreUpsert:
     def test_update_metadata_on_nonexistent_no_error_property(self):
         """EDGE: updating metadata on nonexistent snapshot_id does not raise."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = SnapshotStore(tmpdir)
+            store = _make_store_for_dir(tmpdir)
             store.update_snapshot_metadata("snap:ghost:000", {"key": "val"})
             # Should not raise
 
@@ -1558,7 +1570,7 @@ class TestSnapshotStoreUpsert:
     ):
         """HAPPY: metadata update roundtrips through get_snapshot_record."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = SnapshotStore(tmpdir)
+            store = _make_store_for_dir(tmpdir)
             snap_id = f"snap:{repo}:{commit}"
             snap = _build_connected_snapshot(repo, snap_id, branch, commit)
             store.save_snapshot(snap)

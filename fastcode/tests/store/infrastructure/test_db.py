@@ -6,8 +6,11 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from fastcode.store.contracts import SnapshotRecord
-from fastcode.store.infrastructure.db import load_snapshot_record, save_snapshot_record
+from fastcode.store.infrastructure.db import (
+    SnapshotRecord,
+    load_snapshot_record,
+    save_snapshot_record,
+)
 
 
 def _setup_test_db() -> sqlite3.Connection:

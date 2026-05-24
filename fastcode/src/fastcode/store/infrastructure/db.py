@@ -8,9 +8,19 @@ No dict[str, Any] returns.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
-from fastcode.store.contracts import SnapshotRecord
+
+@dataclass(frozen=True)
+class SnapshotRecord:
+    """Minimal snapshot metadata row used by the low-level DB adapter."""
+
+    snapshot_id: str
+    repo_name: str
+    branch: str | None = None
+    commit_id: str | None = None
+    tree_id: str | None = None
 
 
 def load_snapshot_record(

@@ -56,9 +56,13 @@ class _FakeConn:
 class _FakeDBRuntime:
     def __init__(self, conn: Any) -> None:
         self._conn = conn
+        self.backend = "postgres"
 
     def connect(self) -> Any:
         return self._conn
+
+    def supports_pgvector_adapter(self) -> bool:
+        return True
 
 
 def _make_store(

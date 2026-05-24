@@ -4,12 +4,13 @@ Published manifest storage for branch/ref -> snapshot mapping.
 
 from __future__ import annotations
 
-import uuid
 from typing import Any, cast
 
-from ..utils.clock import utc_now
-from .infrastructure.runtime import DBRuntime
-from .records import ManifestRecord
+from ..ports.runtime import Clock, IdGenerator
+from ..ports.storage import StoreDatabaseRuntime
+from ..utils.clock import SystemClock
+from ..utils.ids import PrefixedIdGenerator
+from .manifest_contracts import ManifestRecord
 
 
 class ManifestStore:
@@ -24,14 +25,23 @@ class ManifestStore:
         "status",
     )
 
-    def __init__(self, db_path_or_runtime: str | DBRuntime) -> None:
-        if isinstance(db_path_or_runtime, DBRuntime):
-            self.db_runtime = db_path_or_runtime
-        else:
-            self.db_runtime = DBRuntime(
-                backend="sqlite", sqlite_path=db_path_or_runtime
-            )
+    def __init__(
+        self,
+        db_runtime: StoreDatabaseRuntime,
+        *,
+        clock: Clock | None = None,
+        id_generator: IdGenerator | None = None,
+    ) -> None:
+        self.db_runtime = db_runtime
+        self.clock = clock or SystemClock()
+        self.id_generator = id_generator or PrefixedIdGenerator()
         self._init_db()
+
+    def _utc_now(self) -> str:
+        return self.clock.utc_now()
+
+    def _new_id(self, prefix: str) -> str:
+        return self.id_generator.new_id(prefix)
 
     def _init_db(self) -> None:
         with self.db_runtime.connect() as conn:
@@ -88,7 +98,7 @@ class ManifestStore:
                 VALUES (?, ?, ?)
                 ON CONFLICT(component, version) DO NOTHING
                 """,
-                ("manifest_store", "v1", utc_now()),
+                ("manifest_store", "v1", self._utc_now()),
             )
             conn.commit()
 
@@ -117,8 +127,8 @@ class ManifestStore:
         index_run_id: str,
         status: str = "published",
     ) -> ManifestRecord:
-        manifest_id = f"manifest_{uuid.uuid4().hex[:16]}"
-        now = utc_now()
+        manifest_id = self._new_id("manifest")
+        now = self._utc_now()
 
         with self.db_runtime.connect() as conn:
             self.db_runtime.begin_write(conn)

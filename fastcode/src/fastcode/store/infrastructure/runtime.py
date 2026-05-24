@@ -11,6 +11,8 @@ import sqlite3
 from collections.abc import Iterator
 from typing import Any
 
+from fastcode.ports.storage import StoreDatabaseRuntime
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -35,7 +37,7 @@ def pgvector_adapter_available() -> bool:
     return register_vector is not None
 
 
-class DBRuntime:
+class DBRuntime(StoreDatabaseRuntime):
     def __init__(
         self,
         *,
@@ -157,6 +159,9 @@ class DBRuntime:
         cur = conn.cursor()
         cur.executemany(self.adapt_sql(sql), params_seq)
         return cur
+
+    def supports_pgvector_adapter(self) -> bool:
+        return pgvector_adapter_available()
 
     @staticmethod
     def _configure_postgres_connection(conn: Any) -> None:

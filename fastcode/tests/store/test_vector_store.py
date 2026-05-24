@@ -9,8 +9,11 @@ import faiss
 import numpy as np
 import pytest
 
-from fastcode.store.records import RepositoryOverviewRecord, VectorSearchResultRecord
 from fastcode.store.vector import VectorStore
+from fastcode.store.vector_contracts import (
+    RepositoryOverviewRecord,
+    VectorSearchResultRecord,
+)
 
 pytestmark = [pytest.mark.test_double]
 

@@ -8,7 +8,10 @@ import pytest
 
 from fastcode.ir.projection import ProjectionBuildResult, ProjectionScope
 from fastcode.store.projection import ProjectionStore
-from fastcode.store.records import ProjectionBuildRecord, ProjectionDirtyScopeRecord
+from fastcode.store.projection_contracts import (
+    ProjectionBuildRecord,
+    ProjectionDirtyScopeRecord,
+)
 
 
 class _FakeCursor:

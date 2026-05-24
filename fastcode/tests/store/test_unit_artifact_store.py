@@ -5,8 +5,18 @@ from typing import Any
 
 import pytest
 
-from fastcode.store.records import FileIRShardRecord, UnitArtifactRecord
+from fastcode.store.infrastructure.runtime import DBRuntime
+from fastcode.store.unit_artifact_contracts import (
+    FileIRShardRecord,
+    UnitArtifactRecord,
+)
 from fastcode.store.unit_artifacts import UnitArtifactStore
+
+
+def _make_store(tmp: str) -> UnitArtifactStore:
+    return UnitArtifactStore(
+        DBRuntime(backend="sqlite", sqlite_path=f"{tmp}/unit_artifacts.db")
+    )
 
 
 class _OpaqueValue:
@@ -16,7 +26,7 @@ class _OpaqueValue:
 
 def test_unit_artifact_store_replaces_and_lists_snapshot_units() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_") as tmp:
-        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store = _make_store(tmp)
 
         store.replace_snapshot_units(
             "snap:1",
@@ -78,7 +88,7 @@ def test_unit_artifact_store_replaces_and_lists_snapshot_units() -> None:
 
 def test_unit_artifact_store_refreshes_only_requested_units() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_refresh_") as tmp:
-        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store = _make_store(tmp)
 
         store.replace_snapshot_units(
             "snap:1",
@@ -140,7 +150,7 @@ def test_unit_artifact_store_list_avoids_generic_row_to_dict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_row_") as tmp:
-        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store = _make_store(tmp)
         store.replace_snapshot_units(
             "snap:1",
             elements=[
@@ -168,7 +178,7 @@ def test_unit_artifact_store_list_avoids_generic_row_to_dict(
 
 def test_unit_artifact_store_exposes_typed_records() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_record_") as tmp:
-        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store = _make_store(tmp)
         store.replace_snapshot_units(
             "snap:1",
             elements=[
@@ -218,7 +228,7 @@ def test_unit_artifact_legacy_payload_avoids_record_to_dict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_compat_") as tmp:
-        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store = _make_store(tmp)
         store.replace_snapshot_units(
             "snap:1",
             elements=[
@@ -248,7 +258,7 @@ def test_unit_artifact_delta_copies_previous_records_without_legacy_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_delta_") as tmp:
-        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store = _make_store(tmp)
         store.replace_snapshot_units(
             "snap:old",
             elements=[
@@ -303,7 +313,7 @@ def test_unit_artifact_delta_copies_previous_records_without_legacy_payload(
 
 def test_unit_artifact_delta_replaces_target_snapshot_atomically() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_delta_retry_") as tmp:
-        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store = _make_store(tmp)
         store.replace_snapshot_units(
             "snap:old",
             elements=[
@@ -373,7 +383,7 @@ def test_unit_artifact_delta_replaces_target_snapshot_atomically() -> None:
 
 def test_unit_artifact_delta_normalizes_changed_paths() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_delta_norm_") as tmp:
-        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store = _make_store(tmp)
         store.replace_snapshot_units(
             "snap:old",
             elements=[
@@ -422,7 +432,7 @@ def test_file_ir_shards_replace_and_list_typed_records(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="fc_file_ir_shards_") as tmp:
-        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store = _make_store(tmp)
 
         store.replace_snapshot_file_ir_shards(
             "snap:1",
@@ -488,7 +498,7 @@ def test_file_ir_shard_delta_copies_unchanged_shards_as_typed_records(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="fc_file_ir_shards_delta_") as tmp:
-        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store = _make_store(tmp)
         store.replace_snapshot_file_ir_shards(
             "snap:old",
             shards=[
@@ -554,7 +564,7 @@ def test_file_ir_shard_delta_copies_unchanged_shards_as_typed_records(
 
 def test_unit_artifact_store_serializes_opaque_metadata_values() -> None:
     with tempfile.TemporaryDirectory(prefix="fc_unit_artifacts_opaque_") as tmp:
-        store = UnitArtifactStore(f"{tmp}/unit_artifacts.db")
+        store = _make_store(tmp)
         store.replace_snapshot_units(
             "snap:1",
             elements=[

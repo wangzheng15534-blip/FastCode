@@ -1725,7 +1725,10 @@ class TestSnapshotStoreQueries:
         key2 = store.artifact_key_for_snapshot(snap.snapshot_id)
         assert key1 == key2
 
-    @given(sid1=identifier, sid2=identifier)
+    @given(
+        sid1=st.builds(lambda x: f"snap:{x}", identifier),
+        sid2=st.builds(lambda x: f"snap:{x}", identifier),
+    )
     @settings(max_examples=20)
     @pytest.mark.edge
     def test_artifact_key_differs_for_different_ids_property(

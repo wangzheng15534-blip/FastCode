@@ -5,13 +5,14 @@ from typing import Any
 
 import pytest
 
-from fastcode.store.cache import (
+from fastcode.store._cache_payloads import (
     _CACHE_EMBEDDING_KIND,
     _CACHE_JSON_KIND,
     _CACHE_RECORD_MAGIC,
-    CacheManager,
+    _json_cache_payload,
 )
-from fastcode.store.records import (
+from fastcode.store.cache import CacheManager
+from fastcode.store.cache_contracts import (
     ContextActivationRecord,
     ContextBundleRecord,
     ContextDistillationRecord,
@@ -217,7 +218,7 @@ def test_query_result_cache_legacy_raw_payload_is_preserved(
         cache_key = manager._generate_key(
             "query", "Where is config loaded?", "repo-hash"
         )
-        assert manager.cache.set(cache_key, manager._json_cache_payload(legacy_result))
+        assert manager.cache.set(cache_key, _json_cache_payload(legacy_result))
 
         assert (
             manager.get_query_result("Where is config loaded?", "repo-hash")

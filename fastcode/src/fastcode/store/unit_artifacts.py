@@ -6,10 +6,11 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, cast
 
-from ..utils.clock import utc_now
+from ..ports.runtime import Clock
+from ..ports.storage import StoreDatabaseRuntime
+from ..utils.clock import SystemClock
 from ..utils.filesystem import normalize_path
-from .infrastructure.runtime import DBRuntime
-from .records import FileIRShardRecord, UnitArtifactRecord
+from .unit_artifact_contracts import FileIRShardRecord, UnitArtifactRecord
 
 
 class UnitArtifactStore:
@@ -51,14 +52,18 @@ class UnitArtifactStore:
         "created_at",
     )
 
-    def __init__(self, db_path_or_runtime: str | DBRuntime) -> None:
-        if isinstance(db_path_or_runtime, DBRuntime):
-            self.db_runtime = db_path_or_runtime
-        else:
-            self.db_runtime = DBRuntime(
-                backend="sqlite", sqlite_path=db_path_or_runtime
-            )
+    def __init__(
+        self,
+        db_runtime: StoreDatabaseRuntime,
+        *,
+        clock: Clock | None = None,
+    ) -> None:
+        self.db_runtime = db_runtime
+        self.clock = clock or SystemClock()
         self._init_db()
+
+    def _utc_now(self) -> str:
+        return self.clock.utc_now()
 
     def _init_db(self) -> None:
         with self.db_runtime.connect() as conn:
@@ -136,7 +141,7 @@ class UnitArtifactStore:
                 VALUES (?, ?, ?)
                 ON CONFLICT(component, version) DO NOTHING
                 """,
-                ("unit_artifact_store", "v1", utc_now()),
+                ("unit_artifact_store", "v1", self._utc_now()),
             )
             self.db_runtime.execute(
                 conn,
@@ -145,7 +150,7 @@ class UnitArtifactStore:
                 VALUES (?, ?, ?)
                 ON CONFLICT(component, version) DO NOTHING
                 """,
-                ("unit_artifact_store", "v2_file_ir_shards", utc_now()),
+                ("unit_artifact_store", "v2_file_ir_shards", self._utc_now()),
             )
             self._ensure_extra_columns(conn)
             conn.commit()
@@ -245,6 +250,8 @@ class UnitArtifactStore:
         cls,
         snapshot_id: str,
         elem: dict[str, Any],
+        *,
+        created_at: str,
     ) -> UnitArtifactRecord | None:
         metadata = cls._metadata_mapping(elem)
         stable_unit_id = str(metadata.get("stable_unit_id") or "")
@@ -293,7 +300,7 @@ class UnitArtifactStore:
             package_root=package_root,
             repair_frontier_summary=repair_frontier_summary,
             metadata_json=cls._serialize_metadata_json(metadata),
-            created_at=utc_now(),
+            created_at=created_at,
         )
 
     @staticmethod
@@ -355,7 +362,11 @@ class UnitArtifactStore:
         snapshot_id: str,
         elem: dict[str, Any],
     ) -> None:
-        record = self._unit_record_from_element(snapshot_id, elem)
+        record = self._unit_record_from_element(
+            snapshot_id,
+            elem,
+            created_at=self._utc_now(),
+        )
         if record is None:
             return
         self._insert_unit_record(conn, record)
@@ -412,6 +423,8 @@ class UnitArtifactStore:
         cls,
         snapshot_id: str,
         shard: Mapping[str, Any],
+        *,
+        created_at: str,
     ) -> FileIRShardRecord | None:
         relative_path = normalize_path(
             str(shard.get("relative_path") or shard.get("path") or "")
@@ -451,7 +464,7 @@ class UnitArtifactStore:
             relation_count=len(relations),
             embedding_count=len(embeddings),
             content_hash=content_hash,
-            created_at=utc_now(),
+            created_at=created_at,
         )
 
     def _insert_file_ir_shard_record(
@@ -515,6 +528,7 @@ class UnitArtifactStore:
         record: FileIRShardRecord,
         *,
         snapshot_id: str,
+        created_at: str,
     ) -> FileIRShardRecord:
         payload = cls._deserialize_metadata_json(record.payload_json)
         payload.update(
@@ -539,7 +553,7 @@ class UnitArtifactStore:
             relation_count=record.relation_count,
             embedding_count=record.embedding_count,
             content_hash=record.content_hash,
-            created_at=utc_now(),
+            created_at=created_at,
         )
 
     @classmethod
@@ -575,7 +589,11 @@ class UnitArtifactStore:
                 (snapshot_id,),
             )
             for shard in shards:
-                record = self._file_ir_record_from_payload(snapshot_id, shard)
+                record = self._file_ir_record_from_payload(
+                    snapshot_id,
+                    shard,
+                    created_at=self._utc_now(),
+                )
                 if record is None:
                     continue
                 self._insert_file_ir_shard_record(conn, record)
@@ -598,7 +616,11 @@ class UnitArtifactStore:
         excluded_path_set = changed_path_set | removed_path_set
         reused_records: list[FileIRShardRecord] = []
         for shard in reused_shards or ():
-            record = self._file_ir_record_from_payload(snapshot_id, shard)
+            record = self._file_ir_record_from_payload(
+                snapshot_id,
+                shard,
+                created_at=self._utc_now(),
+            )
             if record is None or record.relative_path in excluded_path_set:
                 continue
             reused_records.append(record)
@@ -611,7 +633,11 @@ class UnitArtifactStore:
         ]
         incoming_records: list[FileIRShardRecord] = []
         for shard in shards:
-            record = self._file_ir_record_from_payload(snapshot_id, shard)
+            record = self._file_ir_record_from_payload(
+                snapshot_id,
+                shard,
+                created_at=self._utc_now(),
+            )
             if record is None:
                 continue
             if record.relative_path in changed_path_set:
@@ -629,6 +655,7 @@ class UnitArtifactStore:
                     self._retarget_file_ir_shard_record(
                         record,
                         snapshot_id=snapshot_id,
+                        created_at=self._utc_now(),
                     ),
                 )
                 copied += 1
@@ -732,7 +759,7 @@ class UnitArtifactStore:
                         package_root=record.package_root,
                         repair_frontier_summary=record.repair_frontier_summary,
                         metadata_json=record.metadata_json,
-                        created_at=utc_now(),
+                        created_at=self._utc_now(),
                     ),
                 )
                 copied += 1

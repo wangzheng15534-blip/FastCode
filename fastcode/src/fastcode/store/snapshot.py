@@ -28,8 +28,10 @@ from ..ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
+from ..kernel.identifiers import ArtifactKey, SnapshotId
 from ..ports.runtime import Clock, IdGenerator
 from ..ports.storage import StoreDatabaseRuntime
+from ..runtime_support.retry import exponential_backoff_seconds
 from ..utils.clock import SystemClock, utc_now
 from ..utils.filesystem import ensure_dir, normalize_path
 from ..utils.ids import PrefixedIdGenerator
@@ -975,9 +977,7 @@ class SnapshotStore:
             primary_anchor_symbol_id=cls._string_or_none(
                 payload.get("primary_anchor_symbol_id")
             ),
-            anchor_symbol_ids=_string_list_payload(
-                payload.get("anchor_symbol_ids")
-            ),
+            anchor_symbol_ids=_string_list_payload(payload.get("anchor_symbol_ids")),
             candidate_anchor_symbol_ids=_string_list_payload(
                 payload.get("candidate_anchor_symbol_ids")
             ),
@@ -1650,7 +1650,7 @@ class SnapshotStore:
             conn.commit()
 
     def artifact_key_for_snapshot(self, snapshot_id: str) -> str:
-        return f"snap_{hashlib.md5(snapshot_id.encode('utf-8')).hexdigest()[:20]}"
+        return ArtifactKey.for_snapshot(SnapshotId.parse(snapshot_id)).as_str()
 
     def snapshot_dir(self, snapshot_id: str) -> str:
         safe = self.artifact_key_for_snapshot(snapshot_id)
@@ -2771,8 +2771,7 @@ class SnapshotStore:
                 )
             )
         return [
-            _embedding_from_sharded_payload(snap_dir=snap_dir, data=row)
-            for row in rows
+            _embedding_from_sharded_payload(snap_dir=snap_dir, data=row) for row in rows
         ]
 
     def get_snapshot_record(self, snapshot_id: str) -> SnapshotRecord | None:
@@ -4173,7 +4172,7 @@ class SnapshotStore:
                     (error, self._utc_now(), task_id),
                 )
             else:
-                backoff_seconds = max(1, 2**attempts)
+                backoff_seconds = exponential_backoff_seconds(attempts)
                 next_attempt_at = (
                     datetime.fromisoformat(self._utc_now())
                     + timedelta(seconds=backoff_seconds)

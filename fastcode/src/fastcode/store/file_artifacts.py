@@ -6,16 +6,24 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, cast
 
-from ..utils.clock import utc_now
+from ..ports.artifacts import (
+    FileArtifactRecordView,
+)
+from ..ports.artifacts import (
+    FileArtifactStore as FileArtifactStorePort,
+)
+from ..ports.runtime import Clock
+from ..ports.storage import StoreDatabaseRuntime
+from ..utils.clock import SystemClock
 from ..utils.filesystem import normalize_path
-from .infrastructure.runtime import DBRuntime
-from .records import FileArtifactRecord
+from .file_artifact_contracts import FileArtifactRecord
 
 
-class FileArtifactStore:
+class FileArtifactStore(FileArtifactStorePort):
     """Store reusable file artifacts keyed by repository, path, and content ID."""
 
     PARSED_ELEMENTS_ARTIFACT_TYPE: ClassVar[str] = "parsed_elements"
+    parsed_elements_artifact_type: ClassVar[str] = PARSED_ELEMENTS_ARTIFACT_TYPE
     FILE_IR_ARTIFACT_TYPE: ClassVar[str] = "file_ir"
     EMBEDDING_REFS_ARTIFACT_TYPE: ClassVar[str] = "embedding_refs"
     SEMANTIC_FACTS_ARTIFACT_TYPE: ClassVar[str] = "semantic_facts"
@@ -39,14 +47,18 @@ class FileArtifactStore:
         "created_at",
     )
 
-    def __init__(self, db_path_or_runtime: str | DBRuntime) -> None:
-        if isinstance(db_path_or_runtime, DBRuntime):
-            self.db_runtime = db_path_or_runtime
-        else:
-            self.db_runtime = DBRuntime(
-                backend="sqlite", sqlite_path=db_path_or_runtime
-            )
+    def __init__(
+        self,
+        db_runtime: StoreDatabaseRuntime,
+        *,
+        clock: Clock | None = None,
+    ) -> None:
+        self.db_runtime = db_runtime
+        self.clock = clock or SystemClock()
         self._init_db()
+
+    def _utc_now(self) -> str:
+        return self.clock.utc_now()
 
     def _init_db(self) -> None:
         with self.db_runtime.connect() as conn:
@@ -99,7 +111,7 @@ class FileArtifactStore:
                 VALUES (?, ?, ?)
                 ON CONFLICT(component, version) DO NOTHING
                 """,
-                ("file_artifact_store", "v1", utc_now()),
+                ("file_artifact_store", "v1", self._utc_now()),
             )
             conn.commit()
 
@@ -231,6 +243,7 @@ class FileArtifactStore:
         repo_name: str,
         shard: Mapping[str, Any],
         file_info_by_path: Mapping[str, Mapping[str, Any]] | None = None,
+        created_at: str,
     ) -> FileArtifactRecord | None:
         relative_path = normalize_path(
             str(shard.get("relative_path") or shard.get("path") or "")
@@ -288,7 +301,7 @@ class FileArtifactStore:
                 ensure_ascii=False,
                 sort_keys=True,
             ),
-            created_at=utc_now(),
+            created_at=created_at,
         )
 
     @classmethod
@@ -315,6 +328,7 @@ class FileArtifactStore:
         relative_path: str,
         elements: Sequence[Mapping[str, Any]],
         file_info_by_path: Mapping[str, Mapping[str, Any]],
+        created_at: str,
     ) -> FileArtifactRecord | None:
         relative_path = normalize_path(relative_path)
         identity = cls._identity_from_file_info(file_info_by_path.get(relative_path))
@@ -352,7 +366,7 @@ class FileArtifactStore:
                 ensure_ascii=False,
                 sort_keys=True,
             ),
-            created_at=utc_now(),
+            created_at=created_at,
         )
 
     @classmethod
@@ -363,6 +377,7 @@ class FileArtifactStore:
         relative_path: str,
         rows: Sequence[Mapping[str, Any]],
         file_info_by_path: Mapping[str, Mapping[str, Any]],
+        created_at: str,
     ) -> FileArtifactRecord | None:
         relative_path = normalize_path(relative_path)
         identity = cls._identity_from_file_info(file_info_by_path.get(relative_path))
@@ -435,7 +450,7 @@ class FileArtifactStore:
                 ensure_ascii=False,
                 sort_keys=True,
             ),
-            created_at=utc_now(),
+            created_at=created_at,
         )
 
     @classmethod
@@ -445,6 +460,7 @@ class FileArtifactStore:
         repo_name: str,
         shard: Mapping[str, Any],
         file_info_by_path: Mapping[str, Mapping[str, Any]],
+        created_at: str,
     ) -> FileArtifactRecord | None:
         relative_path = normalize_path(
             str(shard.get("relative_path") or shard.get("path") or "")
@@ -491,7 +507,7 @@ class FileArtifactStore:
                 ensure_ascii=False,
                 sort_keys=True,
             ),
-            created_at=utc_now(),
+            created_at=created_at,
         )
 
     @classmethod
@@ -577,6 +593,7 @@ class FileArtifactStore:
                     repo_name=repo_name,
                     shard=shard,
                     file_info_by_path=file_info_by_path,
+                    created_at=self._utc_now(),
                 )
             )
             is not None
@@ -624,6 +641,7 @@ class FileArtifactStore:
                     relative_path=relative_path,
                     elements=grouped_elements,
                     file_info_by_path=file_info_by_path,
+                    created_at=self._utc_now(),
                 )
             )
             is not None
@@ -672,6 +690,7 @@ class FileArtifactStore:
                     relative_path=relative_path,
                     rows=grouped_rows,
                     file_info_by_path=file_info_by_path,
+                    created_at=self._utc_now(),
                 )
             )
             is not None
@@ -718,6 +737,7 @@ class FileArtifactStore:
                     repo_name=repo_name,
                     shard=shard,
                     file_info_by_path=file_info_by_path,
+                    created_at=self._utc_now(),
                 )
             )
             is not None
@@ -852,7 +872,7 @@ class FileArtifactStore:
     @classmethod
     def file_ir_payload_from_record(
         cls,
-        record: FileArtifactRecord,
+        record: FileArtifactRecordView,
         *,
         snapshot_id: str | None = None,
     ) -> dict[str, Any]:
@@ -876,7 +896,7 @@ class FileArtifactStore:
     @classmethod
     def parsed_elements_payload_from_record(
         cls,
-        record: FileArtifactRecord,
+        record: FileArtifactRecordView,
     ) -> dict[str, Any]:
         payload = cls._deserialize_json_mapping(record.payload_json)
         payload["repo_name"] = record.repo_name
@@ -893,7 +913,7 @@ class FileArtifactStore:
     @classmethod
     def embedding_refs_payload_from_record(
         cls,
-        record: FileArtifactRecord,
+        record: FileArtifactRecordView,
     ) -> dict[str, Any]:
         payload = cls._deserialize_json_mapping(record.payload_json)
         payload["repo_name"] = record.repo_name
@@ -911,7 +931,7 @@ class FileArtifactStore:
     @classmethod
     def semantic_facts_payload_from_record(
         cls,
-        record: FileArtifactRecord,
+        record: FileArtifactRecordView,
     ) -> dict[str, Any]:
         payload = cls._deserialize_json_mapping(record.payload_json)
         payload["repo_name"] = record.repo_name

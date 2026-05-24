@@ -8,7 +8,10 @@ import numpy as np
 import pytest
 
 from fastcode.store.pg_retrieval import PgRetrievalStore
-from fastcode.store.records import PgRetrievalElementRecord, PgRetrievalResultRecord
+from fastcode.store.pg_retrieval_contracts import (
+    PgRetrievalElementRecord,
+    PgRetrievalResultRecord,
+)
 
 pytestmark = [pytest.mark.test_double]
 
@@ -70,11 +73,16 @@ class _FakeConn:
 
 
 class _FakeDBRuntime:
-    def __init__(self, conn: Any) -> None:
+    def __init__(self, conn: Any, *, supports_pgvector_adapter: bool = True) -> None:
         self._conn = conn
+        self.backend = "postgres"
+        self._supports_pgvector_adapter = supports_pgvector_adapter
 
     def connect(self) -> Any:
         return self._conn
+
+    def supports_pgvector_adapter(self) -> bool:
+        return self._supports_pgvector_adapter
 
 
 class _ExplodingMetadata:
@@ -604,14 +612,15 @@ def test_upsert_elements_batches_vector_and_search_rows_double():
     }
 
 
-def test_vector_parameter_falls_back_to_literal_without_pgvector_adapter_double(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import fastcode.store.infrastructure.runtime as db_runtime_module
+def test_vector_parameter_falls_back_to_literal_without_pgvector_adapter_double() -> (
+    None
+):
+    store = PgRetrievalStore.__new__(PgRetrievalStore)
+    store.db_runtime = _FakeDBRuntime(
+        _FakeConn(_RecordingCursor()), supports_pgvector_adapter=False
+    )
 
-    monkeypatch.setattr(db_runtime_module, "register_vector", None)
-
-    param = PgRetrievalStore._vector_parameter(np.asarray([0.1, 0.2], dtype=np.float32))
+    param = store._vector_parameter(np.asarray([0.1, 0.2], dtype=np.float32))
 
     assert param == "[0.10000000,0.20000000]"
 

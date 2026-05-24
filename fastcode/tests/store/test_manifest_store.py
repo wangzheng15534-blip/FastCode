@@ -11,7 +11,7 @@ from hypothesis import strategies as st
 
 from fastcode.store.infrastructure.runtime import DBRuntime
 from fastcode.store.manifest import ManifestStore
-from fastcode.store.records import ManifestRecord
+from fastcode.store.manifest_contracts import ManifestRecord
 
 # --- Helpers ---
 
@@ -19,7 +19,11 @@ from fastcode.store.records import ManifestRecord
 def _make_store() -> ManifestStore:
     tmpdir = tempfile.mkdtemp(prefix="mfst_prop_")
     path = os.path.join(tmpdir, "test.db")
-    return ManifestStore(path)
+    return ManifestStore(_sqlite_runtime(path))
+
+
+def _sqlite_runtime(path: str) -> DBRuntime:
+    return DBRuntime(backend="sqlite", sqlite_path=path)
 
 
 small_id = st.text(alphabet="abcdefghijklmnopqrstuvwxyz", min_size=1, max_size=8)
@@ -126,14 +130,11 @@ class TestManifestStoreProperties:
         assert result["status"] == "draft"
 
     @pytest.mark.edge
-    def test_init_with_string_path_property(self):
-        """EDGE: ManifestStore accepts string path (not just DBRuntime)."""
-        import os
-        import tempfile
-
+    def test_init_with_explicit_runtime_property(self):
+        """EDGE: ManifestStore receives an already wired DB runtime."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.db")
-            store = ManifestStore(path)
+            store = ManifestStore(_sqlite_runtime(path))
             result = store.publish("repo", "main", "snap1", "run1")
             assert result["manifest_id"] is not None
 
@@ -225,8 +226,8 @@ class TestSchemaMigration:
     def test_init_idempotent_reinstantiation_property(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.db")
-            ManifestStore(path)
-            store2 = ManifestStore(path)
+            ManifestStore(_sqlite_runtime(path))
+            store2 = ManifestStore(_sqlite_runtime(path))
             result = store2.publish("repo", "main", "snap1", "run1")
             assert result["manifest_id"] is not None
 
@@ -234,7 +235,7 @@ class TestSchemaMigration:
     def test_init_db_creates_required_tables_property(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.db")
-            store = ManifestStore(path)
+            store = ManifestStore(_sqlite_runtime(path))
             with store.db_runtime.connect() as conn:
                 tables = [
                     row[0]
@@ -249,7 +250,7 @@ class TestSchemaMigration:
     def test_schema_migration_row_written_property(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.db")
-            store = ManifestStore(path)
+            store = ManifestStore(_sqlite_runtime(path))
             with store.db_runtime.connect() as conn:
                 row = conn.execute(
                     "SELECT component, version FROM schema_migrations WHERE component=?",

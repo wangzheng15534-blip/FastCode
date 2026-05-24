@@ -10,7 +10,7 @@ from typing import Any, cast
 import yaml
 from dotenv import load_dotenv
 
-from fastcode.inbound.config_mapper import config_from_mapping
+from fastcode.inbound.config_mapper import config_from_mapping, config_to_dict
 from fastcode.runtime.config import FastCodeConfig
 
 
@@ -63,7 +63,7 @@ def load_runtime_config(config_path: str = "config/config.yaml") -> FastCodeConf
 
 def config_to_runtime_mapping(config: FastCodeConfig) -> dict[str, Any]:
     """Convert frozen runtime config into a shell runtime mapping."""
-    return config.to_dict()
+    return config_to_dict(config)
 
 
 def prepare_runtime_config_mapping(

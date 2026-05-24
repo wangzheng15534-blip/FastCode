@@ -6,7 +6,11 @@ import dataclasses
 
 import pytest
 
-from fastcode.inbound.config_mapper import config_from_dto, config_from_mapping
+from fastcode.inbound.config_mapper import (
+    config_from_dto,
+    config_from_mapping,
+    config_to_dict,
+)
 from fastcode.inbound.config_schema import FastCodeConfigDTO
 from fastcode.runtime.config import (
     DocsIntegrationConfig,
@@ -143,7 +147,7 @@ def test_runtime_overrides_return_new_frozen_config_without_mutating_original() 
     assert updated is not original
 
 
-def test_to_dict_produces_runtime_mapping() -> None:
+def test_config_to_dict_produces_runtime_mapping() -> None:
     config = config_from_mapping(
         {
             "repo_root": "/tmp/repos",
@@ -151,7 +155,7 @@ def test_to_dict_produces_runtime_mapping() -> None:
         }
     )
 
-    runtime_mapping = config.to_dict()
+    runtime_mapping = config_to_dict(config)
 
     assert runtime_mapping["repo_root"] == "/tmp/repos"
     assert runtime_mapping["storage"]["backend"] == "sqlite"
@@ -162,6 +166,30 @@ def test_to_dict_produces_runtime_mapping() -> None:
         IndexingLevel.FUNCTION,
         IndexingLevel.DOCUMENTATION,
     )
+
+
+def test_config_to_dict_avoids_runtime_config_generic_serializer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = config_from_mapping(
+        {
+            "repo_root": "/tmp/repos",
+            "projection": {"edge_weights": {"call": 2.0, "contain": 4.0}},
+        }
+    )
+
+    def _boom_to_dict(_: FastCodeConfig) -> dict[str, object]:
+        raise AssertionError("config_to_dict must not call FastCodeConfig.to_dict()")
+
+    monkeypatch.setattr(FastCodeConfig, "to_dict", _boom_to_dict)
+
+    runtime_mapping = config_to_dict(config)
+
+    assert runtime_mapping["repo_root"] == "/tmp/repos"
+    assert runtime_mapping["projection"]["edge_weights"] == {
+        "call": 2.0,
+        "contain": 4.0,
+    }
 
 
 def test_runtime_config_contracts_reject_invalid_internal_invariants() -> None:

@@ -321,4 +321,208 @@ def config_from_mapping(raw: dict[str, Any] | None) -> runtime_config.FastCodeCo
 
 def config_to_dict(config: runtime_config.FastCodeConfig) -> dict[str, Any]:
     """Explicit runtime mapping adapter for dict-based shell consumers."""
-    return config.to_dict()
+    return {
+        "repo_root": config.repo_root,
+        "storage": {
+            "backend": config.storage.backend.value,
+            "postgres_dsn": config.storage.postgres_dsn,
+            "pool_min": config.storage.pool_min,
+            "pool_max": config.storage.pool_max,
+        },
+        "repository": {
+            "clone_depth": config.repository.clone_depth,
+            "max_file_size_mb": config.repository.max_file_size_mb,
+            "backup_directory": config.repository.backup_directory,
+            "local_source_mode": config.repository.local_source_mode.value,
+            "exclude_site_packages": config.repository.exclude_site_packages,
+            "ignore_patterns": config.repository.ignore_patterns,
+            "supported_extensions": config.repository.supported_extensions,
+        },
+        "parser": {
+            "extract_docstrings": config.parser.extract_docstrings,
+            "extract_comments": config.parser.extract_comments,
+            "extract_imports": config.parser.extract_imports,
+            "compute_complexity": config.parser.compute_complexity,
+            "max_function_lines": config.parser.max_function_lines,
+        },
+        "embedding": {
+            "provider": config.embedding.provider,
+            "model": config.embedding.model,
+            "ollama_url": config.embedding.ollama_url,
+            "device": config.embedding.device,
+            "batch_size": config.embedding.batch_size,
+            "max_seq_length": config.embedding.max_seq_length,
+            "normalize_embeddings": config.embedding.normalize_embeddings,
+        },
+        "indexing": {
+            "levels": config.indexing.levels,
+            "include_imports": config.indexing.include_imports,
+            "include_class_context": config.indexing.include_class_context,
+            "generate_repo_overview": config.indexing.generate_repo_overview,
+            "allow_direct_index": config.indexing.allow_direct_index,
+        },
+        "vector_store": {
+            "type": config.vector_store.type,
+            "distance_metric": config.vector_store.distance_metric,
+            "index_type": config.vector_store.index_type,
+            "shard_storage": config.vector_store.shard_storage.value,
+            "ef_construction": config.vector_store.ef_construction,
+            "ef_search": config.vector_store.ef_search,
+            "m": config.vector_store.m,
+            "persist_directory": config.vector_store.persist_directory,
+            "in_memory": config.vector_store.in_memory,
+            "index_scan_cache_ttl": config.vector_store.index_scan_cache_ttl,
+            "index_scan_sample_size": config.vector_store.index_scan_sample_size,
+        },
+        "retrieval": {
+            "semantic_weight": config.retrieval.semantic_weight,
+            "keyword_weight": config.retrieval.keyword_weight,
+            "graph_weight": config.retrieval.graph_weight,
+            "retrieval_backend": config.retrieval.retrieval_backend.value,
+            "graph_expansion_backend": (
+                config.retrieval.graph_expansion_backend.value
+            ),
+            "allow_graph_builder_fallback": (
+                config.retrieval.allow_graph_builder_fallback
+            ),
+            "min_similarity": config.retrieval.min_similarity,
+            "max_results": config.retrieval.max_results,
+            "diversity_penalty": config.retrieval.diversity_penalty,
+            "enable_two_stage_retrieval": (
+                config.retrieval.enable_two_stage_retrieval
+            ),
+            "select_repos_by_overview": config.retrieval.select_repos_by_overview,
+            "repo_selection_method": config.retrieval.repo_selection_method,
+            "top_repos_to_search": config.retrieval.top_repos_to_search,
+            "min_repo_similarity": config.retrieval.min_repo_similarity,
+            "max_files_to_search": config.retrieval.max_files_to_search,
+            "enable_agency_mode": config.retrieval.enable_agency_mode,
+            "adaptive_fusion": dict(config.retrieval.adaptive_fusion),
+        },
+        "generation": {
+            "provider": config.generation.provider,
+            "model": config.generation.model,
+            "base_url": config.generation.base_url,
+            "openai_api_key": config.generation.openai_api_key,
+            "anthropic_api_key": config.generation.anthropic_api_key,
+            "temperature": config.generation.temperature,
+            "max_tokens": config.generation.max_tokens,
+            "max_context_tokens": config.generation.max_context_tokens,
+            "reserve_tokens_for_response": (
+                config.generation.reserve_tokens_for_response
+            ),
+            "include_file_paths": config.generation.include_file_paths,
+            "include_line_numbers": config.generation.include_line_numbers,
+            "include_related_code": config.generation.include_related_code,
+            "enable_multi_turn": config.generation.enable_multi_turn,
+            "context_rounds": config.generation.context_rounds,
+        },
+        "query": {
+            "expand_query": config.query.expand_query,
+            "decompose_complex": config.query.decompose_complex,
+            "max_subqueries": config.query.max_subqueries,
+            "extract_keywords": config.query.extract_keywords,
+            "detect_intent": config.query.detect_intent,
+            "use_llm_enhancement": config.query.use_llm_enhancement,
+            "llm_enhancement_mode": config.query.llm_enhancement_mode,
+            "history_summary_rounds": config.query.history_summary_rounds,
+            "max_summary_words": config.query.max_summary_words,
+        },
+        "graph": {
+            "build_call_graph": config.graph.build_call_graph,
+            "build_dependency_graph": config.graph.build_dependency_graph,
+            "build_inheritance_graph": config.graph.build_inheritance_graph,
+            "max_depth": config.graph.max_depth,
+            "ladybug": {
+                "enabled": config.graph.ladybug.enabled,
+                "db_path": config.graph.ladybug.db_path,
+                "postgres_attach_dsn": config.graph.ladybug.postgres_attach_dsn,
+            },
+        },
+        "docs_integration": {
+            "enabled": config.docs_integration.enabled,
+            "curated_paths": config.docs_integration.curated_paths,
+            "allow_paths": config.docs_integration.allow_paths,
+            "deny_paths": config.docs_integration.deny_paths,
+            "chunk_token_size": config.docs_integration.chunk_token_size,
+            "similarity_threshold": config.docs_integration.similarity_threshold,
+            "chunk_size": config.docs_integration.chunk_size,
+            "chunk_overlap": config.docs_integration.chunk_overlap,
+            "max_chunk_chars": config.docs_integration.max_chunk_chars,
+        },
+        "agent": {
+            "iterative": {
+                "max_iterations": config.agent.iterative.max_iterations,
+                "confidence_threshold": (
+                    config.agent.iterative.confidence_threshold
+                ),
+                "min_confidence_gain": config.agent.iterative.min_confidence_gain,
+                "max_total_lines": config.agent.iterative.max_total_lines,
+                "temperature_agent": config.agent.iterative.temperature_agent,
+                "max_tokens_agent": config.agent.iterative.max_tokens_agent,
+                "max_elements": config.agent.iterative.max_elements,
+                "max_candidates_display": (
+                    config.agent.iterative.max_candidates_display
+                ),
+            }
+        },
+        "cache": {
+            "enabled": config.cache.enabled,
+            "backend": config.cache.backend,
+            "ttl": config.cache.ttl,
+            "dialogue_ttl": config.cache.dialogue_ttl,
+            "max_size_mb": config.cache.max_size_mb,
+            "cache_embeddings": config.cache.cache_embeddings,
+            "cache_queries": config.cache.cache_queries,
+            "cache_directory": config.cache.cache_directory,
+            "redis_host": config.cache.redis_host,
+            "redis_port": config.cache.redis_port,
+        },
+        "evaluation": {
+            "enabled": config.evaluation.enabled,
+            "in_memory_index": config.evaluation.in_memory_index,
+            "disable_cache": config.evaluation.disable_cache,
+            "disable_persistence": config.evaluation.disable_persistence,
+            "force_reindex": config.evaluation.force_reindex,
+        },
+        "logging": {
+            "level": config.logging.level,
+            "format": config.logging.format,
+            "file": config.logging.file,
+            "console": config.logging.console,
+        },
+        "terminus": {
+            "endpoint": config.terminus.endpoint,
+            "api_key": config.terminus.api_key,
+            "timeout_seconds": config.terminus.timeout_seconds,
+        },
+        "projection": {
+            "postgres_dsn": config.projection.postgres_dsn,
+            "enable_leiden": config.projection.enable_leiden,
+            "hierarchical_leiden_enabled": (
+                config.projection.hierarchical_leiden_enabled
+            ),
+            "leiden_resolutions": config.projection.leiden_resolutions,
+            "hierarchy_max_levels": config.projection.hierarchy_max_levels,
+            "hierarchy_max_nodes": config.projection.hierarchy_max_nodes,
+            "steiner_prune": config.projection.steiner_prune,
+            "aggregation_top_members": config.projection.aggregation_top_members,
+            "max_supporting_docs_per_cluster": (
+                config.projection.max_supporting_docs_per_cluster
+            ),
+            "llm_enabled": config.projection.llm_enabled,
+            "llm_timeout_seconds": config.projection.llm_timeout_seconds,
+            "llm_max_tokens": config.projection.llm_max_tokens,
+            "llm_temperature": config.projection.llm_temperature,
+            "max_entity_hops": config.projection.max_entity_hops,
+            "max_query_hops": config.projection.max_query_hops,
+            "max_chunk_count": config.projection.max_chunk_count,
+            "dirty_widen_path_threshold": (
+                config.projection.dirty_widen_path_threshold
+            ),
+            "edge_weights": {
+                str(name): float(weight)
+                for name, weight in config.projection.edge_weights
+            },
+        },
+    }

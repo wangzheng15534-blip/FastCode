@@ -22,6 +22,7 @@ from fastcode.ir.types import (
     IRSymbol,
     IRUnitSupport,
 )
+from fastcode.main.config import config_to_runtime_mapping
 from fastcode.main.fastcode import FastCode
 from fastcode.query.context_payloads import (
     context_bundle_payload,
@@ -649,7 +650,7 @@ def test_apply_repository_runtime_overrides_refreshes_loader_and_runtime_config(
             }
         }
     )
-    fc.config = fc.runtime_config.to_dict()
+    fc.config = config_to_runtime_mapping(fc.runtime_config)
     fc.eval_config = fc.config.get("evaluation", {})
     fc.eval_mode = False
     fc.in_memory_index = False

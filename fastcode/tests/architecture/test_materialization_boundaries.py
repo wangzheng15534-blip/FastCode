@@ -202,6 +202,21 @@ def test_hot_paths_do_not_use_generic_row_or_record_round_trips() -> None:
     )
 
 
+def test_incremental_pipeline_does_not_call_full_element_graph_fallback() -> None:
+    path = PACKAGE_ROOT / "indexing" / "pipeline.py"
+    tree = ast.parse(path.read_text())
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if _call_name(node) == "_full_elements_for_incremental_fallback":
+            violations.append(f"{_rel(path)}:{node.lineno}")
+    assert not violations, (
+        "incremental artifact graph path must stay delta-first:\n"
+        + "\n".join(violations)
+    )
+
+
 def test_networkx_imports_stay_explicit_compatibility_boundaries() -> None:
     violations: list[str] = []
     for path in PACKAGE_ROOT.rglob("*.py"):

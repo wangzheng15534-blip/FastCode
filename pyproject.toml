@@ -64,6 +64,59 @@ reportUnknownParameterType = "warning"
 reportPrivateUsage = "none"                                                   # internal cross-module access is common in this codebase
 reportDeprecated = "warning"                                                  # deprecated API usage should surface but not block
 
+# ---------------------------------------------------------------------------
+# Import Linter: public facade / private implementation boundaries
+# ---------------------------------------------------------------------------
+
+[tool.importlinter]
+root_package = "fastcode"
+exclude_type_checking_imports = true
+
+[[tool.importlinter.contracts]]
+id = "inbound-private-config-schema"
+name = "Inbound private config schema modules stay inside inbound"
+type = "protected"
+protected_modules = [
+    "fastcode.inbound._config_schema_base",
+    "fastcode.inbound._config_schema_indexing",
+    "fastcode.inbound._config_schema_operations",
+    "fastcode.inbound._config_schema_persistence",
+    "fastcode.inbound._config_schema_querying",
+    "fastcode.inbound._config_schema_root",
+]
+allowed_importers = [
+    "fastcode.inbound.*",
+]
+as_packages = false
+
+[[tool.importlinter.contracts]]
+id = "semantic-resolver-private-implementation"
+name = "Semantic resolver private implementation stays inside resolvers"
+type = "protected"
+protected_modules = [
+    "fastcode.semantic.resolvers._helper_operations",
+    "fastcode.semantic.resolvers._resolver_support",
+]
+allowed_importers = [
+    "fastcode.semantic.resolvers.*",
+]
+as_packages = false
+
+[[tool.importlinter.contracts]]
+id = "store-private-payload-implementation"
+name = "Store private payload modules stay inside store"
+type = "protected"
+protected_modules = [
+    "fastcode.store._cache_payloads",
+    "fastcode.store._graph_artifact_payloads",
+    "fastcode.store._snapshot_ir_payloads",
+    "fastcode.store._snapshot_queue_payloads",
+]
+allowed_importers = [
+    "fastcode.store.*",
+]
+as_packages = false
+
 # Tests: known-good literals, untyped fixtures/mocks — Rust cfg(test) equivalent
 [[tool.pyright.executionEnvironments]]
 root = "fastcode/tests"

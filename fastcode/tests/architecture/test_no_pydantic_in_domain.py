@@ -33,6 +33,4 @@ def test_no_pydantic_in_domain_or_common_packages():
         for py_file in pkg_dir.rglob("*.py"):
             if _imports_pydantic(py_file):
                 violations.append(str(py_file.relative_to(PACKAGE_ROOT)))
-    assert not violations, (
-        f"Pydantic found in domain/common packages: {violations}"
-    )
+    assert not violations, f"Pydantic found in domain/common packages: {violations}"

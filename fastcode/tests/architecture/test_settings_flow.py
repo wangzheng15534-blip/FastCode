@@ -39,7 +39,9 @@ def _has_env_loading(filepath: Path) -> list[str]:
     violations: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == "dotenv":
-            violations.append(f"{filepath.relative_to(PACKAGE_ROOT)}:{node.lineno}: dotenv import")
+            violations.append(
+                f"{filepath.relative_to(PACKAGE_ROOT)}:{node.lineno}: dotenv import"
+            )
         elif isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id == "load_dotenv":
                 violations.append(

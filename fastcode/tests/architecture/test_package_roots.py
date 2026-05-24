@@ -1,6 +1,7 @@
 """Verify package roots stay thin enough to preserve import boundaries."""
 
 import ast
+import tomllib
 from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
@@ -11,10 +12,10 @@ ROOT_INIT = PACKAGE_ROOT / "__init__.py"
 MAIN_INIT = PACKAGE_ROOT / "main" / "__init__.py"
 FORBIDDEN_GENERIC_LAYOUT_NAMES = {"config", "core", "events"}
 ALLOWED_ROLE_SPECIFIC_LAYOUT_FILES = {
+    Path("inbound/config_schema.py"),
     Path("main/config.py"),
     Path("runtime/config.py"),
     Path("runtime/events.py"),
-    Path("schemas/config.py"),
 }
 DELETED_COMPATIBILITY_MODULES = {
     "fastcode.db_runtime",
@@ -23,6 +24,7 @@ DELETED_COMPATIBILITY_MODULES = {
     "fastcode.llm_utils",
     "fastcode.module_resolver",
     "fastcode.path_utils",
+    "fastcode.api.contracts",
     "fastcode.indexing.call_extractor",
     "fastcode.indexing.global_builder",
     "fastcode.indexing.tree_sitter",
@@ -30,8 +32,14 @@ DELETED_COMPATIBILITY_MODULES = {
     "fastcode.retrieval.core",
     "fastcode.retrieval.hybrid",
     "fastcode.retrieval.iterative",
+    "fastcode.schemas",
     "fastcode.schemas.api",
+    "fastcode.schemas.config",
     "fastcode.schemas.core_types",
+    "fastcode.schemas.ir",
+    "fastcode.semantic.resolvers.base",
+    "fastcode.store.contracts",
+    "fastcode.store.records",
     "fastcode.utils._compat",
     "fastcode.utils.core",
     "fastcode.utils.vectors",
@@ -43,6 +51,7 @@ DELETED_COMPATIBILITY_FILES = {
     "llm_utils.py",
     "module_resolver.py",
     "path_utils.py",
+    "api/contracts.py",
     "indexing/call_extractor.py",
     "indexing/global_builder.py",
     "indexing/tree_sitter.py",
@@ -50,12 +59,22 @@ DELETED_COMPATIBILITY_FILES = {
     "retrieval/core",
     "retrieval/hybrid.py",
     "retrieval/iterative.py",
+    "schemas",
     "schemas/api.py",
+    "schemas/config.py",
     "schemas/core_types.py",
+    "schemas/ir.py",
+    "semantic/resolvers/base.py",
+    "store/contracts.py",
+    "store/records.py",
     "utils/_compat.py",
     "utils/core.py",
     "utils/vectors.py",
 }
+
+
+def _module_name_for_path(path: Path) -> str:
+    return ".".join(("fastcode", *path.relative_to(PACKAGE_ROOT).with_suffix("").parts))
 
 
 def _tree(path: Path) -> ast.Module:
@@ -126,6 +145,41 @@ def _resolve_fastcode_import_target(
     if node.names:
         return ".".join((*base_parts, node.names[0].name))
     return None
+
+
+def _expr_name(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Subscript):
+        return _expr_name(node.value)
+    return None
+
+
+def _basemodel_class_names(path: Path) -> set[str]:
+    names: set[str] = set()
+    for node in _tree(path).body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if any(_expr_name(base) == "BaseModel" for base in node.bases):
+            names.add(node.name)
+    return names
+
+
+def _tuple_assignment_names(path: Path, assignment_name: str) -> set[str]:
+    for node in _tree(path).body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == assignment_name
+            for target in node.targets
+        ):
+            continue
+        if not isinstance(node.value, ast.Tuple):
+            return set()
+        return {item.id for item in node.value.elts if isinstance(item, ast.Name)}
+    return set()
 
 
 def test_fastcode_root_has_no_runtime_side_effect_imports():
@@ -375,3 +429,104 @@ def test_deleted_compatibility_modules_are_not_restored_or_imported():
     assert not violations, (
         "Deleted compatibility modules are still reachable:\n" + "\n".join(violations)
     )
+
+
+def test_api_schema_models_are_split_by_http_boundary_direction():
+    """HTTP DTOs live in inbound/outbound/openapi, not a mixed contracts module."""
+    inbound_path = PACKAGE_ROOT / "api" / "inbound.py"
+    outbound_path = PACKAGE_ROOT / "api" / "outbound.py"
+    openapi_path = PACKAGE_ROOT / "api" / "openapi.py"
+
+    inbound_models = _basemodel_class_names(inbound_path)
+    outbound_models = _basemodel_class_names(outbound_path)
+    openapi_models = _tuple_assignment_names(openapi_path, "OPENAPI_SCHEMA_MODELS")
+
+    bad_inbound = sorted(
+        name for name in inbound_models if not name.endswith("Request")
+    )
+    outbound_response_models = {
+        name for name in outbound_models if name.endswith("Response")
+    }
+    outbound_helper_models = {name for name in outbound_models if name.endswith("DTO")}
+    bad_outbound = sorted(
+        outbound_models - outbound_response_models - outbound_helper_models
+    )
+    missing_openapi = sorted(
+        (inbound_models | outbound_response_models) - openapi_models
+    )
+    unknown_openapi = sorted(
+        openapi_models - (inbound_models | outbound_response_models)
+    )
+
+    assert not bad_inbound, "Non-request DTOs in api/inbound.py: " + ", ".join(
+        bad_inbound
+    )
+    assert not bad_outbound, (
+        "Unexpected outbound BaseModel names in api/outbound.py: "
+        + ", ".join(bad_outbound)
+    )
+    assert not missing_openapi, "OpenAPI registry missing DTOs: " + ", ".join(
+        missing_openapi
+    )
+    assert not unknown_openapi, "OpenAPI registry has unknown DTOs: " + ", ".join(
+        unknown_openapi
+    )
+
+
+def test_import_linter_protects_current_private_implementation_modules():
+    """Private implementation modules must be covered by protected contracts."""
+    root_config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    package_config = tomllib.loads(
+        (REPO_ROOT / "fastcode" / "pyproject.toml").read_text()
+    )
+    import_linter = root_config["tool"]["importlinter"]
+    contracts = import_linter["contracts"]
+
+    assert import_linter["root_package"] == "fastcode"
+    assert "import-linter" in package_config["project"]["optional-dependencies"]["dev"]
+
+    private_modules = {
+        _module_name_for_path(path)
+        for path in PACKAGE_ROOT.rglob("_*.py")
+        if path.name != "__init__.py"
+    }
+    protected_modules = {
+        module
+        for contract in contracts
+        if contract.get("type") == "protected"
+        for module in contract.get("protected_modules", [])
+    }
+    missing = sorted(private_modules - protected_modules)
+
+    assert not missing, (
+        "Private modules missing import-linter protection: " + ", ".join(missing)
+    )
+
+
+def test_pyright_configs_remain_strict():
+    """Workspace and package pyright configs stay on strict type-checking mode."""
+    root_config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    package_config = tomllib.loads(
+        (REPO_ROOT / "fastcode" / "pyproject.toml").read_text()
+    )
+
+    assert root_config["tool"]["pyright"]["typeCheckingMode"] == "strict"
+    assert package_config["tool"]["pyright"]["typeCheckingMode"] == "strict"
+
+
+def test_repo_justfile_exposes_quality_gates():
+    """Top-level task surface must expose FastCode quality gates."""
+    justfile_path = REPO_ROOT / "justfile"
+    assert justfile_path.exists(), "Missing repo justfile quality surface"
+    justfile = justfile_path.read_text()
+
+    for recipe in (
+        "qa:",
+        "qa-lint:",
+        "qa-full:",
+        "check:",
+        "check-deps:",
+        "arch-check:",
+        "type-check:",
+    ):
+        assert recipe in justfile, f"Missing just recipe: {recipe}"

@@ -113,6 +113,7 @@ dev = [
     "pytest-benchmark",
     "pytest-xdist",
     "hypothesis",
+    "import-linter",
     "syrupy",
     "pip-audit",
     "lefthook",
@@ -250,9 +251,6 @@ packages = ["src/fastcode"]                                               # pack
 "src/fastcode/indexing/scip_runner.py" = [
     "S603",    # design: subprocess for SCIP indexer binary invocation; shell=False is already used
 ]
-"src/fastcode/indexing/semantic_helper_runner.py" = [
-    "S603",    # design: subprocess for external semantic helper command; shell=False is already used
-]
 "src/fastcode/retrieval/iteration.py" = [
     "PLR2004", # design: threshold constants (0.85, 3) from original HKUDS iterative refinement logic
     "PLR0913", # complexity: should_continue_iteration takes 7 params (track: bundle into IterationState dataclass)
@@ -301,11 +299,6 @@ packages = ["src/fastcode"]                                               # pack
     "PLR2004", # design: 8000 char truncation threshold for READMEs is a UI limit, not domain constant
     "RET504",  # design: overview dict assigned for readability before return in generate_overview
     "SIM102",  # design: nested if clarifies two independent conditions (directory depth + file membership)
-]
-"src/fastcode/schemas/ir.py" = [
-    "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
-    "PLC0415", # design: lazy import to avoid circular dep between schemas/ir.py and ir/types.py
-    "PLR0913", # complexity: IRSnapshot.__init__ takes 7 params (track: bundle into Builder)
 ]
 "src/fastcode/mcp/server.py" = [
     "PLC0415", # design: lazy imports inside tool functions to keep startup fast
@@ -370,13 +363,12 @@ packages = ["src/fastcode"]                                               # pack
     "SIM102",  # design: nested if clarifies two independent conditions
 ]
 # --- Security per-file ignores (scoped from global; each has specific justification) ---
-"src/fastcode/graph/build.py" = [
-    "E722",    # design: bare-except in degree calculation — missing data returns 0, not crash
-    "S301",    # design: pickle for graph serialization to disk, not deserializing untrusted input
-]
 "src/fastcode/store/cache.py" = [
     "S301",    # design: pickle for Redis cache serialization — trusted data round-trip only
     "S324",    # design: MD5 for cache key dedup — not cryptographic
+]
+"src/fastcode/store/graph_artifacts.py" = [
+    "S301",    # design: pickle for trusted local CodeGraphBuilder artifact persistence
 ]
 "src/fastcode/store/snapshot.py" = [
     "S301",    # design: pickle for IR graph persistence — trusted local store, not untrusted input

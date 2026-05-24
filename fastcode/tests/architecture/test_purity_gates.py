@@ -8,8 +8,19 @@ from pathlib import Path
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
 
 PURE_PACKAGES = ["ir", "graph", "retrieval"]
+BEHAVIOR_NAMED_DOMAIN_PACKAGES = ["ir", "graph", "retrieval", "scip", "semantic"]
 BANNED_MODULES = {"pydantic", "sqlite3", "subprocess", "urllib"}
 FORBIDDEN_TOP_LEVEL_HUBS = ("config.py", "config", "events.py", "events")
+FORBIDDEN_GENERIC_INTERNAL_NAMES = {
+    "utils",
+    "helpers",
+    "common",
+    "misc",
+    "service",
+    "manager",
+    "handler",
+    "module",
+}
 BANNED_IMPORTS_BY_PACKAGE = {
     "graph": {
         "pydantic": "The graph layer must stay Pydantic-free.",
@@ -21,7 +32,8 @@ BANNED_IMPORTS_BY_PACKAGE = {
         "fastcode.mcp": "The graph layer must not depend on transport shells.",
         "fastcode.query": "Graph construction must stay independent of query orchestration.",
         "fastcode.retrieval": "Graph construction must stay independent of retrieval orchestration.",
-        "fastcode.schemas": "Graph construction should depend on IR and helpers, not boundary schemas.",
+        "fastcode.inbound": "Graph construction should depend on IR and helpers, not inbound schemas.",
+        "fastcode.schemas": "Graph construction should depend on IR and helpers, not deleted schema compatibility modules.",
         "fastcode.store": "Graph construction must stay independent of storage orchestration.",
     },
     "ir": {
@@ -36,7 +48,8 @@ BANNED_IMPORTS_BY_PACKAGE = {
         "fastcode.mcp": "The IR layer must not depend on transport shells.",
         "fastcode.query": "Query orchestration depends on IR, not vice versa.",
         "fastcode.retrieval": "Retrieval orchestration depends on IR, not vice versa.",
-        "fastcode.schemas": "IR is canonical; schema compatibility types may re-export IR, not the reverse.",
+        "fastcode.inbound": "IR is canonical; inbound DTOs must not be imported by IR.",
+        "fastcode.schemas": "IR is canonical; deleted schema compatibility modules must stay out of IR.",
         "fastcode.scip": "SCIP adapters depend on IR, not vice versa.",
         "fastcode.semantic": "Semantic adapters depend on IR, not vice versa.",
         "fastcode.store": "Storage depends on IR types, not vice versa.",
@@ -52,28 +65,14 @@ BANNED_IMPORTS_BY_PACKAGE = {
         "fastcode.main": "retrieval must not depend on the composition root.",
         "fastcode.mcp": "retrieval must not depend on transport shells.",
         "fastcode.query": "retrieval must stay independent of query orchestration.",
-        "fastcode.schemas": "retrieval must not depend on Pydantic inbound schemas.",
-        "fastcode.inbound": "retrieval must not depend on inbound boundary mappers.",
+        "fastcode.inbound": "retrieval must not depend on inbound schemas or mappers.",
+        "fastcode.schemas": "retrieval must not depend on deleted schema compatibility modules.",
         "fastcode.scip": "retrieval must stay independent of SCIP loading and adapters.",
         "fastcode.semantic": "retrieval must stay independent of semantic adapters.",
         "fastcode.store": "retrieval must stay independent of storage orchestration.",
     },
-    "schemas": {
-        "fastcode.runtime": "Schemas validate external DTOs; inbound mappers build runtime contracts.",
-        "fastcode.inbound": "Schemas must not depend on inbound mappers.",
-        "fastcode.api": "Schema types must stay independent of API route implementations.",
-        "fastcode.graph": "Schema types must stay independent of graph construction.",
-        "fastcode.indexing": "Schema types must stay independent of indexing orchestration.",
-        "fastcode.main": "Schema types must stay independent of the composition root.",
-        "fastcode.mcp": "Schema types must stay independent of transport shells.",
-        "fastcode.query": "Schema types must stay independent of query orchestration.",
-        "fastcode.retrieval": "Schema types must stay independent of retrieval orchestration.",
-        "fastcode.scip": "Schema types must stay independent of SCIP adapters.",
-        "fastcode.semantic": "Schema types must stay independent of semantic adapters.",
-        "fastcode.store": "Schema types must stay independent of storage orchestration.",
-    },
     "inbound": {
-        "pydantic": "Inbound mappers consume validated DTOs through schemas, not Pydantic directly.",
+        "pydantic": "Only inbound config schema modules may import Pydantic; mappers consume DTOs directly.",
         "dotenv": "Inbound mappers must not load environment files.",
         "sqlite3": "Inbound mappers must stay independent of database I/O.",
         "subprocess": "Inbound mappers must stay independent of process execution.",
@@ -98,8 +97,8 @@ BANNED_IMPORTS_BY_PACKAGE = {
         "fastcode.mcp": "store.infrastructure must stay independent of transport shells.",
         "fastcode.query": "store.infrastructure must stay independent of query orchestration.",
         "fastcode.retrieval": "store.infrastructure must stay independent of retrieval orchestration.",
-        "fastcode.schemas": "store.infrastructure must not depend on Pydantic inbound schemas.",
-        "fastcode.inbound": "store.infrastructure must not depend on inbound boundary mappers.",
+        "fastcode.inbound": "store.infrastructure must not depend on inbound schemas or mappers.",
+        "fastcode.schemas": "store.infrastructure must not depend on deleted schema compatibility modules.",
         "fastcode.scip": "store.infrastructure must stay independent of SCIP adapters.",
         "fastcode.semantic": "store.infrastructure must stay independent of semantic adapters.",
     },
@@ -116,8 +115,8 @@ BANNED_IMPORTS_BY_PACKAGE = {
         "fastcode.mcp": "runtime contracts must not depend on transport shells.",
         "fastcode.query": "runtime contracts must not depend on query orchestration.",
         "fastcode.retrieval": "runtime contracts must not depend on retrieval logic.",
-        "fastcode.schemas": "runtime contracts must not depend on boundary schemas.",
-        "fastcode.inbound": "runtime contracts must not depend on inbound mappers.",
+        "fastcode.inbound": "runtime contracts must not depend on inbound schemas or mappers.",
+        "fastcode.schemas": "runtime contracts must not depend on deleted schema compatibility modules.",
         "fastcode.scip": "runtime contracts must not depend on SCIP adapters.",
         "fastcode.semantic": "runtime contracts must not depend on semantic adapters.",
         "fastcode.store": "runtime contracts must not depend on storage orchestration.",
@@ -291,6 +290,14 @@ def test_package_boundary_import_bans() -> None:
                     continue
                 for imported in _import_candidates(py_file, node):
                     for banned, message in banned_imports.items():
+                        is_inbound_config_schema = rel == Path(
+                            "inbound/config_schema.py"
+                        ) or (
+                            rel.parent == Path("inbound")
+                            and rel.name.startswith("_config_schema")
+                        )
+                        if is_inbound_config_schema and banned == "pydantic":
+                            continue
                         if _matches_banned_import(imported, banned):
                             violations.append(
                                 f"{rel}:{node.lineno}: imports {imported}; {message}"
@@ -307,6 +314,25 @@ def test_runtime_contracts_do_not_load_env_or_dotenv() -> None:
     for py_file in _iter_python_files("runtime"):
         violations.extend(_has_env_loading(py_file))
     assert not violations, "Runtime env access violations:\n" + "\n".join(violations)
+
+
+def test_domain_and_common_modules_use_behavior_names_not_generic_buckets() -> None:
+    """Pure/domain packages should name modules by behavior, not generic buckets."""
+    violations: list[str] = []
+    for package_path in BEHAVIOR_NAMED_DOMAIN_PACKAGES:
+        for py_file in _iter_python_files(package_path):
+            stem = py_file.stem
+            normalized = stem[1:] if stem.startswith("_") else stem
+            if normalized not in FORBIDDEN_GENERIC_INTERNAL_NAMES:
+                continue
+            violations.append(
+                f"{py_file.relative_to(PACKAGE_ROOT)}: generic internal module name"
+            )
+
+    assert not violations, (
+        "Pure/domain packages should use behavior-specific module names:\n"
+        + "\n".join(violations)
+    )
 
 
 def test_package_roots_do_not_import_fastcode_root_exports() -> None:

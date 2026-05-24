@@ -46,8 +46,8 @@ Evaluated each file for:
 
 | File | Tests | Lines | Verdict | Notes |
 |------|-------|-------|---------|-------|
-| `schemas/test_ir.py` | 7 | 330 | **SUBSTANTIAL** | Tests merge rules, validators, graph building. Zero tautologies. |
-| `schemas/test_core_types.py` | 17 | 188 | **MIXED** | 6/17 tautological (field readback, constant uniqueness checks). Good negative/edge tests for HitFromRetrievalRow. |
+| `ir/test_ir_contracts.py` | 7 | 330 | **SUBSTANTIAL** | Tests merge rules, validators, graph building. Zero tautologies. |
+| `retrieval/test_contracts.py` | 17 | 188 | **MIXED** | 6/17 tautological (field readback, constant uniqueness checks). Good negative/edge tests for HitFromRetrievalRow. |
 | `test_semantic_ir.py` | 18 | 299 | **MIXED** | TestSourcePriority, TestConfidenceMapping, TestOccurrenceDedup are solid. TestLegacyConversion is field-existence only. |
 | `test_scip_models.py` | 13 | 194 | **MIXED** | Reserved-field separation and non-dict filtering tests are real. Nested conversion tests are tautological. |
 | `test_projection_models.py` | 6 | 130 | **SUPERFICIAL** | 5/6 tests are Hypothesis on trivial `to_dict()` accessors. Only `utc_now_iso` format check has value. |

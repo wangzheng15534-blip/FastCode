@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+from typing import Any
 
 
 def compute_file_hash(file_path: str) -> str:
@@ -19,9 +20,43 @@ def compute_file_hash(file_path: str) -> str:
         return ""
 
 
+def compute_file_sha256(file_path: str | Path) -> str | None:
+    """Compute a SHA-256 hash for a local file, returning None on failure."""
+    hash_sha256 = hashlib.sha256()
+    try:
+        with Path(file_path).open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                hash_sha256.update(chunk)
+    except OSError:
+        return None
+    return hash_sha256.hexdigest()
+
+
 def ensure_dir(directory: str) -> None:
     """Ensure a directory exists."""
     Path(directory).mkdir(parents=True, exist_ok=True)
+
+
+def file_content_identity(file_path: str | Path) -> dict[str, Any] | None:
+    """Return stable size and content hash identity for a readable local file."""
+    path = Path(file_path)
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    digest = compute_file_sha256(path)
+    if digest is None:
+        return None
+    return {"size": int(stat.st_size), "content_hash": digest}
+
+
+def file_stat_identity(file_path: str | Path) -> dict[str, Any] | None:
+    """Return size and mtime identity for a local path without hashing content."""
+    try:
+        stat = Path(file_path).stat()
+    except OSError:
+        return None
+    return {"size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
 
 
 def get_file_extension(file_path: str) -> str:
@@ -55,3 +90,8 @@ def is_text_file(file_path: str) -> bool:
 def normalize_path(path: str) -> str:
     """Normalize a path to a forward-slash representation."""
     return os.path.normpath(path).replace("\\", "/")
+
+
+def resolve_absolute_root(root: str | None) -> str:
+    """Resolve an optional root path to an absolute filesystem path."""
+    return os.path.abspath(root or os.getcwd())

@@ -77,3 +77,15 @@ def test_safe_extract_zip_extracts_valid_archive(tmp_path: Path) -> None:
 
 def test_safe_repo_name_from_archive_sanitizes_upload_name() -> None:
     assert safe_repo_name_from_archive("../../bad repo-main.zip") == "bad_repo"
+
+
+def test_zip_extraction_limits_coerces_foundation_types() -> None:
+    limits = ZipExtractionLimits(
+        max_members=5,
+        max_total_uncompressed_bytes=10,
+        max_member_uncompressed_bytes=3,
+    )
+
+    assert limits.max_members.as_int() == 5
+    assert limits.max_total_uncompressed_bytes.as_bytes() == 10
+    assert limits.max_member_uncompressed_bytes.as_bytes() == 3

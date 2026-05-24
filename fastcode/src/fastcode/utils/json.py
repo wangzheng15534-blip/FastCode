@@ -5,7 +5,11 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
+from collections.abc import Mapping
+from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 _MAX_SAFE_JSONABLE_DEPTH = 12
@@ -327,3 +331,28 @@ def robust_json_parse(json_str: str) -> Any:
 
     # All strategies failed
     raise json.JSONDecodeError("All parsing strategies failed", json_str, 0)
+
+
+def load_json_object(path: str | Path) -> dict[str, Any] | None:
+    """Load a JSON object from disk, returning None for missing or invalid data."""
+    try:
+        with Path(path).open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def write_json_object_atomic(path: str | Path, payload: Mapping[str, Any]) -> bool:
+    """Write a JSON object via temporary sibling replacement."""
+    target = Path(path)
+    tmp_path = target.with_name(f"{target.name}.tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
+        os.replace(tmp_path, target)
+    except OSError:
+        with suppress(OSError):
+            tmp_path.unlink()
+        return False
+    return True

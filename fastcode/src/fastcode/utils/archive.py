@@ -7,8 +7,11 @@ import re
 import shutil
 import stat
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
+
+from ..foundation.byte_count import ByteCount
+from ..foundation.positive_int import PositiveInt
 
 
 class UnsafeArchiveError(ValueError):
@@ -17,10 +20,29 @@ class UnsafeArchiveError(ValueError):
 
 @dataclass(frozen=True)
 class ZipExtractionLimits:
-    max_members: int = 20_000
-    max_total_uncompressed_bytes: int = 512 * 1024 * 1024
-    max_member_uncompressed_bytes: int = 100 * 1024 * 1024
+    max_members: PositiveInt | int = field(default_factory=lambda: PositiveInt(20_000))
+    max_total_uncompressed_bytes: ByteCount | int = field(
+        default_factory=lambda: ByteCount.from_mib(512)
+    )
+    max_member_uncompressed_bytes: ByteCount | int = field(
+        default_factory=lambda: ByteCount.from_mib(100)
+    )
     max_compression_ratio: float = 1000.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "max_members", PositiveInt.coerce(self.max_members))
+        object.__setattr__(
+            self,
+            "max_total_uncompressed_bytes",
+            ByteCount.coerce(self.max_total_uncompressed_bytes),
+        )
+        object.__setattr__(
+            self,
+            "max_member_uncompressed_bytes",
+            ByteCount.coerce(self.max_member_uncompressed_bytes),
+        )
+        if self.max_compression_ratio <= 0:
+            raise ValueError("max_compression_ratio must be > 0")
 
 
 _SAFE_REPO_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -87,9 +109,16 @@ def validate_zip_members(
 ) -> list[tuple[zipfile.ZipInfo, Path]]:
     """Validate all ZIP members before extraction and return destination paths."""
     infos = zip_ref.infolist()
-    if len(infos) > limits.max_members:
+    max_members = PositiveInt.coerce(limits.max_members).as_int()
+    max_total_uncompressed_bytes = ByteCount.coerce(
+        limits.max_total_uncompressed_bytes
+    ).as_bytes()
+    max_member_uncompressed_bytes = ByteCount.coerce(
+        limits.max_member_uncompressed_bytes
+    ).as_bytes()
+    if len(infos) > max_members:
         raise UnsafeArchiveError(
-            f"ZIP archive has too many members: {len(infos)} > {limits.max_members}"
+            f"ZIP archive has too many members: {len(infos)} > {max_members}"
         )
 
     total_size = 0
@@ -102,11 +131,11 @@ def validate_zip_members(
         target = _validate_member_path(info.filename.rstrip("/"), destination)
         if not info.is_dir():
             total_size += int(info.file_size)
-            if info.file_size > limits.max_member_uncompressed_bytes:
+            if info.file_size > max_member_uncompressed_bytes:
                 raise UnsafeArchiveError(
                     f"ZIP member is too large after extraction: {info.filename}"
                 )
-            if total_size > limits.max_total_uncompressed_bytes:
+            if total_size > max_total_uncompressed_bytes:
                 raise UnsafeArchiveError("ZIP archive expands beyond configured limit")
             if info.compress_size > 0:
                 ratio = float(info.file_size) / float(info.compress_size)

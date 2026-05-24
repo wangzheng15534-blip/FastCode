@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -16,13 +17,18 @@ from fastcode.query.tokens import truncate_to_tokens
 from fastcode.utils.clock import utc_now
 from fastcode.utils.filesystem import (
     compute_file_hash,
+    compute_file_sha256,
     ensure_dir,
+    file_content_identity,
+    file_stat_identity,
     get_file_extension,
     get_repo_name_from_url,
     is_supported_file,
     is_text_file,
     normalize_path,
+    resolve_absolute_root,
 )
+from fastcode.utils.ids import new_prefixed_id
 from fastcode.utils.json import safe_jsonable
 from fastcode.utils.paths import get_language_from_extension
 from fastcode.utils.text import (
@@ -81,6 +87,45 @@ class TestComputeFileHash:
         assert len(h) == 32
 
 
+class TestComputeFileSha256:
+    def test_hash_deterministic_property(self, tmp_path: Path):
+        path = tmp_path / "data.txt"
+        path.write_text("hello world", encoding="utf-8")
+
+        h1 = compute_file_sha256(path)
+        h2 = compute_file_sha256(path)
+
+        assert h1 == h2
+        assert h1 is not None
+        assert len(h1) == 64
+
+    @pytest.mark.edge
+    def test_hash_missing_file_property(self):
+        assert compute_file_sha256("/nonexistent") is None
+
+
+class TestFileIdentities:
+    def test_content_identity_contains_size_and_hash(self, tmp_path: Path):
+        path = tmp_path / "data.txt"
+        path.write_text("abc", encoding="utf-8")
+
+        identity = file_content_identity(path)
+
+        assert identity is not None
+        assert identity["size"] == 3
+        assert len(identity["content_hash"]) == 64
+
+    def test_stat_identity_contains_size_and_mtime(self, tmp_path: Path):
+        path = tmp_path / "data.txt"
+        path.write_text("abc", encoding="utf-8")
+
+        identity = file_stat_identity(path)
+
+        assert identity is not None
+        assert identity["size"] == 3
+        assert isinstance(identity["mtime_ns"], int)
+
+
 class TestIsTextFile:
     def test_text_file_true_property(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -132,6 +177,27 @@ class TestNormalizePath:
     def test_no_backslashes_property(self, path: str):
         result = normalize_path(path)
         assert "\\" not in result
+
+
+class TestPrefixedIds:
+    def test_new_prefixed_id_has_prefix(self):
+        value = new_prefixed_id("snap")
+        assert value.startswith("snap_")
+
+    @pytest.mark.edge
+    def test_new_prefixed_id_rejects_blank_prefix(self):
+        with pytest.raises(ValueError, match="non-empty"):
+            new_prefixed_id("   ")
+
+
+class TestResolveAbsoluteRoot:
+    def test_explicit_root_property(self, tmp_path: Path):
+        assert resolve_absolute_root(str(tmp_path)) == os.path.abspath(str(tmp_path))
+
+    def test_none_uses_current_working_directory(self, monkeypatch: MonkeyPatch):
+        with tempfile.TemporaryDirectory() as tmp:
+            monkeypatch.chdir(tmp)
+            assert resolve_absolute_root(None) == os.path.abspath(tmp)
 
 
 class TestGetLanguageFromExtension:

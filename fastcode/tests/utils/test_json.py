@@ -1,14 +1,17 @@
 """Tests for pure JSON parsing functions."""
 
 import json
+from pathlib import Path
 
 import pytest
 
 from fastcode.utils.json import (
     extract_json_from_response,
+    load_json_object,
     remove_json_comments,
     robust_json_parse,
     sanitize_json_string,
+    write_json_object_atomic,
 )
 
 
@@ -113,3 +116,31 @@ class TestRobustJsonParse:
     def test_extract_first_object(self):
         result = robust_json_parse('prefix {"a": 1} suffix')
         assert result == {"a": 1}
+
+
+class TestJsonObjectFiles:
+    def test_load_json_object_returns_dict(self, tmp_path: Path):
+        path = tmp_path / "payload.json"
+        path.write_text('{"key": "value"}', encoding="utf-8")
+
+        assert load_json_object(path) == {"key": "value"}
+
+    def test_load_json_object_rejects_non_object(self, tmp_path: Path):
+        path = tmp_path / "payload.json"
+        path.write_text('["value"]', encoding="utf-8")
+
+        assert load_json_object(path) is None
+
+    def test_load_json_object_returns_none_for_invalid_json(self, tmp_path: Path):
+        path = tmp_path / "payload.json"
+        path.write_text("{", encoding="utf-8")
+
+        assert load_json_object(path) is None
+
+    def test_write_json_object_atomic_replaces_target(self, tmp_path: Path):
+        path = tmp_path / "payload.json"
+        path.write_text('{"old": true}', encoding="utf-8")
+
+        assert write_json_object_atomic(path, {"new": True}) is True
+        assert json.loads(path.read_text(encoding="utf-8")) == {"new": True}
+        assert not path.with_name("payload.json.tmp").exists()

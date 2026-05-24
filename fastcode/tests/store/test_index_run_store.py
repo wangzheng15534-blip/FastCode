@@ -29,7 +29,7 @@ def test_get_run_avoids_generic_row_to_dict(
     def _boom(_: object) -> dict[str, object]:
         raise AssertionError("index run store must not call row_to_dict()")
 
-    monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom)
+    monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom, raising=False)
 
     run = store.get_run(run_id)
 
@@ -86,7 +86,7 @@ def test_get_latest_run_record_returns_newest_typed_record(
     def _boom(_: object) -> dict[str, object]:
         raise AssertionError("latest run lookup must not call row_to_dict()")
 
-    monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom)
+    monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom, raising=False)
 
     record = store.get_latest_run_record()
     payload = store.get_latest_run()
@@ -119,7 +119,7 @@ def test_claim_next_publish_task_returns_running_payload_after_claim(
     def _boom(_: object) -> dict[str, object]:
         raise AssertionError("index run store must not call row_to_dict()")
 
-    monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom)
+    monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom, raising=False)
 
     task = store.claim_next_publish_task()
 

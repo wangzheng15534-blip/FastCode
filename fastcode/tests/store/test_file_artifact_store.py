@@ -56,7 +56,12 @@ def test_file_artifact_store_upserts_and_loads_file_ir_by_content_identity(
         def _boom_record_to_dict(_: FileArtifactRecord) -> dict[str, Any]:
             raise AssertionError("file artifact compatibility payload is explicit")
 
-        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row_to_dict)
+        monkeypatch.setattr(
+            store.db_runtime,
+            "row_to_dict",
+            _boom_row_to_dict,
+            raising=False,
+        )
         monkeypatch.setattr(FileArtifactRecord, "to_dict", _boom_record_to_dict)
 
         fetched = store.list_file_ir_records_for_file_infos(
@@ -172,7 +177,12 @@ def test_file_artifact_store_upserts_parsed_elements_without_embeddings(
         def _boom_record_to_dict(_: FileArtifactRecord) -> dict[str, Any]:
             raise AssertionError("parsed element payloads must be explicit")
 
-        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row_to_dict)
+        monkeypatch.setattr(
+            store.db_runtime,
+            "row_to_dict",
+            _boom_row_to_dict,
+            raising=False,
+        )
         monkeypatch.setattr(FileArtifactRecord, "to_dict", _boom_record_to_dict)
 
         fetched = store.list_parsed_element_records_for_file_infos(
@@ -241,7 +251,12 @@ def test_file_artifact_store_upserts_embedding_refs_by_content_identity(
         def _boom_record_to_dict(_: FileArtifactRecord) -> dict[str, Any]:
             raise AssertionError("embedding ref payloads must be explicit")
 
-        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row_to_dict)
+        monkeypatch.setattr(
+            store.db_runtime,
+            "row_to_dict",
+            _boom_row_to_dict,
+            raising=False,
+        )
         monkeypatch.setattr(FileArtifactRecord, "to_dict", _boom_record_to_dict)
 
         fetched = store.list_embedding_ref_records_for_file_infos(
@@ -331,7 +346,12 @@ def test_file_artifact_store_upserts_semantic_facts_by_content_identity(
         def _boom_record_to_dict(_: FileArtifactRecord) -> dict[str, Any]:
             raise AssertionError("semantic fact payloads must be explicit")
 
-        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row_to_dict)
+        monkeypatch.setattr(
+            store.db_runtime,
+            "row_to_dict",
+            _boom_row_to_dict,
+            raising=False,
+        )
         monkeypatch.setattr(FileArtifactRecord, "to_dict", _boom_record_to_dict)
 
         fetched = store.list_semantic_fact_records_for_file_infos(

@@ -180,14 +180,6 @@ class DBRuntime(StoreDatabaseRuntime):
                     rollback()
             logger.debug("pgvector adapter registration failed: %s", exc)
 
-    @staticmethod
-    def row_to_dict(row: Any) -> dict[str, Any] | None:
-        if not row:
-            return None
-        if isinstance(row, dict):
-            return row
-        return dict(row)
-
     def begin_write(self, conn: Any) -> None:
         if self.backend == "sqlite":
             conn.execute("BEGIN IMMEDIATE")

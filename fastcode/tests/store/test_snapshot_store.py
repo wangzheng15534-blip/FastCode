@@ -1610,7 +1610,7 @@ class TestSnapshotStoreQueries:
         def _boom(_: object) -> dict[str, Any]:
             raise AssertionError("snapshot store must not call row_to_dict()")
 
-        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom)
+        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom, raising=False)
 
         record = store.get_snapshot_record(snap.snapshot_id)
 
@@ -1644,7 +1644,7 @@ class TestSnapshotStoreQueries:
                 "snapshot store must not call SnapshotRefRecord.to_dict()"
             )
 
-        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row)
+        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row, raising=False)
         monkeypatch.setattr(SnapshotRecord, "to_dict", _boom_snapshot)
         monkeypatch.setattr(SnapshotRefRecord, "to_dict", _boom_ref)
 
@@ -1875,7 +1875,7 @@ class TestScipArtifactRefProperties:
                 "snapshot store must not call SCIPArtifactRecord.to_dict()"
             )
 
-        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row)
+        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row, raising=False)
         monkeypatch.setattr(SCIPArtifactRef, "to_dict", _boom_to_dict)
         monkeypatch.setattr(SCIPArtifactRecord, "to_dict", _boom_record_to_dict)
 
@@ -2494,7 +2494,7 @@ class TestSnapshotStoreRedoProperties:
         monkeypatch.setattr(
             snapshot_module, "utc_now", lambda: "2026-05-05T00:00:05+00:00"
         )
-        monkeypatch.setattr(runtime, "row_to_dict", _boom)
+        monkeypatch.setattr(runtime, "row_to_dict", _boom, raising=False)
         monkeypatch.setattr(RedoTaskRecord, "to_dict", _boom_task)
 
         task = store.claim_redo_task()
@@ -2532,7 +2532,7 @@ class TestSnapshotStoreRedoProperties:
         monkeypatch.setattr(
             snapshot_module, "utc_now", lambda: "2026-05-05T00:00:07+00:00"
         )
-        monkeypatch.setattr(runtime, "row_to_dict", _boom)
+        monkeypatch.setattr(runtime, "row_to_dict", _boom, raising=False)
         monkeypatch.setattr(RedoTaskRecord, "to_dict", _boom_task)
 
         task = store.claim_redo_task_record()
@@ -2572,7 +2572,7 @@ class TestSnapshotStoreRedoProperties:
         monkeypatch.setattr(
             snapshot_module, "utc_now", lambda: "2026-05-05T00:00:10+00:00"
         )
-        monkeypatch.setattr(runtime, "row_to_dict", _boom)
+        monkeypatch.setattr(runtime, "row_to_dict", _boom, raising=False)
 
         store.mark_redo_task_failed("redo_2", "boom", max_attempts=5)
 
@@ -2658,7 +2658,7 @@ class TestSnapshotStoreOutboxPostgresProperties:
         monkeypatch.setattr(
             snapshot_module, "utc_now", lambda: "2026-05-05T00:00:06+00:00"
         )
-        monkeypatch.setattr(runtime, "row_to_dict", _boom)
+        monkeypatch.setattr(runtime, "row_to_dict", _boom, raising=False)
         monkeypatch.setattr(OutboxEventRecord, "to_dict", _boom_event)
 
         events = store.claim_outbox_event(limit=10)
@@ -2709,7 +2709,7 @@ class TestSnapshotStoreOutboxPostgresProperties:
         monkeypatch.setattr(
             snapshot_module, "utc_now", lambda: "2026-05-05T00:00:08+00:00"
         )
-        monkeypatch.setattr(runtime, "row_to_dict", _boom)
+        monkeypatch.setattr(runtime, "row_to_dict", _boom, raising=False)
         monkeypatch.setattr(OutboxEventRecord, "to_dict", _boom_event)
 
         events = store.claim_outbox_event_records(limit=10)
@@ -2763,7 +2763,7 @@ class TestSnapshotStoreOutboxPostgresProperties:
         def _boom(_: object) -> dict[str, Any]:
             raise AssertionError("snapshot store must not call row_to_dict()")
 
-        monkeypatch.setattr(runtime, "row_to_dict", _boom)
+        monkeypatch.setattr(runtime, "row_to_dict", _boom, raising=False)
 
         assert store.get_outbox_pending_count() == 1
 

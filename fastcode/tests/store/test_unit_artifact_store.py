@@ -168,7 +168,7 @@ def test_unit_artifact_store_list_avoids_generic_row_to_dict(
         def _boom(_: object) -> dict[str, Any]:
             raise AssertionError("unit artifact store must not call row_to_dict()")
 
-        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom)
+        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom, raising=False)
 
         rows = store.list_snapshot_units("snap:1")
 
@@ -469,7 +469,12 @@ def test_file_ir_shards_replace_and_list_typed_records(
                 "file IR shard compatibility payloads must be explicit"
             )
 
-        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row_to_dict)
+        monkeypatch.setattr(
+            store.db_runtime,
+            "row_to_dict",
+            _boom_row_to_dict,
+            raising=False,
+        )
         monkeypatch.setattr(FileIRShardRecord, "to_dict", _boom_record_to_dict)
 
         records = store.list_file_ir_shard_records("snap:1")

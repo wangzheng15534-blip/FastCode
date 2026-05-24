@@ -82,23 +82,17 @@ class _FakeFastCode:
         self.manifest_store = ManifestStore(snapshot_store.db_runtime)
 
     def list_repo_refs(self, repo_name: str) -> list[dict[str, Any]]:
-        with self.snapshot_store.db_runtime.connect() as conn:
-            rows = self.snapshot_store.db_runtime.execute(
-                conn,
-                """
-                SELECT branch, commit_id, tree_id, snapshot_id, created_at
-                FROM snapshot_refs
-                WHERE repo_name=?
-                ORDER BY created_at DESC
-                """,
-                (repo_name,),
-            ).fetchall()
         return [
-            d
-            for r in rows
-            if r
-            for d in [self.snapshot_store.db_runtime.row_to_dict(r)]
-            if d is not None
+            {
+                "ref_id": record.ref_id,
+                "repo_name": record.repo_name,
+                "branch": record.branch,
+                "commit_id": record.commit_id,
+                "tree_id": record.tree_id,
+                "snapshot_id": record.snapshot_id,
+                "created_at": record.created_at,
+            }
+            for record in self.snapshot_store.list_repo_ref_records(repo_name)
         ]
 
     def get_scip_artifact_ref(self, snapshot_id: str) -> dict[str, Any] | None:

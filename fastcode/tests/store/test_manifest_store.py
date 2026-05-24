@@ -348,7 +348,7 @@ class TestExplicitManifestBoundaries:
         def _boom(_: object) -> dict[str, object]:
             raise AssertionError("manifest store must not call row_to_dict()")
 
-        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom)
+        monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom, raising=False)
 
         second = store.publish_record("repo", "main", "snap2", "run2")
 

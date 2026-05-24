@@ -472,67 +472,40 @@ class TestExecute:
                 rt.execute(conn, "INSERT INTO t VALUES (1)")
 
 
-# --- row_to_dict() tests (lines 114-119) ---
+# --- explicit row access tests ---
 
 
-class TestRowToDict:
-    @pytest.mark.edge
-    def test_none_returns_none_property(self) -> None:
-        """Line 116: None input returns None."""
-        assert DBRuntime.row_to_dict(None) is None
+class TestExplicitRowAccess:
+    def test_db_runtime_has_no_generic_row_to_dict_helper(self) -> None:
+        assert not hasattr(DBRuntime, "row_to_dict")
 
-    @pytest.mark.parametrize("falsy_val", ["", 0, [], {}])
-    @pytest.mark.edge
-    def test_falsy_values_return_none_property(self, falsy_val: Any) -> None:
-        """Line 116: all falsy inputs return None."""
-        assert DBRuntime.row_to_dict(falsy_val) is None
-
-    def test_nonempty_dict_passthrough_property(self) -> None:
-        """Line 118: non-empty dict returned as-is (same reference)."""
-        d = {"a": 1, "b": "two"}
-        result = DBRuntime.row_to_dict(d)
-        assert result is d
-
-    def test_sqlite_row_to_dict_property(self) -> None:
-        """Line 119: sqlite3.Row converted to dict."""
+    def test_sqlite_row_supports_explicit_dict_conversion(self) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
             rt.execute(conn, "CREATE TABLE t (id INTEGER, name TEXT)")
             rt.execute(conn, "INSERT INTO t VALUES (?, ?)", (42, "test"))
             cur = rt.execute(conn, "SELECT id, name FROM t")
             row = cur.fetchone()
-            result = DBRuntime.row_to_dict(row)
-            assert isinstance(result, dict)
-            assert result["id"] == 42
-            assert result["name"] == "test"
+            result = dict(row)
+            assert result == {"id": 42, "name": "test"}
 
     @given(
         id_val=st.integers(min_value=0, max_value=2**31 - 1),
         name=st.text(min_size=0, max_size=100),
     )
     @settings(max_examples=30)
-    def test_sqlite_row_preserves_data_property(self, id_val: int, name: str) -> None:
-        """Line 119: row_to_dict preserves all column values."""
+    def test_sqlite_row_preserves_data_via_explicit_dict(
+        self, id_val: int, name: str
+    ) -> None:
         rt = _make_sqlite_runtime()
         with rt.connect() as conn:
             rt.execute(conn, "CREATE TABLE t (id INTEGER, name TEXT)")
             rt.execute(conn, "INSERT INTO t VALUES (?, ?)", (id_val, name))
             cur = rt.execute(conn, "SELECT id, name FROM t")
             row = cur.fetchone()
-            result = DBRuntime.row_to_dict(row)
+            result = dict(row)
             assert result["id"] == id_val
             assert result["name"] == name
-
-    def test_tuple_converted_property(self) -> None:
-        """Line 119: dict(row) works on sqlite3.Row (which supports dict())."""
-        rt = _make_sqlite_runtime()
-        with rt.connect() as conn:
-            rt.execute(conn, "CREATE TABLE t (a TEXT, b INTEGER)")
-            rt.execute(conn, "INSERT INTO t VALUES (?, ?)", ("hello", 5))
-            cur = rt.execute(conn, "SELECT a, b FROM t")
-            row = cur.fetchone()
-            result = DBRuntime.row_to_dict(row)
-            assert result == {"a": "hello", "b": 5}
 
 
 # --- begin_write() tests (lines 121-125) ---
@@ -815,7 +788,7 @@ class TestSchema:
             conn.execute("INSERT INTO t VALUES ('x', 42, 3.14)")
             cur = conn.execute("SELECT a, b, c FROM t")
             row = cur.fetchone()
-            d = DBRuntime.row_to_dict(row)
+            d = dict(row)
             assert d == {"a": "x", "b": 42, "c": 3.14}
 
 

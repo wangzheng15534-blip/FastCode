@@ -50,6 +50,7 @@ from ..retrieval.contracts import (
     FusionConfig,
     Hit,
     ProjectionEvidence,
+    RetrievalSource,
     TraceLink,
 )
 from ..utils.filesystem import ensure_dir
@@ -58,12 +59,36 @@ from .iterative_agent import IterativeAgent
 _BM25_SHARD_STORAGE_VERSION = 1
 
 
-def _hit_rows_from_records(hits: list[Hit]) -> list[dict[str, Any]]:
-    return [hit.to_retrieval_row() for hit in hits]
+def _hit_rows_from_records(hits: Sequence[Hit]) -> list[dict[str, Any]]:
+    return [_projected_hit_row(hit) for hit in hits]
 
 
 def _hit_records_from_rows(rows: list[dict[str, Any]]) -> list[Hit]:
     return [Hit.from_retrieval_row(row) for row in rows]
+
+
+def _element_payload_from_hit(hit: Hit) -> CodeElementMeta:
+    payload = dict(hit.element_extra)
+    payload.update(
+        {
+            "id": hit.element_id,
+            "type": hit.element_type,
+            "name": hit.element_name,
+            "language": hit.language,
+            "file_path": hit.file_path,
+            "relative_path": hit.relative_path,
+            "repo_name": hit.repo_name,
+            "repo_url": hit.repo_url,
+            "snapshot_id": hit.snapshot_id,
+            "start_line": hit.start_line,
+            "end_line": hit.end_line,
+            "signature": hit.signature,
+            "docstring": hit.docstring,
+            "summary": hit.summary,
+            "metadata": dict(hit.metadata),
+        }
+    )
+    return cast(CodeElementMeta, payload)
 
 
 def _element_filter_from_payload(filters: dict[str, Any]) -> ElementFilter:
@@ -168,7 +193,7 @@ class RetrievalChannelOutput:
     semantic_results: list[tuple[CodeElementMeta, float]]
     keyword_results: list[tuple[CodeElementMeta, float]]
     pseudocode_results: list[tuple[CodeElementMeta, float]]
-    ranked_results: list[dict[str, Any]]
+    ranked_results: list[Hit]
 
 
 class HybridRetriever:
@@ -561,11 +586,10 @@ class HybridRetriever:
             repo_filter=repo_filter,
             element_types=allowed_types,
         )
-        ranked_results = self._rerank(
-            semantic_query,
-            self._combine_results(
+        ranked_results = self._rerank_hits(
+            self._combine_hit_results(
                 semantic_results, keyword_results, pseudocode_results
-            ),
+            )
         )
         return RetrievalChannelOutput(
             collection="code",
@@ -595,9 +619,8 @@ class HybridRetriever:
             repo_filter=repo_filter,
             element_types=doc_types,
         )
-        ranked_results = self._rerank(
-            semantic_query,
-            self._combine_results(semantic_results, keyword_results, []),
+        ranked_results = self._rerank_hits(
+            self._combine_hit_results(semantic_results, keyword_results, [])
         )
         return RetrievalChannelOutput(
             collection="doc",
@@ -617,6 +640,24 @@ class HybridRetriever:
             for link in _fusion.extract_trace_links(Hit.from_retrieval_row(row))
         ]
 
+    def _project_doc_priors_for_hits(
+        self,
+        *,
+        query: str,
+        query_info: dict[str, Any],
+        doc_results: Sequence[Hit],
+    ) -> dict[str, Any]:
+        record = _fusion.project_doc_priors(
+            query=query,
+            query_info=query_info,
+            doc_results=doc_results,
+            config=_fusion_config_from_runtime(self.adaptive_fusion_cfg),
+            doc_projection_beta_max=float(
+                self.retrieval_config.get("doc_projection_beta_max", 0.35)
+            ),
+        )
+        return _doc_projection_priors_payload(record)
+
     def _project_doc_priors(
         self,
         *,
@@ -624,16 +665,11 @@ class HybridRetriever:
         query_info: dict[str, Any],
         doc_results: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        record = _fusion.project_doc_priors(
+        return self._project_doc_priors_for_hits(
             query=query,
             query_info=query_info,
             doc_results=_hit_records_from_rows(doc_results),
-            config=_fusion_config_from_runtime(self.adaptive_fusion_cfg),
-            doc_projection_beta_max=float(
-                self.retrieval_config.get("doc_projection_beta_max", 0.35)
-            ),
         )
-        return _doc_projection_priors_payload(record)
 
     def _active_bm25_elements(self) -> list[CodeElement]:
         return (
@@ -666,16 +702,34 @@ class HybridRetriever:
         doc_results: list[dict[str, Any]],
         repo_filter: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        hits = self._apply_doc_projection_to_code_hits(
+            query=query,
+            query_info=query_info,
+            code_results=_hit_records_from_rows(code_results),
+            doc_results=_hit_records_from_rows(doc_results),
+            repo_filter=repo_filter,
+        )
+        return _hit_rows_from_records(hits)
+
+    def _apply_doc_projection_to_code_hits(
+        self,
+        *,
+        query: str,
+        query_info: dict[str, Any],
+        code_results: Sequence[Hit],
+        doc_results: Sequence[Hit],
+        repo_filter: list[str] | None = None,
+    ) -> list[Hit]:
         bm25_elements = (
             self.filtered_bm25_elements
             if self.filtered_bm25_elements
             else self.full_bm25_elements
         )
-        hits = _fusion.apply_doc_projection_to_code(
+        return _fusion.apply_doc_projection_to_code(
             query=query,
             query_info=query_info,
-            code_results=_hit_records_from_rows(code_results),
-            doc_results=_hit_records_from_rows(doc_results),
+            code_results=code_results,
+            doc_results=doc_results,
             config=_fusion_config_from_runtime(self.adaptive_fusion_cfg),
             doc_projection_beta_max=float(
                 self.retrieval_config.get("doc_projection_beta_max", 0.35)
@@ -684,7 +738,6 @@ class HybridRetriever:
             repo_filter=repo_filter,
             debug=self._last_fusion_debug,
         )
-        return [_projected_hit_row(hit) for hit in hits]
 
     def retrieve(
         self,
@@ -895,7 +948,7 @@ class HybridRetriever:
             )
 
         seeded_code = (
-            self._apply_doc_projection_to_code(
+            self._apply_doc_projection_to_code_hits(
                 query=query_str,
                 query_info=query_info,
                 code_results=code_channel.ranked_results,
@@ -903,35 +956,37 @@ class HybridRetriever:
                 repo_filter=repo_filter,
             )
             if doc_channel.ranked_results
-            else [self._clone_result_row(row) for row in code_channel.ranked_results]
+            else list(code_channel.ranked_results)
         )
 
         code_final = seeded_code
         if self.graph_weight > 0:
-            code_final = self._expand_with_graph(code_final, max_hops=2)
-        code_final = self._rerank(query_str, code_final)
+            code_final = self._expand_hits_with_graph(code_final, max_hops=2)
+        code_final = self._rerank_hits(code_final)
 
         if doc_channel.ranked_results:
-            final_results = self._adaptive_fuse_channels(
+            final_hits = self._adaptive_fuse_channel_hits(
                 query=query_str,
                 query_info=query_info,
                 code_results=code_final,
                 doc_results=doc_channel.ranked_results,
             )
         else:
-            final_results = code_final
+            final_hits = code_final
 
         # Stage 6: Apply filters
         if filters:
-            final_results = self._apply_filters(final_results, filters)
+            final_hits = self._apply_filters_to_hits(final_hits, filters)
 
         # Stage 7: Diversification
-        final_results = self._diversify(final_results)
+        final_hits = self._diversify_hits(final_hits)
 
         # Limit results
-        final_results = final_results[: self.max_results]
+        final_hits = final_hits[: self.max_results]
 
-        self.logger.info(f"Retrieved {len(final_results)} elements")
+        self.logger.info(f"Retrieved {len(final_hits)} elements")
+
+        final_results = _hit_rows_from_records(final_hits)
 
         # Optional: LLM-based file selection (single or multi-repo) - only if not using agency mode
         if enable_file_selection and not should_use_agency:
@@ -1339,15 +1394,30 @@ class HybridRetriever:
         code_results: list[dict[str, Any]],
         doc_results: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        hits = _fusion.adaptive_fuse_channels(
+        hits = self._adaptive_fuse_channel_hits(
             query=query,
             query_info=query_info,
             code_results=_hit_records_from_rows(code_results),
             doc_results=_hit_records_from_rows(doc_results),
+        )
+        return _hit_rows_from_records(hits)
+
+    def _adaptive_fuse_channel_hits(
+        self,
+        *,
+        query: str,
+        query_info: dict[str, Any],
+        code_results: Sequence[Hit],
+        doc_results: Sequence[Hit],
+    ) -> list[Hit]:
+        return _fusion.adaptive_fuse_channels(
+            query=query,
+            query_info=query_info,
+            code_results=code_results,
+            doc_results=doc_results,
             config=_fusion_config_from_runtime(self.adaptive_fusion_cfg),
             debug=self._last_fusion_debug,
         )
-        return _hit_rows_from_records(hits)
 
     @staticmethod
     def _new_fused_entry(element: dict[str, Any]) -> dict[str, Any]:
@@ -1678,18 +1748,39 @@ class HybridRetriever:
         pseudocode_results: list[tuple[CodeElementMeta, float]] | None = None,
     ) -> list[dict[str, Any]]:
         """Combine semantic, keyword, and pseudocode search results"""
-        hits = _combination.combine_results(
+        hits = self._combine_hit_results(
+            semantic_results,
+            keyword_results,
+            pseudocode_results,
+        )
+        return _hit_rows_from_records(hits)
+
+    def _combine_hit_results(
+        self,
+        semantic_results: list[tuple[CodeElementMeta, float]],
+        keyword_results: list[tuple[CodeElementMeta, float]],
+        pseudocode_results: list[tuple[CodeElementMeta, float]] | None = None,
+    ) -> list[Hit]:
+        return _combination.combine_results(
             semantic_results,
             keyword_results,
             pseudocode_results,
             semantic_weight=self.semantic_weight,
             keyword_weight=self.keyword_weight,
         )
-        return _hit_rows_from_records(hits)
 
     def _expand_with_graph(
         self, results: list[dict[str, Any]], max_hops: int = 2
     ) -> list[dict[str, Any]]:
+        hits = self._expand_hits_with_graph(
+            _hit_records_from_rows(results),
+            max_hops=max_hops,
+        )
+        return _hit_rows_from_records(hits)
+
+    def _expand_hits_with_graph(
+        self, results: list[Hit], max_hops: int = 2
+    ) -> list[Hit]:
         """
         Expand results using code graph relationships
 
@@ -1700,11 +1791,11 @@ class HybridRetriever:
             return results
 
         # Step 1: Keep all original results (even those not in graph)
-        expanded = {}
+        expanded: dict[str, Hit] = {}
 
         # Add all original results first, using a generated key for those without elem_id
         for idx, result in enumerate(results):
-            elem_id = result["element"].get("id")
+            elem_id = result.element_id
             if elem_id:
                 expanded[elem_id] = result
             else:
@@ -1714,13 +1805,15 @@ class HybridRetriever:
 
         # Step 2: Expand only the top 10 elements that exist in the active graph backend
         for result in results[:10]:
-            elem_id = result["element"].get("id")
-            elem_name = result["element"].get("name")
+            elem_id = result.element_id
+            elem_name = result.element_name
 
             if not elem_id or elem_id not in expanded:
                 continue
             related_ids = self._get_related_ids(
-                elem_id, result["element"], max_hops=max_hops
+                elem_id,
+                _element_payload_from_hit(result),
+                max_hops=max_hops,
             )
 
             # Add related elements with reduced score
@@ -1730,25 +1823,24 @@ class HybridRetriever:
                 elem = self.graph_builder.element_by_id.get(related_id)
                 if elem is None:
                     continue
-                graph_score = result["total_score"] * 0.5 * self.graph_weight
-                expanded[related_id] = {
-                    "element": serialize_code_element(elem),
-                    "semantic_score": 0.0,
-                    "keyword_score": 0.0,
-                    "pseudocode_score": 0.0,
-                    "graph_score": graph_score,
-                    "total_score": graph_score,
-                    "related_to": elem_name,
-                }
+                graph_score = result.total_score * 0.5 * self.graph_weight
+                expanded[related_id] = Hit.from_element(
+                    serialize_code_element(elem),
+                    score=graph_score,
+                    source=RetrievalSource.GRAPH,
+                    graph_score=graph_score,
+                    total_score=graph_score,
+                    related_to=elem_name,
+                )
 
         # Convert back to list and sort
-        results = list(expanded.values())
-        results.sort(key=lambda x: x["total_score"], reverse=True)
+        expanded_hits = list(expanded.values())
+        expanded_hits.sort(key=lambda hit: hit.total_score, reverse=True)
 
-        return results
+        return expanded_hits
 
     def _get_related_ids(
-        self, element_id: str, element_meta: dict[str, Any], max_hops: int = 2
+        self, element_id: str, element_meta: CodeElementMeta, max_hops: int = 2
     ) -> set[str]:
         use_ir = self.graph_expansion_backend == "ir" and (
             getattr(self, "ir_graphs", None) is not None
@@ -1768,7 +1860,7 @@ class HybridRetriever:
         return self.graph_builder.get_related_elements(element_id, max_hops)
 
     def _get_related_ids_from_ir(
-        self, element_id: str, element_meta: dict[str, Any], max_hops: int = 2
+        self, element_id: str, element_meta: CodeElementMeta, max_hops: int = 2
     ) -> set[str]:
         ir_graphs = self._ensure_ir_graphs_loaded()
         if ir_graphs is None:
@@ -1819,7 +1911,7 @@ class HybridRetriever:
                     break
         return mapped
 
-    def _heuristic_ir_seed(self, element_meta: dict[str, Any]) -> str | None:
+    def _heuristic_ir_seed(self, element_meta: CodeElementMeta) -> str | None:
         ir_graphs = self._ensure_ir_graphs_loaded()
         if ir_graphs is None:
             return None
@@ -1842,25 +1934,35 @@ class HybridRetriever:
         self, query: str, results: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Re-rank results based on additional factors"""
-        hits = _filtering.rerank(_hit_records_from_rows(results))
-        return _hit_rows_from_records(hits)
+        return _hit_rows_from_records(self._rerank_hits(_hit_records_from_rows(results)))
+
+    def _rerank_hits(self, results: list[Hit]) -> list[Hit]:
+        return _filtering.rerank(results)
 
     def _apply_filters(
         self, results: list[dict[str, Any]], filters: dict[str, Any]
     ) -> list[dict[str, Any]]:
         """Apply filters to results"""
-        hits = _filtering.apply_filters(
-            _hit_records_from_rows(results),
+        return _hit_rows_from_records(
+            self._apply_filters_to_hits(_hit_records_from_rows(results), filters)
+        )
+
+    def _apply_filters_to_hits(
+        self, results: list[Hit], filters: dict[str, Any]
+    ) -> list[Hit]:
+        return _filtering.apply_filters(
+            results,
             _element_filter_from_payload(filters),
         )
-        return _hit_rows_from_records(hits)
 
     def _diversify(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Diversify results to avoid too many similar elements"""
-        hits = _filtering.diversify(
-            _hit_records_from_rows(results), self.diversity_penalty
+        return _hit_rows_from_records(
+            self._diversify_hits(_hit_records_from_rows(results))
         )
-        return _hit_rows_from_records(hits)
+
+    def _diversify_hits(self, results: list[Hit]) -> list[Hit]:
+        return _filtering.diversify(results, self.diversity_penalty)
 
     def _final_repo_filter(
         self, results: list[dict[str, Any]], repo_filter: list[str]
@@ -1876,8 +1978,13 @@ class HybridRetriever:
         Returns:
             Filtered results containing only elements from allowed repositories
         """
-        filtered, count = _filtering.final_repo_filter(
-            _hit_records_from_rows(results), repo_filter, return_count=True
+        filtered, count = cast(
+            tuple[list[Hit], int],
+            self._final_repo_filter_hits(
+                _hit_records_from_rows(results),
+                repo_filter,
+                return_count=True,
+            ),
         )
         if count > 0:
             self.logger.warning(
@@ -1885,6 +1992,19 @@ class HybridRetriever:
                 f"This indicates a potential issue in the retrieval pipeline."
             )
         return _hit_rows_from_records(filtered)
+
+    def _final_repo_filter_hits(
+        self,
+        results: list[Hit],
+        repo_filter: list[str],
+        *,
+        return_count: bool = False,
+    ) -> list[Hit] | tuple[list[Hit], int]:
+        return _filtering.final_repo_filter(
+            results,
+            repo_filter,
+            return_count=return_count,
+        )
 
     def retrieve_by_file(self, file_path: str) -> list[dict[str, Any]]:
         """Retrieve all elements from a specific file"""

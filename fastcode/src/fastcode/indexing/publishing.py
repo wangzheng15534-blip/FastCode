@@ -6,14 +6,16 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
+
+from ..ports.jobs import IndexRunStore as IndexRunStorePort
+from ..ports.publishing import LineagePublisher
 
 if TYPE_CHECKING:
-    from ..store.index_run import IndexRunStore
+    from ..ports.jobs import IndexRunView
     from ..store.manifest import ManifestStore
     from ..store.snapshot import SnapshotStore
     from .redo_worker import RedoWorker
-    from .terminus import TerminusPublisher
 
 
 class PublishingService:
@@ -35,10 +37,10 @@ class PublishingService:
         *,
         config: dict[str, Any],
         logger: logging.Logger,
-        index_run_store: IndexRunStore,
+        index_run_store: IndexRunStorePort,
         manifest_store: ManifestStore,
         snapshot_store: SnapshotStore,
-        terminus_publisher: TerminusPublisher,
+        terminus_publisher: LineagePublisher,
         redo_worker: RedoWorker | None,
         build_git_meta: Callable[[dict[str, Any]], dict[str, Any]],
         previous_snapshot_symbol_versions: Callable[
@@ -58,49 +60,43 @@ class PublishingService:
         self._run_index_pipeline = run_index_pipeline_cb
 
     def get_index_run(self, run_id: str) -> dict[str, Any] | None:
-        return self.index_run_store.get_run(run_id)
-
-    def _get_run_record_or_payload(self, run_id: str) -> Any:
-        get_record = getattr(self.index_run_store, "get_run_record", None)
-        if callable(get_record):
-            record = get_record(run_id)
-            if record is not None:
-                return record
-        return self.index_run_store.get_run(run_id)
-
-    def _claim_publish_task_record_or_payload(self) -> Any:
-        claim_record = getattr(
-            self.index_run_store, "claim_next_publish_task_record", None
-        )
-        if callable(claim_record):
-            record = claim_record()
-            if record is not None:
-                return record
-        return self.index_run_store.claim_next_publish_task()
-
-    @staticmethod
-    def _field(payload: Any, name: str) -> Any:
-        if isinstance(payload, dict):
-            return cast(dict[str, Any], payload).get(name)
-        return getattr(payload, name, None)
+        run = self.index_run_store.get_run_record(run_id)
+        return self._run_payload(run) if run is not None else None
 
     @classmethod
     def _manifest_payload(cls, manifest: Any) -> dict[str, Any]:
         return {
-            field_name: cls._field(manifest, field_name)
+            field_name: getattr(manifest, field_name, None)
             for field_name in cls._MANIFEST_FIELDS
+        }
+
+    @staticmethod
+    def _run_payload(run: IndexRunView) -> dict[str, Any]:
+        return {
+            "run_id": run.run_id,
+            "repo_name": run.repo_name,
+            "snapshot_id": run.snapshot_id,
+            "branch": run.branch,
+            "commit_id": run.commit_id,
+            "idempotency_key": run.idempotency_key,
+            "status": run.status,
+            "error_message": run.error_message,
+            "warnings_json": run.warnings_json,
+            "created_at": run.created_at,
+            "started_at": run.started_at,
+            "completed_at": run.completed_at,
         }
 
     def publish_index_run(
         self, run_id: str, ref_name: str | None = None
     ) -> dict[str, Any]:
-        run = self._get_run_record_or_payload(run_id)
+        run = self.index_run_store.get_run_record(run_id)
         if not run:
             raise RuntimeError(f"index run not found: {run_id}")
-        snapshot_id = str(self._field(run, "snapshot_id") or "")
-        repo_name = str(self._field(run, "repo_name") or "")
-        branch = self._field(run, "branch")
-        commit_id = self._field(run, "commit_id")
+        snapshot_id = run.snapshot_id
+        repo_name = run.repo_name
+        branch = run.branch
+        commit_id = run.commit_id
         snapshot = self.snapshot_store.load_snapshot(snapshot_id)
         if not snapshot:
             raise RuntimeError(f"snapshot not found for run: {run_id}")
@@ -162,20 +158,20 @@ class PublishingService:
         failed = 0
 
         while processed < limit:
-            task = self._claim_publish_task_record_or_payload()
+            task = self.index_run_store.claim_next_publish_task_record()
             if not task:
                 break
             processed += 1
-            task_id = str(self._field(task, "task_id") or "")
-            run_id = str(self._field(task, "run_id") or "")
+            task_id = task.task_id
+            run_id = task.run_id
             try:
-                run = self._get_run_record_or_payload(run_id)
+                run = self.index_run_store.get_run_record(run_id)
                 if not run:
                     raise RuntimeError(f"run not found: {run_id}")
-                snapshot_id = str(self._field(run, "snapshot_id") or "")
-                repo_name = str(self._field(run, "repo_name") or "")
-                branch = self._field(run, "branch")
-                commit_id = self._field(run, "commit_id")
+                snapshot_id = run.snapshot_id
+                repo_name = run.repo_name
+                branch = run.branch
+                commit_id = run.commit_id
                 snapshot = self.snapshot_store.load_snapshot(snapshot_id)
                 if not snapshot:
                     raise RuntimeError(f"snapshot not found: {snapshot_id}")

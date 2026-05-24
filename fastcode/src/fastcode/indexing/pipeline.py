@@ -41,28 +41,35 @@ from ..ir.graph import IRGraphBuilder, IRGraphs
 from ..ir.merge import merge_ir
 from ..ir.types import IRRelation, IRSnapshot, IRUnitSupport
 from ..ir.validate import validate_snapshot
+from ..ports.artifacts import (
+    FileArtifactStore as FileArtifactStorePort,
+)
+from ..ports.artifacts import (
+    UnitArtifactStore as UnitArtifactStorePort,
+)
+from ..ports.execution import (
+    ScipFileInfoView,
+    ScipIndexerRuntime,
+    SemanticHelperRuntime,
+)
+from ..ports.publishing import LineagePublisher
+from ..ports.storage import DocumentGraphRuntime
 from ..query.retriever import HybridRetriever
 from ..scip.ast_adapter import build_ir_from_ast
 from ..scip.global_builder import GlobalIndexBuilder
-from ..scip.indexers import (
-    detect_scip_languages_from_file_infos,
-    detect_scip_languages_in_paths,
-    get_scip_indexer_profile,
-)
-from ..scip.loader import load_scip_artifact
 from ..scip.models import SCIPIndex
 from ..scip.module_resolver import ModuleResolver
 from ..scip.scip_adapter import build_ir_from_scip
 from ..scip.symbol_resolver import SymbolResolver
+from ..semantic.contracts import SemanticGraphContext
 from ..semantic.resolvers.patching import apply_resolution_patch
 from ..semantic.resolvers.registry import build_default_semantic_resolver_registry
 from ..semantic.symbol_index import SnapshotSymbolIndex
-from ..store.file_artifacts import FileArtifactStore
+from ..store.graph_artifacts import GraphArtifactStore
 from ..store.index_run import IndexRunStore
 from ..store.manifest import ManifestStore
 from ..store.pg_retrieval import PgRetrievalStore
 from ..store.snapshot import SnapshotStore
-from ..store.unit_artifacts import UnitArtifactStore
 from ..store.vector import VectorStore
 from ..store.vector_math import as_float32_matrix, as_float32_vector
 from ..utils.filesystem import compute_file_hash, ensure_dir, normalize_path
@@ -86,9 +93,6 @@ from .incremental import (
 )
 from .indexer import CodeIndexer
 from .loader import RepositoryLoader
-from .scip_runner import run_scip_for_language, run_scip_python_index
-from .semantic_helper_runner import run_helper_command
-from .terminus import TerminusPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +148,7 @@ class IndexPipeline:
         snapshot_store: SnapshotStore,
         manifest_store: ManifestStore,
         index_run_store: IndexRunStore,
-        unit_artifact_store: UnitArtifactStore,
+        unit_artifact_store: UnitArtifactStorePort,
         snapshot_symbol_index: SnapshotSymbolIndex,
         vector_store: VectorStore,
         embedder: CodeEmbedder,
@@ -153,14 +157,17 @@ class IndexPipeline:
         graph_builder: CodeGraphBuilder,
         ir_graph_builder: IRGraphBuilder,
         pg_retrieval_store: PgRetrievalStore | None,
-        terminus_publisher: TerminusPublisher,
+        terminus_publisher: LineagePublisher,
         doc_ingester: KeyDocIngester,
         semantic_resolver_registry: Any,
         # Callbacks for mutable FastCode state
         set_repo_indexed: Callable[[bool], None],
         set_repo_loaded: Callable[[bool], None],
         set_repo_info: Callable[[dict[str, Any]], None],
-        file_artifact_store: FileArtifactStore | None = None,
+        graph_artifact_store: GraphArtifactStore | None = None,
+        semantic_helper_runtime: SemanticHelperRuntime | None = None,
+        scip_indexer_runtime: ScipIndexerRuntime | None = None,
+        file_artifact_store: FileArtifactStorePort | None = None,
     ) -> None:
         self.config = config
         self.logger = logger
@@ -169,10 +176,6 @@ class IndexPipeline:
         self.manifest_store = manifest_store
         self.index_run_store = index_run_store
         self.unit_artifact_store = unit_artifact_store
-        if file_artifact_store is None:
-            artifact_runtime = getattr(unit_artifact_store, "db_runtime", None)
-            if artifact_runtime is not None:
-                file_artifact_store = FileArtifactStore(artifact_runtime)
         self.file_artifact_store = file_artifact_store
         self.snapshot_symbol_index = snapshot_symbol_index
         self.vector_store = vector_store
@@ -181,10 +184,13 @@ class IndexPipeline:
         self.retriever = retriever
         self.graph_builder = graph_builder
         self.ir_graph_builder = ir_graph_builder
+        self.graph_artifact_store = graph_artifact_store or GraphArtifactStore(config)
         self.pg_retrieval_store = pg_retrieval_store
         self.terminus_publisher = terminus_publisher
         self.doc_ingester = doc_ingester
         self.semantic_resolver_registry = semantic_resolver_registry
+        self.semantic_helper_runtime = semantic_helper_runtime
+        self.scip_indexer_runtime = scip_indexer_runtime
         self._set_repo_indexed = set_repo_indexed
         self._set_repo_loaded = set_repo_loaded
         self._set_repo_info = set_repo_info
@@ -197,6 +203,70 @@ class IndexPipeline:
         self._last_file_inventory_metrics: dict[str, Any] = {}
         self._last_repository_inventory_metrics: dict[str, Any] = {}
         self._active_pipeline_profile: dict[str, Any] | None = None
+
+    def _run_scip_indexer(
+        self,
+        language: str,
+        repo_path: str,
+        output_path: str,
+    ) -> str:
+        if self.scip_indexer_runtime is None:
+            raise RuntimeError("SCIP indexer runtime is not configured")
+        return self.scip_indexer_runtime.run_indexer(language, repo_path, output_path)
+
+    def _scip_profile(self, language: str) -> Any | None:
+        if self.scip_indexer_runtime is None:
+            return None
+        return self.scip_indexer_runtime.get_profile(language)
+
+    def _detect_scip_languages_from_file_infos(
+        self,
+        file_infos: Sequence[ScipFileInfoView],
+    ) -> tuple[str, ...]:
+        if self.scip_indexer_runtime is None:
+            return ()
+        return self.scip_indexer_runtime.detect_languages_from_file_infos(file_infos)
+
+    def _detect_scip_languages_in_paths(
+        self,
+        repo_path: str,
+        relative_paths: Sequence[str],
+    ) -> tuple[str, ...]:
+        if self.scip_indexer_runtime is None:
+            return ()
+        return self.scip_indexer_runtime.detect_languages_in_paths(
+            repo_path, relative_paths
+        )
+
+    @staticmethod
+    def _experimental_scip_languages(languages: Sequence[str]) -> list[str]:
+        experimental: list[str] = []
+        for language in languages:
+            if language in {"zig", "fortran", "julia"}:
+                experimental.append(language)
+        return experimental
+
+    def _load_scip_artifact(self, path: str) -> SCIPIndex:
+        if self.scip_indexer_runtime is None:
+            raise RuntimeError("SCIP indexer runtime is not configured")
+        return self.scip_indexer_runtime.load_artifact(path)
+
+    def _run_scip_for_language(
+        self,
+        language: str,
+        repo_path: str,
+        output_dir: str,
+    ) -> SCIPIndex | None:
+        output_path = os.path.join(output_dir, f"{language}.scip")
+        try:
+            artifact_path = self._run_scip_indexer(language, repo_path, output_path)
+            return self._load_scip_artifact(artifact_path)
+        except (RuntimeError, FileNotFoundError, ValueError) as exc:
+            self.logger.warning("SCIP indexer for %s unavailable: %s", language, exc)
+            return None
+
+    def _run_scip_python_index(self, repo_path: str, output_path: str) -> str:
+        return self._run_scip_indexer("python", repo_path, output_path)
 
     # ------------------------------------------------------------------
     # URL inference (pure static utility)
@@ -472,7 +542,7 @@ class IndexPipeline:
             return None
 
         graph_builder = CodeGraphBuilder(self.config)
-        graph_loaded = graph_builder.load(artifact_key)
+        graph_loaded = self.graph_artifact_store.load(graph_builder, artifact_key)
         retriever = HybridRetriever(
             self.config,
             vector_store,
@@ -515,7 +585,7 @@ class IndexPipeline:
             return False
 
         bm25_loaded = self.retriever.load_bm25(artifact_key)
-        graph_loaded = self.graph_builder.load(artifact_key)
+        graph_loaded = self.graph_artifact_store.load(self.graph_builder, artifact_key)
         if artifact_key.startswith("snap_"):
             snapshot_id = self._snapshot_id_for_artifact_key(artifact_key)
             self._configure_retriever_ir_graph_backend(
@@ -977,13 +1047,15 @@ class IndexPipeline:
                 payload[field_name] = str(legacy_payload.get(field_name))
         return payload
 
-    def _has_active_doc_persistence(self, graph_runtime: Any) -> bool:
+    def _has_active_doc_persistence(
+        self, graph_runtime: DocumentGraphRuntime | None
+    ) -> bool:
         """Return True when doc ingestion has at least one active sink."""
         return self.snapshot_store.db_runtime.backend == "postgres" or bool(
-            getattr(graph_runtime, "enabled", False)
+            graph_runtime is not None and graph_runtime.enabled
         )
 
-    def _should_ingest_docs(self, graph_runtime: Any) -> bool:
+    def _should_ingest_docs(self, graph_runtime: DocumentGraphRuntime | None) -> bool:
         """Only ingest docs when the feature is enabled and results can be persisted."""
         return bool(
             getattr(self.doc_ingester, "enabled", False)
@@ -991,18 +1063,16 @@ class IndexPipeline:
 
     def _sync_doc_overlay(
         self,
-        graph_runtime: Any,
+        graph_runtime: DocumentGraphRuntime | None,
         *,
         chunks: list[dict[str, Any]],
         mentions: list[dict[str, Any]],
         warnings: list[str],
     ) -> None:
         """Best-effort Ladybug sync with explicit failure reporting."""
-        if not chunks or not getattr(graph_runtime, "enabled", False):
+        if not chunks or graph_runtime is None or not graph_runtime.enabled:
             return
         try:
-            if graph_runtime is None:
-                raise RuntimeError("Graph runtime not available")
             synced = graph_runtime.sync_docs(chunks=chunks, mentions=mentions)
         except Exception as e:
             warnings.append(f"ladybug_doc_sync_failed: {e}")
@@ -1205,7 +1275,7 @@ class IndexPipeline:
         *,
         snapshot: IRSnapshot,
         elements: list[CodeElement],
-        legacy_graph_builder: CodeGraphBuilder | None,
+        graph_context: CodeGraphBuilder | None,
         target_paths: set[str],
         warnings: list[str],
         budget: str = "changed_files",
@@ -1214,11 +1284,11 @@ class IndexPipeline:
             return snapshot
 
         upgraded = snapshot
-        registry = getattr(
-            self,
-            "semantic_resolver_registry",
-            build_default_semantic_resolver_registry(command_runner=run_helper_command),
-        )
+        registry = getattr(self, "semantic_resolver_registry", None)
+        if registry is None:
+            registry = build_default_semantic_resolver_registry(
+                semantic_helper_runtime=getattr(self, "semantic_helper_runtime", None)
+            )
 
         # Collect pending capabilities from unresolved relations so we can
         # capability-gate which resolvers actually run.
@@ -1243,13 +1313,14 @@ class IndexPipeline:
                 target_paths=target_paths,
             )
 
+        semantic_graph_context = cast(SemanticGraphContext | None, graph_context)
         for resolver in resolvers:
             try:
                 patch = resolver.resolve(
                     snapshot=upgraded,
                     elements=elements,
                     target_paths=target_paths,
-                    legacy_graph_builder=legacy_graph_builder,
+                    graph_context=semantic_graph_context,
                 )
             except Exception as exc:
                 warnings.append(f"{resolver.language}_resolver_failed: {exc}")
@@ -3169,7 +3240,11 @@ class IndexPipeline:
         new_elements = cached_changed_elements + parsed_new_elements
         parsed_artifact_publish = {
             "mode": "content_addressed",
-            "artifact_type": FileArtifactStore.PARSED_ELEMENTS_ARTIFACT_TYPE,
+            "artifact_type": (
+                self.file_artifact_store.parsed_elements_artifact_type
+                if self.file_artifact_store is not None
+                else "parsed_elements"
+            ),
             "candidate_files": len(uncached_changed_file_infos),
             "written_records": 0,
             "candidate_elements": len(parsed_new_elements),
@@ -3667,7 +3742,7 @@ class IndexPipeline:
         target_paths: set[str],
     ) -> ScopedSCIPCacheEntry:
         normalized_scope = normalize_path(scope_root or ".") or "."
-        profile = get_scip_indexer_profile(language)
+        profile = self._scip_profile(language)
         file_fingerprints = [
             fingerprint
             for path in sorted(normalize_path(path) for path in target_paths if path)
@@ -3799,7 +3874,9 @@ class IndexPipeline:
         repo_root = self.loader.repo_path or ""
         if scope_kind != "package" or not repo_root or not scope_roots:
             return None, []
-        languages = detect_scip_languages_in_paths(repo_root, sorted(target_paths))
+        languages = list(
+            self._detect_scip_languages_in_paths(repo_root, sorted(target_paths))
+        )
         if not languages:
             return None, []
 
@@ -3834,7 +3911,7 @@ class IndexPipeline:
                     cache_misses += 1
                     scip_temp_root = tempfile.mkdtemp(prefix="fastcode_scope_scip_")
                     self._profile_record_temp_dir(scip_temp_root)
-                    scoped_index = run_scip_for_language(
+                    scoped_index = self._run_scip_for_language(
                         language,
                         materialized_root,
                         scip_temp_root,
@@ -3961,9 +4038,11 @@ class IndexPipeline:
 
         if scope_kind == "package" and (self.loader.repo_path or ""):
             try:
-                scoped_tool_languages = detect_scip_languages_in_paths(
-                    self.loader.repo_path or "",
-                    sorted(target_paths),
+                scoped_tool_languages = list(
+                    self._detect_scip_languages_in_paths(
+                        self.loader.repo_path or "",
+                        sorted(target_paths),
+                    )
                 )
             except Exception as exc:
                 warnings.append(f"scoped_tool_language_detection_failed: {exc}")
@@ -4028,7 +4107,7 @@ class IndexPipeline:
         repaired_snapshot = self._apply_semantic_resolvers(
             snapshot=base_snapshot,
             elements=elements,
-            legacy_graph_builder=self.graph_builder,
+            graph_context=self.graph_builder,
             target_paths=target_paths,
             warnings=warnings,
             budget="repair_frontier",
@@ -4112,8 +4191,7 @@ class IndexPipeline:
         load_repository_cb: Callable[..., None] | None = None,
         # Access to loaded_repositories dict for storing results
         get_loaded_repositories: Callable[[], dict[str, dict[str, Any]]] | None = None,
-        # Access to graph_runtime for doc sync
-        graph_runtime: Any = None,
+        graph_runtime: DocumentGraphRuntime | None = None,
     ) -> dict[str, Any]:
         """
         Run snapshot-oriented indexing pipeline with AST + optional SCIP merge.
@@ -4198,21 +4276,10 @@ class IndexPipeline:
             commit_id=snapshot_ref.get("commit_id"),
             idempotency_key=idempotency_key,
         )
-        get_run_record = getattr(self.index_run_store, "get_run_record", None)
-        existing_run = (
-            get_run_record(run_id)
-            if callable(get_run_record)
-            else self.index_run_store.get_run(run_id)
-        )
-        existing_run_status = (
-            existing_run.get("status")
-            if isinstance(existing_run, dict)
-            else getattr(existing_run, "status", None)
-        )
+        existing_run = self.index_run_store.get_run_record(run_id)
+        existing_run_status = existing_run.status if existing_run is not None else None
         existing_run_warnings_json = (
-            existing_run.get("warnings_json")
-            if isinstance(existing_run, dict)
-            else getattr(existing_run, "warnings_json", None)
+            existing_run.warnings_json if existing_run is not None else None
         )
         if (
             existing_run
@@ -4426,7 +4493,7 @@ class IndexPipeline:
                     experimental_scip_languages: list[str] = []
                     scip_data: SCIPIndex | None = None
                     if scip_artifact_path:
-                        scip_data = load_scip_artifact(scip_artifact_path)
+                        scip_data = self._load_scip_artifact(scip_artifact_path)
                         scip_artifact_paths = [scip_artifact_path]
                         scip_snapshot = build_ir_from_scip(
                             repo_name=repo_name,
@@ -4479,13 +4546,9 @@ class IndexPipeline:
                                     warnings=warnings,
                                 )
                             )
-                            experimental_scip_languages = [
-                                language
-                                for language in scoped_languages
-                                if (profile := get_scip_indexer_profile(language))
-                                is not None
-                                and profile.experimental
-                            ]
+                            experimental_scip_languages = (
+                                self._experimental_scip_languages(scoped_languages)
+                            )
                             if experimental_scip_languages:
                                 warning = "experimental_scip_languages: " + ", ".join(
                                     sorted(experimental_scip_languages)
@@ -4531,16 +4594,16 @@ class IndexPipeline:
                             out_dir = tempfile.mkdtemp(prefix="fastcode_scip_")
                             self._profile_record_temp_dir(out_dir)
                             scip_indexes = []
-                            detected_languages = detect_scip_languages_from_file_infos(
-                                current_files
+                            detected_languages = list(
+                                self._detect_scip_languages_from_file_infos(
+                                    cast(Sequence[ScipFileInfoView], current_files)
+                                )
                             )
-                            experimental_scip_languages = [
-                                language
-                                for language in detected_languages
-                                if (profile := get_scip_indexer_profile(language))
-                                is not None
-                                and profile.experimental
-                            ]
+                            experimental_scip_languages = (
+                                self._experimental_scip_languages(
+                                    detected_languages
+                                )
+                            )
                             if experimental_scip_languages:
                                 warning = "experimental_scip_languages: " + ", ".join(
                                     sorted(experimental_scip_languages)
@@ -4548,7 +4611,7 @@ class IndexPipeline:
                                 warnings.append(warning)
                                 layer2["warnings"].append(warning)
                             for language in detected_languages:
-                                scip_index = run_scip_for_language(
+                                scip_index = self._run_scip_for_language(
                                     language, self.loader.repo_path or "", out_dir
                                 )
                                 if scip_index is not None:
@@ -4560,11 +4623,11 @@ class IndexPipeline:
                                         scip_artifact_paths.append(artifact_path)
                             if not scip_indexes:
                                 out_path = os.path.join(out_dir, "index.scip.json")
-                                run_scip_python_index(
+                                self._run_scip_python_index(
                                     self.loader.repo_path or "", out_path
                                 )
                                 scip_indexes.append(
-                                    ("python", load_scip_artifact(out_path))
+                                    ("python", self._load_scip_artifact(out_path))
                                 )
                                 scip_artifact_paths.append(out_path)
                             scip_snapshots = [
@@ -4846,7 +4909,7 @@ class IndexPipeline:
             merged_snapshot = self._apply_semantic_resolvers(
                 snapshot=merged_snapshot,
                 elements=elements,
-                legacy_graph_builder=temp_graph,
+                graph_context=temp_graph,
                 target_paths=target_paths,
                 warnings=warnings,
             )
@@ -4985,7 +5048,7 @@ class IndexPipeline:
                 str | None, getattr(temp_retriever, "persist_dir", None)
             )
             graph_persist_dir = cast(
-                str | None, getattr(temp_graph, "persist_dir", None)
+                str | None, getattr(self.graph_artifact_store, "persist_dir", None)
             )
             if (
                 reusable_path_keys
@@ -5061,9 +5124,11 @@ class IndexPipeline:
                     else set()
                 )
                 if graph_reuse_path_keys:
-                    publish_graph_delta = getattr(temp_graph, "publish_delta", None)
+                    publish_graph_delta = getattr(
+                        self.graph_artifact_store, "publish_delta", None
+                    )
                     save_graph_incremental = getattr(
-                        temp_graph, "save_incremental", None
+                        self.graph_artifact_store, "save_incremental", None
                     )
                     with self._profile_store_surface(
                         pipeline_profile, "graph", graph_persist_dir
@@ -5073,6 +5138,7 @@ class IndexPipeline:
                                 cast(
                                     dict[str, Any],
                                     publish_graph_delta(
+                                        temp_graph,
                                         artifact_key,
                                         previous_name=incremental_previous_artifact_key,
                                         reusable_path_keys=graph_reuse_path_keys,
@@ -5084,6 +5150,7 @@ class IndexPipeline:
                                 cast(
                                     dict[str, Any],
                                     save_graph_incremental(
+                                        temp_graph,
                                         artifact_key,
                                         previous_name=incremental_previous_artifact_key,
                                         reusable_path_keys=graph_reuse_path_keys,
@@ -5091,7 +5158,7 @@ class IndexPipeline:
                                 )
                             )
                         else:
-                            temp_graph.save(artifact_key)
+                            self.graph_artifact_store.save(temp_graph, artifact_key)
                 else:
                     with self._profile_store_surface(
                         pipeline_profile, "graph", graph_persist_dir
@@ -5111,7 +5178,7 @@ class IndexPipeline:
                             module_resolver,
                             symbol_resolver,
                         )
-                        fallback_graph.save(artifact_key)
+                        self.graph_artifact_store.save(fallback_graph, artifact_key)
                         artifact_reuse_stats["graph_fallback_reason"] = (
                             "edge_or_delete_frontier_requires_full_graph"
                         )
@@ -5127,7 +5194,7 @@ class IndexPipeline:
                 with self._profile_store_surface(
                     pipeline_profile, "graph", graph_persist_dir
                 ):
-                    temp_graph.save(artifact_key)
+                    self.graph_artifact_store.save(temp_graph, artifact_key)
             with self._profile_store_surface(
                 pipeline_profile,
                 "unit_artifact",

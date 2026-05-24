@@ -1,5 +1,6 @@
 """Tests for pure snapshot logic."""
 
+from fastcode.retrieval.contracts import Hit, SourceCitation
 from fastcode.retrieval.snapshot import extract_sources_from_elements
 from fastcode.utils.hashing import projection_params_hash
 from fastcode.utils.paths import projection_scope_key
@@ -50,21 +51,29 @@ class TestProjectionParamsHash:
 class TestExtractSourcesFromElements:
     def test_basic(self):
         elements = [
-            {
-                "element": {
-                    "relative_path": "src/main.py",
-                    "repo_name": "myrepo",
-                    "type": "function",
-                    "name": "func1",
-                    "start_line": 10,
-                    "end_line": 20,
-                },
-            },
+            Hit(
+                element_id="func:1",
+                element_type="function",
+                element_name="func1",
+                score=0.0,
+                relative_path="src/main.py",
+                repo_name="myrepo",
+                start_line=10,
+                end_line=20,
+                total_score=0.0,
+            ),
         ]
         sources = extract_sources_from_elements(elements)
-        assert len(sources) == 1
-        assert sources[0]["file"] == "src/main.py"
-        assert sources[0]["repo"] == "myrepo"
+        assert sources == (
+            SourceCitation(
+                repository="myrepo",
+                file="src/main.py",
+                name="func1",
+                element_type="function",
+                lines="10-20",
+                score=0.0,
+            ),
+        )
 
     def test_empty(self):
-        assert extract_sources_from_elements([]) == []
+        assert extract_sources_from_elements([]) == ()

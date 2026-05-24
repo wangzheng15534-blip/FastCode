@@ -27,6 +27,7 @@ from .agent_context import (
     WorkingMemoryArtifact,
     WorkingSet,
 )
+from .contracts import SourceCitation
 
 COMPILER_FINGERPRINT = "fcx-v1"
 DEFAULT_PROJECTION_FINGERPRINT = "projection:none"
@@ -53,29 +54,16 @@ def _mapping_summary(value: Any) -> str:
 
 
 def build_evidence_refs_from_sources(
-    sources: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    sources: tuple[SourceCitation, ...] | list[SourceCitation],
     *,
     snapshot_id: str | None,
     source_kind: str = "range",
 ) -> tuple[EvidenceRef, ...]:
     refs: list[EvidenceRef] = []
     for index, item in enumerate(sources, 1):
-        repo_name = str(item.get("repository") or item.get("repo") or "")
-        path = str(item.get("file") or item.get("path") or "")
-        lines_value = item.get("lines")
-        start_line = item.get("start_line")
-        end_line = item.get("end_line")
-        if (
-            not lines_value
-            and isinstance(start_line, int)
-            and isinstance(end_line, int)
-        ):
-            lines_value = f"{start_line}-{end_line}"
-        lines = str(lines_value or "")
-        score_value = item.get("score")
-        if score_value is None:
-            score_value = item.get("total_score")
-        score = float(score_value) if isinstance(score_value, (int, float)) else None
+        repo_name = item.repository
+        path = item.file
+        lines = item.lines
         refs.append(
             EvidenceRef(
                 ref_id=f"e{index}",
@@ -84,8 +72,8 @@ def build_evidence_refs_from_sources(
                 snapshot_id=snapshot_id,
                 path=path or None,
                 lines=lines or None,
-                label=str(item.get("name") or path or f"source-{index}"),
-                score=score,
+                label=item.name or path or f"source-{index}",
+                score=item.score,
                 source="retrieval",
                 fresh="ok" if snapshot_id else "unknown",
             )

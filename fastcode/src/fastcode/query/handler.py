@@ -37,6 +37,7 @@ from ..retrieval.context_compiler import (
     build_turn_plan,
     compile_working_memory,
 )
+from ..retrieval.contracts import Hit, SourceCitation
 from ..semantic.symbol_index import SnapshotSymbolIndex
 from ..store.cache import CacheManager
 from ..store.cache_contracts import (
@@ -486,8 +487,8 @@ class QueryPipeline:
                         if result.get("summary") is not None
                         else None
                     ),
-                    sources=cast(list[dict[str, Any]], result.get("sources", []))
-                    or cast(list[dict[str, Any]], turn_bundle["sources"]),
+                    sources=self._source_citations_from_payloads(result.get("sources"))
+                    or cast(tuple[SourceCitation, ...], turn_bundle["sources"]),
                     processed_query=processed_query,
                     repo_filter=repo_filter,
                     enable_multi_turn=bool(enable_multi_turn),
@@ -694,8 +695,8 @@ class QueryPipeline:
                 question=question,
                 answer=full_answer,
                 summary=str(summary) if summary is not None else None,
-                sources=cast(list[dict[str, Any]], result.get("sources", []))
-                or cast(list[dict[str, Any]], turn_bundle["sources"]),
+                sources=self._source_citations_from_payloads(result.get("sources"))
+                or cast(tuple[SourceCitation, ...], turn_bundle["sources"]),
                 processed_query=processed_query,
                 repo_filter=repo_filter,
                 enable_multi_turn=bool(enable_multi_turn),
@@ -892,6 +893,70 @@ class QueryPipeline:
         if len(normalized) <= 280:
             return normalized
         return normalized[:277] + "..."
+
+    @staticmethod
+    def _source_citation_payloads(
+        sources: tuple[SourceCitation, ...],
+    ) -> list[dict[str, Any]]:
+        payloads: list[dict[str, Any]] = []
+        for source in sources:
+            payloads.append(
+                {
+                    "repository": source.repository,
+                    "repo": source.repository,
+                    "file": source.file,
+                    "name": source.name,
+                    "type": source.element_type,
+                    "lines": source.lines,
+                    "score": source.score,
+                }
+            )
+        return payloads
+
+    @staticmethod
+    def _source_citation_from_payload(payload: Any) -> SourceCitation | None:
+        if not isinstance(payload, Mapping):
+            return None
+        mapping = cast(Mapping[str, Any], payload)
+        repository = str(mapping.get("repository") or mapping.get("repo") or "")
+        file_path = str(mapping.get("file") or mapping.get("path") or "")
+        name = str(mapping.get("name") or "")
+        element_type = str(mapping.get("type") or mapping.get("element_type") or "")
+        lines_value = mapping.get("lines")
+        start_line = mapping.get("start_line")
+        end_line = mapping.get("end_line")
+        if not lines_value and isinstance(start_line, int) and isinstance(end_line, int):
+            lines_value = f"{start_line}-{end_line}"
+        lines = str(lines_value or "")
+        score_value = mapping.get("score")
+        if score_value is None:
+            score_value = mapping.get("total_score")
+        score = float(score_value) if isinstance(score_value, (int, float)) else 0.0
+        return SourceCitation(
+            repository=repository,
+            file=file_path,
+            name=name,
+            element_type=element_type,
+            lines=lines,
+            score=score,
+        )
+
+    @classmethod
+    def _source_citations_from_payloads(
+        cls,
+        payloads: Any,
+    ) -> tuple[SourceCitation, ...]:
+        if not isinstance(payloads, list | tuple):
+            return ()
+        records: list[SourceCitation] = []
+        for payload in cast(tuple[Any, ...] | list[Any], payloads):
+            if isinstance(payload, SourceCitation):
+                records.append(payload)
+                continue
+            record = cls._source_citation_from_payload(payload)
+            if record is not None:
+                records.append(record)
+        return tuple(records)
 
     def _build_tool_observations(
         self,
@@ -1095,7 +1160,7 @@ class QueryPipeline:
         question: str,
         answer: str,
         summary: str | None,
-        sources: list[dict[str, Any]],
+        sources: tuple[SourceCitation, ...],
         processed_query: ProcessedQuery,
         repo_filter: list[str] | None,
         enable_multi_turn: bool,
@@ -1248,7 +1313,7 @@ class QueryPipeline:
             query=question,
             answer=answer,
             summary=dialogue_summary,
-            retrieved_elements=sources,
+            retrieved_elements=self._source_citation_payloads(sources),
             metadata=metadata,
         )
         self.logger.info(
@@ -1300,6 +1365,7 @@ class QueryPipeline:
 
     def _extract_sources_from_elements(
         self, elements: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[SourceCitation, ...]:
         """Extract source information from retrieved elements"""
-        return _snapshot.extract_sources_from_elements(elements)
+        hits = tuple(Hit.from_retrieval_row(item) for item in elements)
+        return _snapshot.extract_sources_from_elements(hits)

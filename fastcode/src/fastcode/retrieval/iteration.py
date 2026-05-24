@@ -5,11 +5,12 @@ Zero I/O, zero logging. The orchestrator wraps these with logging.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any, NamedTuple
 
 import numpy as np
 
-from fastcode.retrieval.contracts import IterationConfig
+from fastcode.retrieval.contracts import Hit, IterationConfig, IterationHistoryEntry
 
 # ---------------------------------------------------------------------------
 # AdaptiveParams -- result of parameter initialization
@@ -29,31 +30,53 @@ class AdaptiveParams(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
+def _history_entry(
+    value: IterationHistoryEntry | Mapping[str, Any],
+) -> IterationHistoryEntry:
+    if isinstance(value, IterationHistoryEntry):
+        return value
+    mapping = value
+    return IterationHistoryEntry(
+        round=int(mapping.get("round") or 0),
+        confidence=int(mapping.get("confidence") or 0),
+        query_complexity=int(mapping.get("query_complexity") or 0),
+        elements_count=int(mapping.get("elements_count") or 0),
+        total_lines=int(mapping.get("total_lines") or 0),
+        confidence_gain=float(mapping.get("confidence_gain") or 0.0),
+        lines_added=int(mapping.get("lines_added") or 0),
+        roi=float(mapping.get("roi") or 0.0),
+        budget_usage_pct=float(mapping.get("budget_usage_pct") or 0.0),
+    )
+
+
 def calculate_recent_confidence_gain(
-    history: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    history: Sequence[IterationHistoryEntry | Mapping[str, Any]],
 ) -> float:
     """Return confidence delta between last two history entries."""
     if len(history) < 2:
         return 0.0
-    return float(history[-1]["confidence"] - history[-2]["confidence"])
+    current = _history_entry(history[-1])
+    previous = _history_entry(history[-2])
+    return float(current.confidence - previous.confidence)
 
 
 def calculate_recent_lines_added(
-    history: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    history: Sequence[IterationHistoryEntry | Mapping[str, Any]],
 ) -> int:
     """Return total-lines delta between last two history entries."""
     if len(history) < 2:
         return 0
-    return history[-1]["total_lines"] - history[-2]["total_lines"]
+    current = _history_entry(history[-1])
+    previous = _history_entry(history[-2])
+    return current.total_lines - previous.total_lines
 
 
-def calculate_total_lines(elements: list[dict[str, Any]]) -> int:
+def calculate_total_lines(elements: Sequence[Hit]) -> int:
     """Sum (end - start + 1) for every element with line-range info."""
     total = 0
-    for elem_data in elements:
-        elem = elem_data.get("element", {})
-        start = elem.get("start_line", 0)
-        end = elem.get("end_line", 0)
+    for hit in elements:
+        start = hit.start_line
+        end = hit.end_line
         if end > start:
             total += end - start + 1
     return total
@@ -161,7 +184,7 @@ def should_continue_iteration(
     total_lines: int,
     line_budget: int,
     confidence_threshold: int,
-    history: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    history: Sequence[IterationHistoryEntry | Mapping[str, Any]],
     min_confidence_gain: float,
     query_complexity: int = 50,
 ) -> bool:
@@ -180,13 +203,13 @@ def should_continue_iteration(
 
     # Check 4: Adaptive trend & ROI analysis
     if len(history) >= 2:
-        current_metrics = history[-1]
-        current_gain = current_metrics["confidence_gain"]
-        current_roi = current_metrics["roi"]
+        current_metrics = _history_entry(history[-1])
+        current_gain = current_metrics.confidence_gain
+        current_roi = current_metrics.roi
 
         # 4a. Stagnation -- consecutive small fluctuations
         if abs(current_gain) < 1.0 and len(history) >= 3:
-            prev_gain = history[-2]["confidence_gain"]
+            prev_gain = _history_entry(history[-2]).confidence_gain
             if abs(prev_gain) < 1.0:
                 return False
 
@@ -198,16 +221,18 @@ def should_continue_iteration(
             return -1.0 <= gain < min_confidence_gain and roi < min_roi
 
         if _is_low_performance(current_gain, current_roi) and len(history) >= 3:
-            prev_metrics = history[-2]
+            prev_metrics = _history_entry(history[-2])
             if _is_low_performance(
-                prev_metrics["confidence_gain"],
-                prev_metrics["roi"],
+                prev_metrics.confidence_gain,
+                prev_metrics.roi,
             ):
                 return False
 
     # Check 5: Strict stagnation (last 3 rounds)
     if len(history) >= 3:
-        last_three_confidences = [h["confidence"] for h in history[-3:]]
+        last_three_confidences = [
+            _history_entry(entry).confidence for entry in history[-3:]
+        ]
         if max(last_three_confidences) - min(last_three_confidences) < 2:
             return False
 
@@ -218,7 +243,7 @@ def should_continue_iteration(
 
     if estimated_lines_needed > remaining_line_budget * 1.5:
         # Relax if we just had a confidence drop (exploration mode)
-        if len(history) >= 2 and history[-1]["confidence_gain"] < 0:
+        if len(history) >= 2 and _history_entry(history[-1]).confidence_gain < 0:
             pass  # allow continuation
         else:
             return False
@@ -232,7 +257,7 @@ def determine_stopping_reason(
     confidence_threshold: int,
     current_round: int,
     max_iterations: int,
-    iteration_history: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    iteration_history: Sequence[IterationHistoryEntry | Mapping[str, Any]],
     line_budget: int,
     min_confidence_gain: float = 0.5,
 ) -> str:
@@ -241,10 +266,12 @@ def determine_stopping_reason(
         return "confidence_threshold_reached"
     if current_round >= max_iterations:
         return "max_iterations_reached"
-    if iteration_history and iteration_history[-1].get("total_lines", 0) >= line_budget:
+    if iteration_history and _history_entry(iteration_history[-1]).total_lines >= line_budget:
         return "line_budget_exceeded"
     if len(iteration_history) >= 3:
-        recent_gains = [h["confidence_gain"] for h in iteration_history[-2:]]
+        recent_gains = [
+            _history_entry(entry).confidence_gain for entry in iteration_history[-2:]
+        ]
         if all(g < min_confidence_gain for g in recent_gains):
             return "diminishing_returns"
     return "other"

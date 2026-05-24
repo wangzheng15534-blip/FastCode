@@ -37,7 +37,6 @@ from fastcode.retrieval.agent_context import (
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.store.cache_contracts import ContextDistillationRecord
 
-
 AGENT_CONTEXT_SERIALIZER_CLASSES = (
     EvidenceRef,
     ToolObservation,

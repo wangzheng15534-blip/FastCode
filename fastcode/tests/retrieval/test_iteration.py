@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from fastcode.retrieval.contracts import IterationConfig
+from fastcode.retrieval.contracts import Hit, IterationConfig, IterationHistoryEntry
 from fastcode.retrieval.iteration import (
     calculate_recent_confidence_gain,
     calculate_recent_lines_added,
@@ -18,19 +18,56 @@ from fastcode.retrieval.iteration import (
 )
 
 
+def _history_entry(
+    *,
+    confidence: int,
+    total_lines: int,
+    confidence_gain: float = 0.0,
+    roi: float = 0.0,
+    round: int = 1,
+    query_complexity: int = 0,
+    elements_count: int = 0,
+    lines_added: int = 0,
+    budget_usage_pct: float = 0.0,
+) -> IterationHistoryEntry:
+    return IterationHistoryEntry(
+        round=round,
+        confidence=confidence,
+        query_complexity=query_complexity,
+        elements_count=elements_count,
+        total_lines=total_lines,
+        confidence_gain=confidence_gain,
+        lines_added=lines_added,
+        roi=roi,
+        budget_usage_pct=budget_usage_pct,
+    )
+
+
+def _hit(
+    *,
+    start_line: int = 0,
+    end_line: int = 0,
+) -> Hit:
+    return Hit(
+        element_id="elem",
+        element_type="function",
+        element_name="elem",
+        score=0.0,
+        start_line=start_line,
+        end_line=end_line,
+    )
+
+
 class TestCalculateRecentConfidenceGain:
     def test_with_history(self):
         history = [
-            {"confidence": 50, "total_lines": 500},
-            {"confidence": 65, "total_lines": 800},
+            _history_entry(confidence=50, total_lines=500),
+            _history_entry(confidence=65, total_lines=800),
         ]
         assert calculate_recent_confidence_gain(history) == 15.0
 
     def test_single_entry(self):
-        assert (
-            calculate_recent_confidence_gain([{"confidence": 50, "total_lines": 500}])
-            == 0.0
-        )
+        assert calculate_recent_confidence_gain([_history_entry(confidence=50, total_lines=500)]) == 0.0
 
     def test_empty(self):
         assert calculate_recent_confidence_gain([]) == 0.0
@@ -39,15 +76,13 @@ class TestCalculateRecentConfidenceGain:
 class TestCalculateRecentLinesAdded:
     def test_with_history(self):
         history = [
-            {"confidence": 50, "total_lines": 500},
-            {"confidence": 65, "total_lines": 800},
+            _history_entry(confidence=50, total_lines=500),
+            _history_entry(confidence=65, total_lines=800),
         ]
         assert calculate_recent_lines_added(history) == 300
 
     def test_single_entry(self):
-        assert (
-            calculate_recent_lines_added([{"confidence": 50, "total_lines": 500}]) == 0
-        )
+        assert calculate_recent_lines_added([_history_entry(confidence=50, total_lines=500)]) == 0
 
     def test_empty(self):
         assert calculate_recent_lines_added([]) == 0
@@ -102,14 +137,11 @@ class TestCalculateRepoFactor:
 
 class TestCalculateTotalLines:
     def test_with_line_ranges(self):
-        elements = [
-            {"element": {"start_line": 10, "end_line": 20}},
-            {"element": {"start_line": 30, "end_line": 40}},
-        ]
+        elements = [_hit(start_line=10, end_line=20), _hit(start_line=30, end_line=40)]
         assert calculate_total_lines(elements) == 22
 
     def test_no_line_info(self):
-        assert calculate_total_lines([{"element": {}}]) == 0
+        assert calculate_total_lines([_hit()]) == 0
 
     def test_empty(self):
         assert calculate_total_lines([]) == 0
@@ -166,9 +198,9 @@ class TestShouldContinueIteration:
 
     def test_stops_on_stagnation(self):
         history = (
-            {"confidence": 60, "confidence_gain": 0.3, "roi": 1.0, "total_lines": 5000},
-            {"confidence": 60, "confidence_gain": 0.2, "roi": 0.5, "total_lines": 5500},
-            {"confidence": 60, "confidence_gain": 0.1, "roi": 0.3, "total_lines": 6000},
+            _history_entry(confidence=60, total_lines=5000, confidence_gain=0.3, roi=1.0),
+            _history_entry(confidence=60, total_lines=5500, confidence_gain=0.2, roi=0.5),
+            _history_entry(confidence=60, total_lines=6000, confidence_gain=0.1, roi=0.3),
         )
         assert not should_continue_iteration(
             confidence=60,
@@ -236,7 +268,10 @@ class TestDetermineStoppingReason:
             confidence_threshold=95,
             current_round=3,
             max_iterations=4,
-            iteration_history=tuple({"round": i} for i in range(3)),
+            iteration_history=tuple(
+                _history_entry(confidence=50 + i, total_lines=100 * (i + 1), round=i)
+                for i in range(3)
+            ),
             line_budget=12000,
         )
         assert "confidence" in reason.lower() or "threshold" in reason.lower()
@@ -247,7 +282,10 @@ class TestDetermineStoppingReason:
             confidence_threshold=95,
             current_round=4,
             max_iterations=4,
-            iteration_history=tuple({"round": i} for i in range(4)),
+            iteration_history=tuple(
+                _history_entry(confidence=50 + i, total_lines=100 * (i + 1), round=i)
+                for i in range(4)
+            ),
             line_budget=12000,
         )
         assert "iteration" in reason.lower() or "max" in reason.lower()
@@ -258,7 +296,10 @@ class TestDetermineStoppingReason:
             confidence_threshold=95,
             current_round=2,
             max_iterations=4,
-            iteration_history=tuple({"total_lines": 13000} for _ in range(2)),
+            iteration_history=tuple(
+                _history_entry(confidence=60, total_lines=13000, round=i)
+                for i in range(2)
+            ),
             line_budget=12000,
         )
         assert "budget" in reason.lower()

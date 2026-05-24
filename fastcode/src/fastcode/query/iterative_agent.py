@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from anthropic import Anthropic
@@ -22,7 +23,12 @@ import fastcode.retrieval.iteration as _iteration
 import fastcode.retrieval.prompts as _prompts
 
 from ..ir.element import serialize_code_element
-from ..retrieval.contracts import Hit, IterationConfig, ToolHistoryEntry
+from ..retrieval.contracts import (
+    Hit,
+    IterationConfig,
+    IterationHistoryEntry,
+    ToolHistoryEntry,
+)
 from ..utils.json import (
     extract_json_from_response,
     remove_json_comments,
@@ -50,8 +56,6 @@ from .contracts import (
 )
 from .llm import openai_chat_completion
 
-# Type alias for iteration history entries
-IterationEntry = dict[str, Any]
 
 def _hit_records_from_rows(rows: list[dict[str, Any]]) -> tuple[Hit, ...]:
     return tuple(Hit.from_retrieval_row(row) for row in rows)
@@ -130,7 +134,7 @@ class IterativeAgent:
         self.repo_stats: dict[str, Any] | None = None
 
         # Iteration history
-        self.iteration_history: list[IterationEntry] = []
+        self.iteration_history: list[IterationHistoryEntry] = []
         self.tool_call_history: list[ToolHistoryEntry] = []
 
         # Dialogue history (set per query)
@@ -256,17 +260,17 @@ class IterativeAgent:
         # Record round 1 results
         total_lines_r1 = self._calculate_total_lines(round1_elements)
         self.iteration_history.append(
-            {
-                "round": 1,
-                "confidence": round1_result["confidence"],
-                "query_complexity": round1_result.get("query_complexity", 0),
-                "elements_count": len(round1_elements),
-                "total_lines": total_lines_r1,
-                "confidence_gain": 0,
-                "lines_added": total_lines_r1,
-                "roi": 0.0,
-                "budget_usage_pct": (total_lines_r1 / self.adaptive_line_budget) * 100,
-            }
+            IterationHistoryEntry(
+                round=1,
+                confidence=round1_result["confidence"],
+                query_complexity=round1_result.get("query_complexity", 0),
+                elements_count=len(round1_elements),
+                total_lines=total_lines_r1,
+                confidence_gain=0.0,
+                lines_added=total_lines_r1,
+                roi=0.0,
+                budget_usage_pct=(total_lines_r1 / self.adaptive_line_budget) * 100,
+            )
         )
 
         retained_elements = round1_elements
@@ -323,8 +327,8 @@ class IterativeAgent:
 
             # Calculate metrics for this round
             total_lines = self._calculate_total_lines(current_elements)
-            prev_confidence = self.iteration_history[-1]["confidence"]
-            prev_lines = self.iteration_history[-1]["total_lines"]
+            prev_confidence = self.iteration_history[-1].confidence
+            prev_lines = self.iteration_history[-1].total_lines
             confidence_gain = confidence - prev_confidence
             lines_added = total_lines - prev_lines
             roi = (confidence_gain / lines_added * 1000) if lines_added > 0 else 0.0
@@ -332,16 +336,17 @@ class IterativeAgent:
 
             # Record round results with detailed metrics
             self.iteration_history.append(
-                {
-                    "round": current_round,
-                    "confidence": confidence,
-                    "elements_count": len(current_elements),
-                    "total_lines": total_lines,
-                    "confidence_gain": confidence_gain,
-                    "lines_added": lines_added,
-                    "roi": roi,
-                    "budget_usage_pct": budget_usage_pct,
-                }
+                IterationHistoryEntry(
+                    round=current_round,
+                    confidence=confidence,
+                    query_complexity=round1_result.get("query_complexity", 0),
+                    elements_count=len(current_elements),
+                    total_lines=total_lines,
+                    confidence_gain=confidence_gain,
+                    lines_added=lines_added,
+                    roi=roi,
+                    budget_usage_pct=budget_usage_pct,
+                )
             )
 
             self.logger.info(
@@ -439,10 +444,10 @@ class IterativeAgent:
             }
 
         # Basic stats
-        initial_confidence = self.iteration_history[0]["confidence"]
-        final_confidence = self.iteration_history[-1]["confidence"]
+        initial_confidence = self.iteration_history[0].confidence
+        final_confidence = self.iteration_history[-1].confidence
         total_confidence_gain = final_confidence - initial_confidence
-        total_lines = _iteration.calculate_total_lines(final_elements)
+        total_lines = _iteration.calculate_total_lines(_hit_records_from_rows(final_elements))
 
         # Efficiency metrics
         overall_roi = (
@@ -454,10 +459,10 @@ class IterativeAgent:
         for h in self.iteration_history[1:]:  # Skip round 1 for ROI
             round_efficiencies.append(
                 {
-                    "round": h["round"],
-                    "confidence_gain": h["confidence_gain"],
-                    "lines_added": h["lines_added"],
-                    "roi": h["roi"],
+                    "round": h.round,
+                    "confidence_gain": h.confidence_gain,
+                    "lines_added": h.lines_added,
+                    "roi": h.roi,
                 }
             )
 
@@ -513,7 +518,7 @@ class IterativeAgent:
                 overall_roi, budget_used_pct
             ),
             # Detailed history
-            "history": self.iteration_history,
+            "history": [asdict(entry) for entry in self.iteration_history],
         }
 
         return metadata
@@ -2719,7 +2724,9 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         Returns:
             True if should continue, False otherwise
         """
-        total_lines = _iteration.calculate_total_lines(current_elements)
+        total_lines = _iteration.calculate_total_lines(
+            _hit_records_from_rows(current_elements)
+        )
 
         result: bool = _iteration.should_continue_iteration(
             confidence=confidence,
@@ -2780,7 +2787,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
 
     def _calculate_total_lines(self, elements: list[dict[str, Any]]) -> int:
         """Calculate total lines of code in elements (delegates to core)."""
-        return _iteration.calculate_total_lines(elements)
+        return _iteration.calculate_total_lines(_hit_records_from_rows(elements))
 
     def _call_llm(self, prompt: str) -> str:
         """Call LLM with prompt"""

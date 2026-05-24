@@ -2,24 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
+
+from .contracts import Hit, SourceCitation
 
 
 def extract_sources_from_elements(
-    elements: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+    elements: Sequence[Hit],
+) -> tuple[SourceCitation, ...]:
     """Extract source information from retrieved elements."""
-    sources: list[dict[str, Any]] = []
-    for elem_data in elements:
-        elem = elem_data.get("element", {})
+    sources: list[SourceCitation] = []
+    for hit in elements:
         sources.append(
-            {
-                "file": elem.get("relative_path", ""),
-                "repo": elem.get("repo_name", ""),
-                "type": elem.get("type", ""),
-                "name": elem.get("name", ""),
-                "start_line": elem.get("start_line", 0),
-                "end_line": elem.get("end_line", 0),
-            }
+            SourceCitation(
+                repository=hit.repo_name,
+                file=hit.relative_path or hit.file_path,
+                name=hit.element_name,
+                element_type=hit.element_type,
+                lines=f"{hit.start_line}-{hit.end_line}",
+                score=hit.total_score,
+            )
         )
-    return sources
+    return tuple(sources)

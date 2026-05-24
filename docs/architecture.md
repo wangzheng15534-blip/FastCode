@@ -15,15 +15,17 @@ tests:
 
 - **app-runtime shell:** workflow/runtime use in `indexing/`, `query/`, and most
   of `store/`;
-- **capability ports:** owner-local adapter contracts such as
-  `store/contracts.py`;
+- **capability ports:** shared external capability contracts under
+  `fastcode.ports`. App-runtime code and infrastructure adapters may both
+  import these compile-time contracts, but ports do not import either side and do
+  not own runtime wiring. Current examples include `StoreDatabaseRuntime`,
+  `FileArtifactStore`, `EmbeddingProvider`, and `SemanticHelperRuntime`;
 - **infrastructure:** concrete DB, filesystem, network, subprocess,
   native-library, and SDK wrappers such as `store/infrastructure/`.
 
-There is intentionally no top-level `fastcode.ports` package today. Add one
-only when a capability contract is genuinely shared by multiple owners and
-cannot live cleanly beside a single owner. This is separate from network ports
-listed in the API surface section.
+Do not add package-local `ports.py` modules or domain traits for external
+capabilities such as DB, network, filesystem, subprocess, event, queue, or
+storage. This is separate from network ports listed in the API surface section.
 
 ---
 

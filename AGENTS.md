@@ -24,7 +24,7 @@ The current branch is a hardened pre-release, not a stable release.
 
 - `api/`: HTTP API shell, CORS, web entrypoint, response serialization.
 - `graph/`: graph-domain construction, tree-sitter helpers, call extraction.
-- `inbound/`: explicit inbound DTO/schema to frozen contract mappers.
+- `inbound/`: inbound DTO/schema validation and frozen contract mappers.
 - `indexing/`: repository loading, parsing, indexing, projection, publishing.
 - `ir/`: canonical frozen IR dataclasses, graph views, merge, validation.
 - `main/`: config preparation, CLI wiring, `FastCode` composition root.
@@ -32,7 +32,6 @@ The current branch is a hardened pre-release, not a stable release.
 - `query/`: query orchestration, retriever shell, agent tools, LLM answering.
 - `retrieval/`: pure retrieval scoring, fusion, context, iteration logic.
 - `runtime/`: frozen runtime config and runtime lifecycle event contracts.
-- `schemas/`: Pydantic inbound validation schemas and DTOs.
 - `scip/`: SCIP models, loaders, indexers, symbol resolution, IR adapters.
 - `semantic/`: semantic resolver contracts and helper-backed upgrades.
 - `store/`: persistence, snapshots, vectors, manifests, cache, records.
@@ -49,26 +48,30 @@ Shell code follows the FCIS split:
 
 - app-runtime/use-case shell: coordinates workflows and owns mutable runtime
   use, currently `indexing/`, `query/`, and most of `store/`;
-- capability ports: owner-local contracts used across an adapter boundary,
-  currently files such as `store/contracts.py` and domain `contracts.py` files;
+- capability ports: shared external capability contracts under
+  `fastcode/ports/`.
+  Ports are compile-time capability contracts, not runtime wiring modules:
+  app-runtime and infrastructure may both import them, but ports must not import
+  either side or construct adapters;
 - infrastructure: concrete network, DB, filesystem, subprocess, native-library,
   and SDK wrappers, currently `store/infrastructure/` plus owner-local runners
   such as `indexing/scip_runner.py`.
 
-Do not add a generic top-level `ports/` package just to mirror the pattern. Add
-one only when multiple domains or shells share a real capability surface that
-cannot live cleanly beside its owner.
+Do not add package-local `ports.py` modules for DB, network, filesystem,
+subprocess, event, queue, storage, or other external capabilities. Keep those
+capability contracts in `fastcode.ports` and keep domain contracts limited to
+pure domain types or domain polymorphism.
 
 Inner packages do not read env directly. Config flows through
 `prepare_runtime_config_mapping(...)`,
-`fastcode.schemas.config.FastCodeConfigDTO`, explicit inbound mappers in
+`fastcode.inbound.config_schema.FastCodeConfigDTO`, explicit inbound mappers in
 `fastcode.inbound.config_mapper`, `fastcode.runtime.config.FastCodeConfig`,
 then `FastCode`.
 
 Events and config are not miscellaneous hub layers. Runtime events/config live
-under `runtime/`; external config schemas live under `schemas/`; schema-to-
-contract translation lives under `inbound/`; config loading stays in `main/`;
-future domain events/config should live near their owning domain.
+under `runtime/`; inbound config schemas and schema-to-contract translation live
+under `inbound/`; config loading stays in `main/`; future domain events/config
+should live near their owning domain.
 
 Keep package roots thin. Avoid compatibility exports, `__getattr__` shims, and
 runtime imports in `__init__.py`.

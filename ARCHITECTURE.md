@@ -33,7 +33,7 @@ Current top-level modules:
 
 - `api/` HTTP transport shell and API contracts
 - `graph/` graph construction primitives and graph-domain contracts
-- `inbound/` explicit inbound schema/DTO to frozen contract mappers
+- `inbound/` inbound schema/DTO validation and frozen contract mappers
 - `indexing/` repository loading, extraction orchestration, projections
 - `ir/` canonical frozen IR types and helpers
 - `main/` composition root, CLI wiring, and runtime config preparation
@@ -41,7 +41,6 @@ Current top-level modules:
 - `query/` query orchestration, iterative agent behavior, and tool adapters
 - `retrieval/` pure retrieval logic, scoring, and context assembly
 - `runtime/` frozen runtime config and runtime lifecycle event contracts
-- `schemas/` Pydantic inbound validation schemas and DTOs
 - `scip/` SCIP adapters, loaders, and translation helpers
 - `semantic/` semantic resolver registry and helper-backed upgrades
 - `store/` persistence orchestration and store contracts
@@ -50,18 +49,20 @@ Current top-level modules:
 
 ## Enforced layer DAG
 
-The import graph is enforced by
-`fastcode/tests/architecture/test_layer_dag.py`.
+The import graph and dependency gate are enforced by
+`scripts/check_deps.py`, with the underlying rule implementations living in
+`fastcode/tests/architecture/test_layer_dag.py` and the adjacent architecture
+test modules.
 
 Current tiers:
 
 - Facade: `api`, `mcp`, `main`
 - App-runtime shell: `indexing`, `query`, and most of `store`
 - Infrastructure shell: concrete adapter packages such as `store/infrastructure`
-- Capability ports: owner-local adapter contracts such as `store/contracts.py`
+- Capability ports: shared external capability contracts under `fastcode/ports`
 - Runtime contracts: `runtime`
-- Inbound mappers: `inbound`
-- Inbound schemas: `schemas`
+- Inbound schemas: schema-only modules such as `inbound.config_schema`
+- Inbound mappers: the rest of `inbound`
 - Domain: `retrieval`, `graph`, `scip`, `semantic`
 - Common: `ir`
 - Base: `utils`
@@ -74,20 +75,21 @@ The shell tier follows the FCIS split:
 - **App runtime / use-case shell** coordinates workflows, manages mutable
   runtime state, invokes domain logic, and chooses adapters. In the current
   layout this is `indexing/`, `query/`, and most of `store/`.
-- **Capability ports** are stable contracts across an adapter boundary. They
-  should be owner-local until the capability is truly shared across multiple
-  owners. Current examples are `store/contracts.py` and domain-local
-  `contracts.py` files. A top-level `ports/` package is intentionally absent
-  until there is a real cross-package capability surface.
+- **Capability ports** are stable contracts across an external adapter
+  boundary. They live under `fastcode/ports/`, not in owner-local `ports.py` or
+  capability-style `contracts.py` modules. Ports are compile-time contracts:
+  app-runtime code and infrastructure adapters may both import them, but ports
+  do not import either side and do not construct concrete adapters. Current
+  examples include `StoreDatabaseRuntime` for SQL execution,
+  `FileArtifactStore`/`UnitArtifactStore` for artifact persistence,
+  `EmbeddingProvider`, and `SemanticHelperRuntime`.
 - **Infrastructure** owns concrete network, DB, filesystem, subprocess,
   native-library, and SDK wrappers. Current examples are `store/infrastructure/`
-  and owner-local runners such as `indexing/scip_runner.py` and
-  `indexing/semantic_helper_runner.py`.
+  and tool runners such as `indexing/scip_runner.py`.
 
 The architecture gate classifies these subroles explicitly where the current
-layout supports it: `store.infrastructure.*` is infrastructure,
-`store.contracts` is a capability port, and the rest of `store` remains
-app-runtime shell.
+layout supports it: `store.infrastructure.*` is infrastructure, `fastcode.ports`
+is the capability-port layer, and the rest of `store` remains app-runtime shell.
 
 ## Architecture contract
 
@@ -95,10 +97,11 @@ The repo currently enforces these rules in code, architecture tests, and
 repo-wide lint rules:
 
 1. Pydantic stops at the boundary.
-   - `schemas/` owns Pydantic validation, external aliases/defaults/coercion,
-     and settings parsing.
-   - `inbound/` translates validated schemas/DTOs into frozen internal
-     contracts.
+   - Schema modules under `inbound/`, currently `config_schema.py`, own
+     Pydantic validation, external aliases/defaults/coercion, and settings
+     parsing.
+   - Mapper modules under `inbound/` translate validated DTOs into frozen
+     internal contracts.
    - Closed external vocabularies use schema-local `StrEnum` DTOs; closed
      internal vocabularies use runtime/domain `StrEnum` types. The mapper owns
      value translation between them.
@@ -129,28 +132,30 @@ repo-wide lint rules:
      sanitizing values.
 
 5. Inner packages do not read environment directly.
-   - `indexing`, `query`, `retrieval`, `store`, `mcp`, `schemas`, and related
+   - `indexing`, `query`, `retrieval`, `store`, `mcp`, inbound mappers, and related
      inner packages must not call `os.getenv`, `os.environ[...]`, or
      `load_dotenv()` directly.
    - Environment loading is centralized in config preparation.
 
 6. Events and config are not single hub layers.
    - Runtime events and runtime config contracts live under `runtime/`.
-   - External config schemas live under `schemas/`.
-   - Inbound schema-to-contract mappers live under `inbound/`.
+   - External config schemas and schema-to-contract mappers live under
+     `inbound/`, split by module.
    - Config loading belongs to `main/`.
    - Future domain event/config types should live near their owning domain or
      shared kernel, not in a top-level `events/` or `config/` bucket.
 
 7. Ports are capability contracts, not a dumping ground.
-   - Prefer owner-local contracts when a capability has one clear owner.
-   - Do not add a generic top-level `ports/` package for symmetry with the
-     architecture diagram.
-   - Introduce `ports/` only when at least two owners need the same stable
-     capability contract and an owner-local module would create ambiguous
-     dependencies.
+   - External capability contracts live in `fastcode/ports/`.
+   - Do not add package-local `ports.py` modules or capability-style domain
+     traits for DB, network, filesystem, subprocess, event, queue, or storage
+     capabilities.
+   - Ports are imported by app-runtime/use-case shell code and by infrastructure
+     adapters as shared compile-time contracts.
    - Ports must not import app-runtime shell code, infrastructure adapters,
      facades, inbound mappers, or Pydantic schemas.
+   - Runtime adapter selection and concrete object construction belong in the
+     composition root or the owning app-runtime shell, not inside port modules.
 
 ## Runtime configuration flow
 
@@ -159,7 +164,7 @@ The current config boundary is:
 1. Raw YAML and `.env` input enter through `fastcode.main.config`.
 2. `prepare_runtime_config_mapping(...)` resolves paths and overlays env-backed
    runtime settings.
-3. `fastcode.schemas.config.FastCodeConfigDTO` validates the external config
+3. `fastcode.inbound.config_schema.FastCodeConfigDTO` validates the external config
    shape with Pydantic.
 4. `fastcode.inbound.config_mapper` explicitly maps validated DTOs into
    `fastcode.runtime.config.FastCodeConfig`, including external-to-runtime
@@ -875,7 +880,7 @@ silently treated as production-complete.
 Storage follows the FCIS shell split:
 
 - `store/` coordinates persistence behavior as app-runtime shell code
-- `store/contracts.py` owns store-local capability-port records
+- `fastcode/ports/storage.py` owns shared storage capability ports
 - `store/infrastructure/` holds lower-level storage-facing infrastructure code
 
 Current backends in active use:

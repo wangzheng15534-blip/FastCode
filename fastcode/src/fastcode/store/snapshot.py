@@ -74,8 +74,6 @@ from ._snapshot_ir_payloads import (
     _unit_support_payload,
 )
 from ._snapshot_queue_payloads import (
-    _outbox_event_payload,
-    _redo_task_payload,
     _row_to_outbox_event_record,
     _row_to_redo_task_record,
 )
@@ -4130,10 +4128,6 @@ class SnapshotStore:
             updated_at=now,
         )
 
-    def claim_redo_task(self) -> dict[str, Any] | None:
-        record = self.claim_redo_task_record()
-        return _redo_task_payload(record) if record is not None else None
-
     def mark_redo_task_done(self, task_id: str) -> None:
         if self.db_runtime.backend != "postgres":
             return
@@ -4274,13 +4268,6 @@ class SnapshotStore:
                 )
             conn.commit()
         return claimed
-
-    def claim_outbox_event(self, limit: int = 10) -> list[dict[str, Any]]:
-        """Claim pending or retryable failed events from the outbox."""
-        return [
-            _outbox_event_payload(record)
-            for record in self.claim_outbox_event_records(limit=limit)
-        ]
 
     def mark_outbox_event_done(self, event_id: str) -> None:
         """Mark an outbox event as published."""

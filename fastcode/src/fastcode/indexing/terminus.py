@@ -70,16 +70,10 @@ class TerminusPublisher(LineagePublisher):
         self.logger.info("Publish event %s already exists, skipping", event_id)
         return event_id
 
-    @staticmethod
-    def _declares_method(target: object, method_name: str) -> bool:
-        return callable(getattr(type(target), method_name, None))
-
     def _claim_outbox_events(
         self, snapshot_store: EventSink, limit: int
     ) -> Sequence[Any]:
-        if self._declares_method(snapshot_store, "claim_outbox_event_records"):
-            return snapshot_store.claim_outbox_event_records(limit=limit)
-        return snapshot_store.claim_outbox_event(limit=limit)
+        return snapshot_store.claim_outbox_event_records(limit=limit)
 
     def flush_outbox(
         self, snapshot_store: EventSink, limit: int = 10

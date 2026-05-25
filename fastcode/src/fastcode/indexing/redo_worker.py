@@ -24,10 +24,6 @@ class RedoWorker:
         self._thread: threading.Thread | None = None
 
     @staticmethod
-    def _declares_method(target: object, method_name: str) -> bool:
-        return callable(getattr(type(target), method_name, None))
-
-    @staticmethod
     def _field(payload: Any, name: str) -> Any:
         if isinstance(payload, Mapping):
             return cast(Mapping[str, Any], payload).get(name)
@@ -38,12 +34,6 @@ class RedoWorker:
 
     def _event_sink(self) -> EventSink:
         return cast(EventSink, self.fastcode.snapshot_store)
-
-    def _claim_redo_task_record_or_payload(self) -> Any:
-        queue = self._redo_queue()
-        if self._declares_method(queue, "claim_redo_task_record"):
-            return queue.claim_redo_task_record()
-        return queue.claim_redo_task()
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -64,7 +54,7 @@ class RedoWorker:
         return self.process_once_status() == "succeeded"
 
     def process_once_status(self) -> str:
-        task = self._claim_redo_task_record_or_payload()
+        task = self._redo_queue().claim_redo_task_record()
         if not task:
             return "none"
         task_id = str(self._field(task, "task_id") or "")

@@ -335,7 +335,7 @@ def test_sqlite_redo_task_noops_do_not_raise():
     """SQLite redo task methods (claim, mark_done, mark_failed) are no-ops but must not crash."""
     with tempfile.TemporaryDirectory(prefix="fc_redo_") as tmp:
         store = _make_snapshot_store(tmp)
-        assert store.claim_redo_task() is None
+        assert store.claim_redo_task_record() is None
         store.mark_redo_task_done("redo_fake")
         store.mark_redo_task_failed(task_id="redo_fake", error="test error")
 

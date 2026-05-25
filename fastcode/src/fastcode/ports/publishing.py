@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 from fastcode.ir.types import IRSnapshot
@@ -57,8 +57,6 @@ class EventSink(Protocol):
     def claim_outbox_event_records(
         self, limit: int = 10
     ) -> Sequence[OutboxEventView]: ...
-
-    def claim_outbox_event(self, limit: int = 10) -> Sequence[Mapping[str, Any]]: ...
 
     def mark_outbox_event_done(self, event_id: str) -> None: ...
 

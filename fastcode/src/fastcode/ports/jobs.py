@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any, Protocol
 
 
@@ -119,8 +118,6 @@ class RedoJobQueue(Protocol):
     ) -> str: ...
 
     def claim_redo_task_record(self) -> RedoTaskView | None: ...
-
-    def claim_redo_task(self) -> Mapping[str, Any] | None: ...
 
     def mark_redo_task_done(self, task_id: str) -> None: ...
 

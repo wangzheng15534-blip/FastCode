@@ -25,7 +25,7 @@ class _FakeSnapshotStore:
         self.done_ids = []
         self.failed_ids = []
 
-    def claim_redo_task(self) -> Any:
+    def claim_redo_task_record(self) -> Any:
         if self._tasks:
             return self._tasks.pop(0)
         return None
@@ -80,14 +80,14 @@ task_st = st.dictionaries(
 
 def test_process_once_status_returns_none_when_no_tasks_double():
     fc = _FakeFastCode()
-    fc.snapshot_store.claim_redo_task.return_value = None
+    fc.snapshot_store.claim_redo_task_record.return_value = None
     worker = RedoWorker(fc)
     assert worker.process_once_status() == "none"
 
 
 def test_process_once_status_succeeds_on_valid_task_double():
     fc = _FakeFastCode()
-    fc.snapshot_store.claim_redo_task.return_value = {
+    fc.snapshot_store.claim_redo_task_record.return_value = {
         "task_id": "redo_abc",
         "task_type": "index_run_recovery",
         "payload_json": json.dumps({"run_id": "run1", "source": "/tmp/repo"}),
@@ -100,7 +100,7 @@ def test_process_once_status_succeeds_on_valid_task_double():
 
 def test_process_once_status_fails_and_marks_failed_double():
     fc = _FakeFastCode()
-    fc.snapshot_store.claim_redo_task.return_value = {
+    fc.snapshot_store.claim_redo_task_record.return_value = {
         "task_id": "redo_xyz",
         "task_type": "index_run_recovery",
         "payload_json": json.dumps({"run_id": "run2", "source": "/tmp/repo"}),

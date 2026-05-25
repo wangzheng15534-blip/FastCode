@@ -2451,10 +2451,10 @@ class TestSnapshotStoreRedoProperties:
         assert t1 != t2
 
     @pytest.mark.edge
-    def test_claim_redo_task_sqlite_noop_property(self):
-        """EDGE: claim_redo_task returns None on SQLite backend."""
+    def test_claim_redo_task_record_sqlite_noop_property(self):
+        """EDGE: claim_redo_task_record returns None on SQLite backend."""
         store = _make_store()
-        result = store.claim_redo_task()
+        result = store.claim_redo_task_record()
         assert result is None
 
     @pytest.mark.edge
@@ -2471,7 +2471,7 @@ class TestSnapshotStoreRedoProperties:
             task_id="redo_test123", error="fail", max_attempts=3
         )
 
-    def test_claim_redo_task_returns_running_payload_after_claim(
+    def test_claim_redo_task_record_returns_running_record_after_claim(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         store = SnapshotStore.__new__(SnapshotStore)
@@ -2497,60 +2497,20 @@ class TestSnapshotStoreRedoProperties:
         monkeypatch.setattr(runtime, "row_to_dict", _boom, raising=False)
         monkeypatch.setattr(RedoTaskRecord, "to_dict", _boom_task)
 
-        task = store.claim_redo_task()
+        task = store.claim_redo_task_record()
 
         assert task is not None
-        assert task["task_id"] == "redo_1"
-        assert task["status"] == "running"
-        assert task["attempts"] == 1
-        assert task["updated_at"] == "2026-05-05T00:00:05+00:00"
+        assert task.task_id == "redo_1"
+        assert task.status == "running"
+        assert task.attempts == 1
+        assert task.updated_at == "2026-05-05T00:00:05+00:00"
         assert runtime.redo_tasks["redo_1"]["status"] == "running"
         assert runtime.redo_tasks["redo_1"]["attempts"] == 1
         assert runtime.redo_tasks["redo_1"]["updated_at"] == "2026-05-05T00:00:05+00:00"
-        assert store.claim_redo_task() is None
-
-    def test_claim_redo_task_record_returns_typed_running_record(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        store = SnapshotStore.__new__(SnapshotStore)
-        runtime = _FakePostgresQueueRuntime()
-        runtime.add_redo_task(
-            task_id="redo_record",
-            task_type="index_run_recovery",
-            payload_json='{"run_id":"run-record"}',
-        )
-        store.db_runtime = runtime
-
-        def _boom(_: object) -> dict[str, Any]:
-            raise AssertionError("snapshot store must not call row_to_dict()")
-
-        def _boom_task(_: RedoTaskRecord) -> dict[str, Any]:
-            raise AssertionError(
-                "typed redo claim must not call RedoTaskRecord.to_dict()"
-            )
-
-        monkeypatch.setattr(
-            snapshot_module, "utc_now", lambda: "2026-05-05T00:00:07+00:00"
-        )
-        monkeypatch.setattr(runtime, "row_to_dict", _boom, raising=False)
-        monkeypatch.setattr(RedoTaskRecord, "to_dict", _boom_task)
-
-        task = store.claim_redo_task_record()
-
-        assert task == RedoTaskRecord(
-            task_id="redo_record",
-            task_type="index_run_recovery",
-            payload_json='{"run_id":"run-record"}',
-            status="running",
-            attempts=1,
-            last_error=None,
-            next_attempt_at=None,
-            created_at="2026-05-05T00:00:00+00:00",
-            updated_at="2026-05-05T00:00:07+00:00",
-        )
-        assert runtime.redo_tasks["redo_record"]["status"] == "running"
-        assert runtime.redo_tasks["redo_record"]["attempts"] == 1
         assert store.claim_redo_task_record() is None
+
+    def test_snapshot_store_exposes_typed_redo_queue_only(self) -> None:
+        assert not hasattr(SnapshotStore, "claim_redo_task")
 
     def test_mark_redo_task_failed_uses_explicit_attempt_lookup(
         self, monkeypatch: pytest.MonkeyPatch
@@ -2613,7 +2573,7 @@ class TestSnapshotStoreOutboxPostgresProperties:
         assert runtime.outbox_events["evt1"]["snapshot_id"] == "snap:1"
         assert runtime.outbox_events["evt1"]["max_attempts"] == 2
 
-    def test_claim_outbox_event_returns_in_progress_payload_after_claim(
+    def test_claim_outbox_event_records_returns_in_progress_records_after_claim(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         store = SnapshotStore.__new__(SnapshotStore)
@@ -2661,88 +2621,21 @@ class TestSnapshotStoreOutboxPostgresProperties:
         monkeypatch.setattr(runtime, "row_to_dict", _boom, raising=False)
         monkeypatch.setattr(OutboxEventRecord, "to_dict", _boom_event)
 
-        events = store.claim_outbox_event(limit=10)
+        events = store.claim_outbox_event_records(limit=10)
 
-        assert [event["event_id"] for event in events] == ["evt1", "evt2"]
-        assert all(event["status"] == "in_progress" for event in events)
+        assert [event.event_id for event in events] == ["evt1", "evt2"]
+        assert all(event.status == "in_progress" for event in events)
         assert all(
-            event["last_attempt_at"] == "2026-05-05T00:00:06+00:00" for event in events
+            event.last_attempt_at == "2026-05-05T00:00:06+00:00" for event in events
         )
         assert runtime.outbox_events["evt1"]["status"] == "in_progress"
         assert runtime.outbox_events["evt2"]["status"] == "in_progress"
         assert runtime.outbox_events["evt3"]["status"] == "failed"
         assert store.get_outbox_pending_count() == 0
-
-    def test_claim_outbox_event_records_returns_typed_records(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        store = SnapshotStore.__new__(SnapshotStore)
-        runtime = _FakePostgresQueueRuntime()
-        runtime.add_outbox_event(
-            event_id="evt-record-1",
-            event_type="lineage_publish",
-            payload='{"snapshot":"snap:record:1"}',
-            snapshot_id="snap:record:1",
-            created_at="2026-05-05T00:00:00+00:00",
-        )
-        runtime.add_outbox_event(
-            event_id="evt-record-2",
-            event_type="lineage_publish",
-            payload='{"snapshot":"snap:record:2"}',
-            snapshot_id="snap:record:2",
-            status="failed",
-            attempts=1,
-            max_attempts=3,
-            error_message="retry",
-            created_at="2026-05-05T00:00:01+00:00",
-        )
-        store.db_runtime = runtime
-
-        def _boom(_: object) -> dict[str, Any]:
-            raise AssertionError("snapshot store must not call row_to_dict()")
-
-        def _boom_event(_: OutboxEventRecord) -> dict[str, Any]:
-            raise AssertionError(
-                "typed outbox claim must not call OutboxEventRecord.to_dict()"
-            )
-
-        monkeypatch.setattr(
-            snapshot_module, "utc_now", lambda: "2026-05-05T00:00:08+00:00"
-        )
-        monkeypatch.setattr(runtime, "row_to_dict", _boom, raising=False)
-        monkeypatch.setattr(OutboxEventRecord, "to_dict", _boom_event)
-
-        events = store.claim_outbox_event_records(limit=10)
-
-        assert events == [
-            OutboxEventRecord(
-                event_id="evt-record-1",
-                event_type="lineage_publish",
-                payload='{"snapshot":"snap:record:1"}',
-                snapshot_id="snap:record:1",
-                status="in_progress",
-                attempts=0,
-                max_attempts=5,
-                created_at="2026-05-05T00:00:00+00:00",
-                last_attempt_at="2026-05-05T00:00:08+00:00",
-                error_message=None,
-            ),
-            OutboxEventRecord(
-                event_id="evt-record-2",
-                event_type="lineage_publish",
-                payload='{"snapshot":"snap:record:2"}',
-                snapshot_id="snap:record:2",
-                status="in_progress",
-                attempts=1,
-                max_attempts=3,
-                created_at="2026-05-05T00:00:01+00:00",
-                last_attempt_at="2026-05-05T00:00:08+00:00",
-                error_message="retry",
-            ),
-        ]
-        assert runtime.outbox_events["evt-record-1"]["status"] == "in_progress"
-        assert runtime.outbox_events["evt-record-2"]["status"] == "in_progress"
         assert store.claim_outbox_event_records(limit=10) == []
+
+    def test_snapshot_store_exposes_typed_outbox_queue_only(self) -> None:
+        assert not hasattr(SnapshotStore, "claim_outbox_event")
 
     def test_mark_outbox_event_failed_and_count_use_explicit_row_access(
         self, monkeypatch: pytest.MonkeyPatch

@@ -319,11 +319,11 @@ def test_e2e_postgres_storage_semantics_gate(
             ),
         )
         redo_id = f"redo_{prefix}_1"
-        claimed_redo = store.claim_redo_task()
+        claimed_redo = store.claim_redo_task_record()
         assert claimed_redo is not None
-        assert claimed_redo["task_id"] == redo_id
-        assert claimed_redo["status"] == "running"
-        assert claimed_redo["attempts"] == 1
+        assert claimed_redo.task_id == redo_id
+        assert claimed_redo.status == "running"
+        assert claimed_redo.attempts == 1
         store.mark_redo_task_failed(redo_id, "retry", max_attempts=5)
         pending_rows = _pg_fetchall(
             dsn,
@@ -336,9 +336,9 @@ def test_e2e_postgres_storage_semantics_gate(
             "UPDATE redo_tasks SET next_attempt_at = NULL WHERE task_id = %s",
             (redo_id,),
         )
-        claimed_again = store.claim_redo_task()
+        claimed_again = store.claim_redo_task_record()
         assert claimed_again is not None
-        assert claimed_again["attempts"] == 2
+        assert claimed_again.attempts == 2
         store.mark_redo_task_done(redo_id)
         done_rows = _pg_fetchall(
             dsn,
@@ -366,9 +366,9 @@ def test_e2e_postgres_storage_semantics_gate(
             "{}",
             snapshot_id_v1,
         )
-        claimed_events = store.claim_outbox_event(limit=1)
-        assert [event["event_id"] for event in claimed_events] == [event_id]
-        assert claimed_events[0]["status"] == "in_progress"
+        claimed_events = store.claim_outbox_event_records(limit=1)
+        assert [event.event_id for event in claimed_events] == [event_id]
+        assert claimed_events[0].status == "in_progress"
         store.mark_outbox_event_failed(event_id, "publish failed")
         assert store.get_outbox_pending_count() >= 1
         retryable_rows = _pg_fetchall(
@@ -381,8 +381,8 @@ def test_e2e_postgres_storage_semantics_gate(
             (event_id,),
         )
         assert retryable_rows == [("failed", 1, 2, "publish failed")]
-        claimed_events = store.claim_outbox_event(limit=1)
-        assert [event["event_id"] for event in claimed_events] == [event_id]
+        claimed_events = store.claim_outbox_event_records(limit=1)
+        assert [event.event_id for event in claimed_events] == [event_id]
         store.mark_outbox_event_done(event_id)
         outbox_rows = _pg_fetchall(
             dsn,

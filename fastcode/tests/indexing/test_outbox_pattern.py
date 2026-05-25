@@ -144,7 +144,7 @@ class TestFlushOutbox:
         """flush_outbox returns zeros when no events to process."""
         pub = _make_publisher()
         store = MagicMock()
-        store.claim_outbox_event.return_value = []
+        store.claim_outbox_event_records.return_value = []
         result = pub.flush_outbox(store)
         assert result == {"processed": 0, "succeeded": 0, "failed": 0}
 
@@ -153,7 +153,7 @@ class TestFlushOutbox:
         pub = _make_publisher()
         store = MagicMock()
         payload = {"version": "v1", "snapshot_id": "snap:repo:abc"}
-        store.claim_outbox_event.return_value = [
+        store.claim_outbox_event_records.return_value = [
             {
                 "event_id": "evt1",
                 "payload": json.dumps(payload),
@@ -173,7 +173,7 @@ class TestFlushOutbox:
         pub = _make_publisher()
         store = MagicMock()
         payload = {"version": "v1"}
-        store.claim_outbox_event.return_value = [
+        store.claim_outbox_event_records.return_value = [
             {
                 "event_id": "evt2",
                 "payload": json.dumps(payload),
@@ -196,7 +196,7 @@ class TestFlushOutbox:
         """flush_outbox marks event failed when payload is not valid JSON."""
         pub = _make_publisher()
         store = MagicMock()
-        store.claim_outbox_event.return_value = [
+        store.claim_outbox_event_records.return_value = [
             {
                 "event_id": "evt3",
                 "payload": "not-json{{{",
@@ -223,19 +223,19 @@ class TestFlushOutbox:
             }
             for i in range(3)
         ]
-        store.claim_outbox_event.return_value = events
+        store.claim_outbox_event_records.return_value = events
         with patch.object(pub, "_do_post"):
             result = pub.flush_outbox(store, limit=10)
         assert result["processed"] == 3
         assert result["succeeded"] == 3
 
     def test_flush_respects_limit_double(self):
-        """flush_outbox passes limit to claim_outbox_event."""
+        """flush_outbox passes limit to claim_outbox_event_records."""
         pub = _make_publisher()
         store = MagicMock()
-        store.claim_outbox_event.return_value = []
+        store.claim_outbox_event_records.return_value = []
         pub.flush_outbox(store, limit=5)
-        store.claim_outbox_event.assert_called_once_with(limit=5)
+        store.claim_outbox_event_records.assert_called_once_with(limit=5)
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +302,7 @@ class TestRedoWorkerOutboxFlush:
         }
         fc.terminus_publisher = publisher
         fc.snapshot_store = MagicMock()
-        fc.snapshot_store.claim_outbox_event.return_value = []
+        fc.snapshot_store.claim_outbox_event_records.return_value = []
         worker = RedoWorker(fc)
         task = {
             "task_id": "redo_flush1",
@@ -323,7 +323,7 @@ class TestRedoWorkerOutboxFlush:
             "payload_json": "{}",
         }
         worker._dispatch_task(task)  # should not raise
-        fc.snapshot_store.claim_outbox_event.assert_not_called()
+        fc.snapshot_store.claim_outbox_event_records.assert_not_called()
 
     def test_flush_outbox_no_publisher_double(self):
         """_flush_outbox is safe when terminus_publisher attribute is missing."""
@@ -363,10 +363,10 @@ class TestSnapshotStoreOutbox:
             assert result is False
 
     def test_claim_outbox_event_non_postgres_double(self):
-        """claim_outbox_event returns empty list for non-postgres."""
+        """claim_outbox_event_records returns empty list for non-postgres."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _make_snapshot_store(tmpdir)
-            assert store.claim_outbox_event() == []
+            assert store.claim_outbox_event_records() == []
 
     def test_mark_outbox_event_done_non_postgres_double(self):
         """mark_outbox_event_done is no-op for non-postgres."""

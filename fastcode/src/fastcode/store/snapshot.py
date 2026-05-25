@@ -93,27 +93,6 @@ class SnapshotStore:
     IR_GRAPH_MANIFEST_FILENAME = "ir_graphs_manifest.json"
     IR_GRAPH_SHARD_SCHEMA_VERSION = "ir_graph_shards.v1"
 
-    _SNAPSHOT_FIELDS = (
-        "snapshot_id",
-        "repo_name",
-        "branch",
-        "commit_id",
-        "tree_id",
-        "artifact_key",
-        "ir_path",
-        "ir_graphs_path",
-        "created_at",
-        "metadata_json",
-    )
-    _SNAPSHOT_REF_FIELDS = (
-        "ref_id",
-        "repo_name",
-        "branch",
-        "commit_id",
-        "tree_id",
-        "snapshot_id",
-        "created_at",
-    )
     _SCIP_ARTIFACT_FIELDS = (
         "snapshot_id",
         "indexer_name",
@@ -2781,9 +2760,9 @@ class SnapshotStore:
             ).fetchone()
         return self._row_to_snapshot_record(row)
 
-    def find_by_repo_commit(
+    def find_by_repo_commit_record(
         self, repo_name: str, commit_id: str
-    ) -> dict[str, Any] | None:
+    ) -> SnapshotRecord | None:
         with self.db_runtime.connect() as conn:
             row = self.db_runtime.execute(
                 conn,
@@ -2795,8 +2774,7 @@ class SnapshotStore:
                 """,
                 (repo_name, commit_id),
             ).fetchone()
-        record = self._row_to_snapshot_record(row)
-        return self._snapshot_payload(record) if record is not None else None
+        return self._row_to_snapshot_record(row)
 
     def find_by_artifact_key_record(self, artifact_key: str) -> SnapshotRecord | None:
         with self.db_runtime.connect() as conn:
@@ -2811,16 +2789,6 @@ class SnapshotStore:
                 (artifact_key,),
             ).fetchone()
         return self._row_to_snapshot_record(row)
-
-    def find_by_artifact_key(self, artifact_key: str) -> dict[str, Any] | None:
-        record = self.find_by_artifact_key_record(artifact_key)
-        return self._snapshot_payload(record) if record is not None else None
-
-    def resolve_snapshot_for_ref(
-        self, repo_name: str, branch: str
-    ) -> dict[str, Any] | None:
-        record = self.resolve_snapshot_for_ref_record(repo_name, branch)
-        return self._snapshot_ref_payload(record) if record is not None else None
 
     def resolve_snapshot_for_ref_record(
         self, repo_name: str, branch: str
@@ -3256,20 +3224,6 @@ class SnapshotStore:
                 return row[index]
             except (IndexError, KeyError, TypeError):
                 return None
-
-    @classmethod
-    def _snapshot_payload(cls, record: SnapshotRecord) -> dict[str, Any]:
-        return {
-            field_name: getattr(record, field_name)
-            for field_name in cls._SNAPSHOT_FIELDS
-        }
-
-    @classmethod
-    def _snapshot_ref_payload(cls, record: SnapshotRefRecord) -> dict[str, Any]:
-        return {
-            field_name: getattr(record, field_name)
-            for field_name in cls._SNAPSHOT_REF_FIELDS
-        }
 
     def import_git_backbone(
         self, snapshot: IRSnapshot, git_meta: dict[str, Any] | None = None

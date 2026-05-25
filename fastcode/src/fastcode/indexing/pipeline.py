@@ -640,18 +640,11 @@ class IndexPipeline:
         return True
 
     def _snapshot_id_for_artifact_key(self, artifact_key: str) -> str | None:
-        find_record = getattr(self.snapshot_store, "find_by_artifact_key_record", None)
-        if callable(find_record):
-            record = find_record(artifact_key)
-            candidate = getattr(record, "snapshot_id", None)
-            if isinstance(candidate, str) and candidate:
-                return candidate
-
-        record = self.snapshot_store.find_by_artifact_key(artifact_key)
-        if not isinstance(record, Mapping):
-            return None
-        candidate = record.get("snapshot_id")
-        return candidate if isinstance(candidate, str) and candidate else None
+        record = self.snapshot_store.find_by_artifact_key_record(artifact_key)
+        candidate = getattr(record, "snapshot_id", None)
+        if isinstance(candidate, str) and candidate:
+            return candidate
+        return None
 
     @staticmethod
     def _reconstruct_elements_from_metadata_view(

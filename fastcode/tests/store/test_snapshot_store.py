@@ -1492,26 +1492,26 @@ class TestSnapshotSaveLoadProperties:
 
     @given(snap=connected_snapshot_st())
     @settings(max_examples=20)
-    def test_resolve_snapshot_for_ref_property(self, snap: IRSnapshot):
-        """HAPPY: resolve_snapshot_for_ref finds snapshot by repo+branch after save."""
+    def test_resolve_snapshot_for_ref_record_property(self, snap: IRSnapshot):
+        """HAPPY: resolve_snapshot_for_ref_record finds snapshot by repo+branch after save."""
         assume(snap.branch is not None)
         store = _make_store()
         store.save_snapshot(snap)
-        result = store.resolve_snapshot_for_ref(snap.repo_name, snap.branch)
+        result = store.resolve_snapshot_for_ref_record(snap.repo_name, snap.branch)
         assert result is not None
-        assert result["snapshot_id"] == snap.snapshot_id
-        assert result["repo_name"] == snap.repo_name
-        assert result["branch"] == snap.branch
+        assert result.snapshot_id == snap.snapshot_id
+        assert result.repo_name == snap.repo_name
+        assert result.branch == snap.branch
 
     @given(repo=identifier, branch=identifier)
     @settings(max_examples=15)
     @pytest.mark.edge
-    def test_resolve_snapshot_for_ref_missing_returns_none_property(
+    def test_resolve_snapshot_for_ref_record_missing_returns_none_property(
         self, repo: str, branch: str
     ):
-        """EDGE: resolve_snapshot_for_ref returns None for unknown ref."""
+        """EDGE: resolve_snapshot_for_ref_record returns None for unknown ref."""
         store = _make_store()
-        assert store.resolve_snapshot_for_ref(repo, branch) is None
+        assert store.resolve_snapshot_for_ref_record(repo, branch) is None
 
     def test_resolve_snapshot_for_ref_record_returns_typed_record(self):
         store = _make_store()
@@ -1551,48 +1551,44 @@ class TestSnapshotSaveLoadProperties:
 class TestSnapshotStoreQueries:
     @given(snap=snapshot_st())
     @settings(max_examples=20)
-    def test_find_by_repo_commit_property(self, snap: IRSnapshot):
-        """HAPPY: find_by_repo_commit returns record after save (requires commit_id)."""
+    def test_find_by_repo_commit_record_property(self, snap: IRSnapshot):
+        """HAPPY: find_by_repo_commit_record returns record after save (requires commit_id)."""
         assume(snap.commit_id is not None)
         store = _make_store()
         store.save_snapshot(snap)
-        result = store.find_by_repo_commit(snap.repo_name, snap.commit_id)
+        result = store.find_by_repo_commit_record(snap.repo_name, snap.commit_id)
         assert result is not None
-        assert result["snapshot_id"] == snap.snapshot_id
-        assert result["repo_name"] == snap.repo_name
+        assert result.snapshot_id == snap.snapshot_id
+        assert result.repo_name == snap.repo_name
 
     @given(repo=identifier, commit=identifier)
     @settings(max_examples=15)
     @pytest.mark.edge
-    def test_find_by_repo_commit_missing_returns_none_property(
+    def test_find_by_repo_commit_record_missing_returns_none_property(
         self, repo: str, commit: str
     ):
-        """EDGE: find_by_repo_commit returns None for unknown repo/commit."""
+        """EDGE: find_by_repo_commit_record returns None for unknown repo/commit."""
         store = _make_store()
-        assert store.find_by_repo_commit(repo, commit) is None
+        assert store.find_by_repo_commit_record(repo, commit) is None
 
     @given(snap=snapshot_st())
     @settings(max_examples=20)
-    def test_find_by_artifact_key_property(self, snap: IRSnapshot):
-        """HAPPY: find_by_artifact_key returns record after save."""
+    def test_find_by_artifact_key_record_property(self, snap: IRSnapshot):
+        """HAPPY: find_by_artifact_key_record returns record after save."""
         store = _make_store()
         result = store.save_snapshot(snap)
         found_record = store.find_by_artifact_key_record(result.artifact_key)
-        found = store.find_by_artifact_key(result.artifact_key)
         assert found_record is not None
         assert found_record.snapshot_id == snap.snapshot_id
         assert found_record.artifact_key == result.artifact_key
-        assert found is not None
-        assert found["snapshot_id"] == snap.snapshot_id
 
     @given(key=identifier)
     @settings(max_examples=15)
     @pytest.mark.edge
-    def test_find_by_artifact_key_missing_returns_none_property(self, key: str):
-        """EDGE: find_by_artifact_key returns None for unknown key."""
+    def test_find_by_artifact_key_record_missing_returns_none_property(self, key: str):
+        """EDGE: find_by_artifact_key_record returns None for unknown key."""
         store = _make_store()
         assert store.find_by_artifact_key_record(key) is None
-        assert store.find_by_artifact_key(key) is None
 
     def test_get_snapshot_record_avoids_generic_row_to_dict(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1618,7 +1614,7 @@ class TestSnapshotStoreQueries:
         assert record.snapshot_id == snap.snapshot_id
         assert record.branch == "main"
 
-    def test_snapshot_query_helpers_use_explicit_serializers(
+    def test_snapshot_query_record_helpers_use_explicit_serializers(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         store = _make_store()
@@ -1649,18 +1645,20 @@ class TestSnapshotStoreQueries:
         monkeypatch.setattr(SnapshotRefRecord, "to_dict", _boom_ref)
 
         by_artifact_record = store.find_by_artifact_key_record(saved.artifact_key)
-        by_artifact = store.find_by_artifact_key(saved.artifact_key)
-        by_commit = store.find_by_repo_commit("repo", "abc999")
-        by_ref = store.resolve_snapshot_for_ref("repo", "main")
+        by_commit = store.find_by_repo_commit_record("repo", "abc999")
+        by_ref = store.resolve_snapshot_for_ref_record("repo", "main")
 
         assert by_artifact_record is not None
         assert by_artifact_record.snapshot_id == snap.snapshot_id
-        assert by_artifact is not None
-        assert by_artifact["snapshot_id"] == snap.snapshot_id
         assert by_commit is not None
-        assert by_commit["artifact_key"] == saved.artifact_key
+        assert by_commit.artifact_key == saved.artifact_key
         assert by_ref is not None
-        assert by_ref["snapshot_id"] == snap.snapshot_id
+        assert by_ref.snapshot_id == snap.snapshot_id
+
+    def test_snapshot_store_exposes_typed_lookup_accessors_only(self) -> None:
+        assert not hasattr(SnapshotStore, "find_by_repo_commit")
+        assert not hasattr(SnapshotStore, "find_by_artifact_key")
+        assert not hasattr(SnapshotStore, "resolve_snapshot_for_ref")
 
     @given(
         snap1=connected_snapshot_st(n_docs=1, n_symbols_per_doc=1),
@@ -1693,12 +1691,12 @@ class TestSnapshotStoreQueries:
         store = _make_store()
         store.save_snapshot(snap1)
         store.save_snapshot(snap2)
-        r1 = store.find_by_repo_commit(snap1.repo_name, snap1.commit_id)
-        r2 = store.find_by_repo_commit(snap2.repo_name, snap2.commit_id)
+        r1 = store.find_by_repo_commit_record(snap1.repo_name, snap1.commit_id)
+        r2 = store.find_by_repo_commit_record(snap2.repo_name, snap2.commit_id)
         assert r1 is not None
         assert r2 is not None
-        assert r1["snapshot_id"] == snap1.snapshot_id
-        assert r2["snapshot_id"] == snap2.snapshot_id
+        assert r1.snapshot_id == snap1.snapshot_id
+        assert r2.snapshot_id == snap2.snapshot_id
 
     @given(
         snap=snapshot_st(),

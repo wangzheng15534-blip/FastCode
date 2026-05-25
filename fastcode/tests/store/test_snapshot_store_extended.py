@@ -327,19 +327,19 @@ class TestSnapshotRefsConstraints:
         branch=_branch_st,
     )
     @settings(max_examples=10)
-    def test_resolve_snapshot_for_ref_property(
+    def test_resolve_snapshot_for_ref_record_property(
         self, repo: str, commit: str, branch: str
     ):
-        """HAPPY: resolve_snapshot_for_ref returns record for known branch."""
+        """HAPPY: resolve_snapshot_for_ref_record returns record for known branch."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
         store.save_snapshot(snap)
 
-        result = store.resolve_snapshot_for_ref(repo, branch)
+        result = store.resolve_snapshot_for_ref_record(repo, branch)
         assert result is not None
-        assert result["repo_name"] == repo
-        assert result["branch"] == branch
-        assert result["snapshot_id"] == snap.snapshot_id
+        assert result.repo_name == repo
+        assert result.branch == branch
+        assert result.snapshot_id == snap.snapshot_id
 
     @given(
         repo=_repo_name_st,
@@ -347,12 +347,12 @@ class TestSnapshotRefsConstraints:
     )
     @settings(max_examples=10)
     @pytest.mark.edge
-    def test_resolve_snapshot_for_unknown_ref_returns_none_property(
+    def test_resolve_snapshot_for_record_unknown_ref_returns_none_property(
         self, repo: str, branch: str
     ):
         """EDGE: resolving unknown branch returns None."""
         store = _make_store()
-        result = store.resolve_snapshot_for_ref(repo, branch)
+        result = store.resolve_snapshot_for_ref_record(repo, branch)
         assert result is None
 
 
@@ -441,17 +441,17 @@ class TestMultipleSnapshotsSameRepo:
         branch=_branch_st,
     )
     @settings(max_examples=10)
-    def test_find_by_repo_commit_returns_latest_property(
+    def test_find_by_repo_commit_record_returns_latest_property(
         self, repo: str, commit: str, branch: str
     ):
-        """HAPPY: find_by_repo_commit returns a record for the given repo+commit."""
+        """HAPPY: find_by_repo_commit_record returns a record for the given repo+commit."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
         store.save_snapshot(snap)
 
-        result = store.find_by_repo_commit(repo, commit)
+        result = store.find_by_repo_commit_record(repo, commit)
         assert result is not None
-        assert result["snapshot_id"] == snap.snapshot_id
+        assert result.snapshot_id == snap.snapshot_id
 
 
 class TestLargeMetadataRoundtrip:
@@ -612,15 +612,15 @@ class TestFindLatestBehavior:
     def test_find_by_repo_commit_returns_matching_property(
         self, repo: str, commit: str, branch: str
     ):
-        """HAPPY: find_by_repo_commit returns a snapshot matching the query."""
+        """HAPPY: find_by_repo_commit_record returns a snapshot matching the query."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
         store.save_snapshot(snap)
 
-        result = store.find_by_repo_commit(repo, commit)
+        result = store.find_by_repo_commit_record(repo, commit)
         assert result is not None
-        assert result["repo_name"] == repo
-        assert result["commit_id"] == commit
+        assert result.repo_name == repo
+        assert result.commit_id == commit
 
     @given(
         repo=_repo_name_st,
@@ -632,7 +632,7 @@ class TestFindLatestBehavior:
     def test_find_by_repo_commit_distinguishes_commits_property(
         self, repo: str, commit1: Any, commit2: Any, branch: str
     ):
-        """HAPPY: different commits for same repo return distinct records."""
+        """HAPPY: different commits for same repo return distinct typed records."""
         assume(commit1 != commit2)
         store = _make_store()
         snap1 = _build_snapshot(repo, commit1, branch)
@@ -640,11 +640,13 @@ class TestFindLatestBehavior:
         store.save_snapshot(snap1)
         store.save_snapshot(snap2)
 
-        r1 = store.find_by_repo_commit(repo, commit1)
-        r2 = store.find_by_repo_commit(repo, commit2)
-        assert r1["commit_id"] == commit1
-        assert r2["commit_id"] == commit2
-        assert r1["snapshot_id"] != r2["snapshot_id"]
+        r1 = store.find_by_repo_commit_record(repo, commit1)
+        r2 = store.find_by_repo_commit_record(repo, commit2)
+        assert r1 is not None
+        assert r2 is not None
+        assert r1.commit_id == commit1
+        assert r2.commit_id == commit2
+        assert r1.snapshot_id != r2.snapshot_id
 
     @given(
         repo=_repo_name_st,
@@ -657,7 +659,7 @@ class TestFindLatestBehavior:
     def test_resolve_snapshot_for_ref_distinguishes_branches_property(
         self, repo: str, commit1: Any, commit2: Any, branch1: Any, branch2: Any
     ):
-        """HAPPY: resolve_snapshot_for_ref distinguishes branches."""
+        """HAPPY: resolve_snapshot_for_ref_record distinguishes branches."""
         assume(branch1 != branch2)
         assume(commit1 != commit2)
         store = _make_store()
@@ -666,12 +668,12 @@ class TestFindLatestBehavior:
         store.save_snapshot(snap1)
         store.save_snapshot(snap2)
 
-        r1 = store.resolve_snapshot_for_ref(repo, branch1)
-        r2 = store.resolve_snapshot_for_ref(repo, branch2)
+        r1 = store.resolve_snapshot_for_ref_record(repo, branch1)
+        r2 = store.resolve_snapshot_for_ref_record(repo, branch2)
         assert r1 is not None
         assert r2 is not None
-        assert r1["branch"] == branch1
-        assert r2["branch"] == branch2
+        assert r1.branch == branch1
+        assert r2.branch == branch2
 
 
 class TestArtifactKeyGeneration:
@@ -738,20 +740,20 @@ class TestFindbyArtifactKey:
     def test_find_by_artifact_key_after_save_property(
         self, repo: str, commit: str, branch: str
     ):
-        """HAPPY: find_by_artifact_key retrieves saved snapshot."""
+        """HAPPY: find_by_artifact_key_record retrieves saved snapshot."""
         store = _make_store()
         snap = _build_snapshot(repo, commit, branch)
         result = store.save_snapshot(snap)
 
-        found = store.find_by_artifact_key(result.artifact_key)
+        found = store.find_by_artifact_key_record(result.artifact_key)
         assert found is not None
-        assert found["snapshot_id"] == snap.snapshot_id
+        assert found.snapshot_id == snap.snapshot_id
 
     @pytest.mark.edge
-    def test_find_by_artifact_key_unknown_returns_none_property(self):
+    def test_find_by_artifact_key_record_unknown_returns_none_property(self):
         """EDGE: querying unknown artifact key returns None."""
         store = _make_store()
-        result = store.find_by_artifact_key("snap_nonexistent")
+        result = store.find_by_artifact_key_record("snap_nonexistent")
         assert result is None
 
 
@@ -1158,15 +1160,15 @@ class TestFullWorkflow:
         assert loaded_graphs == graphs
 
         # Query by repo+commit
-        found = store.find_by_repo_commit("repo_wf", "c_workflow")
+        found = store.find_by_repo_commit_record("repo_wf", "c_workflow")
         assert found is not None
-        assert found["snapshot_id"] == snap.snapshot_id
+        assert found.snapshot_id == snap.snapshot_id
 
     @pytest.mark.edge
     def test_workflow_find_by_repo_commit_unknown_property(self):
         """EDGE: find_by_repo_commit returns None for unknown repo/commit."""
         store = _make_store()
-        assert store.find_by_repo_commit("no_repo", "no_commit") is None
+        assert store.find_by_repo_commit_record("no_repo", "no_commit") is None
 
 
 class TestMultipleSnapshotsSameRepoDifferentCommits:
@@ -1210,11 +1212,13 @@ class TestMultipleSnapshotsSameRepoDifferentCommits:
         store.save_snapshot(snap1)
         store.save_snapshot(snap2)
 
-        r1 = store.find_by_repo_commit(repo, commit1)
-        r2 = store.find_by_repo_commit(repo, commit2)
-        assert r1["commit_id"] == commit1
-        assert r2["commit_id"] == commit2
-        assert r1["snapshot_id"] != r2["snapshot_id"]
+        r1 = store.find_by_repo_commit_record(repo, commit1)
+        r2 = store.find_by_repo_commit_record(repo, commit2)
+        assert r1 is not None
+        assert r2 is not None
+        assert r1.commit_id == commit1
+        assert r2.commit_id == commit2
+        assert r1.snapshot_id != r2.snapshot_id
 
     @pytest.mark.edge
     def test_snapshots_do_not_leak_metadata_property(self):
@@ -1396,10 +1400,10 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
             return
         snap_id = data.draw(st.sampled_from(sorted(self.saved_snapshots.keys())))
         snap = self.saved_snapshots[snap_id]
-        result = self.store.find_by_repo_commit(snap.repo_name, snap.commit_id)
+        result = self.store.find_by_repo_commit_record(snap.repo_name, snap.commit_id)
         assert result is not None
-        assert result["repo_name"] == snap.repo_name
-        assert result["commit_id"] == snap.commit_id
+        assert result.repo_name == snap.repo_name
+        assert result.commit_id == snap.commit_id
 
     @invariant()
     def load_never_raises_on_known_id(self):
@@ -1424,7 +1428,9 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
     def find_by_repo_commit_returns_record(self):
         """INVARIANT: find_by_repo_commit always returns a record for saved data."""
         for _snap_id, snap in self.saved_snapshots.items():
-            result = self.store.find_by_repo_commit(snap.repo_name, snap.commit_id)
+            result = self.store.find_by_repo_commit_record(
+                snap.repo_name, snap.commit_id
+            )
             assert result is not None, (
                 f"No record for {snap.repo_name}:{snap.commit_id}"
             )
@@ -1534,7 +1540,7 @@ class TestSnapshotStoreUpsert:
         """EDGE: querying unknown repo+commit returns None."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _make_store_for_dir(tmpdir)
-            result = store.find_by_repo_commit(repo, commit)
+            result = store.find_by_repo_commit_record(repo, commit)
             assert result is None
 
     @given(

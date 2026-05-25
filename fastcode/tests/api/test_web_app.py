@@ -68,7 +68,9 @@ class _FakeFastCode:
         self.vector_store = _FakeVectorStore()
         self.cache_manager = SimpleNamespace(
             clear=lambda: True,
-            _get_session_index=lambda session_id: {"multi_turn": True},
+            get_session_index_record=lambda session_id: SimpleNamespace(
+                multi_turn=True
+            ),
         )
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
 

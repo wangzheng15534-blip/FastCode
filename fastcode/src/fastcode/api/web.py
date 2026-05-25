@@ -1015,22 +1015,12 @@ async def get_session(session_id: str):
     try:
         history = fastcode_instance.get_session_history(session_id) or []
 
-        # Determine if this session was multi-turn from session index
-        get_record = getattr(
-            fastcode_instance.cache_manager, "get_session_index_record", None
+        session_record = cast(
+            Any, fastcode_instance.cache_manager.get_session_index_record(session_id)
         )
-        if callable(get_record):
-            session_record = cast(Any, get_record(session_id))
-            multi_turn = (
-                bool(session_record.multi_turn) if session_record is not None else False
-            )
-        else:
-            session_index = fastcode_instance.cache_manager._get_session_index(
-                session_id
-            )
-            multi_turn = (
-                bool(session_index.get("multi_turn", False)) if session_index else False
-            )
+        multi_turn = (
+            bool(session_record.multi_turn) if session_record is not None else False
+        )
 
         return {
             "status": "success",

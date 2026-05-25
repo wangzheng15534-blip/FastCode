@@ -71,18 +71,18 @@ def test_save_dialogue_turn_uses_json_cache_envelope(tmp_path: Path) -> None:
         assert raw_turn.startswith(_CACHE_RECORD_MAGIC + _CACHE_JSON_KIND)
         assert raw_index.startswith(_CACHE_RECORD_MAGIC + _CACHE_JSON_KIND)
 
-        turn = manager.get_dialogue_turn("session-1", 1)
-        assert turn is not None
-        assert turn["summary"] == "Located config load path"
-        assert turn["retrieved_elements"][0]["file"] == "src/config.py"
+        turn_record = manager.get_dialogue_turn_record("session-1", 1)
+        assert turn_record is not None
+        assert turn_record.summary == "Located config load path"
+        assert turn_record.retrieved_elements[0]["file"] == "src/config.py"
 
-        session_index = manager._get_session_index("session-1")
-        assert session_index is not None
-        assert session_index["session_id"] == "session-1"
-        assert session_index["total_turns"] == 1
-        assert session_index["multi_turn"] is True
-        assert isinstance(session_index["created_at"], float)
-        assert isinstance(session_index["last_updated"], float)
+        session_record = manager.get_session_index_record("session-1")
+        assert session_record is not None
+        assert session_record.session_id == "session-1"
+        assert session_record.total_turns == 1
+        assert session_record.multi_turn is True
+        assert isinstance(session_record.created_at, float)
+        assert isinstance(session_record.last_updated, float)
     finally:
         manager.cache.close()
 
@@ -268,16 +268,16 @@ def test_dialogue_record_accessors_use_explicit_serializers(
 
         turn_record = manager.get_dialogue_turn_record("session-typed", 1)
         session_record = manager.get_session_index_record("session-typed")
-        history = manager.get_dialogue_history("session-typed")
-        sessions = manager.list_sessions()
+        history = manager.get_dialogue_history_records("session-typed")
+        sessions = manager.list_session_records()
 
         assert turn_record is not None
         assert turn_record.query == "Where is config loaded?"
         assert session_record is not None
         assert session_record.total_turns == 1
         assert session_record.multi_turn is True
-        assert history[0]["summary"] == "Located config load path"
-        assert sessions[0]["session_id"] == "session-typed"
+        assert history[0].summary == "Located config load path"
+        assert sessions[0].session_id == "session-typed"
     finally:
         manager.cache.close()
 

@@ -393,25 +393,6 @@ class CacheManager:
             self.logger.error(f"Failed to save dialogue turn: {e}")
             return False
 
-    def get_dialogue_turn(
-        self, session_id: str, turn_number: int
-    ) -> dict[str, Any] | None:
-        """
-        Get a specific dialogue turn from cache
-
-        Args:
-            session_id: Session identifier
-            turn_number: Turn number to retrieve
-
-        Returns:
-            Turn data dictionary or None
-        """
-        if not self.enabled:
-            return None
-
-        record = self.get_dialogue_turn_record(session_id, turn_number)
-        return _dialogue_turn_payload(record) if record is not None else None
-
     def get_dialogue_turn_record(
         self, session_id: str, turn_number: int
     ) -> DialogueTurnRecord | None:
@@ -467,14 +448,6 @@ class CacheManager:
         except Exception as e:
             self.logger.error(f"Failed to get dialogue history: {e}")
             return []
-
-    def get_dialogue_history(
-        self, session_id: str, max_turns: int | None = None
-    ) -> list[dict[str, Any]]:
-        return [
-            _dialogue_turn_payload(record)
-            for record in self.get_dialogue_history_records(session_id, max_turns)
-        ]
 
     def get_recent_summaries(
         self, session_id: str, num_rounds: int
@@ -917,11 +890,6 @@ class CacheManager:
             return None
         return _dialogue_session_record(cast(dict[str, Any], value))
 
-    def _get_session_index(self, session_id: str) -> dict[str, Any] | None:
-        """Get session index"""
-        record = self.get_session_index_record(session_id)
-        return _dialogue_session_payload(record) if record is not None else None
-
     def delete_session(self, session_id: str) -> bool:
         """
         Delete an entire dialogue session
@@ -966,26 +934,6 @@ class CacheManager:
         except Exception as e:
             self.logger.error(f"Failed to delete session: {e}")
             return False
-
-    def list_sessions(self) -> list[dict[str, Any]]:
-        """
-        List all dialogue sessions
-
-        Returns:
-            List of session metadata dictionaries
-        """
-        if not self.enabled or self.cache is None:
-            return []
-
-        try:
-            return [
-                _dialogue_session_payload(record)
-                for record in self.list_session_records()
-            ]
-
-        except Exception as e:
-            self.logger.error(f"Failed to list sessions: {e}")
-            return []
 
     def list_session_records(self) -> list[DialogueSessionRecord]:
         if not self.enabled or self.cache is None:

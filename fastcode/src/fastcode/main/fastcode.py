@@ -88,6 +88,8 @@ from ..semantic.symbol_index import SnapshotSymbolIndex
 from ..store.cache import CacheManager
 from ..store.cache_contracts import (
     ContextActivationRecord,
+    DialogueSessionRecord,
+    DialogueTurnRecord,
     HandoffArtifactRecord,
 )
 from ..store.file_artifacts import FileArtifactStore
@@ -3260,7 +3262,7 @@ class FastCode:
     def _get_next_turn_number(self, session_id: str) -> int:
         return self.query_handler._get_next_turn_number(session_id)
 
-    def get_session_history(self, session_id: str) -> list[dict[str, Any]]:
+    def get_session_history(self, session_id: str) -> list[DialogueTurnRecord]:
         """
         Get dialogue history for a session
 
@@ -3270,7 +3272,7 @@ class FastCode:
         Returns:
             List of dialogue turns
         """
-        return self.cache_manager.get_dialogue_history(session_id)
+        return self.cache_manager.get_dialogue_history_records(session_id)
 
     @staticmethod
     def _parse_working_memory_record_payload(
@@ -3695,58 +3697,35 @@ class FastCode:
         Returns:
             List of session metadata with first query as title
         """
-        list_session_records = getattr(self.cache_manager, "list_session_records", None)
-        get_turn_record = getattr(self.cache_manager, "get_dialogue_turn_record", None)
-        if callable(list_session_records) and callable(get_turn_record):
-            enriched_sessions: list[dict[str, Any]] = []
-            for session in cast(list[Any], list_session_records()):
-                session_id = str(session.session_id)
-                title = "Unknown Session"
-                if session_id:
-                    first_turn = cast(Any, get_turn_record(session_id, 1))
-                    if first_turn is not None:
-                        first_query = str(first_turn.query)
-                        title = (
-                            first_query[:77] + "..."
-                            if len(first_query) > 80
-                            else first_query
-                        )
-                    else:
-                        title = f"Session {session_id}"
-                enriched_sessions.append(
-                    {
-                        "session_id": session_id,
-                        "created_at": float(session.created_at),
-                        "total_turns": int(session.total_turns),
-                        "last_updated": float(session.last_updated),
-                        "multi_turn": bool(session.multi_turn),
-                        "title": title,
-                    }
-                )
-            return enriched_sessions
-
-        sessions = self.cache_manager.list_sessions()
-
-        # Enrich each session with the first query as a title
         enriched_sessions: list[dict[str, Any]] = []
-        for session in sessions:
-            session_id = session.get("session_id", "")
+        for session in cast(
+            list[DialogueSessionRecord], self.cache_manager.list_session_records()
+        ):
+            session_id = str(session.session_id)
+            title = "Unknown Session"
             if session_id:
-                # Get the first turn to use its query as title
-                first_turn = self.cache_manager.get_dialogue_turn(session_id, 1)
-                if first_turn:
-                    first_query = first_turn.get("query", "")
-                    # Truncate long queries
-                    if len(first_query) > 80:
-                        title = first_query[:77] + "..."
-                    else:
-                        title = first_query
-                    session["title"] = title
+                first_turn = cast(
+                    DialogueTurnRecord | None,
+                    self.cache_manager.get_dialogue_turn_record(session_id, 1),
+                )
+                if first_turn is not None:
+                    first_query = str(first_turn.query)
+                    title = (
+                        first_query[:77] + "..."
+                        if len(first_query) > 80
+                        else first_query
+                    )
                 else:
-                    session["title"] = f"Session {session_id}"
-            else:
-                session["title"] = "Unknown Session"
-
-            enriched_sessions.append(session)
+                    title = f"Session {session_id}"
+            enriched_sessions.append(
+                {
+                    "session_id": session_id,
+                    "created_at": float(session.created_at),
+                    "total_turns": int(session.total_turns),
+                    "last_updated": float(session.last_updated),
+                    "multi_turn": bool(session.multi_turn),
+                    "title": title,
+                }
+            )
 
         return enriched_sessions

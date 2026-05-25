@@ -1337,11 +1337,27 @@ class QueryPipeline:
             return None
 
         context_rounds = self.config.get("generation", {}).get("context_rounds", 10)
-        history = self.cache_manager.get_dialogue_history(
-            session_id, max_turns=context_rounds
-        )
+        history = [
+            self._dialogue_turn_payload(record)
+            for record in self.cache_manager.get_dialogue_history_records(
+                session_id, max_turns=context_rounds
+            )
+        ]
 
         return history if history else None
+
+    @staticmethod
+    def _dialogue_turn_payload(record: Any) -> dict[str, Any]:
+        return {
+            "session_id": str(record.session_id),
+            "turn_number": int(record.turn_number),
+            "timestamp": float(record.timestamp),
+            "query": str(record.query),
+            "answer": str(record.answer),
+            "summary": str(record.summary),
+            "retrieved_elements": list(record.retrieved_elements),
+            "metadata": dict(record.metadata),
+        }
 
     def _get_next_turn_number(self, session_id: str) -> int:
         """
@@ -1353,14 +1369,9 @@ class QueryPipeline:
         Returns:
             Next turn number (1-indexed)
         """
-        get_record = getattr(self.cache_manager, "get_session_index_record", None)
-        if callable(get_record):
-            session_record = cast(Any, get_record(session_id))
-            if session_record is not None:
-                return int(session_record.total_turns) + 1
-        session_index = self.cache_manager._get_session_index(session_id)
-        if session_index:
-            return int(session_index.get("total_turns", 0)) + 1
+        session_record = cast(Any, self.cache_manager.get_session_index_record(session_id))
+        if session_record is not None:
+            return int(session_record.total_turns) + 1
         return 1
 
     def _extract_sources_from_elements(

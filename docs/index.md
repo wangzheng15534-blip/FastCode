@@ -17,6 +17,7 @@
 
 - [Project Overview](./project-overview.md) — What FastCode is, tech summary, architecture type
 - [Architecture](./architecture.md) — Three-layer architecture, precision-anchored extraction, projection pipeline, module organization
+- [Package Layout Tightening Plan](./_plans/plan-package-layout-tightening.md) — strict layout-gap assessment and target subpackage proposal
 - [API Contracts](./api-contracts.md) — REST API (35+ endpoints), MCP tools (11), CLI commands (14)
 - [Data Models](./data-models.md) — Canonical IR (6 models), SCIP models, projection models, merge strategy
 - [Source Tree Analysis](./source-tree-analysis.md) — Annotated directory tree, critical folders, entry points, integration points

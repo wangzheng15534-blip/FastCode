@@ -217,6 +217,68 @@ def test_incremental_pipeline_does_not_call_full_element_graph_fallback() -> Non
     )
 
 
+def test_incremental_pipeline_does_not_reintroduce_full_element_fallback_helper() -> None:
+    path = PACKAGE_ROOT / "indexing" / "pipeline.py"
+    tree = ast.parse(path.read_text())
+    violations = [
+        f"{_rel(path)}:{node.lineno}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_full_elements_for_incremental_fallback"
+    ]
+    assert not violations, (
+        "full-element incremental fallback helper must stay removed:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_semantic_patch_does_not_eagerly_copy_snapshot_collections() -> None:
+    path = PACKAGE_ROOT / "semantic" / "resolvers" / "patching.py"
+    tree = ast.parse(path.read_text())
+    parents = _parents(tree)
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _call_name(node) != "list":
+            continue
+        if _enclosing_function(node, parents) != "apply_resolution_patch":
+            continue
+        first_arg = node.args[0] if node.args else None
+        if not isinstance(first_arg, ast.Attribute):
+            continue
+        if not isinstance(first_arg.value, ast.Name) or first_arg.value.id != "snapshot":
+            continue
+        if first_arg.attr in {"units", "supports", "relations", "embeddings"}:
+            violations.append(f"{_rel(path)}:{node.lineno}:{first_arg.attr}")
+    assert not violations, (
+        "semantic patch must not eagerly copy snapshot collections:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_shard_native_bm25_retrieval_helpers_do_not_construct_bm25okapi() -> None:
+    path = PACKAGE_ROOT / "query" / "retriever.py"
+    tree = ast.parse(path.read_text())
+    parents = _parents(tree)
+    guarded_functions = {
+        "load_bm25_sources",
+        "_keyword_search_sharded",
+        "_keyword_search_sharded_runtime",
+    }
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if _call_name(node) != "BM25Okapi":
+            continue
+        function_name = _enclosing_function(node, parents) or "<module>"
+        if function_name in guarded_functions:
+            violations.append(f"{_rel(path)}:{node.lineno}:{function_name}")
+    assert not violations, (
+        "shard-native BM25 helpers must stay rebuild-free:\n"
+        + "\n".join(violations)
+    )
+
+
 def test_networkx_imports_stay_explicit_compatibility_boundaries() -> None:
     violations: list[str] = []
     for path in PACKAGE_ROOT.rglob("*.py"):

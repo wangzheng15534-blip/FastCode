@@ -2064,47 +2064,6 @@ class IndexPipeline:
         }
         return manifest
 
-    def _full_elements_for_incremental_fallback(
-        self,
-        *,
-        changed_elements: Sequence[CodeElement],
-        incremental_plan: Mapping[str, Any],
-        current_files: Sequence[Mapping[str, Any]],
-        repo_name: str,
-        repo_url: str,
-    ) -> list[CodeElement]:
-        previous_key = str(incremental_plan.get("previous_artifact_key") or "")
-        previous_manifest = self._load_file_manifest(previous_key)
-        if previous_manifest is None:
-            return list(changed_elements)
-        existing_metadata = self._load_existing_metadata(previous_key)
-        unchanged_paths = [
-            normalize_path(str(path))
-            for path in incremental_plan.get("unchanged_paths", [])
-            if path
-        ]
-        unchanged_metadata, _expected_ids = self._collect_unchanged_metadata(
-            previous_manifest,
-            unchanged_paths,
-            existing_metadata,
-        )
-        current_lookup = self._file_info_by_relative_path(current_files)
-        unchanged_elements: list[CodeElement] = []
-        for meta in unchanged_metadata:
-            rel_path = normalize_path(
-                str(meta.get("relative_path") or meta.get("file_path") or "")
-            )
-            file_info = current_lookup.get(rel_path)
-            elem = self._reconstruct_code_element(
-                meta,
-                file_info=dict(file_info) if isinstance(file_info, Mapping) else None,
-                repo_name=repo_name,
-                repo_url=repo_url,
-            )
-            if elem is not None:
-                unchanged_elements.append(elem)
-        return unchanged_elements + list(changed_elements)
-
     def _incremental_graph_delta_context(
         self,
         *,

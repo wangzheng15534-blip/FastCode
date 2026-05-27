@@ -441,6 +441,39 @@ class TestApplyIncrementalUpdate:
         assert "unit:sym:b.py:old_func" not in emb_unit_ids
         assert "unit:sym:b.py:new_func" in emb_unit_ids
 
+    def test_reuses_unchanged_unit_objects_by_reference(self) -> None:
+        stable_file = _make_file_unit("a.py", "h1")
+        stable_symbol = _make_symbol_unit("a.py", "stable")
+        old_changed_symbol = _make_symbol_unit("b.py", "old_func")
+        new_changed_symbol = _make_symbol_unit("b.py", "new_func")
+        old = _make_snapshot(
+            snapshot_id="snap:test:old",
+            units=[stable_file, stable_symbol, _make_file_unit("b.py", "h2"), old_changed_symbol],
+            commit_id="old123",
+        )
+        new = _make_snapshot(
+            snapshot_id="snap:test:new",
+            units=[
+                _make_file_unit("a.py", "h1"),
+                _make_symbol_unit("a.py", "stable"),
+                _make_file_unit("b.py", "h2_new"),
+                new_changed_symbol,
+            ],
+            commit_id="new123",
+        )
+
+        result = apply_incremental_update(
+            old,
+            new,
+            FileChangeSet(modified=["b.py"], unchanged=["a.py"]),
+        )
+
+        assert result.units[0] is stable_file
+        assert result.units[1] is stable_symbol
+        assert result.units[2].unit_id == "unit:file:b.py"
+        assert result.units[2] is not old.units[2]
+        assert result.units[3] is new_changed_symbol
+
     def test_removed_file_drops_units_and_relations(self) -> None:
         sym_b = _make_symbol_unit("b.py", "func_b")
         old = _build_simple_snapshot(
@@ -485,6 +518,50 @@ class TestApplyIncrementalUpdate:
         assert "unit:sym:a.py:foo" in emb_ids
         emb = next(e for e in result.embeddings if e.unit_id == "unit:sym:a.py:foo")
         assert emb.vector == [1.0, 2.0, 3.0]
+
+    def test_reuses_unchanged_support_relation_and_embedding_objects_by_reference(
+        self,
+    ) -> None:
+        caller = _make_symbol_unit("a.py", "caller")
+        callee_old = _make_symbol_unit("b.py", "callee_old")
+        callee_new = _make_symbol_unit("b.py", "callee_new")
+        old_support = IRUnitSupport(
+            support_id="sup:a",
+            unit_id=caller.unit_id,
+            source="scip",
+            support_kind="occurrence",
+            role="definition",
+        )
+        old_relation = _make_relation(
+            "unit:file:a.py",
+            caller.unit_id,
+            "contain",
+            rel_id="rel:contain:a",
+        )
+        old_embedding = _make_embedding(caller.unit_id, vector=[1.0, 2.0, 3.0])
+        old = _build_simple_snapshot(
+            {"a.py": "h1", "b.py": "h2"},
+            extra_units=[caller, callee_old],
+            supports=[old_support],
+            relations=[old_relation],
+            embeddings=[old_embedding],
+        )
+        new = _build_simple_snapshot(
+            {"a.py": "h1", "b.py": "h2_new"},
+            extra_units=[callee_new],
+            snapshot_id="snap:test:new",
+            commit_id="new123",
+        )
+
+        result = apply_incremental_update(
+            old,
+            new,
+            FileChangeSet(modified=["b.py"], unchanged=["a.py"]),
+        )
+
+        assert result.supports[0] is old_support
+        assert result.relations[0] is old_relation
+        assert result.embeddings[0] is old_embedding
 
     def test_cross_file_relation_preserved_if_source_unchanged(self) -> None:
         """A relation from an unchanged file to a changed file's unit should be dropped
@@ -939,10 +1016,26 @@ class TestIncrementalIntegration:
             _make_file_unit("a.py", "h1"),
             _make_symbol_unit("a.py", "foo"),
         ]
+        unchanged_support = IRUnitSupport(
+            support_id="sup:stable",
+            unit_id="unit:sym:a.py:foo",
+            source="scip",
+            support_kind="occurrence",
+            role="definition",
+        )
+        unchanged_relation = _make_relation(
+            "unit:file:a.py",
+            "unit:sym:a.py:foo",
+            "contain",
+            rel_id="rel:stable",
+        )
+        unchanged_embedding = _make_embedding("unit:sym:a.py:foo")
         old = _make_snapshot(
             snapshot_id="snap:test:old",
             units=units,
-            embeddings=[_make_embedding("unit:sym:a.py:foo")],
+            supports=[unchanged_support],
+            relations=[unchanged_relation],
+            embeddings=[unchanged_embedding],
             commit_id="old123",
         )
         new_units = [
@@ -960,4 +1053,9 @@ class TestIncrementalIntegration:
 
         result = apply_incremental_update(old, new, cs)
         assert len(result.units) == 2
+        assert result.units[0] is units[0]
+        assert result.units[1] is units[1]
+        assert result.supports[0] is unchanged_support
+        assert result.relations[0] is unchanged_relation
+        assert result.embeddings[0] is unchanged_embedding
         assert result.snapshot_id == "snap:test:new"

@@ -287,6 +287,8 @@ class HybridRetriever:
         self.filtered_bm25_elements: list[CodeElement] = []
         self._bm25_shard_name: str | None = None
         self._bm25_shard_manifest: dict[str, Any] | None = None
+        self._full_bm25_shard_runtime: dict[str, Any] | None = None
+        self._filtered_bm25_shard_runtime: dict[str, Any] | None = None
 
         # Filtered vector store for selected repositories
         self.filtered_vector_store: VectorSearchStore | None = None
@@ -345,6 +347,7 @@ class HybridRetriever:
             elements: List of code elements (without repository_overview type)
         """
         self.logger.info("Building full BM25 index for keyword search")
+        self._clear_full_bm25_shard_runtime()
 
         self.full_bm25_elements = []
         self.full_bm25_corpus = []
@@ -1593,12 +1596,31 @@ class HybridRetriever:
             # CRITICAL FIX: Always apply repo_filter check for safety, even with filtered index
             use_filter = bool(repo_filter)
             self.logger.debug("Using filtered BM25 index")
+        elif (
+            getattr(self, "_filtered_bm25_shard_runtime", None) is not None
+            and len(self.filtered_bm25_elements) > 0
+        ):
+            return self._keyword_search_sharded_runtime(
+                cast(dict[str, Any], self._filtered_bm25_shard_runtime),
+                query,
+                top_k=top_k,
+                repo_filter=repo_filter,
+                element_types=element_types,
+            )
         elif self.full_bm25 is not None:
             # Use full BM25
             bm25_index = self.full_bm25
             bm25_elements = self.full_bm25_elements
             use_filter = bool(repo_filter)
             self.logger.debug("Using full BM25 index")
+        elif getattr(self, "_full_bm25_shard_runtime", None) is not None:
+            return self._keyword_search_sharded_runtime(
+                cast(dict[str, Any], self._full_bm25_shard_runtime),
+                query,
+                top_k=top_k,
+                repo_filter=repo_filter,
+                element_types=element_types,
+            )
         elif self._bm25_shard_manifest is not None and self._bm25_shard_name:
             return self._keyword_search_sharded(
                 query,
@@ -1663,22 +1685,60 @@ class HybridRetriever:
         repo_filter: list[str] | None,
         element_types: list[str] | None,
     ) -> list[tuple[CodeElementMeta, float]]:
-        manifest = self._bm25_shard_manifest or {}
-        statistics = manifest.get("statistics", {})
+        runtime = self._full_bm25_shard_runtime
+        if runtime is None:
+            manifest = self._bm25_shard_manifest
+            name = self._bm25_shard_name
+            if not (
+                isinstance(manifest, dict)
+                and isinstance(manifest.get("statistics"), dict)
+                and name
+            ):
+                return []
+            runtime = self._build_bm25_shard_runtime(((name, manifest),))
+            if runtime is None:
+                return []
+            self._full_bm25_shard_runtime = runtime
+        return self._keyword_search_sharded_runtime(
+            runtime,
+            query,
+            top_k=top_k,
+            repo_filter=repo_filter,
+            element_types=element_types,
+        )
+
+    def _keyword_search_sharded_runtime(
+        self,
+        runtime: dict[str, Any],
+        query: str,
+        *,
+        top_k: int,
+        repo_filter: list[str] | None,
+        element_types: list[str] | None,
+    ) -> list[tuple[CodeElementMeta, float]]:
+        statistics = runtime.get("statistics", {})
         if not isinstance(statistics, dict):
             return []
         query_tokens = query.lower().split()
         if not query_tokens:
             return []
-        term_shards = manifest.get("term_shards", {})
+        term_shards = runtime.get("term_shards", {})
         if not isinstance(term_shards, dict):
             return []
-        shard_files: set[str] = set()
+        shard_refs: set[tuple[str, str]] = set()
         for token in query_tokens:
-            raw_files = term_shards.get(token, [])
-            if isinstance(raw_files, list):
-                shard_files.update(str(file_name) for file_name in raw_files)
-        if not shard_files:
+            raw_refs = term_shards.get(token, [])
+            if not isinstance(raw_refs, list):
+                continue
+            for raw_ref in raw_refs:
+                if (
+                    isinstance(raw_ref, (list, tuple))
+                    and len(raw_ref) == 2
+                    and raw_ref[0]
+                    and raw_ref[1]
+                ):
+                    shard_refs.add((str(raw_ref[0]), str(raw_ref[1])))
+        if not shard_refs:
             return []
 
         idf = statistics.get("idf", {})
@@ -1692,10 +1752,21 @@ class HybridRetriever:
         allowed_types = set(element_types) if element_types else None
         repo_names = set(repo_filter or [])
         use_filter = bool(repo_names)
-        shard_dir = self._bm25_shards_dir(self._bm25_shard_name or "")
-        scored: list[tuple[float, int, dict[str, Any]]] = []
-        seen_sequences: set[int] = set()
-        for shard_file in sorted(shard_files):
+        source_dirs = runtime.get("source_dirs", {})
+        if not isinstance(source_dirs, dict):
+            return []
+        source_order = runtime.get("source_order", {})
+        if not isinstance(source_order, dict):
+            source_order = {}
+        scored: list[tuple[float, int, int, dict[str, Any]]] = []
+        seen_sequences: set[tuple[str, int]] = set()
+        for source_name, shard_file in sorted(
+            shard_refs,
+            key=lambda item: (int(source_order.get(item[0], 0) or 0), item[1]),
+        ):
+            shard_dir = source_dirs.get(source_name)
+            if not isinstance(shard_dir, str) or not shard_dir:
+                continue
             shard_path = os.path.join(shard_dir, shard_file)
             if not os.path.exists(shard_path):
                 continue
@@ -1712,12 +1783,12 @@ class HybridRetriever:
                 element = entry.get("element")
                 if (
                     not isinstance(sequence_no, int)
-                    or sequence_no in seen_sequences
+                    or (source_name, sequence_no) in seen_sequences
                     or not isinstance(tokens, list)
                     or not isinstance(element, dict)
                 ):
                     continue
-                seen_sequences.add(sequence_no)
+                seen_sequences.add((source_name, sequence_no))
                 if allowed_types and element.get("type") not in allowed_types:
                     continue
                 if use_filter and element.get("repo_name") not in repo_names:
@@ -1734,12 +1805,184 @@ class HybridRetriever:
                         q_freq * (k1 + 1) / denominator
                     )
                 if score > 0:
-                    scored.append((score, sequence_no, element))
-        scored.sort(key=lambda item: (-item[0], item[1]))
+                    scored.append(
+                        (
+                            score,
+                            int(source_order.get(source_name, 0) or 0),
+                            sequence_no,
+                            element,
+                        )
+                    )
+        scored.sort(key=lambda item: (-item[0], item[1], item[2]))
         return [
             (cast(CodeElementMeta, element), float(score))
-            for score, _sequence_no, element in scored[:top_k]
+            for score, _source_order, _sequence_no, element in scored[:top_k]
         ]
+
+    def _clear_full_bm25_shard_runtime(self) -> None:
+        self._full_bm25_shard_runtime = None
+        self._bm25_shard_name = None
+        self._bm25_shard_manifest = None
+
+    def _clear_filtered_bm25_shard_runtime(self) -> None:
+        self._filtered_bm25_shard_runtime = None
+
+    def _load_bm25_elements_only(self, name: str) -> list[CodeElement]:
+        manifest = self._load_bm25_manifest(name)
+        if manifest is not None:
+            ordered_entries: list[tuple[int, dict[str, Any]]] = []
+            shard_dir = self._bm25_shards_dir(name)
+            for shard in manifest.get("shards", []):
+                if not isinstance(shard, dict) or not shard.get("shard_file"):
+                    continue
+                shard_path = os.path.join(shard_dir, str(shard["shard_file"]))
+                with open(shard_path, "rb") as handle:
+                    payload = pickle.load(handle)
+                entries = (
+                    payload.get("entries", []) if isinstance(payload, dict) else []
+                )
+                if not isinstance(entries, list):
+                    continue
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    sequence_no = entry.get("sequence_no")
+                    element = entry.get("element")
+                    if not isinstance(sequence_no, int) or not isinstance(
+                        element, dict
+                    ):
+                        continue
+                    ordered_entries.append((sequence_no, cast(dict[str, Any], element)))
+            ordered_entries.sort(key=lambda item: item[0])
+            return [
+                deserialize_code_element(element_payload)
+                for _sequence_no, element_payload in ordered_entries
+            ]
+
+        bm25_path = self._legacy_bm25_path(name)
+        if not os.path.exists(bm25_path):
+            return []
+        with open(bm25_path, "rb") as handle:
+            payload = pickle.load(handle)
+        if not isinstance(payload, dict):
+            return []
+        return [
+            deserialize_code_element(element_payload)
+            for element_payload in cast(
+                list[dict[str, Any]], payload.get("bm25_elements", [])
+            )
+        ]
+
+    def _build_bm25_shard_runtime(
+        self,
+        sources: Sequence[tuple[str, dict[str, Any]]],
+    ) -> dict[str, Any] | None:
+        term_document_frequencies: Counter[str] = Counter()
+        term_shards: dict[str, list[tuple[str, str]]] = {}
+        doc_lengths: list[int] = []
+        source_dirs: dict[str, str] = {}
+        source_order: dict[str, int] = {}
+
+        for index, (source_name, manifest) in enumerate(sources):
+            source_order[source_name] = index
+            source_dirs[source_name] = self._bm25_shards_dir(source_name)
+            for shard in manifest.get("shards", []):
+                if not isinstance(shard, dict):
+                    continue
+                shard_file = str(shard.get("shard_file") or "")
+                stats = shard.get("statistics", {})
+                if not shard_file or not isinstance(stats, dict):
+                    continue
+                doc_lengths.extend(
+                    int(length)
+                    for length in stats.get("doc_lengths", [])
+                    if isinstance(length, int)
+                )
+                raw_df = stats.get("term_document_frequencies", {})
+                if isinstance(raw_df, dict):
+                    for term, count in raw_df.items():
+                        term_document_frequencies[str(term)] += int(count)
+                for term in stats.get("terms", []):
+                    term_shards.setdefault(str(term), []).append(
+                        (source_name, shard_file)
+                    )
+
+        doc_count = len(doc_lengths)
+        if doc_count == 0:
+            return None
+        avgdl = float(sum(doc_lengths) / doc_count)
+        idf: dict[str, float] = {}
+        idf_sum = 0.0
+        negative_terms: list[str] = []
+        for term, frequency in sorted(term_document_frequencies.items()):
+            value = math.log(doc_count - frequency + 0.5) - math.log(frequency + 0.5)
+            idf[term] = value
+            idf_sum += value
+            if value < 0:
+                negative_terms.append(term)
+        average_idf = idf_sum / len(idf) if idf else 0.0
+        epsilon = 0.25
+        epsilon_value = epsilon * average_idf
+        for term in negative_terms:
+            idf[term] = epsilon_value
+        return {
+            "statistics": {
+                "schema_version": "bm25_statistics.v1",
+                "doc_count": doc_count,
+                "avgdl": avgdl,
+                "idf": idf,
+                "average_idf": average_idf,
+                "epsilon": epsilon,
+                "k1": 1.5,
+                "b": 0.75,
+            },
+            "term_shards": {
+                term: sorted(set(refs)) for term, refs in sorted(term_shards.items())
+            },
+            "source_dirs": source_dirs,
+            "source_order": source_order,
+        }
+
+    def load_bm25_sources(
+        self,
+        names: Sequence[str],
+        *,
+        filtered: bool,
+    ) -> bool:
+        manifests: list[tuple[str, dict[str, Any]]] = []
+        elements: list[CodeElement] = []
+        for name in names:
+            manifest = self._load_bm25_manifest(name)
+            if not (
+                isinstance(manifest, dict)
+                and isinstance(manifest.get("statistics"), dict)
+            ):
+                return False
+            manifests.append((name, manifest))
+            elements.extend(self._load_bm25_elements_only(name))
+
+        runtime = self._build_bm25_shard_runtime(manifests)
+        if runtime is None:
+            return False
+
+        if filtered:
+            self.filtered_bm25 = None
+            self.filtered_bm25_corpus = []
+            self.filtered_bm25_elements = elements
+            self._filtered_bm25_shard_runtime = runtime
+            return True
+
+        self.full_bm25 = None
+        self.full_bm25_corpus = []
+        self.full_bm25_elements = elements
+        self._full_bm25_shard_runtime = runtime
+        if len(manifests) == 1:
+            self._bm25_shard_name = manifests[0][0]
+            self._bm25_shard_manifest = manifests[0][1]
+        else:
+            self._bm25_shard_name = None
+            self._bm25_shard_manifest = None
+        return True
 
     def _combine_results(
         self,
@@ -1934,7 +2177,9 @@ class HybridRetriever:
         self, query: str, results: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Re-rank results based on additional factors"""
-        return _hit_rows_from_records(self._rerank_hits(_hit_records_from_rows(results)))
+        return _hit_rows_from_records(
+            self._rerank_hits(_hit_records_from_rows(results))
+        )
 
     def _rerank_hits(self, results: list[Hit]) -> list[Hit]:
         return _filtering.rerank(results)
@@ -2106,39 +2351,52 @@ class HybridRetriever:
                 self.logger.error("Failed to load any repository vector indexes")
                 return False
 
-            # Reload BM25 indexes for specific repositories into FILTERED indexes
-            all_bm25_elements = []
-            all_bm25_corpus = []
-
-            for repo_name in repo_names:
-                data = self._load_bm25_payload(repo_name)
-                if data is None:
-                    self.logger.warning(f"BM25 index not found for {repo_name}")
-                    continue
-                try:
-                    all_bm25_corpus.extend(
-                        cast(list[list[str]], data.get("bm25_corpus", []))
-                    )
-                    for elem_payload in cast(
-                        list[dict[str, Any]], data.get("bm25_elements", [])
-                    ):
-                        all_bm25_elements.append(deserialize_code_element(elem_payload))
-                    self.logger.info(f"Loaded BM25 index for {repo_name}")
-                except Exception as e:
-                    self.logger.warning(
-                        f"Failed to load BM25 index for {repo_name}: {e}"
-                    )
-
-            # Rebuild FILTERED BM25 with selected repositories
-            if all_bm25_elements and all_bm25_corpus:
-                self.filtered_bm25_elements = all_bm25_elements
-                self.filtered_bm25_corpus = all_bm25_corpus
-                self.filtered_bm25 = BM25Okapi(all_bm25_corpus)
+            # Reload BM25 indexes for specific repositories into FILTERED indexes.
+            self.filtered_bm25 = None
+            self.filtered_bm25_corpus = []
+            self.filtered_bm25_elements = []
+            self._clear_filtered_bm25_shard_runtime()
+            if self.load_bm25_sources(repo_names, filtered=True):
                 self.logger.info(
-                    f"Rebuilt filtered BM25 index with {len(all_bm25_elements)} elements"
+                    "Loaded shard-native filtered BM25 for %d repositories",
+                    len(repo_names),
                 )
             else:
-                self.logger.warning("No BM25 data found for the specified repositories")
+                all_bm25_elements = []
+                all_bm25_corpus = []
+                for repo_name in repo_names:
+                    data = self._load_bm25_payload(repo_name)
+                    if data is None:
+                        self.logger.warning(f"BM25 index not found for {repo_name}")
+                        continue
+                    try:
+                        all_bm25_corpus.extend(
+                            cast(list[list[str]], data.get("bm25_corpus", []))
+                        )
+                        for elem_payload in cast(
+                            list[dict[str, Any]], data.get("bm25_elements", [])
+                        ):
+                            all_bm25_elements.append(
+                                deserialize_code_element(elem_payload)
+                            )
+                        self.logger.info(f"Loaded BM25 index for {repo_name}")
+                    except Exception as e:
+                        self.logger.warning(
+                            f"Failed to load BM25 index for {repo_name}: {e}"
+                        )
+
+                if all_bm25_elements and all_bm25_corpus:
+                    self.filtered_bm25_elements = all_bm25_elements
+                    self.filtered_bm25_corpus = all_bm25_corpus
+                    self.filtered_bm25 = BM25Okapi(all_bm25_corpus)
+                    self.logger.info(
+                        "Rebuilt filtered BM25 index with %d elements",
+                        len(all_bm25_elements),
+                    )
+                else:
+                    self.logger.warning(
+                        "No BM25 data found for the specified repositories"
+                    )
 
             # Optionally reload graph data (if needed)
             # Note: Graph reloading is commented out since it might not be necessary for all use cases
@@ -2265,6 +2523,9 @@ class HybridRetriever:
                 self.full_bm25_elements = []
                 self._bm25_shard_name = name
                 self._bm25_shard_manifest = manifest
+                self._full_bm25_shard_runtime = self._build_bm25_shard_runtime(
+                    ((name, manifest),)
+                )
                 self.logger.info(
                     "Loaded shard-native BM25 metadata with %d documents",
                     int(manifest.get("element_count") or 0),
@@ -2275,6 +2536,7 @@ class HybridRetriever:
                 bm25_path = self._legacy_bm25_path(name)
                 self.logger.warning(f"BM25 data not found: {bm25_path}")
                 return False
+            self._clear_full_bm25_shard_runtime()
             self.full_bm25_corpus = cast(list[list[str]], data["bm25_corpus"])
             self.full_bm25_elements = [
                 deserialize_code_element(elem_payload)

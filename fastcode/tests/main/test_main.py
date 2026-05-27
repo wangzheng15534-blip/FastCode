@@ -10,8 +10,10 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
+from fastcode.graph.build import CodeGraphBuilder
 from fastcode.inbound.config_mapper import config_from_mapping
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs, IRGraphView
@@ -30,6 +32,7 @@ from fastcode.query.context_payloads import (
     working_memory_from_payload,
     working_memory_payload,
 )
+from fastcode.query.retriever import HybridRetriever
 from fastcode.retrieval.agent_context import (
     AcceptedFact,
     EvidenceRef,
@@ -51,6 +54,7 @@ from fastcode.store.cache_contracts import (
     TurnJournalRecord,
     WorkingMemoryRecord,
 )
+from fastcode.store.graph_artifacts import GraphArtifactStore
 from fastcode.store.index_run_contracts import IndexRunRecord
 from fastcode.store.manifest_contracts import ManifestRecord
 from fastcode.store.snapshot_contracts import (
@@ -58,6 +62,7 @@ from fastcode.store.snapshot_contracts import (
     SnapshotRecord,
     SnapshotRefRecord,
 )
+from fastcode.store.vector import VectorStore
 
 # ---------------------------------------------------------------------------
 # Helpers (basic / doc pipeline tests)
@@ -1166,6 +1171,787 @@ def test_load_multi_repo_cache_uses_explicit_code_element_deserializer(
     assert calls == [payload]
     assert fc.retriever.full_bm25_elements[0].id == "file:service"
     assert fc.retriever.full_bm25_corpus == [["service"]]
+
+
+def test_load_multi_repo_cache_uses_shard_native_bm25_when_available(
+    tmp_path: Path,
+) -> None:
+    fc = FastCode.__new__(FastCode)
+    fc.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+    )
+    fc.embedder = SimpleNamespace(embedding_dim=3)
+    fc.loaded_repositories = {}
+    fc.vector_store = SimpleNamespace(
+        persist_dir=str(tmp_path),
+        initialize=lambda _dimension: None,
+        merge_from_index=lambda _repo_name: True,
+        get_count=lambda: 2,
+        scan_available_indexes=lambda _use_cache=False: [{"name": "repo"}],
+    )
+    load_calls: list[tuple[list[str], bool]] = []
+    fc.retriever = SimpleNamespace(
+        persist_dir=str(tmp_path),
+        full_bm25_elements=[],
+        full_bm25_corpus=[],
+        full_bm25=None,
+        build_repo_overview_bm25=lambda: None,
+        load_bm25_sources=lambda names, *, filtered: load_calls.append(
+            (list(names), filtered)
+        )
+        or True,
+    )
+    fc.graph_builder = SimpleNamespace()
+    fc.graph_artifact_store = SimpleNamespace(
+        load=lambda _builder, _repo_name: True,
+        merge=lambda _builder, _repo_name: True,
+    )
+    fc._reconstruct_elements_from_metadata = lambda: (_ for _ in ()).throw(
+        AssertionError("shard-native multi-repo load should not reconstruct metadata")
+    )
+
+    with patch(
+        "fastcode.main.fastcode.BM25Okapi",
+        side_effect=AssertionError("shard-native multi-repo load should not rebuild"),
+    ):
+        assert fc._load_multi_repo_cache(["repo"]) is True
+
+    assert load_calls == [(["repo"], False)]
+
+
+def test_load_multi_repo_cache_real_shard_artifacts_use_retriever_runtime(
+    tmp_path: Path,
+) -> None:
+    def _make_real_retriever() -> HybridRetriever:
+        return HybridRetriever(
+            {"vector_store": {"persist_directory": str(tmp_path)}},
+            vector_store=SimpleNamespace(load_repo_overviews=lambda **_: {}),
+            embedder=SimpleNamespace(embedding_dim=3),
+            graph_builder=SimpleNamespace(),
+        )
+
+    source = _make_real_retriever()
+    source.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+        debug=lambda *a, **kw: None,
+    )
+    source.full_bm25_corpus = [["shared", "alpha"], ["only", "repo_a"], ["other"]]
+    source.full_bm25_elements = [
+        CodeElement(
+            id="file:a",
+            type="file",
+            name="a.py",
+            file_path="/repo_a/a.py",
+            relative_path="a.py",
+            language="python",
+            start_line=1,
+            end_line=2,
+            code="pass\n",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={},
+            repo_name="repo_a",
+            repo_url=None,
+        ),
+        CodeElement(
+            id="file:a2",
+            type="file",
+            name="a2.py",
+            file_path="/repo_a/a2.py",
+            relative_path="a2.py",
+            language="python",
+            start_line=1,
+            end_line=2,
+            code="pass\n",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={},
+            repo_name="repo_a",
+            repo_url=None,
+        ),
+        CodeElement(
+            id="file:a3",
+            type="file",
+            name="a3.py",
+            file_path="/repo_a/a3.py",
+            relative_path="a3.py",
+            language="python",
+            start_line=1,
+            end_line=2,
+            code="pass\n",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={},
+            repo_name="repo_a",
+            repo_url=None,
+        ),
+    ]
+    assert source.save_bm25("repo_a") is True
+
+    source.full_bm25_corpus = [["shared", "beta"], ["only", "repo_b"], ["other"]]
+    source.full_bm25_elements = [
+        CodeElement(
+            id="file:b",
+            type="file",
+            name="b.py",
+            file_path="/repo_b/b.py",
+            relative_path="b.py",
+            language="python",
+            start_line=1,
+            end_line=2,
+            code="pass\n",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={},
+            repo_name="repo_b",
+            repo_url=None,
+        ),
+        CodeElement(
+            id="file:b2",
+            type="file",
+            name="b2.py",
+            file_path="/repo_b/b2.py",
+            relative_path="b2.py",
+            language="python",
+            start_line=1,
+            end_line=2,
+            code="pass\n",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={},
+            repo_name="repo_b",
+            repo_url=None,
+        ),
+        CodeElement(
+            id="file:b3",
+            type="file",
+            name="b3.py",
+            file_path="/repo_b/b3.py",
+            relative_path="b3.py",
+            language="python",
+            start_line=1,
+            end_line=2,
+            code="pass\n",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={},
+            repo_name="repo_b",
+            repo_url=None,
+        ),
+    ]
+    assert source.save_bm25("repo_b") is True
+
+    fc = FastCode.__new__(FastCode)
+    fc.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+    )
+    fc.embedder = SimpleNamespace(embedding_dim=3)
+    fc.loaded_repositories = {}
+    fc.vector_store = SimpleNamespace(
+        persist_dir=str(tmp_path),
+        initialize=lambda _dimension: None,
+        merge_from_index=lambda _repo_name: True,
+        get_count=lambda: 2,
+        scan_available_indexes=lambda _use_cache=False: [
+            {"name": "repo_a"},
+            {"name": "repo_b"},
+        ],
+    )
+    fc.retriever = _make_real_retriever()
+    fc.retriever.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+        debug=lambda *a, **kw: None,
+    )
+    fc.graph_builder = SimpleNamespace()
+    fc.graph_artifact_store = SimpleNamespace(
+        load=lambda _builder, _repo_name: True,
+        merge=lambda _builder, _repo_name: True,
+    )
+    fc._reconstruct_elements_from_metadata = lambda: (_ for _ in ()).throw(
+        AssertionError("real shard-native multi-repo load should not reconstruct")
+    )
+
+    with patch(
+        "fastcode.main.fastcode.BM25Okapi",
+        side_effect=AssertionError("main multi-repo load should not rebuild BM25"),
+    ):
+        assert fc._load_multi_repo_cache(["repo_a", "repo_b"]) is True
+        results = fc.retriever._keyword_search(
+            "shared beta", top_k=3, repo_filter=["repo_b"]
+        )
+
+    assert fc.retriever.full_bm25 is None
+    assert fc.retriever.full_bm25_corpus == []
+    assert fc.retriever._full_bm25_shard_runtime is not None
+    assert [row["id"] for row, _score in results] == ["file:b"]
+
+
+def test_load_multi_repo_cache_real_shard_artifacts_respects_requested_subset(
+    tmp_path: Path,
+) -> None:
+    def _make_real_retriever() -> HybridRetriever:
+        return HybridRetriever(
+            {"vector_store": {"persist_directory": str(tmp_path)}},
+            vector_store=SimpleNamespace(load_repo_overviews=lambda **_: {}),
+            embedder=SimpleNamespace(embedding_dim=3),
+            graph_builder=SimpleNamespace(),
+        )
+
+    def _element(repo_name: str, rel_path: str, elem_id: str) -> CodeElement:
+        return CodeElement(
+            id=elem_id,
+            type="file",
+            name=rel_path,
+            file_path=f"/{repo_name}/{rel_path}",
+            relative_path=rel_path,
+            language="python",
+            start_line=1,
+            end_line=2,
+            code="pass\n",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={},
+            repo_name=repo_name,
+            repo_url=None,
+        )
+
+    writer = _make_real_retriever()
+    writer.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+        debug=lambda *a, **kw: None,
+    )
+    writer.full_bm25_corpus = [["shared", "alpha"], ["only", "repo_a"], ["other"]]
+    writer.full_bm25_elements = [
+        _element("repo_a", "a.py", "file:a"),
+        _element("repo_a", "a2.py", "file:a2"),
+        _element("repo_a", "a3.py", "file:a3"),
+    ]
+    assert writer.save_bm25("repo_a") is True
+
+    writer.full_bm25_corpus = [["shared", "beta"], ["only", "repo_b"], ["other"]]
+    writer.full_bm25_elements = [
+        _element("repo_b", "b.py", "file:b"),
+        _element("repo_b", "b2.py", "file:b2"),
+        _element("repo_b", "b3.py", "file:b3"),
+    ]
+    assert writer.save_bm25("repo_b") is True
+
+    merged: list[str] = []
+    graph_loads: list[str] = []
+    graph_merges: list[str] = []
+
+    fc = FastCode.__new__(FastCode)
+    fc.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+    )
+    fc.embedder = SimpleNamespace(embedding_dim=3)
+    fc.loaded_repositories = {}
+    fc.vector_store = SimpleNamespace(
+        persist_dir=str(tmp_path),
+        initialize=lambda _dimension: None,
+        merge_from_index=lambda repo_name: merged.append(repo_name) or True,
+        get_count=lambda: len(merged),
+        scan_available_indexes=lambda _use_cache=False: [
+            {"name": "repo_a"},
+            {"name": "repo_b"},
+        ],
+    )
+    fc.retriever = _make_real_retriever()
+    fc.retriever.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+        debug=lambda *a, **kw: None,
+    )
+    fc.graph_builder = SimpleNamespace()
+    fc.graph_artifact_store = SimpleNamespace(
+        load=lambda _builder, repo_name: graph_loads.append(repo_name) or True,
+        merge=lambda _builder, repo_name: graph_merges.append(repo_name) or True,
+    )
+    fc._reconstruct_elements_from_metadata = lambda: (_ for _ in ()).throw(
+        AssertionError("subset shard-native load should not reconstruct")
+    )
+
+    with patch(
+        "fastcode.main.fastcode.BM25Okapi",
+        side_effect=AssertionError("subset shard-native load should not rebuild"),
+    ):
+        assert fc._load_multi_repo_cache(["repo_b"]) is True
+        results = fc.retriever._keyword_search("shared beta", top_k=3)
+
+    assert merged == ["repo_b"]
+    assert graph_loads == ["repo_b"]
+    assert graph_merges == []
+    assert list(fc.loaded_repositories) == ["repo_b"]
+    assert [row["id"] for row, _score in results] == ["file:b"]
+
+
+def test_load_multi_repo_cache_real_vector_and_bm25_artifacts_merge_subset(
+    tmp_path: Path,
+) -> None:
+    def _make_real_retriever(vector_store: Any) -> HybridRetriever:
+        return HybridRetriever(
+            {"vector_store": {"persist_directory": str(tmp_path)}},
+            vector_store=vector_store,
+            embedder=SimpleNamespace(embedding_dim=3),
+            graph_builder=SimpleNamespace(),
+        )
+
+    def _element(repo_name: str, rel_path: str, elem_id: str) -> CodeElement:
+        return CodeElement(
+            id=elem_id,
+            type="file",
+            name=rel_path,
+            file_path=f"/{repo_name}/{rel_path}",
+            relative_path=rel_path,
+            language="python",
+            start_line=1,
+            end_line=2,
+            code="pass\n",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={},
+            repo_name=repo_name,
+            repo_url=None,
+        )
+
+    def _meta(repo_name: str, rel_path: str, elem_id: str) -> dict[str, Any]:
+        return {
+            "id": elem_id,
+            "type": "file",
+            "name": rel_path,
+            "file_path": f"/{repo_name}/{rel_path}",
+            "relative_path": rel_path,
+            "language": "python",
+            "start_line": 1,
+            "end_line": 2,
+            "code": "pass\n",
+            "signature": None,
+            "docstring": None,
+            "summary": None,
+            "metadata": {},
+            "repo_name": repo_name,
+            "repo_url": None,
+        }
+
+    writer_a = VectorStore({"vector_store": {"persist_directory": str(tmp_path)}})
+    writer_a.initialize(3)
+    writer_a.add_vectors(
+        np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32),
+        [_meta("repo_a", "a.py", "vec:a")],
+    )
+    writer_a.save("repo_a")
+
+    writer_b = VectorStore({"vector_store": {"persist_directory": str(tmp_path)}})
+    writer_b.initialize(3)
+    writer_b.add_vectors(
+        np.asarray([[0.0, 1.0, 0.0]], dtype=np.float32),
+        [_meta("repo_b", "b.py", "vec:b")],
+    )
+    writer_b.save("repo_b")
+
+    bm25_writer = _make_real_retriever(
+        VectorStore({"vector_store": {"persist_directory": str(tmp_path)}})
+    )
+    bm25_writer.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+        debug=lambda *a, **kw: None,
+    )
+    bm25_writer.full_bm25_corpus = [["shared", "alpha"], ["only", "repo_a"], ["other"]]
+    bm25_writer.full_bm25_elements = [
+        _element("repo_a", "a.py", "file:a"),
+        _element("repo_a", "a2.py", "file:a2"),
+        _element("repo_a", "a3.py", "file:a3"),
+    ]
+    assert bm25_writer.save_bm25("repo_a") is True
+    bm25_writer.full_bm25_corpus = [["shared", "beta"], ["only", "repo_b"], ["other"]]
+    bm25_writer.full_bm25_elements = [
+        _element("repo_b", "b.py", "file:b"),
+        _element("repo_b", "b2.py", "file:b2"),
+        _element("repo_b", "b3.py", "file:b3"),
+    ]
+    assert bm25_writer.save_bm25("repo_b") is True
+
+    target_store = VectorStore({"vector_store": {"persist_directory": str(tmp_path)}})
+    fc = FastCode.__new__(FastCode)
+    fc.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+    )
+    fc.embedder = SimpleNamespace(embedding_dim=3)
+    fc.loaded_repositories = {}
+    fc.vector_store = target_store
+    fc.retriever = _make_real_retriever(target_store)
+    fc.retriever.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+        debug=lambda *a, **kw: None,
+    )
+    fc.graph_builder = SimpleNamespace()
+    fc.graph_artifact_store = SimpleNamespace(
+        load=lambda _builder, _repo_name: True,
+        merge=lambda _builder, _repo_name: True,
+    )
+    fc._reconstruct_elements_from_metadata = lambda: (_ for _ in ()).throw(
+        AssertionError("real vector+bm25 subset load should not reconstruct")
+    )
+
+    with patch(
+        "fastcode.main.fastcode.BM25Okapi",
+        side_effect=AssertionError("subset load should not rebuild BM25"),
+    ):
+        assert fc._load_multi_repo_cache(["repo_b"]) is True
+        results = fc.retriever._keyword_search("shared beta", top_k=3)
+
+    assert fc.vector_store.get_count() == 1
+    assert [row["id"] for row in fc.vector_store.metadata] == ["vec:b"]
+    assert list(fc.loaded_repositories) == ["repo_b"]
+    assert [row["id"] for row, _score in results] == ["file:b"]
+
+
+def test_load_multi_repo_cache_real_vector_bm25_and_graph_artifacts_merge_subset(
+    tmp_path: Path,
+) -> None:
+    config = {"vector_store": {"persist_directory": str(tmp_path)}}
+
+    def _make_real_retriever(vector_store: Any, graph_builder: Any) -> HybridRetriever:
+        return HybridRetriever(
+            config,
+            vector_store=vector_store,
+            embedder=SimpleNamespace(embedding_dim=3),
+            graph_builder=graph_builder,
+        )
+
+    def _element(repo_name: str, rel_path: str, elem_id: str) -> CodeElement:
+        return CodeElement(
+            id=elem_id,
+            type="function",
+            name=elem_id,
+            file_path=f"/{repo_name}/{rel_path}",
+            relative_path=rel_path,
+            language="python",
+            start_line=1,
+            end_line=2,
+            code="pass\n",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={"stable_unit_id": f"stable:{elem_id}"},
+            repo_name=repo_name,
+            repo_url=None,
+        )
+
+    def _meta(repo_name: str, rel_path: str, elem_id: str) -> dict[str, Any]:
+        return {
+            "id": elem_id,
+            "type": "function",
+            "name": elem_id,
+            "file_path": f"/{repo_name}/{rel_path}",
+            "relative_path": rel_path,
+            "language": "python",
+            "start_line": 1,
+            "end_line": 2,
+            "code": "pass\n",
+            "signature": None,
+            "docstring": None,
+            "summary": None,
+            "metadata": {"stable_unit_id": f"stable:{elem_id}"},
+            "repo_name": repo_name,
+            "repo_url": None,
+        }
+
+    writer_a = VectorStore(config)
+    writer_a.initialize(3)
+    writer_a.add_vectors(
+        np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32),
+        [_meta("repo_a", "a.py", "vec:a")],
+    )
+    writer_a.save("repo_a")
+
+    writer_b = VectorStore(config)
+    writer_b.initialize(3)
+    writer_b.add_vectors(
+        np.asarray([[0.0, 1.0, 0.0]], dtype=np.float32),
+        [_meta("repo_b", "b.py", "vec:b")],
+    )
+    writer_b.save("repo_b")
+
+    bm25_writer = _make_real_retriever(
+        VectorStore(config),
+        CodeGraphBuilder(config),
+    )
+    bm25_writer.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+        debug=lambda *a, **kw: None,
+    )
+    bm25_writer.full_bm25_corpus = [["shared", "alpha"], ["only", "repo_a"], ["other"]]
+    bm25_writer.full_bm25_elements = [
+        _element("repo_a", "a.py", "file:a"),
+        _element("repo_a", "a2.py", "file:a2"),
+        _element("repo_a", "a3.py", "file:a3"),
+    ]
+    assert bm25_writer.save_bm25("repo_a") is True
+    bm25_writer.full_bm25_corpus = [["shared", "beta"], ["only", "repo_b"], ["other"]]
+    bm25_writer.full_bm25_elements = [
+        _element("repo_b", "b.py", "file:b"),
+        _element("repo_b", "b2.py", "file:b2"),
+        _element("repo_b", "b3.py", "file:b3"),
+    ]
+    assert bm25_writer.save_bm25("repo_b") is True
+
+    graph_store = GraphArtifactStore(config)
+    graph_a = CodeGraphBuilder(config)
+    elem_a = _element("repo_a", "a.py", "graph:a")
+    elem_a_dep = _element("repo_a", "a_dep.py", "graph:a_dep")
+    graph_a.element_by_name = {elem_a.name: elem_a, elem_a_dep.name: elem_a_dep}
+    graph_a.element_by_id = {elem_a.id: elem_a, elem_a_dep.id: elem_a_dep}
+    graph_a.call_graph.add_edge(elem_a.id, elem_a_dep.id, type="calls")
+    assert graph_store.save(graph_a, "repo_a") is True
+
+    graph_b = CodeGraphBuilder(config)
+    elem_b = _element("repo_b", "b.py", "graph:b")
+    elem_b_dep = _element("repo_b", "b_dep.py", "graph:b_dep")
+    graph_b.element_by_name = {elem_b.name: elem_b, elem_b_dep.name: elem_b_dep}
+    graph_b.element_by_id = {elem_b.id: elem_b, elem_b_dep.id: elem_b_dep}
+    graph_b.call_graph.add_edge(elem_b.id, elem_b_dep.id, type="calls")
+    assert graph_store.save(graph_b, "repo_b") is True
+
+    target_store = VectorStore(config)
+    target_graph_builder = CodeGraphBuilder(config)
+    target_graph_store = GraphArtifactStore(config)
+
+    fc = FastCode.__new__(FastCode)
+    fc.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+    )
+    fc.embedder = SimpleNamespace(embedding_dim=3)
+    fc.loaded_repositories = {}
+    fc.vector_store = target_store
+    fc.graph_builder = target_graph_builder
+    fc.graph_artifact_store = target_graph_store
+    fc.retriever = _make_real_retriever(target_store, target_graph_builder)
+    fc.retriever.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+        debug=lambda *a, **kw: None,
+    )
+    fc._reconstruct_elements_from_metadata = lambda: (_ for _ in ()).throw(
+        AssertionError("real vector+bm25+graph subset load should not reconstruct")
+    )
+
+    with patch(
+        "fastcode.main.fastcode.BM25Okapi",
+        side_effect=AssertionError("subset load should not rebuild BM25"),
+    ):
+        assert fc._load_multi_repo_cache(["repo_b"]) is True
+        results = fc.retriever._keyword_search("shared beta", top_k=3)
+
+    assert fc.vector_store.get_count() == 1
+    assert [row["id"] for row in fc.vector_store.metadata] == ["vec:b"]
+    assert list(fc.loaded_repositories) == ["repo_b"]
+    assert [row["id"] for row, _score in results] == ["file:b"]
+    assert set(fc.graph_builder.element_by_id) == {"graph:b", "graph:b_dep"}
+    assert fc.graph_builder.get_related_elements("graph:b", max_hops=1) == {
+        "graph:b",
+        "graph:b_dep",
+    }
+
+
+def test_load_multi_repo_cache_real_vector_bm25_and_graph_artifacts_merge_all_repos(
+    tmp_path: Path,
+) -> None:
+    config = {"vector_store": {"persist_directory": str(tmp_path)}}
+
+    def _make_real_retriever(vector_store: Any, graph_builder: Any) -> HybridRetriever:
+        return HybridRetriever(
+            config,
+            vector_store=vector_store,
+            embedder=SimpleNamespace(embedding_dim=3),
+            graph_builder=graph_builder,
+        )
+
+    def _element(repo_name: str, rel_path: str, elem_id: str) -> CodeElement:
+        return CodeElement(
+            id=elem_id,
+            type="function",
+            name=elem_id,
+            file_path=f"/{repo_name}/{rel_path}",
+            relative_path=rel_path,
+            language="python",
+            start_line=1,
+            end_line=2,
+            code="pass\n",
+            signature=None,
+            docstring=None,
+            summary=None,
+            metadata={"stable_unit_id": f"stable:{elem_id}"},
+            repo_name=repo_name,
+            repo_url=None,
+        )
+
+    def _meta(repo_name: str, rel_path: str, elem_id: str) -> dict[str, Any]:
+        return {
+            "id": elem_id,
+            "type": "function",
+            "name": elem_id,
+            "file_path": f"/{repo_name}/{rel_path}",
+            "relative_path": rel_path,
+            "language": "python",
+            "start_line": 1,
+            "end_line": 2,
+            "code": "pass\n",
+            "signature": None,
+            "docstring": None,
+            "summary": None,
+            "metadata": {"stable_unit_id": f"stable:{elem_id}"},
+            "repo_name": repo_name,
+            "repo_url": None,
+        }
+
+    writer_a = VectorStore(config)
+    writer_a.initialize(3)
+    writer_a.add_vectors(
+        np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32),
+        [_meta("repo_a", "a.py", "vec:a")],
+    )
+    writer_a.save("repo_a")
+
+    writer_b = VectorStore(config)
+    writer_b.initialize(3)
+    writer_b.add_vectors(
+        np.asarray([[0.0, 1.0, 0.0]], dtype=np.float32),
+        [_meta("repo_b", "b.py", "vec:b")],
+    )
+    writer_b.save("repo_b")
+
+    bm25_writer = _make_real_retriever(
+        VectorStore(config),
+        CodeGraphBuilder(config),
+    )
+    bm25_writer.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+        debug=lambda *a, **kw: None,
+    )
+    bm25_writer.full_bm25_corpus = [["shared", "alpha"], ["only", "repo_a"], ["other"]]
+    bm25_writer.full_bm25_elements = [
+        _element("repo_a", "a.py", "file:a"),
+        _element("repo_a", "a2.py", "file:a2"),
+        _element("repo_a", "a3.py", "file:a3"),
+    ]
+    assert bm25_writer.save_bm25("repo_a") is True
+    bm25_writer.full_bm25_corpus = [["shared", "beta"], ["only", "repo_b"], ["other"]]
+    bm25_writer.full_bm25_elements = [
+        _element("repo_b", "b.py", "file:b"),
+        _element("repo_b", "b2.py", "file:b2"),
+        _element("repo_b", "b3.py", "file:b3"),
+    ]
+    assert bm25_writer.save_bm25("repo_b") is True
+
+    graph_store = GraphArtifactStore(config)
+    graph_a = CodeGraphBuilder(config)
+    elem_a = _element("repo_a", "a.py", "graph:a")
+    elem_a_dep = _element("repo_a", "a_dep.py", "graph:a_dep")
+    graph_a.element_by_name = {elem_a.name: elem_a, elem_a_dep.name: elem_a_dep}
+    graph_a.element_by_id = {elem_a.id: elem_a, elem_a_dep.id: elem_a_dep}
+    graph_a.call_graph.add_edge(elem_a.id, elem_a_dep.id, type="calls")
+    assert graph_store.save(graph_a, "repo_a") is True
+
+    graph_b = CodeGraphBuilder(config)
+    elem_b = _element("repo_b", "b.py", "graph:b")
+    elem_b_dep = _element("repo_b", "b_dep.py", "graph:b_dep")
+    graph_b.element_by_name = {elem_b.name: elem_b, elem_b_dep.name: elem_b_dep}
+    graph_b.element_by_id = {elem_b.id: elem_b, elem_b_dep.id: elem_b_dep}
+    graph_b.call_graph.add_edge(elem_b.id, elem_b_dep.id, type="calls")
+    assert graph_store.save(graph_b, "repo_b") is True
+
+    target_store = VectorStore(config)
+    target_graph_builder = CodeGraphBuilder(config)
+    target_graph_store = GraphArtifactStore(config)
+
+    fc = FastCode.__new__(FastCode)
+    fc.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+    )
+    fc.embedder = SimpleNamespace(embedding_dim=3)
+    fc.loaded_repositories = {}
+    fc.vector_store = target_store
+    fc.graph_builder = target_graph_builder
+    fc.graph_artifact_store = target_graph_store
+    fc.retriever = _make_real_retriever(target_store, target_graph_builder)
+    fc.retriever.logger = SimpleNamespace(
+        info=lambda *a, **kw: None,
+        warning=lambda *a, **kw: None,
+        error=lambda *a, **kw: None,
+        debug=lambda *a, **kw: None,
+    )
+    fc._reconstruct_elements_from_metadata = lambda: (_ for _ in ()).throw(
+        AssertionError("real vector+bm25+graph multi-repo load should not reconstruct")
+    )
+
+    with patch(
+        "fastcode.main.fastcode.BM25Okapi",
+        side_effect=AssertionError("multi-repo load should not rebuild BM25"),
+    ):
+        assert fc._load_multi_repo_cache(["repo_a", "repo_b"]) is True
+        repo_a_results = fc.retriever._keyword_search(
+            "shared alpha", top_k=3, repo_filter=["repo_a"]
+        )
+        repo_b_results = fc.retriever._keyword_search(
+            "shared beta", top_k=3, repo_filter=["repo_b"]
+        )
+
+    assert fc.vector_store.get_count() == 2
+    assert {row["id"] for row in fc.vector_store.metadata} == {"vec:a", "vec:b"}
+    assert list(fc.loaded_repositories) == ["repo_a", "repo_b"]
+    assert [row["id"] for row, _score in repo_a_results] == ["file:a"]
+    assert [row["id"] for row, _score in repo_b_results] == ["file:b"]
+    assert set(fc.graph_builder.element_by_id) == {
+        "graph:a",
+        "graph:a_dep",
+        "graph:b",
+        "graph:b_dep",
+    }
+    assert fc.graph_builder.get_related_elements("graph:a", max_hops=1) == {
+        "graph:a",
+        "graph:a_dep",
+    }
+    assert fc.graph_builder.get_related_elements("graph:b", max_hops=1) == {
+        "graph:b",
+        "graph:b_dep",
+    }
 
 
 def test_remove_repository_removes_sharded_artifacts(tmp_path: Path) -> None:

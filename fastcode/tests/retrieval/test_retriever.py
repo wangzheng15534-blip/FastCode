@@ -18,6 +18,7 @@ from rank_bm25 import BM25Okapi
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs, IRGraphView
 from fastcode.query.retriever import HybridRetriever, _fusion_config_from_runtime
+from fastcode.store.vector import VectorStore
 
 
 def _mk_row(
@@ -68,6 +69,8 @@ def _mk_retriever() -> HybridRetriever:
     retriever.filtered_bm25 = None
     retriever._bm25_shard_name = None
     retriever._bm25_shard_manifest = None
+    retriever._full_bm25_shard_runtime = None
+    retriever._filtered_bm25_shard_runtime = None
     retriever.retrieval_backend = "local"
     retriever.pg_retrieval_store = None
     return retriever
@@ -713,6 +716,554 @@ def test_reload_specific_repositories_uses_explicit_deserializer(
     assert retriever.filtered_bm25_corpus == [["service"]]
 
 
+def test_reload_specific_repositories_uses_shard_native_bm25_without_rebuild(
+    tmp_path: Path,
+) -> None:
+    source = _mk_retriever()
+    source.logger = MagicMock()
+    source.persist_dir = str(tmp_path)
+    source.full_bm25_corpus = [["service"], ["helper"], ["other"]]
+    source.full_bm25_elements = [
+        _element("service.py", element_id="file:service"),
+        _element("helper.py", element_id="file:helper"),
+        _element("other.py", element_id="file:other"),
+    ]
+    assert source.save_bm25("repo") is True
+
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+    retriever.config = {}
+    retriever.embedder = SimpleNamespace(embedding_dim=3)
+    retriever.filtered_vector_store = SimpleNamespace(
+        clear=lambda: None,
+        merge_from_index=lambda _repo_name: True,
+        get_count=lambda: 2,
+    )
+    retriever.iterative_agent = None
+
+    with patch(
+        "fastcode.query.retriever.BM25Okapi",
+        side_effect=AssertionError("shard-native filtered reload should not rebuild"),
+    ):
+        assert retriever.reload_specific_repositories(["repo"]) is True
+
+    assert retriever.filtered_bm25 is None
+    assert retriever.filtered_bm25_corpus == []
+    assert [elem.id for elem in retriever.filtered_bm25_elements] == [
+        "file:service",
+        "file:helper",
+        "file:other",
+    ]
+    assert retriever._filtered_bm25_shard_runtime is not None
+    assert retriever._keyword_search("service", top_k=1)[0][0]["id"] == "file:service"
+
+
+def test_reload_specific_repositories_preserves_full_shard_runtime_state(
+    tmp_path: Path,
+) -> None:
+    source = _mk_retriever()
+    source.logger = MagicMock()
+    source.persist_dir = str(tmp_path)
+    source.full_bm25_corpus = [["shared", "alpha"], ["only", "repo_a"], ["other"]]
+    source.full_bm25_elements = [
+        _element("a.py", element_id="file:a", repo_name="repo_a"),
+        _element("a2.py", element_id="file:a2", repo_name="repo_a"),
+        _element("a3.py", element_id="file:a3", repo_name="repo_a"),
+    ]
+    assert source.save_bm25("repo_a") is True
+
+    source.full_bm25_corpus = [["shared", "beta"], ["only", "repo_b"], ["other"]]
+    source.full_bm25_elements = [
+        _element("b.py", element_id="file:b", repo_name="repo_b"),
+        _element("b2.py", element_id="file:b2", repo_name="repo_b"),
+        _element("b3.py", element_id="file:b3", repo_name="repo_b"),
+    ]
+    assert source.save_bm25("repo_b") is True
+
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+    retriever.config = {}
+    retriever.embedder = SimpleNamespace(embedding_dim=3)
+    retriever.filtered_vector_store = SimpleNamespace(
+        clear=lambda: None,
+        merge_from_index=lambda _repo_name: True,
+        get_count=lambda: 1,
+    )
+    retriever.iterative_agent = None
+    assert retriever.load_bm25_sources(["repo_a", "repo_b"], filtered=False) is True
+
+    baseline_runtime = retriever._full_bm25_shard_runtime
+    baseline_elements = list(retriever.full_bm25_elements)
+
+    with patch(
+        "fastcode.query.retriever.BM25Okapi",
+        side_effect=AssertionError("filtered shard reload should not rebuild"),
+    ):
+        assert retriever.reload_specific_repositories(["repo_b"]) is True
+
+    assert retriever._full_bm25_shard_runtime is baseline_runtime
+    assert retriever.full_bm25_elements == baseline_elements
+    assert retriever._filtered_bm25_shard_runtime is not None
+    assert [elem.id for elem in retriever.filtered_bm25_elements] == [
+        "file:b",
+        "file:b2",
+        "file:b3",
+    ]
+
+
+def test_reload_specific_repositories_filtered_runtime_overrides_preloaded_full_runtime(
+    tmp_path: Path,
+) -> None:
+    source = _mk_retriever()
+    source.logger = MagicMock()
+    source.persist_dir = str(tmp_path)
+    source.full_bm25_corpus = [["shared", "alpha"], ["only", "repo_a"], ["other"]]
+    source.full_bm25_elements = [
+        _element("a.py", element_id="file:a", repo_name="repo_a"),
+        _element("a2.py", element_id="file:a2", repo_name="repo_a"),
+        _element("a3.py", element_id="file:a3", repo_name="repo_a"),
+    ]
+    assert source.save_bm25("repo_a") is True
+
+    source.full_bm25_corpus = [["shared", "beta"], ["only", "repo_b"], ["other"]]
+    source.full_bm25_elements = [
+        _element("b.py", element_id="file:b", repo_name="repo_b"),
+        _element("b2.py", element_id="file:b2", repo_name="repo_b"),
+        _element("b3.py", element_id="file:b3", repo_name="repo_b"),
+    ]
+    assert source.save_bm25("repo_b") is True
+
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+    retriever.config = {}
+    retriever.embedder = SimpleNamespace(embedding_dim=3)
+    retriever.filtered_vector_store = SimpleNamespace(
+        clear=lambda: None,
+        merge_from_index=lambda _repo_name: True,
+        get_count=lambda: 1,
+    )
+    retriever.iterative_agent = None
+    assert retriever.load_bm25_sources(["repo_a", "repo_b"], filtered=False) is True
+
+    with patch(
+        "fastcode.query.retriever.BM25Okapi",
+        side_effect=AssertionError("filtered reload should stay shard-native"),
+    ):
+        assert retriever.reload_specific_repositories(["repo_b"]) is True
+
+    results = retriever._keyword_search("shared beta", top_k=3)
+
+    assert [row["id"] for row, _score in results] == ["file:b"]
+    assert retriever._full_bm25_shard_runtime is not None
+    assert retriever._filtered_bm25_shard_runtime is not None
+
+
+def test_reload_specific_repositories_real_vector_and_bm25_artifacts_update_filtered_runtime(
+    tmp_path: Path,
+) -> None:
+    vector_store_a = VectorStore({"vector_store": {"persist_directory": str(tmp_path)}})
+    vector_store_a.initialize(2)
+    vector_store_a.add_vectors(
+        np.asarray([[1.0, 0.0]], dtype=np.float32),
+        [
+            {
+                "id": "vec:a",
+                "type": "file",
+                "name": "a.py",
+                "file_path": "/repo_a/a.py",
+                "relative_path": "a.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 2,
+                "code": "pass\n",
+                "signature": None,
+                "docstring": None,
+                "summary": None,
+                "metadata": {},
+                "repo_name": "repo_a",
+                "repo_url": None,
+            }
+        ],
+    )
+    vector_store_a.save("repo_a")
+
+    vector_store_b = VectorStore({"vector_store": {"persist_directory": str(tmp_path)}})
+    vector_store_b.initialize(2)
+    vector_store_b.add_vectors(
+        np.asarray([[0.0, 1.0]], dtype=np.float32),
+        [
+            {
+                "id": "vec:b",
+                "type": "file",
+                "name": "b.py",
+                "file_path": "/repo_b/b.py",
+                "relative_path": "b.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 2,
+                "code": "pass\n",
+                "signature": None,
+                "docstring": None,
+                "summary": None,
+                "metadata": {},
+                "repo_name": "repo_b",
+                "repo_url": None,
+            }
+        ],
+    )
+    vector_store_b.save("repo_b")
+
+    source = _mk_retriever()
+    source.logger = MagicMock()
+    source.persist_dir = str(tmp_path)
+    source.full_bm25_corpus = [["alpha"], ["repo_a"], ["other"]]
+    source.full_bm25_elements = [
+        _element("a.py", element_id="file:a", repo_name="repo_a"),
+        _element("a2.py", element_id="file:a2", repo_name="repo_a"),
+        _element("a3.py", element_id="file:a3", repo_name="repo_a"),
+    ]
+    assert source.save_bm25("repo_a") is True
+    source.full_bm25_corpus = [["beta"], ["repo_b"], ["other"]]
+    source.full_bm25_elements = [
+        _element("b.py", element_id="file:b", repo_name="repo_b"),
+        _element("b2.py", element_id="file:b2", repo_name="repo_b"),
+        _element("b3.py", element_id="file:b3", repo_name="repo_b"),
+    ]
+    assert source.save_bm25("repo_b") is True
+
+    retriever = HybridRetriever(
+        {"vector_store": {"persist_directory": str(tmp_path)}},
+        vector_store=VectorStore({"vector_store": {"persist_directory": str(tmp_path)}}),
+        embedder=SimpleNamespace(
+            embedding_dim=2,
+            embed_many=lambda texts: np.asarray([[0.0, 1.0]], dtype=np.float32),
+            fingerprint=lambda **_kwargs: {
+                "version": 2,
+                "provider": "test",
+                "model": "stub",
+                "dimension": 2,
+                "text_schema_version": 1,
+            },
+        ),
+        graph_builder=SimpleNamespace(),
+        vector_store_factory=SimpleNamespace(
+            create_vector_search_store=lambda: VectorStore(
+                {"vector_store": {"persist_directory": str(tmp_path)}}
+            )
+        ),
+    )
+    retriever.logger = MagicMock()
+    retriever.retrieval_backend = "local"
+    retriever.pg_retrieval_store = None
+    retriever.min_similarity = -1.0
+
+    with patch(
+        "fastcode.query.retriever.BM25Okapi",
+        side_effect=AssertionError("real filtered reload should stay shard-native"),
+    ):
+        assert retriever.reload_specific_repositories(["repo_b"]) is True
+
+    semantic = retriever._semantic_search("beta", top_k=1, repo_filter=["repo_b"])
+    keyword = retriever._keyword_search("beta", top_k=1)
+
+    assert retriever.filtered_vector_store is not None
+    assert retriever.filtered_vector_store.get_count() == 1
+    assert [elem.id for elem in retriever.filtered_bm25_elements] == [
+        "file:b",
+        "file:b2",
+        "file:b3",
+    ]
+    assert semantic[0][0]["id"] == "vec:b"
+    assert keyword[0][0]["id"] == "file:b"
+
+
+def test_load_bm25_sources_filtered_mode_builds_shard_runtime_without_rebuild(
+    tmp_path: Path,
+) -> None:
+    source = _mk_retriever()
+    source.logger = MagicMock()
+    source.persist_dir = str(tmp_path)
+    source.full_bm25_corpus = [["service"], ["helper"], ["other"]]
+    source.full_bm25_elements = [
+        _element("service.py", element_id="file:service"),
+        _element("helper.py", element_id="file:helper"),
+        _element("other.py", element_id="file:other"),
+    ]
+    assert source.save_bm25("repo") is True
+
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+
+    with patch(
+        "fastcode.query.retriever.BM25Okapi",
+        side_effect=AssertionError("core shard runtime load should not rebuild"),
+    ):
+        assert retriever.load_bm25_sources(["repo"], filtered=True) is True
+
+    assert retriever.filtered_bm25 is None
+    assert retriever.filtered_bm25_corpus == []
+    assert [elem.id for elem in retriever.filtered_bm25_elements] == [
+        "file:service",
+        "file:helper",
+        "file:other",
+    ]
+    assert retriever._filtered_bm25_shard_runtime is not None
+    assert retriever._keyword_search("service", top_k=1)[0][0]["id"] == "file:service"
+
+
+def test_load_bm25_sources_sharded_path_uses_explicit_deserializer(
+    tmp_path: Path,
+) -> None:
+    source = _mk_retriever()
+    source.logger = MagicMock()
+    source.persist_dir = str(tmp_path)
+    source.full_bm25_corpus = [["service"], ["helper"], ["other"]]
+    source.full_bm25_elements = [
+        _element("service.py", element_id="file:service"),
+        _element("helper.py", element_id="file:helper"),
+        _element("other.py", element_id="file:other"),
+    ]
+    assert source.save_bm25("repo") is True
+
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+
+    calls: list[dict[str, Any]] = []
+
+    def _deserialize(element_payload: dict[str, Any]) -> CodeElement:
+        calls.append(element_payload)
+        return _element(
+            str(element_payload["relative_path"]),
+            element_id=str(element_payload["id"]),
+            repo_name=str(element_payload["repo_name"]),
+            metadata=element_payload["metadata"],
+        )
+
+    with patch(
+        "fastcode.query.retriever.deserialize_code_element",
+        side_effect=_deserialize,
+    ) as mock_deserialize:
+        assert retriever.load_bm25_sources(["repo"], filtered=False) is True
+
+    assert mock_deserialize.call_count == 3
+    assert [payload["id"] for payload in calls] == [
+        "file:service",
+        "file:helper",
+        "file:other",
+    ]
+    assert [elem.id for elem in retriever.full_bm25_elements] == [
+        "file:service",
+        "file:helper",
+        "file:other",
+    ]
+
+
+def test_load_bm25_sources_merges_multiple_shard_manifests_for_full_runtime(
+    tmp_path: Path,
+) -> None:
+    first = _mk_retriever()
+    first.logger = MagicMock()
+    first.persist_dir = str(tmp_path)
+    first.full_bm25_corpus = [["service"], ["helper"], ["other"]]
+    first.full_bm25_elements = [
+        _element("service.py", element_id="file:service", repo_name="repo_a"),
+        _element("helper.py", element_id="file:helper", repo_name="repo_a"),
+        _element("other.py", element_id="file:other", repo_name="repo_a"),
+    ]
+    assert first.save_bm25("repo_a") is True
+
+    second = _mk_retriever()
+    second.logger = MagicMock()
+    second.persist_dir = str(tmp_path)
+    second.full_bm25_corpus = [["beta"], ["gamma"], ["delta"]]
+    second.full_bm25_elements = [
+        _element("beta.py", element_id="file:beta", repo_name="repo_b"),
+        _element("gamma.py", element_id="file:gamma", repo_name="repo_b"),
+        _element("delta.py", element_id="file:delta", repo_name="repo_b"),
+    ]
+    assert second.save_bm25("repo_b") is True
+
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+
+    with patch(
+        "fastcode.query.retriever.BM25Okapi",
+        side_effect=AssertionError("merged shard runtime should not rebuild"),
+    ):
+        assert retriever.load_bm25_sources(["repo_a", "repo_b"], filtered=False) is True
+
+    assert retriever.full_bm25 is None
+    assert retriever.full_bm25_corpus == []
+    assert retriever._bm25_shard_name is None
+    assert retriever._bm25_shard_manifest is None
+    assert retriever._full_bm25_shard_runtime is not None
+    assert retriever._keyword_search("service", top_k=1)[0][0]["id"] == "file:service"
+    assert retriever._keyword_search("beta", top_k=1)[0][0]["id"] == "file:beta"
+
+
+def test_load_bm25_sources_missing_manifest_leaves_existing_runtime_unchanged(
+    tmp_path: Path,
+) -> None:
+    source = _mk_retriever()
+    source.logger = MagicMock()
+    source.persist_dir = str(tmp_path)
+    source.full_bm25_corpus = [["service"], ["helper"], ["other"]]
+    source.full_bm25_elements = [
+        _element("service.py", element_id="file:service"),
+        _element("helper.py", element_id="file:helper"),
+        _element("other.py", element_id="file:other"),
+    ]
+    assert source.save_bm25("repo") is True
+
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+    assert retriever.load_bm25_sources(["repo"], filtered=False) is True
+
+    baseline_runtime = retriever._full_bm25_shard_runtime
+    baseline_elements = list(retriever.full_bm25_elements)
+
+    assert retriever.load_bm25_sources(["repo", "missing"], filtered=False) is False
+    assert retriever._full_bm25_shard_runtime is baseline_runtime
+    assert retriever.full_bm25_elements == baseline_elements
+
+
+def test_load_bm25_sources_missing_manifest_leaves_existing_filtered_runtime_unchanged(
+    tmp_path: Path,
+) -> None:
+    source = _mk_retriever()
+    source.logger = MagicMock()
+    source.persist_dir = str(tmp_path)
+    source.full_bm25_corpus = [["service"], ["helper"], ["other"]]
+    source.full_bm25_elements = [
+        _element("service.py", element_id="file:service"),
+        _element("helper.py", element_id="file:helper"),
+        _element("other.py", element_id="file:other"),
+    ]
+    assert source.save_bm25("repo") is True
+
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+    assert retriever.load_bm25_sources(["repo"], filtered=True) is True
+
+    baseline_runtime = retriever._filtered_bm25_shard_runtime
+    baseline_elements = list(retriever.filtered_bm25_elements)
+
+    assert retriever.load_bm25_sources(["repo", "missing"], filtered=True) is False
+    assert retriever._filtered_bm25_shard_runtime is baseline_runtime
+    assert retriever.filtered_bm25_elements == baseline_elements
+
+
+def test_filtered_shard_runtime_takes_precedence_over_full_runtime(
+    tmp_path: Path,
+) -> None:
+    source = _mk_retriever()
+    source.logger = MagicMock()
+    source.persist_dir = str(tmp_path)
+    source.full_bm25_corpus = [["shared", "alpha"], ["only", "repo_a"], ["other"]]
+    source.full_bm25_elements = [
+        _element("a.py", element_id="file:a", repo_name="repo_a"),
+        _element("a2.py", element_id="file:a2", repo_name="repo_a"),
+        _element("a3.py", element_id="file:a3", repo_name="repo_a"),
+    ]
+    assert source.save_bm25("repo_a") is True
+
+    source.full_bm25_corpus = [["shared", "beta"], ["only", "repo_b"], ["other"]]
+    source.full_bm25_elements = [
+        _element("b.py", element_id="file:b", repo_name="repo_b"),
+        _element("b2.py", element_id="file:b2", repo_name="repo_b"),
+        _element("b3.py", element_id="file:b3", repo_name="repo_b"),
+    ]
+    assert source.save_bm25("repo_b") is True
+
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+    assert retriever.load_bm25_sources(["repo_a", "repo_b"], filtered=False) is True
+    assert retriever.load_bm25_sources(["repo_b"], filtered=True) is True
+
+    results = retriever._keyword_search("shared beta", top_k=3)
+
+    assert [row["id"] for row, _score in results] == ["file:b"]
+    assert retriever.filtered_bm25 is None
+    assert retriever._filtered_bm25_shard_runtime is not None
+
+
+def test_filtered_shard_runtime_hides_preloaded_full_runtime_hits(
+    tmp_path: Path,
+) -> None:
+    source = _mk_retriever()
+    source.logger = MagicMock()
+    source.persist_dir = str(tmp_path)
+    source.full_bm25_corpus = [["alpha"], ["repo_a"], ["other"]]
+    source.full_bm25_elements = [
+        _element("a.py", element_id="file:a", repo_name="repo_a"),
+        _element("a2.py", element_id="file:a2", repo_name="repo_a"),
+        _element("a3.py", element_id="file:a3", repo_name="repo_a"),
+    ]
+    assert source.save_bm25("repo_a") is True
+
+    source.full_bm25_corpus = [["beta"], ["repo_b"], ["other"]]
+    source.full_bm25_elements = [
+        _element("b.py", element_id="file:b", repo_name="repo_b"),
+        _element("b2.py", element_id="file:b2", repo_name="repo_b"),
+        _element("b3.py", element_id="file:b3", repo_name="repo_b"),
+    ]
+    assert source.save_bm25("repo_b") is True
+
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+    assert retriever.load_bm25_sources(["repo_a", "repo_b"], filtered=False) is True
+    assert retriever.load_bm25_sources(["repo_b"], filtered=True) is True
+
+    assert retriever._keyword_search("alpha", top_k=3) == []
+    assert retriever._keyword_search("beta", top_k=1)[0][0]["id"] == "file:b"
+
+
+def test_merged_shard_runtime_honors_repo_filter_without_filtered_rebuild(
+    tmp_path: Path,
+) -> None:
+    first = _mk_retriever()
+    first.logger = MagicMock()
+    first.persist_dir = str(tmp_path)
+    first.full_bm25_corpus = [["shared", "alpha"], ["only", "repo_a"], ["other"]]
+    first.full_bm25_elements = [
+        _element("a.py", element_id="file:a", repo_name="repo_a"),
+        _element("a2.py", element_id="file:a2", repo_name="repo_a"),
+        _element("a3.py", element_id="file:a3", repo_name="repo_a"),
+    ]
+    assert first.save_bm25("repo_a") is True
+
+    second = _mk_retriever()
+    second.logger = MagicMock()
+    second.persist_dir = str(tmp_path)
+    second.full_bm25_corpus = [["shared", "beta"], ["only", "repo_b"], ["other"]]
+    second.full_bm25_elements = [
+        _element("b.py", element_id="file:b", repo_name="repo_b"),
+        _element("b2.py", element_id="file:b2", repo_name="repo_b"),
+        _element("b3.py", element_id="file:b3", repo_name="repo_b"),
+    ]
+    assert second.save_bm25("repo_b") is True
+
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.persist_dir = str(tmp_path)
+    assert retriever.load_bm25_sources(["repo_a", "repo_b"], filtered=False) is True
+
+    results = retriever._keyword_search("shared beta", top_k=3, repo_filter=["repo_b"])
+
+    assert [row["id"] for row, _score in results] == ["file:b"]
+    assert all(row["repo_name"] == "repo_b" for row, _score in results)
+
+
 def test_save_bm25_persists_sharded_bundle_and_loads_without_legacy_pickle(
     tmp_path: Path,
 ) -> None:
@@ -735,7 +1286,11 @@ def test_save_bm25_persists_sharded_bundle_and_loads_without_legacy_pickle(
     loaded = _mk_retriever()
     loaded.logger = MagicMock()
     loaded.persist_dir = str(tmp_path)
-    assert loaded.load_bm25("index") is True
+    with patch(
+        "fastcode.query.retriever.BM25Okapi",
+        side_effect=AssertionError("shard-native load should not rebuild BM25Okapi"),
+    ):
+        assert loaded.load_bm25("index") is True
     assert loaded.full_bm25_elements == []
     assert loaded.full_bm25_corpus == []
     assert loaded._bm25_shard_manifest is not None

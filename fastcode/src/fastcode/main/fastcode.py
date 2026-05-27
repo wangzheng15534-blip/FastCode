@@ -88,7 +88,6 @@ from ..semantic.symbol_index import SnapshotSymbolIndex
 from ..store.cache import CacheManager
 from ..store.cache_contracts import (
     ContextActivationRecord,
-    DialogueSessionRecord,
     DialogueTurnRecord,
     HandoffArtifactRecord,
 )
@@ -2858,49 +2857,9 @@ class FastCode:
             # For multi-repo, we merge BM25 data from all loaded repositories
             self.logger.info("Loading BM25 and graph data...")
 
-            all_bm25_elements: list[CodeElement] = []
-            all_bm25_corpus: list[list[str]] = []
             graphs_loaded = False
 
-            load_bm25_payload = getattr(self.retriever, "load_bm25_payload", None)
-
             for repo_name in repos_to_load:
-                # Try loading BM25 for each repo
-                data: dict[str, Any] | None = None
-                if callable(load_bm25_payload):
-                    try:
-                        payload = load_bm25_payload(repo_name)
-                        if isinstance(payload, dict):
-                            data = payload
-                    except Exception as e:
-                        self.logger.warning(
-                            f"Failed to load BM25 data for {repo_name}: {e}"
-                        )
-                else:
-                    bm25_path = os.path.join(
-                        self.retriever.persist_dir, f"{repo_name}_bm25.pkl"
-                    )
-                    if os.path.exists(bm25_path):
-                        try:
-                            with open(bm25_path, "rb") as f:
-                                payload = pickle.load(f)
-                            if isinstance(payload, dict):
-                                data = payload
-                        except Exception as e:
-                            self.logger.warning(
-                                f"Failed to load BM25 data for {repo_name}: {e}"
-                            )
-
-                if data is not None:
-                    all_bm25_corpus.extend(
-                        cast(list[list[str]], data.get("bm25_corpus", []))
-                    )
-                    for elem_payload in cast(
-                        list[dict[str, Any]], data.get("bm25_elements", [])
-                    ):
-                        all_bm25_elements.append(deserialize_code_element(elem_payload))
-                    self.logger.info(f"Loaded BM25 data for {repo_name}")
-
                 # Load graph data (merge into main graph)
                 if not graphs_loaded:
                     # Load the first repository's graph as base
@@ -2913,30 +2872,80 @@ class FastCode:
                 else:
                     self.logger.warning(f"Failed to merge graph data from {repo_name}")
                     # TODO: Merge additional repository graphs if needed
-            # Rebuild FULL BM25 index with merged data (for repository selection)
-            if all_bm25_elements and all_bm25_corpus:
-                self.retriever.full_bm25_elements = all_bm25_elements
-                self.retriever.full_bm25_corpus = all_bm25_corpus
-                self.retriever.full_bm25 = BM25Okapi(all_bm25_corpus)
+            load_bm25_sources = getattr(self.retriever, "load_bm25_sources", None)
+            if callable(load_bm25_sources) and load_bm25_sources(
+                repos_to_load, filtered=False
+            ):
                 self.logger.info(
-                    f"Rebuilt full BM25 index with {len(all_bm25_elements)} merged elements"
+                    "Loaded shard-native multi-repo BM25 for %d repositories",
+                    len(repos_to_load),
                 )
             else:
-                # Fallback: reconstruct from metadata
-                self.logger.info("No BM25 data found, reconstructing from metadata...")
-                elements = self._reconstruct_elements_from_metadata()
+                all_bm25_elements: list[CodeElement] = []
+                all_bm25_corpus: list[list[str]] = []
+                load_bm25_payload = getattr(self.retriever, "load_bm25_payload", None)
+                for repo_name in repos_to_load:
+                    data: dict[str, Any] | None = None
+                    if callable(load_bm25_payload):
+                        try:
+                            payload = load_bm25_payload(repo_name)
+                            if isinstance(payload, dict):
+                                data = payload
+                        except Exception as e:
+                            self.logger.warning(
+                                f"Failed to load BM25 data for {repo_name}: {e}"
+                            )
+                    else:
+                        bm25_path = os.path.join(
+                            self.retriever.persist_dir, f"{repo_name}_bm25.pkl"
+                        )
+                        if os.path.exists(bm25_path):
+                            try:
+                                with open(bm25_path, "rb") as f:
+                                    payload = pickle.load(f)
+                                if isinstance(payload, dict):
+                                    data = payload
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"Failed to load BM25 data for {repo_name}: {e}"
+                                )
 
-                if elements:
-                    self.retriever.index_for_bm25(elements)
-                    self.logger.info(
-                        f"Rebuilt BM25 index with {len(elements)} elements"
+                    if data is None:
+                        continue
+                    all_bm25_corpus.extend(
+                        cast(list[list[str]], data.get("bm25_corpus", []))
                     )
+                    for elem_payload in cast(
+                        list[dict[str, Any]], data.get("bm25_elements", [])
+                    ):
+                        all_bm25_elements.append(deserialize_code_element(elem_payload))
 
-                    if not graphs_loaded:
-                        self.graph_builder.build_graphs(elements)
-                        self.logger.info("Rebuilt code graph")
+                if all_bm25_elements and all_bm25_corpus:
+                    self.retriever.full_bm25_elements = all_bm25_elements
+                    self.retriever.full_bm25_corpus = all_bm25_corpus
+                    self.retriever.full_bm25 = BM25Okapi(all_bm25_corpus)
+                    self.logger.info(
+                        "Rebuilt full BM25 index with %d merged elements",
+                        len(all_bm25_elements),
+                    )
                 else:
-                    self.logger.warning("No elements reconstructed from metadata")
+                    # Fallback: reconstruct from metadata
+                    self.logger.info(
+                        "No BM25 data found, reconstructing from metadata..."
+                    )
+                    elements = self._reconstruct_elements_from_metadata()
+
+                    if elements:
+                        self.retriever.index_for_bm25(elements)
+                        self.logger.info(
+                            f"Rebuilt BM25 index with {len(elements)} elements"
+                        )
+
+                        if not graphs_loaded:
+                            self.graph_builder.build_graphs(elements)
+                            self.logger.info("Rebuilt code graph")
+                    else:
+                        self.logger.warning("No elements reconstructed from metadata")
 
             # Build separate BM25 index for repository overviews
             self.retriever.build_repo_overview_bm25()
@@ -3698,16 +3707,11 @@ class FastCode:
             List of session metadata with first query as title
         """
         enriched_sessions: list[dict[str, Any]] = []
-        for session in cast(
-            list[DialogueSessionRecord], self.cache_manager.list_session_records()
-        ):
+        for session in self.cache_manager.list_session_records():
             session_id = str(session.session_id)
             title = "Unknown Session"
             if session_id:
-                first_turn = cast(
-                    DialogueTurnRecord | None,
-                    self.cache_manager.get_dialogue_turn_record(session_id, 1),
-                )
+                first_turn = self.cache_manager.get_dialogue_turn_record(session_id, 1)
                 if first_turn is not None:
                     first_query = str(first_turn.query)
                     title = (

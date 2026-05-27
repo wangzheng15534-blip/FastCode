@@ -512,6 +512,197 @@ def test_apply_resolution_patch_reuses_unchanged_snapshot_objects():
     assert updated.relations[0].metadata["resolution_tier"] == "compiler_confirmed"
 
 
+def test_apply_resolution_patch_keeps_untouched_collections_shared():
+    src = _symbol_unit("unit:src", "a.py", "src", element_id="elem:src")
+    dst = _symbol_unit("unit:dst", "a.py", "dst", element_id="elem:dst")
+    support = IRUnitSupport(
+        support_id="sup:stable",
+        unit_id=src.unit_id,
+        source="fc_structure",
+        support_kind="call_resolution",
+    )
+    relation = IRRelation(
+        relation_id="rel:stable",
+        src_unit_id=src.unit_id,
+        dst_unit_id=dst.unit_id,
+        relation_type="call",
+        resolution_state="structural",
+        support_sources={"fc_structure"},
+        support_ids=[support.support_id],
+    )
+    embedding = IRUnitEmbedding(
+        embedding_id="emb:stable",
+        unit_id=dst.unit_id,
+        source="fc_embedding",
+        vector=[1.0],
+    )
+    snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:1",
+        units=[src, dst],
+        supports=[support],
+        relations=[relation],
+        embeddings=[embedding],
+    )
+
+    updated = apply_resolution_patch(
+        snapshot,
+        ResolutionPatch(unit_metadata_updates={src.unit_id: {"resolver": "python"}}),
+    )
+
+    assert updated.units is not snapshot.units
+    assert updated.supports is snapshot.supports
+    assert updated.relations is snapshot.relations
+    assert updated.embeddings is snapshot.embeddings
+
+
+def test_apply_resolution_patch_deferred_sequences_behave_like_lists():
+    src = _symbol_unit("unit:src", "a.py", "src", element_id="elem:src")
+    dst = _symbol_unit("unit:dst", "a.py", "dst", element_id="elem:dst")
+    other = _symbol_unit("unit:other", "a.py", "other", element_id="elem:other")
+    changed_support = IRUnitSupport(
+        support_id="sup:changed",
+        unit_id=src.unit_id,
+        source="fc_structure",
+        support_kind="call_resolution",
+        metadata={"source": "fc_structure"},
+    )
+    stable_support = IRUnitSupport(
+        support_id="sup:stable",
+        unit_id=other.unit_id,
+        source="fc_structure",
+        support_kind="call_resolution",
+    )
+    changed_relation = IRRelation(
+        relation_id="rel:changed",
+        src_unit_id=src.unit_id,
+        dst_unit_id=dst.unit_id,
+        relation_type="call",
+        resolution_state="structural",
+        support_sources={"fc_structure"},
+        support_ids=[changed_support.support_id],
+        metadata={"source": "fc_structure"},
+    )
+    stable_relation = IRRelation(
+        relation_id="rel:stable",
+        src_unit_id=dst.unit_id,
+        dst_unit_id=other.unit_id,
+        relation_type="call",
+        resolution_state="structural",
+        support_sources={"fc_structure"},
+        support_ids=[stable_support.support_id],
+    )
+    patch_support = IRUnitSupport(
+        support_id=changed_support.support_id,
+        unit_id=src.unit_id,
+        source=PYTHON_RESOLVER_SOURCE,
+        support_kind="call_resolution",
+        metadata={"resolver_language": "python"},
+    )
+    patch_relation = IRRelation(
+        relation_id="rel:patch",
+        src_unit_id=src.unit_id,
+        dst_unit_id=dst.unit_id,
+        relation_type="call",
+        resolution_state="semantically_resolved",
+        support_sources={PYTHON_RESOLVER_SOURCE},
+        support_ids=[patch_support.support_id],
+        metadata={"resolution_tier": "compiler_confirmed"},
+    )
+    snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:1",
+        units=[src, dst, other],
+        supports=[changed_support, stable_support],
+        relations=[changed_relation, stable_relation],
+        embeddings=[],
+    )
+
+    updated = apply_resolution_patch(
+        snapshot,
+        ResolutionPatch(
+            unit_metadata_updates={src.unit_id: {"resolver": "python"}},
+            supports=[patch_support],
+            relations=[patch_relation],
+        ),
+    )
+
+    assert len(updated.units) == 3
+    assert updated.units[:2] == [updated.units[0], dst]
+    assert stable_support in updated.supports
+    assert updated.supports.count(stable_support) == 1
+    assert stable_relation in updated.relations
+    assert updated.relations.index(stable_relation) == 1
+    assert [relation.relation_id for relation in updated.relations] == [
+        changed_relation.relation_id,
+        stable_relation.relation_id,
+    ]
+
+
+def test_apply_resolution_patch_deferred_sequences_include_appended_items():
+    src = _symbol_unit("unit:src", "a.py", "src", element_id="elem:src")
+    dst = _symbol_unit("unit:dst", "a.py", "dst", element_id="elem:dst")
+    support = IRUnitSupport(
+        support_id="sup:stable",
+        unit_id=src.unit_id,
+        source="fc_structure",
+        support_kind="call_resolution",
+    )
+    relation = IRRelation(
+        relation_id="rel:stable",
+        src_unit_id=src.unit_id,
+        dst_unit_id=dst.unit_id,
+        relation_type="call",
+        resolution_state="structural",
+        support_sources={"fc_structure"},
+        support_ids=[support.support_id],
+    )
+    snapshot = IRSnapshot(
+        repo_name="repo",
+        snapshot_id="snap:1",
+        units=[src, dst],
+        supports=[support],
+        relations=[relation],
+        embeddings=[],
+    )
+    appended_support = IRUnitSupport(
+        support_id="sup:appended",
+        unit_id=dst.unit_id,
+        source=PYTHON_RESOLVER_SOURCE,
+        support_kind="call_resolution",
+        metadata={"resolver_language": "python"},
+    )
+    appended_relation = IRRelation(
+        relation_id="rel:appended",
+        src_unit_id=dst.unit_id,
+        dst_unit_id=src.unit_id,
+        relation_type="import",
+        resolution_state="semantically_resolved",
+        support_sources={PYTHON_RESOLVER_SOURCE},
+        support_ids=[appended_support.support_id],
+        metadata={"resolution_tier": "compiler_confirmed"},
+    )
+
+    updated = apply_resolution_patch(
+        snapshot,
+        ResolutionPatch(
+            supports=[appended_support],
+            relations=[appended_relation],
+        ),
+    )
+
+    assert len(updated.supports) == 2
+    assert updated.supports[0] is support
+    assert updated.supports[1].support_id == "sup:appended"
+    assert updated.supports[-1].unit_id == dst.unit_id
+    assert updated.supports[1:] == [updated.supports[1]]
+    assert len(updated.relations) == 2
+    assert updated.relations[0] is relation
+    assert updated.relations[1].relation_type == "import"
+    assert updated.relations[-1].support_ids == ["sup:appended"]
+    assert updated.relations[1:] == [updated.relations[1]]
+
+
 def test_apply_resolution_patch_records_resolver_run_metadata():
     snapshot = _snapshot(units=[_file_unit("a.py")])
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
-from typing import Any
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Generic, SupportsIndex, TypeVar, overload
 
 from ...ir.types import (
     IRCodeUnit,
@@ -20,6 +20,7 @@ from ...utils.materialization import (
 from ..resolution import ResolutionPatch, ResolutionTier
 
 JSONScalar = bool | int | float | str | None
+_T = TypeVar("_T")
 
 _RUN_STRING_FIELDS = {
     "language",
@@ -93,6 +94,105 @@ _RESOLVER_METADATA_INT_FIELDS = {
 _RESOLVER_METADATA_STRING_LIST_FIELDS = {
     "resolver_capabilities",
 }
+
+
+class _DeferredSequence(list[_T], Generic[_T]):
+    def __init__(
+        self,
+        *,
+        length: int,
+        item_getter: Callable[[int], _T],
+        iter_factory: Callable[[], Iterable[_T]] | None = None,
+    ) -> None:
+        super().__init__()
+        self._length = int(length)
+        self._item_getter = item_getter
+        self._iter_factory = iter_factory
+        self._materialized: list[_T] | None = None
+
+    def __len__(self) -> int:
+        return self._length
+
+    @overload
+    def __getitem__(self, index: SupportsIndex) -> _T: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[_T]: ...
+
+    def __getitem__(self, index: SupportsIndex | slice) -> _T | list[_T]:
+        materialized = self._materialized
+        if materialized is None:
+            materialized = (
+                list(self._iter_factory())
+                if self._iter_factory
+                else [self._item_getter(i) for i in range(self._length)]
+            )
+            self._materialized = materialized
+        return materialized[index]
+
+    def __iter__(self) -> Iterator[_T]:
+        materialized = self._materialized
+        if materialized is not None:
+            return iter(materialized)
+        if self._iter_factory is None:
+            return (self._item_getter(i) for i in range(self._length))
+        return iter(self._iter_factory())
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Sequence):
+            return False
+        return list(self) == list(other)
+
+    __hash__ = None  # type: ignore[assignment]
+
+    def __contains__(self, item: object) -> bool:
+        return any(candidate == item for candidate in self)
+
+    def count(self, value: _T) -> int:
+        return list(self).count(value)
+
+    def index(
+        self,
+        value: _T,
+        start: SupportsIndex = 0,
+        stop: SupportsIndex = 9223372036854775807,
+    ) -> int:
+        return list(self).index(value, start, stop)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(len={self._length})"
+
+
+def _sequence_with_replacements(
+    base: list[_T],
+    *,
+    replacements: Mapping[int, _T] | None = None,
+    appended: Sequence[_T] | None = None,
+) -> list[_T]:
+    replacement_map = dict(replacements or {})
+    appended_items = tuple(appended or ())
+    if not replacement_map and not appended_items:
+        return base
+    base_length = len(base)
+    total_length = base_length + len(appended_items)
+
+    def _item_getter(index: int) -> _T:
+        if index < base_length:
+            replacement = replacement_map.get(index)
+            return base[index] if replacement is None else replacement
+        return appended_items[index - base_length]
+
+    def _iter_factory() -> Iterable[_T]:
+        for index, item in enumerate(base):
+            replacement = replacement_map.get(index)
+            yield item if replacement is None else replacement
+        yield from appended_items
+
+    return _DeferredSequence(
+        length=total_length,
+        item_getter=_item_getter,
+        iter_factory=_iter_factory,
+    )
 
 
 def _json_scalar(value: Any) -> JSONScalar:
@@ -441,9 +541,6 @@ def apply_resolution_patch(snapshot: IRSnapshot, patch: ResolutionPatch) -> IRSn
             items=preserved_object_count,
         )
 
-    units = list(snapshot.units)
-    supports = list(snapshot.supports)
-    embeddings = list(snapshot.embeddings)
     metadata: dict[str, Any] = _copy_metadata(snapshot.metadata)
     for key, value in (patch.metadata_updates or {}).items():
         if key == "semantic_resolver_runs":
@@ -453,7 +550,10 @@ def apply_resolution_patch(snapshot: IRSnapshot, patch: ResolutionPatch) -> IRSn
             continue
         metadata[str(key)] = _flat_patch_value(value)
 
-    unit_by_id = {unit.unit_id: (index, unit) for index, unit in enumerate(units)}
+    unit_replacements: dict[int, IRCodeUnit] = {}
+    unit_by_id = {
+        unit.unit_id: (index, unit) for index, unit in enumerate(snapshot.units)
+    }
     changed_object_count = 0
     for unit_id, updates in patch.unit_metadata_updates.items():
         found = unit_by_id.get(unit_id)
@@ -466,11 +566,14 @@ def apply_resolution_patch(snapshot: IRSnapshot, patch: ResolutionPatch) -> IRSn
             **(unit.metadata or {}),
             **_serialize_unit_metadata_updates(updates),
         }
-        units[index] = unit
+        unit_replacements[index] = unit
         unit_by_id[unit_id] = (index, unit)
 
+    support_replacements: dict[int, IRUnitSupport] = {}
+    appended_supports: list[IRUnitSupport] = []
     support_by_id = {
-        support.support_id: (index, support) for index, support in enumerate(supports)
+        support.support_id: (index, support)
+        for index, support in enumerate(snapshot.supports)
     }
     for support in patch.supports:
         changed_object_count += 1
@@ -478,8 +581,6 @@ def apply_resolution_patch(snapshot: IRSnapshot, patch: ResolutionPatch) -> IRSn
         if materialized.support_id in support_by_id:
             index, original_support = support_by_id[materialized.support_id]
             existing = _clone_support(original_support)
-            supports[index] = existing
-            support_by_id[materialized.support_id] = (index, existing)
             existing.metadata = {
                 **(existing.metadata or {}),
                 **(materialized.metadata or {}),
@@ -513,19 +614,29 @@ def apply_resolution_patch(snapshot: IRSnapshot, patch: ResolutionPatch) -> IRSn
                 existing.end_line = materialized.end_line
             if existing.end_col is None and materialized.end_col is not None:
                 existing.end_col = materialized.end_col
+            support_replacements[index] = existing
+            support_by_id[materialized.support_id] = (index, existing)
             continue
-        supports.append(materialized)
-        support_by_id[materialized.support_id] = (len(supports) - 1, materialized)
+        appended_supports.append(materialized)
+        support_by_id[materialized.support_id] = (
+            len(snapshot.supports) + len(appended_supports) - 1,
+            materialized,
+        )
 
     relation_map: dict[tuple[str, ...], IRRelation] = {}
+    relation_order: list[tuple[str, ...]] = []
     for relation in snapshot.relations:
-        relation_map[_relation_key(relation)] = relation
+        key = _relation_key(relation)
+        if key not in relation_map:
+            relation_order.append(key)
+        relation_map[key] = relation
     for relation in patch.relations:
         changed_object_count += 1
         materialized = _clone_relation(relation, resolver_payload=True)
         key = _relation_key(materialized)
         existing = relation_map.get(key)
         if existing is None:
+            relation_order.append(key)
             relation_map[key] = materialized
         else:
             relation_map[key] = _merge_relation(existing, materialized)
@@ -536,15 +647,30 @@ def apply_resolution_patch(snapshot: IRSnapshot, patch: ResolutionPatch) -> IRSn
             items=changed_object_count,
         )
 
-    return IRSnapshot(
+    updated = IRSnapshot(
         repo_name=snapshot.repo_name,
         snapshot_id=snapshot.snapshot_id,
         branch=snapshot.branch,
         commit_id=snapshot.commit_id,
         tree_id=snapshot.tree_id,
-        units=units,
-        supports=supports,
-        relations=list(relation_map.values()),
-        embeddings=embeddings,
         metadata=metadata,
     )
+    updated.units = _sequence_with_replacements(
+        snapshot.units,
+        replacements=unit_replacements,
+    )
+    updated.supports = _sequence_with_replacements(
+        snapshot.supports,
+        replacements=support_replacements,
+        appended=appended_supports,
+    )
+    if patch.relations:
+        updated.relations = _DeferredSequence(
+            length=len(relation_order),
+            item_getter=lambda index: relation_map[relation_order[index]],
+            iter_factory=lambda: (relation_map[key] for key in relation_order),
+        )
+    else:
+        updated.relations = snapshot.relations
+    updated.embeddings = snapshot.embeddings
+    return updated

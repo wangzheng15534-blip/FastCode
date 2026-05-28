@@ -94,8 +94,8 @@ id = "semantic-resolver-private-implementation"
 name = "Semantic resolver private implementation stays inside resolvers"
 type = "protected"
 protected_modules = [
-    "fastcode.semantic.resolvers._helper_operations",
-    "fastcode.semantic.resolvers._resolver_support",
+    "fastcode.semantic.resolvers.core.helper_operations",
+    "fastcode.semantic.resolvers.core.resolver_support",
 ]
 allowed_importers = [
     "fastcode.semantic.resolvers.*",
@@ -107,13 +107,13 @@ id = "store-private-payload-implementation"
 name = "Store private payload modules stay inside store"
 type = "protected"
 protected_modules = [
-    "fastcode.store._cache_payloads",
-    "fastcode.store._graph_artifact_payloads",
-    "fastcode.store._snapshot_ir_payloads",
-    "fastcode.store._snapshot_queue_payloads",
+    "fastcode.app.store.cache.payloads",
+    "fastcode.app.store.artifacts.graph_payloads",
+    "fastcode.app.store.snapshots.ir_payloads",
+    "fastcode.app.store.snapshots.queue_payloads",
 ]
 allowed_importers = [
-    "fastcode.store.*",
+    "fastcode.app.store.*",
 ]
 as_packages = false
 
@@ -153,10 +153,10 @@ parametrize-names-type = "tuple"
 "fastcode.indexing.call_extractor".msg = "Deleted compatibility module; import fastcode.graph.call_extractor instead."
 "fastcode.indexing.global_builder".msg = "Deleted compatibility module; import fastcode.scip.global_builder instead."
 "fastcode.indexing.tree_sitter".msg = "Deleted compatibility module; import fastcode.graph.tree_sitter instead."
-"fastcode.retrieval.agent_tools".msg = "Deleted compatibility module; import fastcode.query.agent_tools instead."
+"fastcode.retrieval.agent_tools".msg = "Deleted compatibility module; import fastcode.app.query.agent.tools instead."
 "fastcode.retrieval.core".msg = "Deleted compatibility package; import concrete retrieval modules instead."
-"fastcode.retrieval.hybrid".msg = "Deleted compatibility module; import fastcode.query.retriever instead."
-"fastcode.retrieval.iterative".msg = "Deleted compatibility module; import fastcode.query.iterative_agent instead."
+"fastcode.retrieval.hybrid".msg = "Deleted compatibility module; import fastcode.app.query.selection.retriever instead."
+"fastcode.retrieval.iterative".msg = "Deleted compatibility module; import fastcode.app.query.agent.iterative instead."
 "fastcode.schemas.api".msg = "Deleted compatibility module; import concrete API schemas instead."
 "fastcode.schemas.core_types".msg = "Deleted compatibility module; import canonical IR types instead."
 "fastcode.utils._compat".msg = "Deleted compatibility module; import fastcode.main.config instead."

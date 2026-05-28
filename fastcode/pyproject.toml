@@ -194,14 +194,14 @@ extend = "../pyproject.toml"                                             # inher
 packages = ["src/fastcode"]                                               # package lives at src/fastcode/
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/fastcode/semantic/resolvers/ts_semantic_helper.js" = "fastcode/semantic/resolvers/ts_semantic_helper.js"
-"src/fastcode/semantic/resolvers/go_semantic_helper.go" = "fastcode/semantic/resolvers/go_semantic_helper.go"
-"src/fastcode/semantic/resolvers/java_semantic_helper.py" = "fastcode/semantic/resolvers/java_semantic_helper.py"
-"src/fastcode/semantic/resolvers/rust_semantic_helper.py" = "fastcode/semantic/resolvers/rust_semantic_helper.py"
-"src/fastcode/semantic/resolvers/csharp_semantic_helper.py" = "fastcode/semantic/resolvers/csharp_semantic_helper.py"
-"src/fastcode/semantic/resolvers/zig_semantic_helper.py" = "fastcode/semantic/resolvers/zig_semantic_helper.py"
-"src/fastcode/semantic/resolvers/fortran_semantic_helper.py" = "fastcode/semantic/resolvers/fortran_semantic_helper.py"
-"src/fastcode/semantic/resolvers/julia_semantic_helper.py" = "fastcode/semantic/resolvers/julia_semantic_helper.py"
+"src/fastcode/semantic/resolvers/helpers/ts_semantic_helper.js" = "fastcode/semantic/resolvers/helpers/ts_semantic_helper.js"
+"src/fastcode/semantic/resolvers/helpers/go_semantic_helper.go" = "fastcode/semantic/resolvers/helpers/go_semantic_helper.go"
+"src/fastcode/semantic/resolvers/helpers/java_semantic_helper.py" = "fastcode/semantic/resolvers/helpers/java_semantic_helper.py"
+"src/fastcode/semantic/resolvers/helpers/rust_semantic_helper.py" = "fastcode/semantic/resolvers/helpers/rust_semantic_helper.py"
+"src/fastcode/semantic/resolvers/helpers/csharp_semantic_helper.py" = "fastcode/semantic/resolvers/helpers/csharp_semantic_helper.py"
+"src/fastcode/semantic/resolvers/helpers/zig_semantic_helper.py" = "fastcode/semantic/resolvers/helpers/zig_semantic_helper.py"
+"src/fastcode/semantic/resolvers/helpers/fortran_semantic_helper.py" = "fastcode/semantic/resolvers/helpers/fortran_semantic_helper.py"
+"src/fastcode/semantic/resolvers/helpers/julia_semantic_helper.py" = "fastcode/semantic/resolvers/helpers/julia_semantic_helper.py"
 
 # ---------------------------------------------------------------------------
 # Ruff: per-file ignores (fastcode-specific, not global)
@@ -220,7 +220,7 @@ packages = ["src/fastcode"]                                               # pack
     "S608",    # design: SQL in test assertions uses string literals, not user input
     "B017",    # design: pytest.raises(Exception) is intentional for error-path tests
 ]
-"src/fastcode/query/retriever.py" = [
+"src/fastcode/app/query/selection/retriever.py" = [
     "ANN201",  # complexity: retrieve() and index_for_bm25 need return types (track: annotate all public methods)
     "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
     "PLC0415", # design: lazy imports avoid circular deps with retrieval package
@@ -234,7 +234,7 @@ packages = ["src/fastcode"]                                               # pack
 "src/fastcode/retrieval/scip_transform.py" = [
     "PLC0415", # external-dep: protobuf may not be installed; lazy import guards import error
 ]
-"src/fastcode/query/iterative_agent.py" = [
+"src/fastcode/app/query/agent/iterative.py" = [
     "ANN001",  # complexity: all function args need types (track: annotate all public methods)
     "ANN201",  # complexity: all public function return types (track: annotate all public methods)
     "ANN202",  # complexity: all private function return types (track: annotate all public methods)
@@ -248,7 +248,7 @@ packages = ["src/fastcode"]                                               # pack
     "S110",    # design: try-except-pass in directory tree builder — individual failures should not halt traversal
     "SIM108",  # design: if-else preferred over ternary for readability of multi-element tuple fallback
 ]
-"src/fastcode/indexing/scip_runner.py" = [
+"src/fastcode/infrastructure/execution/scip_runner.py" = [
     "S603",    # design: subprocess for SCIP indexer binary invocation; shell=False is already used
 ]
 "src/fastcode/retrieval/iteration.py" = [
@@ -260,7 +260,7 @@ packages = ["src/fastcode"]                                               # pack
 "src/fastcode/retrieval/prompts.py" = [
     "PLR0912", # complexity: prompt template selection by query type (track: extract prompt registry)
 ]
-"src/fastcode/query/answer.py" = [
+"src/fastcode/app/query/orchestration/answer.py" = [
     "ANN201",  # complexity: generate_stream needs return type (track: annotate all public methods)
     "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
     "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
@@ -293,7 +293,7 @@ packages = ["src/fastcode"]                                               # pack
 "src/fastcode/retrieval/repo_analysis.py" = [
     "PLR0911", # complexity: infer_project_type if-chain with 6 project types — each branch is distinct
 ]
-"src/fastcode/indexing/overview.py" = [
+"src/fastcode/app/indexing/overview.py" = [
     "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)
     "ANN204",  # complexity: __init__ needs -> None (track: annotate all public methods)
     "PLR2004", # design: 8000 char truncation threshold for READMEs is a UI limit, not domain constant
@@ -363,33 +363,33 @@ packages = ["src/fastcode"]                                               # pack
     "SIM102",  # design: nested if clarifies two independent conditions
 ]
 # --- Security per-file ignores (scoped from global; each has specific justification) ---
-"src/fastcode/store/cache.py" = [
+"src/fastcode/app/store/cache/service.py" = [
     "S301",    # design: pickle for Redis cache serialization — trusted data round-trip only
     "S324",    # design: MD5 for cache key dedup — not cryptographic
 ]
-"src/fastcode/store/graph_artifacts.py" = [
+"src/fastcode/app/store/artifacts/graph.py" = [
     "S301",    # design: pickle for trusted local CodeGraphBuilder artifact persistence
 ]
-"src/fastcode/store/snapshot.py" = [
+"src/fastcode/app/store/snapshots/snapshot.py" = [
     "S301",    # design: pickle for IR graph persistence — trusted local store, not untrusted input
     "S324",    # design: MD5 for snapshot ID generation — not cryptographic
 ]
-"src/fastcode/store/vector.py" = [
+"src/fastcode/app/store/vectors/vector.py" = [
     "S301",    # design: pickle for FAISS index serialization — trusted data round-trip only
 ]
-"src/fastcode/indexing/embedder.py" = [
+"src/fastcode/app/indexing/embedder.py" = [
     "S310",    # design: urllib to Ollama embedding endpoint on localhost — controlled environment
 ]
-"src/fastcode/indexing/terminus.py" = [
+"src/fastcode/app/indexing/terminus.py" = [
     "S310",    # design: urllib to TerminusDB endpoint on localhost — controlled environment
 ]
-"src/fastcode/indexing/doc_ingester.py" = [
+"src/fastcode/app/indexing/doc_ingester.py" = [
     "S324",    # design: MD5 for document chunk ID generation — not cryptographic
 ]
-"src/fastcode/indexing/indexer.py" = [
+"src/fastcode/app/indexing/pipeline/indexer.py" = [
     "S324",    # design: MD5 for code element hash suffix — not cryptographic
 ]
-"src/fastcode/indexing/pipeline.py" = [
+"src/fastcode/app/indexing/pipeline/service.py" = [
     "S324",    # design: SHA1 for idempotency keys — not cryptographic
 ]
 "src/fastcode/utils/hashing.py" = [
@@ -402,21 +402,21 @@ packages = ["src/fastcode"]                                               # pack
     "S110",    # design: try-except-pass in JSON repair — individual repair failures should not abort
     "S112",    # design: try-except-continue in JSON array/object parsing — skip malformed elements
 ]
-"src/fastcode/store/infrastructure/graph_runtime.py" = [
+"src/fastcode/infrastructure/graph_runtime/ladybug.py" = [
     "S110",    # design: try-except-pass in doc graph operations — individual doc failures are non-fatal
 ]
 "src/fastcode/semantic/resolvers/*.py" = [
     "S603",    # design: subprocess for language tooling (go vet, tsc, dotnet, etc.); shell=False is already used
     "S607",    # design: partial path for language binaries found via shutil.which() fallback
 ]
-"src/fastcode/store/index_run.py" = [
+"src/fastcode/app/store/runs/index_run.py" = [
     "S608",    # design: SQL with parameterized queries via psycopg; literals are table/column names
 ]
-"src/fastcode/indexing/projection_transform.py" = [
+"src/fastcode/app/indexing/projection/transform.py" = [
     "S324",    # design: SHA1 for deterministic projection hashing — not cryptographic
     "S110",    # design: try-except-pass for leiden fallback — graceful degradation to greedy_modularity
 ]
-"src/fastcode/query/selector.py" = [
+"src/fastcode/app/query/selection/selector.py" = [
     "S608",    # design: SQL with parameterized queries via psycopg; literals are table/column names
 ]
 # ---------------------------------------------------------------------------

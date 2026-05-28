@@ -12,11 +12,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fastcode.indexing.projection import ProjectionService
+from fastcode.app.indexing.projection.service import ProjectionService
 from fastcode.ir.projection import ProjectionBuildResult, ProjectionScope
 from fastcode.ir.types import IRCodeUnit, IRSnapshot
 from fastcode.main.fastcode import FastCode
-from fastcode.store.projection_contracts import (
+from fastcode.app.store.snapshots.projection_contracts import (
     ProjectionBuildRecord,
     ProjectionDirtyScopeRecord,
 )

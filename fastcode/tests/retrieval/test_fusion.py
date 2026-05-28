@@ -1,4 +1,4 @@
-"""Tests for fastcode.retrieval.fusion — pure fusion functions extracted from HybridRetriever."""
+"""Tests for fastcode.retrieval.ranking.fusion — pure fusion functions extracted from HybridRetriever."""
 
 from typing import Any
 
@@ -6,7 +6,7 @@ import pytest
 
 from fastcode.ir.element import CodeElement
 from fastcode.retrieval.contracts import FusionConfig, Hit
-from fastcode.retrieval.fusion import (
+from fastcode.retrieval.ranking.fusion import (
     adaptive_fuse_channels,
     apply_doc_projection_to_code,
     compute_adaptive_fusion_params,

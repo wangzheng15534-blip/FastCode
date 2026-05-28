@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.retrieval.combination import combine_results
+from fastcode.retrieval.ranking.combination import combine_results
 from fastcode.retrieval.contracts import Hit, RetrievalSource
 
 

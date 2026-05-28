@@ -8,7 +8,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.store.infrastructure.graph_runtime import LadybugGraphRuntime, _esc
+from fastcode.infrastructure.graph_runtime.ladybug import LadybugGraphRuntime, _esc
 
 # --- Strategies ---
 

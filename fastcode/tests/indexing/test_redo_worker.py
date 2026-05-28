@@ -10,7 +10,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.indexing.redo_worker import RedoWorker
+from fastcode.app.indexing.pipeline.redo_worker import RedoWorker
 
 pytestmark = [pytest.mark.test_double]
 

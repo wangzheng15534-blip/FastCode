@@ -7,9 +7,9 @@ from typing import Any, cast
 
 import pytest
 
-from fastcode.indexing.publishing import PublishingService
+from fastcode.app.indexing.publishing import PublishingService
 from fastcode.ir.types import IRSnapshot
-from fastcode.store.index_run_contracts import IndexRunRecord
+from fastcode.app.store.runs.index_run_contracts import IndexRunRecord
 
 
 class NoDictSnapshot(IRSnapshot):

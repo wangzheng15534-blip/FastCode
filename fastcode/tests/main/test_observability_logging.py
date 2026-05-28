@@ -9,11 +9,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import fastcode.indexing.pipeline as pipeline_module
+import fastcode.app.indexing.pipeline.service as pipeline_module
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import IRSnapshot
 from fastcode.main.fastcode import FastCode, _ReadWriteStateLock
-from fastcode.query.processor import ProcessedQuery
+from fastcode.app.query.orchestration.processor import ProcessedQuery
 
 
 def _processed_query(

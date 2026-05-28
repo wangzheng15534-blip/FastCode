@@ -7,32 +7,32 @@ from typing import Any
 
 import pytest
 
-from fastcode.store.cache_contracts import (
+from fastcode.app.store.cache.contracts import (
     DialogueSessionRecord,
     DialogueTurnRecord,
     QueryResultCacheRecord,
 )
-from fastcode.store.index_run_contracts import (
+from fastcode.app.store.runs.index_run_contracts import (
     IndexRunRecord,
     PublishTaskRecord,
 )
-from fastcode.store.manifest_contracts import ManifestRecord
-from fastcode.store.pg_retrieval_contracts import (
+from fastcode.app.store.snapshots.manifest_contracts import ManifestRecord
+from fastcode.app.store.vectors.pg_retrieval_contracts import (
     PgRetrievalElementRecord,
     PgRetrievalResultRecord,
 )
-from fastcode.store.projection_contracts import (
+from fastcode.app.store.snapshots.projection_contracts import (
     ProjectionBuildRecord,
     ProjectionDirtyScopeRecord,
 )
-from fastcode.store.snapshot_contracts import (
+from fastcode.app.store.snapshots.snapshot_contracts import (
     OutboxEventRecord,
     RedoTaskRecord,
     SCIPArtifactRecord,
     SnapshotRecord,
     SnapshotRefRecord,
 )
-from fastcode.store.vector_contracts import (
+from fastcode.app.store.vectors.vector_contracts import (
     RepositoryOverviewRecord,
     VectorSearchResultRecord,
 )

@@ -11,10 +11,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fastcode.indexing.redo_worker import RedoWorker
-from fastcode.indexing.terminus import TerminusPublisher
-from fastcode.store.infrastructure.runtime import DBRuntime
-from fastcode.store.snapshot import SnapshotStore
+from fastcode.app.indexing.pipeline.redo_worker import RedoWorker
+from fastcode.app.indexing.terminus import TerminusPublisher
+from fastcode.infrastructure.storage.runtime import DBRuntime
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
 
 pytestmark = [pytest.mark.test_double]
 

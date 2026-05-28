@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from fastcode.retrieval.contracts import ElementFilter, Hit
-from fastcode.retrieval.filtering import (
+from fastcode.retrieval.ranking.filtering import (
     apply_filters,
     diversify,
     final_repo_filter,

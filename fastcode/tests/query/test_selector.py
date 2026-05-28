@@ -9,7 +9,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.query.selector import RepositorySelector
+from fastcode.app.query.selection.selector import RepositorySelector
 
 
 def _make_selector() -> Any:

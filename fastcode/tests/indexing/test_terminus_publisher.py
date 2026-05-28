@@ -8,7 +8,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.indexing.terminus import TerminusPublisher
+from fastcode.app.indexing.terminus import TerminusPublisher
 from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot
 
 # --- Helpers ---

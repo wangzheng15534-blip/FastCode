@@ -1,4 +1,4 @@
-"""Tests for fastcode.store.infrastructure.llm — error handling and retry contracts."""
+"""Tests for fastcode.infrastructure.llm.client — error handling and retry contracts."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fastcode.store.infrastructure.llm import chat_completion
+from fastcode.infrastructure.llm.client import chat_completion
 
 
 def _client_returning(content: str | None) -> MagicMock:

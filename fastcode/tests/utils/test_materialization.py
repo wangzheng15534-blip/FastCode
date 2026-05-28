@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from fastcode.store.vector_math import as_float32_matrix
+from fastcode.app.store.vectors.vector_math import as_float32_matrix
 from fastcode.utils.materialization import (
     BOUNDARY_JSON_ENCODE,
     BOUNDARY_VECTOR_LIST_CONVERSION,

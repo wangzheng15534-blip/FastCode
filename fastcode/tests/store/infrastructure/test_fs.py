@@ -4,7 +4,7 @@
 import os
 import tempfile
 
-from fastcode.store.infrastructure.fs import file_exists, read_file, write_file
+from fastcode.infrastructure.storage.fs import file_exists, read_file, write_file
 
 
 class TestReadWriteFile:

@@ -5,9 +5,9 @@ from typing import Any
 
 import pytest
 
-from fastcode.store.file_artifact_contracts import FileArtifactRecord
-from fastcode.store.file_artifacts import FileArtifactStore
-from fastcode.store.infrastructure.runtime import DBRuntime
+from fastcode.app.store.artifacts.file_contracts import FileArtifactRecord
+from fastcode.app.store.artifacts.file import FileArtifactStore
+from fastcode.infrastructure.storage.runtime import DBRuntime
 
 
 def _make_store(tmp: str) -> FileArtifactStore:

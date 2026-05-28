@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 from git import Repo
 
-from fastcode.indexing.file_inventory import FileFingerprint, FileInventory
-from fastcode.indexing.loader import RepositoryLoader
-from fastcode.indexing.pipeline import IndexPipeline
+from fastcode.app.indexing.file_inventory import FileFingerprint, FileInventory
+from fastcode.app.indexing.loader import RepositoryLoader
+from fastcode.app.indexing.pipeline.service import IndexPipeline
 
 
 def test_scan_files_can_emit_fingerprints(tmp_path: Path) -> None:
@@ -64,7 +64,7 @@ def test_scan_file_inventory_prefers_git_blob_oid_for_tracked_clean_files(
         raise AssertionError("tracked clean files should use git blob ids")
 
     monkeypatch.setattr(
-        "fastcode.indexing.file_inventory.compute_file_hash", _boom_hash
+        "fastcode.app.indexing.file_inventory.compute_file_hash", _boom_hash
     )
 
     files = loader.scan_files(include_fingerprints=True)
@@ -94,7 +94,7 @@ def test_scan_file_inventory_hashes_untracked_git_files(
     loader.repo_path = str(repo)
     loader.repo_name = "repo"
     monkeypatch.setattr(
-        "fastcode.indexing.file_inventory.compute_file_hash",
+        "fastcode.app.indexing.file_inventory.compute_file_hash",
         lambda _path: "content-hash",
     )
 
@@ -161,7 +161,7 @@ def test_load_from_path_uses_in_place_mode_by_default(
         }
     )
     monkeypatch.setattr(
-        "fastcode.indexing.loader.shutil.copytree",
+        "fastcode.app.indexing.loader.shutil.copytree",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("in-place local loading must not copy the repository")
         ),
@@ -262,7 +262,7 @@ def test_copy_mode_scan_uses_preloaded_source_inventory(
     loaded_path = Path(loader.load_from_path(str(repo)))
 
     monkeypatch.setattr(
-        "fastcode.indexing.loader.build_file_inventory",
+        "fastcode.app.indexing.loader.build_file_inventory",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("copy mode should reuse the source-side inventory")
         ),

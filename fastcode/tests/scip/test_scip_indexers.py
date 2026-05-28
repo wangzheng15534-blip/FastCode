@@ -133,13 +133,13 @@ def test_supported_languages():
 
 def test_run_scip_indexer_success(tmp_path: pathlib.Path):
     """run_scip_indexer executes indexer and returns artifact path."""
-    from fastcode.indexing.scip_runner import run_scip_indexer
+    from fastcode.infrastructure.execution.scip_runner import run_scip_indexer
 
     output = tmp_path / "index.scip"
-    with patch("fastcode.indexing.scip_runner.subprocess.run") as mock_run:
+    with patch("fastcode.infrastructure.execution.scip_runner.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         with patch(
-            "fastcode.indexing.scip_runner.shutil.which",
+            "fastcode.infrastructure.execution.scip_runner.shutil.which",
             return_value="/usr/bin/scip-python",
         ):
             result = run_scip_indexer("python", str(tmp_path), str(output))
@@ -148,10 +148,10 @@ def test_run_scip_indexer_success(tmp_path: pathlib.Path):
 
 def test_run_scip_indexer_not_installed(tmp_path: pathlib.Path):
     """run_scip_indexer raises when indexer not installed."""
-    from fastcode.indexing.scip_runner import run_scip_indexer
+    from fastcode.infrastructure.execution.scip_runner import run_scip_indexer
 
     with (
-        patch("fastcode.indexing.scip_runner.shutil.which", return_value=None),
+        patch("fastcode.infrastructure.execution.scip_runner.shutil.which", return_value=None),
         pytest.raises(RuntimeError, match="not found"),
     ):
         run_scip_indexer("python", str(tmp_path), str(tmp_path / "out.scip"))
@@ -159,13 +159,13 @@ def test_run_scip_indexer_not_installed(tmp_path: pathlib.Path):
 
 def test_run_scip_indexer_failure(tmp_path: pathlib.Path):
     """run_scip_indexer raises when indexer exits non-zero."""
-    from fastcode.indexing.scip_runner import run_scip_indexer
+    from fastcode.infrastructure.execution.scip_runner import run_scip_indexer
 
-    with patch("fastcode.indexing.scip_runner.subprocess.run") as mock_run:
+    with patch("fastcode.infrastructure.execution.scip_runner.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error msg")
         with (
             patch(
-                "fastcode.indexing.scip_runner.shutil.which",
+                "fastcode.infrastructure.execution.scip_runner.shutil.which",
                 return_value="/usr/bin/scip-python",
             ),
             pytest.raises(RuntimeError, match="error msg"),
@@ -264,7 +264,7 @@ def test_detect_scip_languages_in_paths_scans_only_requested_directories(
 @requires_protobuf
 def test_run_scip_for_language_success(tmp_path: pathlib.Path):
     """run_scip_for_language orchestrates indexing and loading."""
-    from fastcode.indexing.scip_runner import run_scip_for_language
+    from fastcode.infrastructure.execution.scip_runner import run_scip_for_language
     from fastcode.scip.pb2 import Index
 
     # Create a fake repo with a Java file
@@ -281,7 +281,7 @@ def test_run_scip_for_language_success(tmp_path: pathlib.Path):
     artifact_path = output_dir / "java.scip"
     artifact_path.write_bytes(idx.SerializeToString())
     with patch(
-        "fastcode.indexing.scip_runner.run_scip_indexer",
+        "fastcode.infrastructure.execution.scip_runner.run_scip_indexer",
         return_value=str(artifact_path),
     ):
         result = run_scip_for_language("java", str(tmp_path), str(output_dir))
@@ -293,10 +293,10 @@ def test_run_scip_for_language_success(tmp_path: pathlib.Path):
 
 def test_run_scip_for_language_not_available(tmp_path: pathlib.Path):
     """run_scip_for_language returns None when indexer not installed."""
-    from fastcode.indexing.scip_runner import run_scip_for_language
+    from fastcode.infrastructure.execution.scip_runner import run_scip_for_language
 
     with patch(
-        "fastcode.indexing.scip_runner.run_scip_indexer",
+        "fastcode.infrastructure.execution.scip_runner.run_scip_indexer",
         side_effect=RuntimeError("not found"),
     ):
         result = run_scip_for_language("java", str(tmp_path), str(tmp_path))

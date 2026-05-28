@@ -5,7 +5,7 @@ import math
 import pytest
 
 from fastcode.retrieval.contracts import Hit, IterationConfig, IterationHistoryEntry
-from fastcode.retrieval.iteration import (
+from fastcode.retrieval.graph.iteration import (
     calculate_recent_confidence_gain,
     calculate_recent_lines_added,
     calculate_repo_factor,

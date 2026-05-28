@@ -1,7 +1,7 @@
 """Tests for pure snapshot logic."""
 
 from fastcode.retrieval.contracts import Hit, SourceCitation
-from fastcode.retrieval.snapshot import extract_sources_from_elements
+from fastcode.retrieval.context.snapshot import extract_sources_from_elements
 from fastcode.utils.hashing import projection_params_hash
 from fastcode.utils.paths import projection_scope_key
 

@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from fastcode.store.index_run import IndexRunStore
-from fastcode.store.index_run_contracts import IndexRunRecord, PublishTaskRecord
-from fastcode.store.infrastructure.runtime import DBRuntime
+from fastcode.app.store.runs.index_run import IndexRunStore
+from fastcode.app.store.runs.index_run_contracts import IndexRunRecord, PublishTaskRecord
+from fastcode.infrastructure.storage.runtime import DBRuntime
 
 
 def _make_store(tmp_path: Path) -> IndexRunStore:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from fastcode.retrieval.fcx import parse_block, render_block, render_record
+from fastcode.retrieval.ranking.fcx import parse_block, render_block, render_record
 
 
 def test_fcx_render_and_parse_block_roundtrip() -> None:

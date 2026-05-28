@@ -26,21 +26,21 @@ from fastcode.ir.types import (
 )
 from fastcode.main.config import config_to_runtime_mapping
 from fastcode.main.fastcode import FastCode
-from fastcode.query.context_payloads import (
+from fastcode.app.query.context_payloads import (
     context_bundle_payload,
     turn_journal_payload,
     working_memory_from_payload,
     working_memory_payload,
 )
-from fastcode.query.retriever import HybridRetriever
-from fastcode.retrieval.agent_context import (
+from fastcode.app.query.selection.retriever import HybridRetriever
+from fastcode.retrieval.context.agent_context import (
     AcceptedFact,
     EvidenceRef,
     Hypothesis,
     RiskState,
     TurnIntent,
 )
-from fastcode.retrieval.context_compiler import (
+from fastcode.retrieval.context.context_compiler import (
     build_context_bundle,
     build_tool_observation,
     build_turn_journal,
@@ -48,21 +48,21 @@ from fastcode.retrieval.context_compiler import (
     compile_working_memory,
 )
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
-from fastcode.store.cache_contracts import (
+from fastcode.app.store.cache.contracts import (
     ContextActivationRecord,
     ContextBundleRecord,
     TurnJournalRecord,
     WorkingMemoryRecord,
 )
-from fastcode.store.graph_artifacts import GraphArtifactStore
-from fastcode.store.index_run_contracts import IndexRunRecord
-from fastcode.store.manifest_contracts import ManifestRecord
-from fastcode.store.snapshot_contracts import (
+from fastcode.app.store.artifacts.graph import GraphArtifactStore
+from fastcode.app.store.runs.index_run_contracts import IndexRunRecord
+from fastcode.app.store.snapshots.manifest_contracts import ManifestRecord
+from fastcode.app.store.snapshots.snapshot_contracts import (
     SCIPArtifactRecord,
     SnapshotRecord,
     SnapshotRefRecord,
 )
-from fastcode.store.vector import VectorStore
+from fastcode.app.store.vectors.vector import VectorStore
 
 # ---------------------------------------------------------------------------
 # Helpers (basic / doc pipeline tests)
@@ -500,7 +500,7 @@ def _make_working_memory_record(
     session_id: str = "sess-1",
     turn_number: int = 2,
 ) -> tuple[WorkingMemoryRecord, dict[str, Any]]:
-    from fastcode.retrieval.agent_context import build_acceptance_contract
+    from fastcode.retrieval.context.agent_context import build_acceptance_contract
 
     intent = TurnIntent(
         session_id=session_id,
@@ -2509,7 +2509,7 @@ def _snapshot_artifact_handle_pipeline(
     import threading
     from collections import OrderedDict
 
-    import fastcode.indexing.pipeline as pipeline_module
+    import fastcode.app.indexing.pipeline.service as pipeline_module
 
     loads: dict[str, list[str]] = {
         "vector": [],

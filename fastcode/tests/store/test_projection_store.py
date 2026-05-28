@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 
 from fastcode.ir.projection import ProjectionBuildResult, ProjectionScope
-from fastcode.store.projection import ProjectionStore
-from fastcode.store.projection_contracts import (
+from fastcode.app.store.snapshots.projection import ProjectionStore
+from fastcode.app.store.snapshots.projection_contracts import (
     ProjectionBuildRecord,
     ProjectionDirtyScopeRecord,
 )
@@ -149,7 +149,7 @@ def test_mark_dirty_merges_existing_scope_via_typed_record(
 
     monkeypatch.setattr(ProjectionDirtyScopeRecord, "to_dict", _boom)
     monkeypatch.setattr(
-        "fastcode.store.projection.utc_now", lambda: "2026-05-05T00:00:10+00:00"
+        "fastcode.app.store.snapshots.projection.utc_now", lambda: "2026-05-05T00:00:10+00:00"
     )
 
     store.mark_dirty(
@@ -234,7 +234,7 @@ def test_save_prunes_stale_chunks_before_upserting_current_chunk_set(
 
     store, executed = _make_store(responder)
     monkeypatch.setattr(
-        "fastcode.store.projection.utc_now", lambda: "2026-05-05T00:00:10+00:00"
+        "fastcode.app.store.snapshots.projection.utc_now", lambda: "2026-05-05T00:00:10+00:00"
     )
 
     result = ProjectionBuildResult(

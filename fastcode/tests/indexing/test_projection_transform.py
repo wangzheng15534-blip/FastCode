@@ -9,7 +9,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.indexing.projection_transform import ProjectionTransformer
+from fastcode.app.indexing.projection.transform import ProjectionTransformer
 from fastcode.ir.graph import IRGraphs
 from fastcode.ir.projection import ProjectionBuildResult, ProjectionScope
 from fastcode.ir.types import IRDocument, IREdge, IRSnapshot, IRSymbol

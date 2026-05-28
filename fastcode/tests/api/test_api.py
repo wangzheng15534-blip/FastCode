@@ -24,9 +24,9 @@ from fastapi.testclient import TestClient
 
 import fastcode.api.routes as api
 from fastcode.ir.types import IRSnapshot
-from fastcode.store.infrastructure.runtime import DBRuntime
-from fastcode.store.manifest import ManifestStore
-from fastcode.store.snapshot import SnapshotStore
+from fastcode.infrastructure.storage.runtime import DBRuntime
+from fastcode.app.store.snapshots.manifest import ManifestStore
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
 
 # ---------------------------------------------------------------------------
 # Helpers

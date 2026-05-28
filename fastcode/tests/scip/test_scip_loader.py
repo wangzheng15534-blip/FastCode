@@ -521,10 +521,10 @@ def test_binary_scip_to_ir_round_trip(tmp_path: pathlib.Path):
 
 def test_run_scip_python_index_delegates_to_scip_indexers(tmp_path: pathlib.Path):
     """run_scip_python_index delegates to scip_indexers.run_scip_indexer."""
-    from fastcode.indexing.scip_runner import run_scip_python_index
+    from fastcode.infrastructure.execution.scip_runner import run_scip_python_index
 
     with patch(
-        "fastcode.indexing.scip_runner.run_scip_indexer",
+        "fastcode.infrastructure.execution.scip_runner.run_scip_indexer",
         return_value="/fake/output.scip",
     ) as mock_run:
         result = run_scip_python_index(str(tmp_path), "/fake/output.scip")

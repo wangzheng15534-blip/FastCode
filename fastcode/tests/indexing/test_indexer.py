@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import numpy as np
 
-from fastcode.indexing.indexer import CodeIndexer
-from fastcode.indexing.parser import FileParseResult, FunctionInfo, ImportInfo
+from fastcode.app.indexing.pipeline.indexer import CodeIndexer
+from fastcode.app.indexing.extractors.parser import FileParseResult, FunctionInfo, ImportInfo
 from fastcode.ir.element import CodeElement
 
 

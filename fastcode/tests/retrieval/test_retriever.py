@@ -17,8 +17,8 @@ from rank_bm25 import BM25Okapi
 
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs, IRGraphView
-from fastcode.query.retriever import HybridRetriever, _fusion_config_from_runtime
-from fastcode.store.vector import VectorStore
+from fastcode.app.query.selection.retriever import HybridRetriever, _fusion_config_from_runtime
+from fastcode.app.store.vectors.vector import VectorStore
 
 
 def _mk_row(
@@ -516,7 +516,7 @@ def test_ir_graph_expansion_uses_compact_graph_view_without_networkx_walk() -> N
     )
 
     with patch(
-        "fastcode.query.retriever.nx.single_source_shortest_path_length",
+        "fastcode.app.query.selection.retriever.nx.single_source_shortest_path_length",
         side_effect=AssertionError("compact graph path must not materialize networkx"),
     ):
         related = retriever._get_related_ids(
@@ -583,7 +583,7 @@ def test_load_bm25_uses_explicit_code_element_deserializer(tmp_path: Path) -> No
         )
 
     with patch(
-        "fastcode.query.retriever.deserialize_code_element",
+        "fastcode.app.query.selection.retriever.deserialize_code_element",
         side_effect=_deserialize,
     ) as mock_deserialize:
         assert retriever.load_bm25("index") is True
@@ -705,7 +705,7 @@ def test_reload_specific_repositories_uses_explicit_deserializer(
         )
 
     with patch(
-        "fastcode.query.retriever.deserialize_code_element",
+        "fastcode.app.query.selection.retriever.deserialize_code_element",
         side_effect=_deserialize,
     ) as mock_deserialize:
         assert retriever.reload_specific_repositories(["repo"]) is True
@@ -743,7 +743,7 @@ def test_reload_specific_repositories_uses_shard_native_bm25_without_rebuild(
     retriever.iterative_agent = None
 
     with patch(
-        "fastcode.query.retriever.BM25Okapi",
+        "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("shard-native filtered reload should not rebuild"),
     ):
         assert retriever.reload_specific_repositories(["repo"]) is True
@@ -798,7 +798,7 @@ def test_reload_specific_repositories_preserves_full_shard_runtime_state(
     baseline_elements = list(retriever.full_bm25_elements)
 
     with patch(
-        "fastcode.query.retriever.BM25Okapi",
+        "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("filtered shard reload should not rebuild"),
     ):
         assert retriever.reload_specific_repositories(["repo_b"]) is True
@@ -849,7 +849,7 @@ def test_reload_specific_repositories_filtered_runtime_overrides_preloaded_full_
     assert retriever.load_bm25_sources(["repo_a", "repo_b"], filtered=False) is True
 
     with patch(
-        "fastcode.query.retriever.BM25Okapi",
+        "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("filtered reload should stay shard-native"),
     ):
         assert retriever.reload_specific_repositories(["repo_b"]) is True
@@ -961,7 +961,7 @@ def test_reload_specific_repositories_real_vector_and_bm25_artifacts_update_filt
     retriever.min_similarity = -1.0
 
     with patch(
-        "fastcode.query.retriever.BM25Okapi",
+        "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("real filtered reload should stay shard-native"),
     ):
         assert retriever.reload_specific_repositories(["repo_b"]) is True
@@ -999,7 +999,7 @@ def test_load_bm25_sources_filtered_mode_builds_shard_runtime_without_rebuild(
     retriever.persist_dir = str(tmp_path)
 
     with patch(
-        "fastcode.query.retriever.BM25Okapi",
+        "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("core shard runtime load should not rebuild"),
     ):
         assert retriever.load_bm25_sources(["repo"], filtered=True) is True
@@ -1045,7 +1045,7 @@ def test_load_bm25_sources_sharded_path_uses_explicit_deserializer(
         )
 
     with patch(
-        "fastcode.query.retriever.deserialize_code_element",
+        "fastcode.app.query.selection.retriever.deserialize_code_element",
         side_effect=_deserialize,
     ) as mock_deserialize:
         assert retriever.load_bm25_sources(["repo"], filtered=False) is True
@@ -1093,7 +1093,7 @@ def test_load_bm25_sources_merges_multiple_shard_manifests_for_full_runtime(
     retriever.persist_dir = str(tmp_path)
 
     with patch(
-        "fastcode.query.retriever.BM25Okapi",
+        "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("merged shard runtime should not rebuild"),
     ):
         assert retriever.load_bm25_sources(["repo_a", "repo_b"], filtered=False) is True
@@ -1287,7 +1287,7 @@ def test_save_bm25_persists_sharded_bundle_and_loads_without_legacy_pickle(
     loaded.logger = MagicMock()
     loaded.persist_dir = str(tmp_path)
     with patch(
-        "fastcode.query.retriever.BM25Okapi",
+        "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("shard-native load should not rebuild BM25Okapi"),
     ):
         assert loaded.load_bm25("index") is True
@@ -1359,7 +1359,7 @@ def test_shard_native_bm25_search_reads_only_query_term_shards(
         return real_pickle_load(handle)
 
     with patch(
-        "fastcode.query.retriever.pickle.load", side_effect=_counting_pickle_load
+        "fastcode.app.query.selection.retriever.pickle.load", side_effect=_counting_pickle_load
     ):
         results = loaded._keyword_search("alpha", top_k=3)
 

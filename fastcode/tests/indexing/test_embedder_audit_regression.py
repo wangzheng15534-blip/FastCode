@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.indexing.embedder import CodeEmbedder
+from fastcode.app.indexing.embedder import CodeEmbedder
 
 pytestmark = [pytest.mark.test_double]
 
@@ -106,7 +106,7 @@ class TestOllamaBatchResponseValidation:
     def test_none_entries_in_embeddings(self, monkeypatch: Any) -> None:
         embedder = self._make_embedder()
         monkeypatch.setattr(
-            "fastcode.indexing.embedder.urllib.request.urlopen",
+            "fastcode.app.indexing.embedder.urllib.request.urlopen",
             lambda *a, **kw: self._fake_urlopen({"embeddings": [None, [0.0, 1.0]]}),
         )
         with pytest.raises((RuntimeError, ValueError)):
@@ -116,7 +116,7 @@ class TestOllamaBatchResponseValidation:
     def test_wrong_count_in_embeddings(self, monkeypatch: Any) -> None:
         embedder = self._make_embedder()
         monkeypatch.setattr(
-            "fastcode.indexing.embedder.urllib.request.urlopen",
+            "fastcode.app.indexing.embedder.urllib.request.urlopen",
             lambda *a, **kw: self._fake_urlopen({"embeddings": [[1.0, 0.0]]}),
         )
         with pytest.raises(RuntimeError, match="missing embeddings"):
@@ -126,7 +126,7 @@ class TestOllamaBatchResponseValidation:
     def test_ragged_inner_dimensions(self, monkeypatch: Any) -> None:
         embedder = self._make_embedder()
         monkeypatch.setattr(
-            "fastcode.indexing.embedder.urllib.request.urlopen",
+            "fastcode.app.indexing.embedder.urllib.request.urlopen",
             lambda *a, **kw: self._fake_urlopen({"embeddings": [[1.0, 0.0], [1.0]]}),
         )
         with pytest.raises((RuntimeError, ValueError)):
@@ -136,7 +136,7 @@ class TestOllamaBatchResponseValidation:
     def test_flat_list_instead_of_list_of_lists(self, monkeypatch: Any) -> None:
         embedder = self._make_embedder()
         monkeypatch.setattr(
-            "fastcode.indexing.embedder.urllib.request.urlopen",
+            "fastcode.app.indexing.embedder.urllib.request.urlopen",
             lambda *a, **kw: self._fake_urlopen({"embeddings": [1.0, 0.0]}),
         )
         with pytest.raises((RuntimeError, ValueError)):
@@ -146,7 +146,7 @@ class TestOllamaBatchResponseValidation:
     def test_missing_embeddings_key(self, monkeypatch: Any) -> None:
         embedder = self._make_embedder()
         monkeypatch.setattr(
-            "fastcode.indexing.embedder.urllib.request.urlopen",
+            "fastcode.app.indexing.embedder.urllib.request.urlopen",
             lambda *a, **kw: self._fake_urlopen({"model": "test-ollama"}),
         )
         with pytest.raises(RuntimeError, match="missing embeddings"):
@@ -156,7 +156,7 @@ class TestOllamaBatchResponseValidation:
     def test_embeddings_not_a_list(self, monkeypatch: Any) -> None:
         embedder = self._make_embedder()
         monkeypatch.setattr(
-            "fastcode.indexing.embedder.urllib.request.urlopen",
+            "fastcode.app.indexing.embedder.urllib.request.urlopen",
             lambda *a, **kw: self._fake_urlopen({"embeddings": "not a list"}),
         )
         with pytest.raises(RuntimeError, match="missing embeddings"):

@@ -24,9 +24,9 @@ from fastcode.ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from fastcode.store.infrastructure.runtime import DBRuntime
-from fastcode.store.manifest import ManifestStore
-from fastcode.store.snapshot import SnapshotStore
+from fastcode.infrastructure.storage.runtime import DBRuntime
+from fastcode.app.store.snapshots.manifest import ManifestStore
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
 
 pytestmark = [pytest.mark.e2e, pytest.mark.integration]
 

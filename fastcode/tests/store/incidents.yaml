@@ -3,7 +3,7 @@
 incidents:
   - id: PGRE-001
     date: "2026-05-17"
-    module: fastcode.store.pg_retrieval
+    module: fastcode.app.store.vectors.pg_retrieval
     trigger: "executemany for embedding_vectors succeeds but executemany for search_documents fails — no rollback"
     consequence: "embedding_vectors table has rows absent from search_documents; search quality silently degrades"
     risk: HIGH
@@ -14,7 +14,7 @@ incidents:
 
   - id: PGRE-002
     date: "2026-05-17"
-    module: fastcode.store.pg_retrieval
+    module: fastcode.app.store.vectors.pg_retrieval
     trigger: "executemany raises after successful upsert in a prior call — last_upsert_metrics retains stale values"
     consequence: "Operational metrics show misleading counts from a previous successful call"
     risk: LOW

@@ -5,14 +5,14 @@ from typing import Any
 
 import pytest
 
-from fastcode.store._cache_payloads import (
+from fastcode.app.store.cache.payloads import (
     _CACHE_EMBEDDING_KIND,
     _CACHE_JSON_KIND,
     _CACHE_RECORD_MAGIC,
     _json_cache_payload,
 )
-from fastcode.store.cache import CacheManager
-from fastcode.store.cache_contracts import (
+from fastcode.app.store.cache.service import CacheManager
+from fastcode.app.store.cache.contracts import (
     ContextActivationRecord,
     ContextBundleRecord,
     ContextDistillationRecord,

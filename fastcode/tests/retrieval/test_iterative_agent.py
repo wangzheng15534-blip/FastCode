@@ -8,9 +8,9 @@ import pytest
 from pydantic import ValidationError
 
 from fastcode.ir.element import CodeElement
-from fastcode.query.contracts import AgentRoundResult, ElementSelectionRecord
-from fastcode.query.iterative_agent import IterativeAgent
-from fastcode.query.processor import ProcessedQuery
+from fastcode.app.query.contracts import AgentRoundResult, ElementSelectionRecord
+from fastcode.app.query.agent.iterative import IterativeAgent
+from fastcode.app.query.orchestration.processor import ProcessedQuery
 
 
 def _make_iterative_agent(

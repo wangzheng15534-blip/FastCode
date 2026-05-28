@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.indexing.projection_transform import ProjectionTransformer
+from fastcode.app.indexing.projection.transform import ProjectionTransformer
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.projection import ProjectionScope
 from fastcode.ir.types import IRDocument, IREdge, IRSnapshot, IRSymbol

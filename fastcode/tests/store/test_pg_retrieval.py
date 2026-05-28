@@ -7,8 +7,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from fastcode.store.pg_retrieval import PgRetrievalStore
-from fastcode.store.pg_retrieval_contracts import (
+from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
+from fastcode.app.store.vectors.pg_retrieval_contracts import (
     PgRetrievalElementRecord,
     PgRetrievalResultRecord,
 )

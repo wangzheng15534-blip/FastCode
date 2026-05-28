@@ -11,7 +11,7 @@ import networkx as nx
 
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.ir.element import CodeElement
-from fastcode.store.graph_artifacts import GraphArtifactStore
+from fastcode.app.store.artifacts.graph import GraphArtifactStore
 
 
 def _config(tmp_path: Path) -> dict[str, Any]:
@@ -332,7 +332,7 @@ def test_graph_artifact_load_uses_explicit_deserializer(tmp_path: Path) -> None:
         )
 
     with patch(
-        "fastcode.store._graph_artifact_payloads.deserialize_code_element",
+        "fastcode.app.store.artifacts.graph_payloads.deserialize_code_element",
         side_effect=_deserialize,
     ) as mock_deserialize:
         assert store.load(builder, "repo") is True
@@ -404,7 +404,7 @@ def test_graph_artifact_merge_uses_explicit_deserializer(tmp_path: Path) -> None
         )
 
     with patch(
-        "fastcode.store._graph_artifact_payloads.deserialize_code_element",
+        "fastcode.app.store.artifacts.graph_payloads.deserialize_code_element",
         side_effect=_deserialize,
     ) as mock_deserialize:
         assert store.merge(builder, "other") is True

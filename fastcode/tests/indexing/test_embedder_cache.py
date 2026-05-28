@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from fastcode.indexing.embedder import CodeEmbedder, EmbeddingFingerprint
+from fastcode.app.indexing.embedder import CodeEmbedder, EmbeddingFingerprint
 from fastcode.ports.embedding import EmbeddingProvider
 
 
@@ -194,7 +194,7 @@ def test_embed_batch_cache_hits_preallocate_matrix_without_vstack(
     def _boom_vstack(_values: object) -> np.ndarray:
         raise AssertionError("embedding cache batch return must not use np.vstack")
 
-    monkeypatch.setattr("fastcode.indexing.embedder.np.vstack", _boom_vstack)
+    monkeypatch.setattr("fastcode.app.indexing.embedder.np.vstack", _boom_vstack)
 
     embeddings = embedder.embed_batch(["a", "b", "a"])
 
@@ -295,7 +295,7 @@ def test_ollama_embedding_uses_batch_api_when_available(monkeypatch: Any) -> Non
         return _Response()
 
     monkeypatch.setattr(
-        "fastcode.indexing.embedder.urllib.request.urlopen", _fake_urlopen
+        "fastcode.app.indexing.embedder.urllib.request.urlopen", _fake_urlopen
     )
 
     embeddings = embedder.embed_batch(["alpha", "beta"])
@@ -531,7 +531,7 @@ def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
 
 builtins.__import__ = guarded_import
 
-from fastcode.indexing.embedder import CodeEmbedder
+from fastcode.app.indexing.embedder import CodeEmbedder
 
 embedder = CodeEmbedder({
     'embedding': {
@@ -561,7 +561,7 @@ def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
 
 builtins.__import__ = guarded_import
 
-from fastcode.indexing.embedder import CodeEmbedder
+from fastcode.app.indexing.embedder import CodeEmbedder
 
 embedder = CodeEmbedder({
     'embedding': {

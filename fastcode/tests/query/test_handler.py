@@ -13,11 +13,11 @@ from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs
 from fastcode.ir.types import IRSnapshot
 from fastcode.main.fastcode import FastCode
-from fastcode.query.context_payloads import distillation_payload
-from fastcode.query.handler import QueryPipeline
-from fastcode.query.processor import ProcessedQuery
-from fastcode.query.retriever import HybridRetriever
-from fastcode.retrieval.agent_context import (
+from fastcode.app.query.context_payloads import distillation_payload
+from fastcode.app.query.orchestration.handler import QueryPipeline
+from fastcode.app.query.orchestration.processor import ProcessedQuery
+from fastcode.app.query.selection.retriever import HybridRetriever
+from fastcode.retrieval.context.agent_context import (
     AcceptanceContract,
     AcceptedFact,
     ActivationRecord,
@@ -35,7 +35,7 @@ from fastcode.retrieval.agent_context import (
     WorkingSet,
 )
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
-from fastcode.store.cache_contracts import ContextDistillationRecord
+from fastcode.app.store.cache.contracts import ContextDistillationRecord
 
 AGENT_CONTEXT_RECORD_CLASSES = (
     EvidenceRef,
@@ -937,7 +937,7 @@ def test_concurrent_query_snapshot_sequential_artifact_loading() -> None:
     import threading
     import time
 
-    from fastcode.indexing.pipeline import IndexPipeline
+    from fastcode.app.indexing.pipeline.service import IndexPipeline
 
     concurrent_count = 0
     max_concurrent = 0

@@ -380,7 +380,7 @@ class TestFastCodeSearchSymbolTool:
                         "symbol_id": "sym_002",
                         "display_name": "HybridRetriever",
                         "kind": "class",
-                        "qualified_name": "fastcode.query.retriever.HybridRetriever",
+                        "qualified_name": "fastcode.app.query.selection.retriever.HybridRetriever",
                         "doc_path": "fastcode/query/retriever.py",
                     },
                 }

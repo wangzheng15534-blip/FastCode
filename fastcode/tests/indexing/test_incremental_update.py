@@ -10,7 +10,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from fastcode.indexing.incremental import (
+from fastcode.app.indexing.pipeline.incremental import (
     FileChangeSet,
     PlanChanges,
     apply_incremental_update,

@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.retrieval.boundary import (
+from fastcode.retrieval.context.boundary import (
     CoreQueryInput,
     hit_to_response,
     query_request_to_core,
@@ -205,7 +205,7 @@ class TestBoundaryExplicitTranslation:
 
     def test_boundary_uses_explicit_translation(self) -> None:
         source = pathlib.Path(
-            __import__("fastcode.retrieval.boundary", fromlist=[""]).__file__
+            __import__("fastcode.retrieval.context.boundary", fromlist=[""]).__file__
         ).read_text(encoding="utf-8")
 
         # Build the set of line numbers that are comments or docstrings

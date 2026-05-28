@@ -30,27 +30,27 @@ import pytest
 
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.inbound.config_mapper import config_from_mapping
-from fastcode.indexing.doc_ingester import KeyDocIngester
-from fastcode.indexing.embedder import CodeEmbedder
-from fastcode.indexing.indexer import CodeIndexer
-from fastcode.indexing.loader import RepositoryLoader
-from fastcode.indexing.parser import CodeParser
-from fastcode.indexing.pipeline import IndexPipeline
-from fastcode.indexing.terminus import TerminusPublisher
+from fastcode.app.indexing.doc_ingester import KeyDocIngester
+from fastcode.app.indexing.embedder import CodeEmbedder
+from fastcode.app.indexing.pipeline.indexer import CodeIndexer
+from fastcode.app.indexing.loader import RepositoryLoader
+from fastcode.app.indexing.extractors.parser import CodeParser
+from fastcode.app.indexing.pipeline.service import IndexPipeline
+from fastcode.app.indexing.terminus import TerminusPublisher
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.main.config import config_to_runtime_mapping
 from fastcode.main.fastcode import FastCode
-from fastcode.semantic.resolvers.registry import (
+from fastcode.semantic.resolvers.core.registry import (
     build_default_semantic_resolver_registry,
 )
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
-from fastcode.store.index_run import IndexRunStore
-from fastcode.store.infrastructure.graph_runtime import LadybugGraphRuntime
-from fastcode.store.infrastructure.runtime import DBRuntime
-from fastcode.store.manifest import ManifestStore
-from fastcode.store.pg_retrieval import PgRetrievalStore
-from fastcode.store.snapshot import SnapshotStore
-from fastcode.store.vector import VectorStore
+from fastcode.app.store.runs.index_run import IndexRunStore
+from fastcode.infrastructure.graph_runtime.ladybug import LadybugGraphRuntime
+from fastcode.infrastructure.storage.runtime import DBRuntime
+from fastcode.app.store.snapshots.manifest import ManifestStore
+from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
+from fastcode.app.store.vectors.vector import VectorStore
 
 pytestmark = [pytest.mark.e2e]
 
@@ -291,9 +291,9 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
         fc.vector_store,
     )
 
-    from fastcode.query.processor import QueryProcessor
-    from fastcode.query.retriever import HybridRetriever
-    from fastcode.store.cache import CacheManager
+    from fastcode.app.query.orchestration.processor import QueryProcessor
+    from fastcode.app.query.selection.retriever import HybridRetriever
+    from fastcode.app.store.cache.service import CacheManager
 
     config_repo_root = fc.config.get("repo_root", "./repos")
     fc.retriever = HybridRetriever(
@@ -319,8 +319,8 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
     fc.index_run_store = IndexRunStore(db_runtime)
     fc.terminus_publisher = TerminusPublisher(fc.config)
 
-    from fastcode.indexing.projection_transform import ProjectionTransformer
-    from fastcode.store.projection import ProjectionStore
+    from fastcode.app.indexing.projection.transform import ProjectionTransformer
+    from fastcode.app.store.snapshots.projection import ProjectionStore
 
     fc.projection_transformer = ProjectionTransformer(fc.config)
     fc.projection_store = ProjectionStore(fc.config)

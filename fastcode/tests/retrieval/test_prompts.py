@@ -1,7 +1,7 @@
 """Tests for pure prompt formatting functions."""
 
 from fastcode.retrieval.contracts import Hit, ToolHistoryEntry
-from fastcode.retrieval.prompts import (
+from fastcode.retrieval.context.prompts import (
     format_elements_with_metadata,
     format_tool_call_history,
 )

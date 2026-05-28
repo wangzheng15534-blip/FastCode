@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.indexing.pipeline import IndexPipeline
+from fastcode.app.indexing.pipeline.service import IndexPipeline
 
 pytestmark = [pytest.mark.test_double]
 

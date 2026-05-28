@@ -16,7 +16,7 @@ from hypothesis import strategies as st
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
 from fastcode.scip.models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
-from fastcode.store.infrastructure.runtime import DBRuntime
+from fastcode.infrastructure.storage.runtime import DBRuntime
 
 # Schemathesis fuzzing is intentionally opt-in because it is slow and uses
 # separate pytest plugin wiring. Keep it out of default collection instead of
@@ -505,7 +505,7 @@ def connected_snapshot_st(
 @pytest.fixture
 def snapshot_store(tmp_path: pathlib.Path):
     """Create a SnapshotStore backed by a temp directory."""
-    from fastcode.store.snapshot import SnapshotStore
+    from fastcode.app.store.snapshots.snapshot import SnapshotStore
 
     db_runtime = DBRuntime(backend="sqlite", sqlite_path=str(tmp_path / "lineage.db"))
     return SnapshotStore(str(tmp_path), db_runtime=db_runtime)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastcode.retrieval.agent_context import (
+from fastcode.retrieval.context.agent_context import (
     AcceptedFact,
     EvidenceRef,
     Hypothesis,
@@ -10,7 +10,7 @@ from fastcode.retrieval.agent_context import (
     WorkingMemoryArtifact,
     build_acceptance_contract,
 )
-from fastcode.retrieval.context_compiler import (
+from fastcode.retrieval.context.context_compiler import (
     build_context_bundle,
     build_context_invalidation_key,
     build_tool_observation,

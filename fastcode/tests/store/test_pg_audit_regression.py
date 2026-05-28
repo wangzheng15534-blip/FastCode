@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from fastcode.store.pg_retrieval import PgRetrievalStore
+from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
 
 pytestmark = [pytest.mark.test_double]
 

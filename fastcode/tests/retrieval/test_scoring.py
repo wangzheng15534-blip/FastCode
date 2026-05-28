@@ -1,4 +1,4 @@
-"""Tests for fastcode.retrieval.scoring — pure scoring functions.
+"""Tests for fastcode.retrieval.ranking.scoring — pure scoring functions.
 
 Each test is independent, self-contained, and requires no HybridRetriever.
 """
@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from fastcode.retrieval.scoring import (
+from fastcode.retrieval.ranking.scoring import (
     clone_result_row,
     normalized_query_entropy,
     normalized_totals,

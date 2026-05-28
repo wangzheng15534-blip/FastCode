@@ -11,7 +11,7 @@ import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-import fastcode.store.snapshot as snapshot_module
+import fastcode.app.store.snapshots.snapshot as snapshot_module
 from fastcode.ir.graph import IRGraphBuilder, IRGraphs
 from fastcode.ir.types import (
     IRAttachment,
@@ -26,9 +26,9 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.scip.models import SCIPArtifactRef
-from fastcode.store.infrastructure.runtime import DBRuntime
-from fastcode.store.snapshot import SnapshotStore
-from fastcode.store.snapshot_contracts import (
+from fastcode.infrastructure.storage.runtime import DBRuntime
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
+from fastcode.app.store.snapshots.snapshot_contracts import (
     OutboxEventRecord,
     RedoTaskRecord,
     SCIPArtifactRecord,

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import networkx as nx
 import pytest
 
-from fastcode.indexing.pipeline import IndexPipeline
+from fastcode.app.indexing.pipeline.service import IndexPipeline
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import (
     IRCodeUnit,
@@ -23,40 +23,40 @@ from fastcode.ir.types import (
 )
 from fastcode.main.fastcode import FastCode
 from fastcode.semantic.resolution import ResolutionPatch
-from fastcode.semantic.resolvers._helper_operations import (
+from fastcode.semantic.resolvers.core.helper_operations import (
     SemanticHelperInvocation,
 )
-from fastcode.semantic.resolvers._resolver_support import (
+from fastcode.semantic.resolvers.core.resolver_support import (
     _hash_id,
     _normalize_path,
     validate_helper_paths,
 )
-from fastcode.semantic.resolvers.c_family import CppSemanticResolver, CSemanticResolver
-from fastcode.semantic.resolvers.csharp import CSharpCompilerResolver
-from fastcode.semantic.resolvers.fortran import FortranCompilerResolver
-from fastcode.semantic.resolvers.go import GoCompilerResolver
-from fastcode.semantic.resolvers.helper_backed import HelperBackedSemanticResolver
-from fastcode.semantic.resolvers.java import JavaCompilerResolver
-from fastcode.semantic.resolvers.js_ts import (
+from fastcode.semantic.resolvers.languages.c_family import CppSemanticResolver, CSemanticResolver
+from fastcode.semantic.resolvers.languages.csharp import CSharpCompilerResolver
+from fastcode.semantic.resolvers.languages.fortran import FortranCompilerResolver
+from fastcode.semantic.resolvers.languages.go import GoCompilerResolver
+from fastcode.semantic.resolvers.core.helper_backed import HelperBackedSemanticResolver
+from fastcode.semantic.resolvers.languages.java import JavaCompilerResolver
+from fastcode.semantic.resolvers.languages.js_ts import (
     JavaScriptCompilerResolver,
     TypeScriptCompilerResolver,
 )
-from fastcode.semantic.resolvers.julia import JuliaCompilerResolver
-from fastcode.semantic.resolvers.patching import (
+from fastcode.semantic.resolvers.languages.julia import JuliaCompilerResolver
+from fastcode.semantic.resolvers.core.patching import (
     _source_preference,
     apply_resolution_patch,
 )
-from fastcode.semantic.resolvers.python import (
+from fastcode.semantic.resolvers.languages.python import (
     PYTHON_RESOLVER_EXTRACTOR,
     PYTHON_RESOLVER_SOURCE,
     PythonSemanticResolver,
 )
-from fastcode.semantic.resolvers.registry import (
+from fastcode.semantic.resolvers.core.registry import (
     SemanticResolverRegistry,
     build_default_semantic_resolver_registry,
 )
-from fastcode.semantic.resolvers.rust import RustCompilerResolver
-from fastcode.semantic.resolvers.zig import ZigCompilerResolver
+from fastcode.semantic.resolvers.languages.rust import RustCompilerResolver
+from fastcode.semantic.resolvers.languages.zig import ZigCompilerResolver
 from fastcode.utils.materialization import (
     BOUNDARY_SEMANTIC_PATCH_CHANGED_OBJECTS,
     BOUNDARY_SEMANTIC_PATCH_PRESERVED_OBJECTS,
@@ -1747,15 +1747,15 @@ def test_compiler_resolver_emits_diagnostics_when_tools_missing(
 
     # Map resolver class names to their modules
     module_map = {
-        "JavaScriptCompilerResolver": "fastcode.semantic.resolvers.js_ts",
-        "TypeScriptCompilerResolver": "fastcode.semantic.resolvers.js_ts",
-        "JavaCompilerResolver": "fastcode.semantic.resolvers.java",
-        "GoCompilerResolver": "fastcode.semantic.resolvers.go",
-        "RustCompilerResolver": "fastcode.semantic.resolvers.rust",
-        "CSharpCompilerResolver": "fastcode.semantic.resolvers.csharp",
-        "ZigCompilerResolver": "fastcode.semantic.resolvers.zig",
-        "FortranCompilerResolver": "fastcode.semantic.resolvers.fortran",
-        "JuliaCompilerResolver": "fastcode.semantic.resolvers.julia",
+        "JavaScriptCompilerResolver": "fastcode.semantic.resolvers.languages.js_ts",
+        "TypeScriptCompilerResolver": "fastcode.semantic.resolvers.languages.js_ts",
+        "JavaCompilerResolver": "fastcode.semantic.resolvers.languages.java",
+        "GoCompilerResolver": "fastcode.semantic.resolvers.languages.go",
+        "RustCompilerResolver": "fastcode.semantic.resolvers.languages.rust",
+        "CSharpCompilerResolver": "fastcode.semantic.resolvers.languages.csharp",
+        "ZigCompilerResolver": "fastcode.semantic.resolvers.languages.zig",
+        "FortranCompilerResolver": "fastcode.semantic.resolvers.languages.fortran",
+        "JuliaCompilerResolver": "fastcode.semantic.resolvers.languages.julia",
     }
     mod = importlib.import_module(module_map[resolver_cls])
     cls = getattr(mod, resolver_cls)
@@ -1810,15 +1810,15 @@ def test_compiler_resolver_spec_matches_language(resolver_cls: str, language: st
     import importlib
 
     module_map = {
-        "JavaScriptCompilerResolver": "fastcode.semantic.resolvers.js_ts",
-        "TypeScriptCompilerResolver": "fastcode.semantic.resolvers.js_ts",
-        "JavaCompilerResolver": "fastcode.semantic.resolvers.java",
-        "GoCompilerResolver": "fastcode.semantic.resolvers.go",
-        "RustCompilerResolver": "fastcode.semantic.resolvers.rust",
-        "CSharpCompilerResolver": "fastcode.semantic.resolvers.csharp",
-        "ZigCompilerResolver": "fastcode.semantic.resolvers.zig",
-        "FortranCompilerResolver": "fastcode.semantic.resolvers.fortran",
-        "JuliaCompilerResolver": "fastcode.semantic.resolvers.julia",
+        "JavaScriptCompilerResolver": "fastcode.semantic.resolvers.languages.js_ts",
+        "TypeScriptCompilerResolver": "fastcode.semantic.resolvers.languages.js_ts",
+        "JavaCompilerResolver": "fastcode.semantic.resolvers.languages.java",
+        "GoCompilerResolver": "fastcode.semantic.resolvers.languages.go",
+        "RustCompilerResolver": "fastcode.semantic.resolvers.languages.rust",
+        "CSharpCompilerResolver": "fastcode.semantic.resolvers.languages.csharp",
+        "ZigCompilerResolver": "fastcode.semantic.resolvers.languages.zig",
+        "FortranCompilerResolver": "fastcode.semantic.resolvers.languages.fortran",
+        "JuliaCompilerResolver": "fastcode.semantic.resolvers.languages.julia",
     }
     mod = importlib.import_module(module_map[resolver_cls])
     cls = getattr(mod, resolver_cls)
@@ -2535,7 +2535,7 @@ def test_helper_backed_resolver_falls_back_on_helper_nonzero_exit(
     with (
         caplog.at_level(
             logging.WARNING,
-            logger="fastcode.semantic.resolvers.helper_backed",
+            logger="fastcode.semantic.resolvers.core.helper_backed",
         ),
         patch.object(resolver, "_has_tools", return_value=True),
         patch(
@@ -2817,20 +2817,20 @@ def test_helper_backed_resolver_reuses_artifact_cache_on_unchanged_inputs(
 
 def test_is_scip_available_returns_false_for_unsupported_language():
     """is_scip_available must return False for unknown languages."""
-    from fastcode.indexing.scip_runner import is_scip_available
+    from fastcode.infrastructure.execution.scip_runner import is_scip_available
 
     assert is_scip_available("brainfuck") is False
 
 
 def test_is_scip_available_checks_binary_presence():
     """is_scip_available must check PATH for the indexer binary."""
-    from fastcode.indexing.scip_runner import is_scip_available
+    from fastcode.infrastructure.execution.scip_runner import is_scip_available
 
-    with patch("fastcode.indexing.scip_runner.shutil.which", return_value=None):
+    with patch("fastcode.infrastructure.execution.scip_runner.shutil.which", return_value=None):
         assert is_scip_available("python") is False
 
     with patch(
-        "fastcode.indexing.scip_runner.shutil.which",
+        "fastcode.infrastructure.execution.scip_runner.shutil.which",
         return_value="/usr/bin/scip-python",
     ):
         assert is_scip_available("python") is True
@@ -2923,43 +2923,43 @@ class TestSharedUtils:
 _HELPER_RESOLVER_SPECS: list[tuple[str, str, str]] = [
     (
         "TypeScriptCompilerResolver",
-        "fastcode.semantic.resolvers.js_ts",
+        "fastcode.semantic.resolvers.languages.js_ts",
         "ts_semantic_helper.js",
     ),
     (
         "JavaScriptCompilerResolver",
-        "fastcode.semantic.resolvers.js_ts",
+        "fastcode.semantic.resolvers.languages.js_ts",
         "ts_semantic_helper.js",
     ),
-    ("GoCompilerResolver", "fastcode.semantic.resolvers.go", "go_semantic_helper.go"),
+    ("GoCompilerResolver", "fastcode.semantic.resolvers.languages.go", "go_semantic_helper.go"),
     (
         "JavaCompilerResolver",
-        "fastcode.semantic.resolvers.java",
+        "fastcode.semantic.resolvers.languages.java",
         "java_semantic_helper.py",
     ),
     (
         "RustCompilerResolver",
-        "fastcode.semantic.resolvers.rust",
+        "fastcode.semantic.resolvers.languages.rust",
         "rust_semantic_helper.py",
     ),
     (
         "CSharpCompilerResolver",
-        "fastcode.semantic.resolvers.csharp",
+        "fastcode.semantic.resolvers.languages.csharp",
         "csharp_semantic_helper.py",
     ),
     (
         "ZigCompilerResolver",
-        "fastcode.semantic.resolvers.zig",
+        "fastcode.semantic.resolvers.languages.zig",
         "zig_semantic_helper.py",
     ),
     (
         "FortranCompilerResolver",
-        "fastcode.semantic.resolvers.fortran",
+        "fastcode.semantic.resolvers.languages.fortran",
         "fortran_semantic_helper.py",
     ),
     (
         "JuliaCompilerResolver",
-        "fastcode.semantic.resolvers.julia",
+        "fastcode.semantic.resolvers.languages.julia",
         "julia_semantic_helper.py",
     ),
 ]
@@ -3000,7 +3000,7 @@ def test_helper_path_returns_existing_file_for_each_resolver(
 @pytest.mark.regression
 def test_helper_command_includes_existing_helper_path() -> None:
     """_helper_command() must build a command whose helper path exists."""
-    from fastcode.semantic.resolvers.js_ts import TypeScriptCompilerResolver
+    from fastcode.semantic.resolvers.languages.js_ts import TypeScriptCompilerResolver
 
     resolver = TypeScriptCompilerResolver()
     command = resolver._helper_command(["/tmp/app.ts"])
@@ -3072,8 +3072,8 @@ def test_helper_path_co_located_with_resolver_module() -> None:
     module.  _helper_path() uses Path(__file__).with_name(), so the helper
     must be co-located.
     """
-    import fastcode.semantic.resolvers.helper_backed as _hb_mod
-    from fastcode.semantic.resolvers.java import JavaCompilerResolver
+    import fastcode.semantic.resolvers.core.helper_backed as _hb_mod
+    from fastcode.semantic.resolvers.languages.java import JavaCompilerResolver
 
     module_dir = Path(_hb_mod.__file__).parent
     resolver = JavaCompilerResolver()

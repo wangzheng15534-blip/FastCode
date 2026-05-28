@@ -9,8 +9,8 @@ import faiss
 import numpy as np
 import pytest
 
-from fastcode.store.vector import VectorStore
-from fastcode.store.vector_contracts import (
+from fastcode.app.store.vectors.vector import VectorStore
+from fastcode.app.store.vectors.vector_contracts import (
     RepositoryOverviewRecord,
     VectorSearchResultRecord,
 )
@@ -76,7 +76,7 @@ def test_add_vectors_uses_growing_row_buffer_without_vstack_double(
     def _boom_vstack(_values: object) -> np.ndarray:
         raise AssertionError("vector row appends should not use np.vstack")
 
-    monkeypatch.setattr("fastcode.store.vector.np.vstack", _boom_vstack)
+    monkeypatch.setattr("fastcode.app.store.vectors.vector.np.vstack", _boom_vstack)
 
     store.add_vectors(
         np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),

@@ -1,7 +1,7 @@
 """Tests for pure summary and formatting functions."""
 
 from fastcode.retrieval.contracts import AnswerDisplayResult, Hit, SourceCitation
-from fastcode.retrieval.summary import (
+from fastcode.retrieval.context.summary import (
     extract_sources,
     format_answer_with_sources,
     generate_fallback_summary,

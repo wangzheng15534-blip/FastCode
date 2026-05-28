@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from fastcode.foundation.byte_count import ByteCount
-from fastcode.foundation.non_empty_string import NonEmptyString
-from fastcode.foundation.positive_int import PositiveInt
+from fastcode.utils.atoms.byte_count import ByteCount
+from fastcode.utils.atoms.non_empty_string import NonEmptyString
+from fastcode.utils.atoms.positive_int import PositiveInt
 
 
 def test_byte_count_from_mib() -> None:

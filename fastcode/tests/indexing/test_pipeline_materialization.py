@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from fastcode.indexing.pipeline import IndexPipeline
+from fastcode.app.indexing.pipeline.service import IndexPipeline
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot

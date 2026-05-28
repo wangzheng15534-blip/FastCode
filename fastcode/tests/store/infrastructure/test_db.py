@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from fastcode.store.infrastructure.db import (
+from fastcode.infrastructure.storage.db import (
     SnapshotRecord,
     load_snapshot_record,
     save_snapshot_record,

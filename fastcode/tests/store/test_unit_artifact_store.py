@@ -5,12 +5,12 @@ from typing import Any
 
 import pytest
 
-from fastcode.store.infrastructure.runtime import DBRuntime
-from fastcode.store.unit_artifact_contracts import (
+from fastcode.infrastructure.storage.runtime import DBRuntime
+from fastcode.app.store.artifacts.unit_contracts import (
     FileIRShardRecord,
     UnitArtifactRecord,
 )
-from fastcode.store.unit_artifacts import UnitArtifactStore
+from fastcode.app.store.artifacts.unit import UnitArtifactStore
 
 
 def _make_store(tmp: str) -> UnitArtifactStore:

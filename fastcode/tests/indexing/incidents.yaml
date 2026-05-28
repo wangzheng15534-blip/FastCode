@@ -3,7 +3,7 @@
 incidents:
   - id: EMBD-001
     date: "2026-05-17"
-    module: fastcode.indexing.embedder
+    module: fastcode.app.indexing.embedder
     trigger: "Empty or None ollama_url produces relative batch URL '/api/embed'"
     consequence: "urlopen fails at request time with confusing error instead of at config time"
     risk: MEDIUM
@@ -14,7 +14,7 @@ incidents:
 
   - id: EMBD-002
     date: "2026-05-17"
-    module: fastcode.indexing.embedder
+    module: fastcode.app.indexing.embedder
     trigger: "Ollama batch response with None entries, ragged inner dimensions, or wrong count"
     consequence: "np.asarray raises ValueError instead of descriptive RuntimeError"
     risk: MEDIUM
@@ -25,7 +25,7 @@ incidents:
 
   - id: EMBD-003
     date: "2026-05-17"
-    module: fastcode.indexing.embedder
+    module: fastcode.app.indexing.embedder
     trigger: "_ensure_embedding_metrics check-then-act race: two threads both replace metrics dict and lock"
     consequence: "Metric increments silently lost when threads use different lock objects"
     risk: MEDIUM
@@ -36,7 +36,7 @@ incidents:
 
   - id: PIPE-002
     date: "2026-05-17"
-    module: fastcode.indexing.pipeline
+    module: fastcode.app.indexing.pipeline.service
     trigger: "_embedding_identity_matches dimension skip only when current is None, not when existing is None"
     consequence: "Version upgrade from non-resolving to resolving fingerprint incorrectly rejects valid reuse"
     risk: MEDIUM

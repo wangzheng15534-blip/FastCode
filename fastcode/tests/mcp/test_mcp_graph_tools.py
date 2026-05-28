@@ -215,7 +215,7 @@ class TestCompactGraphToolContext:
         }
 
     def test_cluster_rebuild_uses_compact_artifacts_without_snapshot_load(self):
-        from fastcode.indexing.projection_transform import ProjectionTransformer
+        from fastcode.app.indexing.projection.transform import ProjectionTransformer
 
         units = [
             _unit("u:A", name="entry", qualified_name="pkg.entry", path="a.py"),

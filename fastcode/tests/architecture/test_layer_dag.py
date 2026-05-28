@@ -20,7 +20,7 @@ PREFIX_LAYERS = {
     "inbound._config_schema_root": "BOUNDARY_IN",
     "inbound.config_mapper": "BOUNDARY_IN",
     "inbound.config_schema": "BOUNDARY_IN",
-    "indexing.scip_runner": "INFRA",
+    "infrastructure": "INFRA",
     "main.cli": "TRANSPORT_FACADE",
     "main.config": "CONFIG_LOADER",
     "main.fastcode": "COMPOSITION_ROOT",
@@ -30,7 +30,7 @@ PREFIX_LAYERS = {
     "scip.transform": "INFRA",
     "scip.models": "KERNEL",
     "ports": "PORTS",
-    "store.infrastructure": "INFRA",
+    "utils.atoms": "UTILS",
     "utils.archive": "UTILS",
     "utils.filesystem": "UTILS",
     "utils.hashing": "UTILS",
@@ -45,14 +45,12 @@ PREFIX_LAYERS = {
 
 TOP_LEVEL_LAYERS = {
     "api": "TRANSPORT_FACADE",
-    "foundation": "FOUNDATION",
+    "app": "APP_RUNTIME",
+    "infrastructure": "INFRA",
     "kernel": "KERNEL",
     "mcp": "TRANSPORT_FACADE",
     "main": "COMPOSITION_ROOT",
-    "indexing": "APP_RUNTIME",
-    "query": "APP_RUNTIME",
     "runtime_support": "RUNTIME_SUPPORT",
-    "store": "APP_RUNTIME",
     "runtime": "RUNTIME_SUPPORT",
     "inbound": "BOUNDARY_IN",
     "retrieval": "DOMAIN",
@@ -268,27 +266,27 @@ KERNEL_DOMAIN_TYPE_MODULES = {
     "scip.models",
 }
 PORT_IMPLEMENTATIONS = (
-    ("store.infrastructure.runtime.DBRuntime", "ports.storage.StoreDatabaseRuntime"),
+    ("infrastructure.storage.runtime.DBRuntime", "ports.storage.StoreDatabaseRuntime"),
     (
-        "store.infrastructure.graph_runtime.LadybugGraphRuntime",
+        "infrastructure.graph_runtime.ladybug.LadybugGraphRuntime",
         "ports.storage.DocumentGraphRuntime",
     ),
     (
-        "store.infrastructure.execution.SubprocessSemanticHelperRuntime",
+        "infrastructure.execution.semantic_helper.SubprocessSemanticHelperRuntime",
         "ports.execution.SemanticHelperRuntime",
     ),
     (
-        "indexing.scip_runner.SubprocessScipIndexerRuntime",
+        "infrastructure.execution.scip_runner.SubprocessScipIndexerRuntime",
         "ports.execution.ScipIndexerRuntime",
     ),
-    ("indexing.embedder.CodeEmbedder", "ports.embedding.EmbeddingProvider"),
-    ("indexing.terminus.TerminusPublisher", "ports.publishing.LineagePublisher"),
-    ("store.file_artifacts.FileArtifactStore", "ports.artifacts.FileArtifactStore"),
-    ("store.unit_artifacts.UnitArtifactStore", "ports.artifacts.UnitArtifactStore"),
-    ("store.snapshot.SnapshotStore", "ports.jobs.RedoJobQueue"),
-    ("store.snapshot.SnapshotStore", "ports.publishing.EventSink"),
-    ("store.index_run.IndexRunStore", "ports.jobs.PublishRetryQueue"),
-    ("store.index_run.IndexRunStore", "ports.jobs.IndexRunStore"),
+    ("app.indexing.embedder.CodeEmbedder", "ports.embedding.EmbeddingProvider"),
+    ("app.indexing.terminus.TerminusPublisher", "ports.publishing.LineagePublisher"),
+    ("app.store.artifacts.file.FileArtifactStore", "ports.artifacts.FileArtifactStore"),
+    ("app.store.artifacts.unit.UnitArtifactStore", "ports.artifacts.UnitArtifactStore"),
+    ("app.store.snapshots.snapshot.SnapshotStore", "ports.jobs.RedoJobQueue"),
+    ("app.store.snapshots.snapshot.SnapshotStore", "ports.publishing.EventSink"),
+    ("app.store.runs.index_run.IndexRunStore", "ports.jobs.PublishRetryQueue"),
+    ("app.store.runs.index_run.IndexRunStore", "ports.jobs.IndexRunStore"),
 )
 BANNED_DOMAIN_IMPORTS = {"pydantic", "sqlite3", "subprocess", "urllib"}
 BANNED_PORT_IMPORTS = {
@@ -856,17 +854,17 @@ def test_fcis_shell_subroles_are_explicitly_classified() -> None:
         "main.cli": "TRANSPORT_FACADE",
         "main.config": "CONFIG_LOADER",
         "main.fastcode": "COMPOSITION_ROOT",
-        "foundation.byte_count": "FOUNDATION",
-        "foundation.non_empty_string": "FOUNDATION",
-        "foundation.positive_int": "FOUNDATION",
+        "utils.atoms.byte_count": "UTILS",
+        "utils.atoms.non_empty_string": "UTILS",
+        "utils.atoms.positive_int": "UTILS",
         "kernel.identifiers": "KERNEL",
-        "indexing.pipeline": "APP_RUNTIME",
-        "indexing.scip_runner": "INFRA",
-        "query.retriever": "APP_RUNTIME",
+        "app.indexing.pipeline.service": "APP_RUNTIME",
+        "infrastructure.execution.scip_runner": "INFRA",
+        "app.query.selection.retriever": "APP_RUNTIME",
         "runtime_support.health": "RUNTIME_SUPPORT",
         "runtime_support.retry": "RUNTIME_SUPPORT",
-        "store.snapshot": "APP_RUNTIME",
-        "store.infrastructure.db": "INFRA",
+        "app.store.snapshots.snapshot": "APP_RUNTIME",
+        "infrastructure.storage.db": "INFRA",
         "runtime.config": "RUNTIME_SUPPORT",
         "ir.types": "KERNEL",
         "utils.clock": "UTILS",
@@ -1077,10 +1075,10 @@ def test_store_database_clients_use_database_runtime_port() -> None:
     """Store clients depend on the DB port, not the concrete DB adapter."""
     violations: list[str] = []
 
-    for py_file in sorted((PACKAGE_ROOT / "store").glob("*.py")):
+    for py_file in sorted((PACKAGE_ROOT / "app" / "store").rglob("*.py")):
         for target, line, _ in _get_fastcode_imports(py_file):
-            if target == "store.infrastructure.runtime" or target.startswith(
-                "store.infrastructure.runtime."
+            if target == "infrastructure.storage.runtime" or target.startswith(
+                "infrastructure.storage.runtime."
             ):
                 violations.append(
                     f"{py_file.relative_to(PACKAGE_ROOT)}:{line}: imports {target}"
@@ -1095,14 +1093,16 @@ def test_store_database_clients_use_database_runtime_port() -> None:
 def test_indexing_publish_clients_use_lineage_publisher_port() -> None:
     """Indexing services depend on the publishing port, not the concrete adapter."""
     checked_files = [
-        PACKAGE_ROOT / "indexing" / "pipeline.py",
-        PACKAGE_ROOT / "indexing" / "publishing.py",
+        PACKAGE_ROOT / "app" / "indexing" / "pipeline" / "service.py",
+        PACKAGE_ROOT / "app" / "indexing" / "publishing.py",
     ]
     violations: list[str] = []
 
     for py_file in checked_files:
         for target, line, _ in _get_fastcode_imports(py_file):
-            if target == "indexing.terminus" or target.startswith("indexing.terminus."):
+            if target == "app.indexing.terminus" or target.startswith(
+                "app.indexing.terminus."
+            ):
                 violations.append(
                     f"{py_file.relative_to(PACKAGE_ROOT)}:{line}: imports {target}"
                 )
@@ -1115,11 +1115,12 @@ def test_indexing_publish_clients_use_lineage_publisher_port() -> None:
 
 def test_query_retriever_uses_embedding_provider_port() -> None:
     """Query retrieval depends on the embedding port, not the concrete embedder."""
-    retriever_file = PACKAGE_ROOT / "query" / "retriever.py"
+    retriever_file = PACKAGE_ROOT / "app" / "query" / "selection" / "retriever.py"
     violations = [
         f"{retriever_file.relative_to(PACKAGE_ROOT)}:{line}: imports {target}"
         for target, line, _ in _get_fastcode_imports(retriever_file)
-        if target == "indexing.embedder" or target.startswith("indexing.embedder.")
+        if target == "app.indexing.embedder"
+        or target.startswith("app.indexing.embedder.")
     ]
 
     assert not violations, (
@@ -1299,12 +1300,12 @@ def test_domain_modules_contain_no_shell_io_imports() -> None:
     assert not violations, "Banned imports in domain modules:\n" + "\n".join(violations)
 
 
-def test_foundation_uses_only_stdlib_imports() -> None:
-    """Foundation stays a small stdlib-only leaf layer."""
+def test_base_atoms_use_only_stdlib_imports() -> None:
+    """The utils/atoms role fold stays a small stdlib-only leaf."""
     violations: list[str] = []
-    foundation_dir = PACKAGE_ROOT / "foundation"
-    if foundation_dir.is_dir():
-        for py_file in foundation_dir.rglob("*.py"):
+    atoms_dir = PACKAGE_ROOT / "utils" / "atoms"
+    if atoms_dir.is_dir():
+        for py_file in atoms_dir.rglob("*.py"):
             for node in ast.walk(_tree(py_file)):
                 imported_roots: list[str] = []
                 if isinstance(node, ast.ImportFrom) and node.module:
@@ -1321,13 +1322,13 @@ def test_foundation_uses_only_stdlib_imports() -> None:
                             f"imports non-stdlib module {imported_root}"
                         )
 
-    assert not violations, "Non-stdlib imports in Foundation layer:\n" + "\n".join(
+    assert not violations, "Non-stdlib imports in utils/atoms:\n" + "\n".join(
         violations
     )
 
 
 def test_utils_use_only_stdlib_and_foundation_imports() -> None:
-    """Utils stay generic and may depend only on stdlib plus foundation."""
+    """Utils stay generic and may depend only on stdlib plus utils/atoms."""
     violations: list[str] = []
     for py_file in (PACKAGE_ROOT / "utils").rglob("*.py"):
         for node in ast.walk(_tree(py_file)):
@@ -1346,8 +1347,6 @@ def test_utils_use_only_stdlib_and_foundation_imports() -> None:
                         f"imports non-stdlib module {imported_root}"
                     )
         for target, line, _ in _get_fastcode_imports(py_file):
-            if _layer_for_module(target) == "FOUNDATION":
-                continue
             if target.startswith("utils.") or target == "utils":
                 continue
             violations.append(

@@ -22,21 +22,27 @@ behavior before trusting older examples.
 The runtime package is a layered monolith rooted at `fastcode/src/fastcode/`.
 The current branch is a hardened pre-release, not a stable release.
 
-- `api/`: HTTP API shell, CORS, web entrypoint, response serialization.
-- `graph/`: graph-domain construction, tree-sitter helpers, call extraction.
-- `inbound/`: inbound DTO/schema validation and frozen contract mappers.
-- `indexing/`: repository loading, parsing, indexing, projection, publishing.
+- `utils/`: generic primitives and stdlib-only helper APIs.
+- `kernel/`: shared repo, snapshot, and artifact identity vocabulary.
+- `runtime_support/`: generic retry, health, and observability helpers.
+- `runtime/`: frozen runtime config and lifecycle event contracts (split deferred).
+- `ports/`: narrow shared capability contract surfaces.
 - `ir/`: canonical frozen IR dataclasses, graph views, merge, validation.
-- `main/`: config preparation, CLI wiring, `FastCode` composition root.
-- `mcp/`: MCP transport shell and graph/query tool adapters.
-- `query/`: query orchestration, retriever shell, agent tools, LLM answering.
+- `graph/`: graph-domain construction, tree-sitter helpers, call extraction.
 - `retrieval/`: pure retrieval scoring, fusion, context, iteration logic.
-- `runtime/`: frozen runtime config and runtime lifecycle event contracts.
-- `scip/`: SCIP models, loaders, indexers, symbol resolution, IR adapters.
 - `semantic/`: semantic resolver contracts and helper-backed upgrades.
-- `store/`: persistence, snapshots, vectors, manifests, cache, records.
-- `store/infrastructure/`: lower-level DB, filesystem, graph, LLM runtime glue.
-- `utils/`: stdlib-only shared helpers.
+- `scip/`: SCIP models, loaders, indexers, symbol resolution, IR adapters.
+- `inbound/`: inbound DTO/schema validation and frozen contract mappers.
+- `app/indexing/`: repository loading, parsing, indexing, projection, publishing.
+- `app/query/`: query orchestration, retriever shell, agent tools, LLM answering.
+- `app/store/`: persistence, snapshots, vectors, manifests, cache, records.
+- `infrastructure/storage/`: DB, filesystem persistence adapters.
+- `infrastructure/execution/`: execution runners.
+- `infrastructure/llm/`: LLM SDK wrappers.
+- `infrastructure/graph_runtime/`: graph runtime adapter.
+- `main/`: config preparation, CLI wiring, `FastCode` composition root.
+- `api/`: HTTP API shell, CORS, web entrypoint, response serialization.
+- `mcp/`: MCP transport shell and graph/query tool adapters.
 
 ## Architecture Rules
 
@@ -47,15 +53,15 @@ shell-free.
 Shell code follows the FCIS split:
 
 - app-runtime/use-case shell: coordinates workflows and owns mutable runtime
-  use, currently `indexing/`, `query/`, and most of `store/`;
+  use, currently `app/indexing/`, `app/query/`, and most of `app/store/`;
 - capability ports: shared external capability contracts under
   `fastcode/ports/`.
   Ports are compile-time capability contracts, not runtime wiring modules:
   app-runtime and infrastructure may both import them, but ports must not import
   either side or construct adapters;
 - infrastructure: concrete network, DB, filesystem, subprocess, native-library,
-  and SDK wrappers, currently `store/infrastructure/` plus owner-local runners
-  such as `indexing/scip_runner.py`.
+  and SDK wrappers, currently `infrastructure/` plus owner-local runners
+  such as `app/indexing/scip_runner.py`.
 
 Do not add package-local `ports.py` modules for DB, network, filesystem,
 subprocess, event, queue, storage, or other external capabilities. Keep those

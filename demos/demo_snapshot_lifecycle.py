@@ -22,9 +22,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.types import IRDocument, IREdge, IRSnapshot, IRSymbol
-from fastcode.store.index_run import IndexRunStore
-from fastcode.store.manifest import ManifestStore
-from fastcode.store.snapshot import SnapshotStore
+from fastcode.app.store.runs.index_run import IndexRunStore
+from fastcode.app.store.snapshots.manifest import ManifestStore
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
 
 
 def _make_snapshot(repo: str, snap_id: str, commit: str, branch: str) -> IRSnapshot:

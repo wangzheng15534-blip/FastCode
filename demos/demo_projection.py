@@ -18,7 +18,7 @@ import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastcode.indexing.projection_transform import ProjectionTransformer
+from fastcode.app.indexing.projection.transform import ProjectionTransformer
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.projection import ProjectionScope
 from fastcode.ir.types import IRDocument, IREdge, IRSnapshot, IRSymbol

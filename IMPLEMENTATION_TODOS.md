@@ -429,10 +429,10 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
 **Verdict:** partial PASS. FastCode now has real early reuse for unchanged files, but it does not yet implement graceful end-to-end incremental update for compiler/tool-backed stages.
 
 **What is already true in code:**
-- `fastcode.indexing.pipeline._plan_incremental_elements()` reuses unchanged element metadata from the previous artifact manifest and only reindexes added/modified files.
+- `fastcode.app.indexing.pipeline.service._plan_incremental_elements()` reuses unchanged element metadata from the previous artifact manifest and only reindexes added/modified files.
 - `fastcode.tests.integration.test_snapshot_pipeline.test_pipeline_incremental_prefilter_only_indexes_changed_files` proves unchanged files bypass `extract_elements()` and only changed files are passed to `index_files()`.
 - `run_index_pipeline()` now shares a precomputed loader inventory through snapshot identity, incremental planning, and full AST extraction.
-- `fastcode.indexing.embedder.CodeEmbedder` uses cache-aware `embed_code_elements()`, deduplicates identical texts, and keys cache entries by provider/model/dimension/normalization/max-sequence-length identity.
+- `fastcode.app.indexing.embedder.CodeEmbedder` uses cache-aware `embed_code_elements()`, deduplicates identical texts, and keys cache entries by provider/model/dimension/normalization/max-sequence-length identity.
 - `build_ir_from_ast()` persists file-level `content_hash` / `blob_oid` metadata on file units.
 - incremental plans can build AST IR from changed elements and merge it with the previous snapshot instead of rebuilding AST IR from unchanged files.
 - changed-unit embeddings can be reused when stable unit identity and `embedding_text_hash` match.

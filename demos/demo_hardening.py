@@ -19,11 +19,11 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import networkx as nx
-from fastcode.indexing.redo_worker import RedoWorker
-from fastcode.indexing.terminus import TerminusPublisher
+from fastcode.app.indexing.pipeline.redo_worker import RedoWorker
+from fastcode.app.indexing.terminus import TerminusPublisher
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.types import IREdge, IRSnapshot, IRSymbol
-from fastcode.store.snapshot import SnapshotStore
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
 from unittest.mock import MagicMock
 
 

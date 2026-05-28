@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import uuid
 
-from ..foundation.non_empty_string import NonEmptyString
-from ..foundation.positive_int import PositiveInt
+from fastcode.utils.atoms.non_empty_string import NonEmptyString
+from fastcode.utils.atoms.positive_int import PositiveInt
 
 
 def new_prefixed_id(prefix: str, *, length: int = 16) -> str:

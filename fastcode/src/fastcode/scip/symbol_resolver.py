@@ -160,7 +160,7 @@ class SymbolResolver:
                             for name in imported_names:
                                 if symbol_name.startswith(name + "."):
                                     # Look up the full symbol "RepositoryLoader.load_from_url"
-                                    # in the target module (fastcode.indexing.loader)
+                                    # in the target module (fastcode.app.indexing.loader)
                                     return self.global_index.get_exported_symbol_id(
                                         target_module_path, symbol_name
                                     )

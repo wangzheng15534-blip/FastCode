@@ -6,7 +6,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 
-from ..foundation.non_empty_string import NonEmptyString
+from fastcode.utils.atoms.non_empty_string import NonEmptyString
 from .error import KernelError
 
 _ARTIFACT_KEY_RE = re.compile(r"^[A-Za-z0-9:_-]+$")

@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..ir.types import IRSnapshot
+from fastcode.ir.types import IRSnapshot
 
 
 @dataclass

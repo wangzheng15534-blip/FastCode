@@ -6,9 +6,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from ..ir.element import CodeElement
-from ..ir.types import IRRelation, IRSnapshot, IRUnitSupport
-from .contracts import SemanticGraphContext
+from fastcode.ir.element import CodeElement
+from fastcode.ir.types import IRRelation, IRSnapshot, IRUnitSupport
+from fastcode.semantic.contracts import SemanticGraphContext
 
 
 def _empty_tool_context() -> dict[str, Any]:

@@ -19,9 +19,9 @@ from typing import Any, cast
 
 import networkx as nx
 
-from ..ir.graph import IRGraphBuilder
-from ..ir.types import IRDocument, IRSnapshot, IRSymbol
-from ..utils.materialization import (
+from fastcode.ir.graph import IRGraphBuilder
+from fastcode.ir.types import IRDocument, IRSnapshot, IRSymbol
+from fastcode.utils.materialization import (
     BOUNDARY_GRAPH_FULL_LOAD,
     BOUNDARY_SNAPSHOT_FULL_LOAD,
     increment_materialization_boundary,
@@ -811,7 +811,7 @@ def compute_leiden_clusters(
     projection_transformer = getattr(fc, "projection_transformer", None)
 
     if projection_store is not None and projection_store.enabled:
-        from ..ir.projection import ProjectionScope
+        from fastcode.ir.projection import ProjectionScope
 
         scope = ProjectionScope(
             scope_kind="full",
@@ -827,7 +827,7 @@ def compute_leiden_clusters(
     # No cached projection; try to build one
     if projection_transformer is not None:
         try:
-            from ..ir.projection import ProjectionScope
+            from fastcode.ir.projection import ProjectionScope
 
             scope = ProjectionScope(
                 scope_kind="full",
@@ -1223,7 +1223,7 @@ def _compute_cached_leiden_clusters(
     projection_store = getattr(fc, "projection_store", None)
     if projection_store is None or not getattr(projection_store, "enabled", False):
         return None
-    from ..ir.projection import ProjectionScope
+    from fastcode.ir.projection import ProjectionScope
 
     scope = ProjectionScope(
         scope_kind="full",
@@ -1283,7 +1283,7 @@ def _build_leiden_clusters_from_context(
     if projection_transformer is None:
         return None
     try:
-        from ..ir.projection import ProjectionScope
+        from fastcode.ir.projection import ProjectionScope
 
         scope = ProjectionScope(
             scope_kind="full",

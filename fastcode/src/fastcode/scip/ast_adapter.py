@@ -10,16 +10,16 @@ import hashlib
 import os
 from collections.abc import Mapping
 
-from ..ir.element import CodeElement
-from ..ir.types import (
+from fastcode.ir.element import CodeElement
+from fastcode.ir.types import (
     IRCodeUnit,
     IRRelation,
     IRSnapshot,
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from ..utils.filesystem import compute_file_hash, normalize_path
-from ..utils.json import safe_jsonable
+from fastcode.utils.filesystem import compute_file_hash, normalize_path
+from fastcode.utils.json import safe_jsonable
 
 STRUCTURE_SOURCE = "fc_structure"
 STRUCTURE_PRIORITY = 50

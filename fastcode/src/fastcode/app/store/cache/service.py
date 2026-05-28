@@ -1,0 +1,981 @@
+"""
+Caching Module - Cache embeddings, queries, and results
+"""
+
+import hashlib
+import logging
+import pickle
+import time
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any, cast
+
+from diskcache import Cache as DiskCache
+
+from .payloads import (
+    _CACHE_NOT_MARSHALLED,
+    _context_activation_payload,
+    _context_activation_record,
+    _context_bundle_payload,
+    _context_bundle_record,
+    _context_distillation_payload,
+    _context_distillation_record,
+    _decode_marshaled_value,
+    _dialogue_session_payload,
+    _dialogue_session_record,
+    _dialogue_turn_payload,
+    _dialogue_turn_record,
+    _embedding_cache_payload,
+    _handoff_artifact_payload,
+    _handoff_artifact_record,
+    _json_cache_payload,
+    _query_result_payload,
+    _query_result_record,
+    _turn_journal_payload,
+    _turn_journal_record,
+    _working_memory_payload,
+    _working_memory_record,
+)
+from .contracts import (
+    ContextActivationRecord,
+    ContextBundleRecord,
+    ContextDistillationRecord,
+    DialogueSessionRecord,
+    DialogueTurnRecord,
+    HandoffArtifactRecord,
+    QueryResultCacheRecord,
+    TurnJournalRecord,
+    WorkingMemoryRecord,
+)
+
+
+class CacheManager:
+    """Manage caching for FastCode"""
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.config = config
+        self.cache_config = config.get("cache", {})
+        self.logger = logging.getLogger(__name__)
+
+        self.enabled = self.cache_config.get("enabled", True)
+        self.backend = self.cache_config.get("backend", "disk")
+        self.ttl = self.cache_config.get("ttl", 3600)
+        self.max_size_mb = self.cache_config.get("max_size_mb", 1000)
+        self.cache_directory = self.cache_config.get("cache_directory", "./data/cache")
+
+        self.cache_embeddings = self.cache_config.get("cache_embeddings", True)
+        self.cache_queries = self.cache_config.get("cache_queries", False)
+
+        # Dialogue history TTL (default: 30 days for long-term conversation history)
+        self.dialogue_ttl = self.cache_config.get(
+            "dialogue_ttl", 2592000
+        )  # 30 days in seconds
+
+        self.cache: Any = None
+
+        if self.enabled:
+            self._initialize_cache()
+
+    def _initialize_cache(self) -> None:
+        """Initialize cache backend"""
+        if self.backend == "disk":
+            Path(self.cache_directory).mkdir(parents=True, exist_ok=True)
+            max_size_bytes = self.max_size_mb * 1024 * 1024
+            self.cache = DiskCache(self.cache_directory, size_limit=max_size_bytes)
+            self.logger.info(f"Initialized disk cache at {self.cache_directory}")
+
+        elif self.backend == "redis":
+            try:
+                import redis
+
+                self.cache = redis.Redis(
+                    host=self.cache_config.get("redis_host", "localhost"),
+                    port=int(self.cache_config.get("redis_port", 6379)),
+                    db=0,
+                    decode_responses=False,
+                )
+                self.cache.ping()
+                self.logger.info("Initialized Redis cache")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize Redis cache: {e}")
+                self.enabled = False
+
+        else:
+            self.logger.warning(f"Unknown cache backend: {self.backend}")
+            self.enabled = False
+
+    def _generate_key(self, prefix: str, *args: Any) -> str:
+        """Generate cache key from arguments"""
+        # Create a hash of all arguments
+        content = "_".join(str(arg) for arg in args)
+        hash_val = hashlib.md5(content.encode()).hexdigest()
+        return f"{prefix}_{hash_val}"
+
+    def _cache_get_raw(self, key: str) -> Any | None:
+        if self.backend == "disk":
+            return self.cache.get(key)
+        if self.backend == "redis":
+            return self.cache.get(key)
+        return None
+
+    def _cache_set_raw(self, key: str, value: Any, ttl: int) -> bool:
+        if self.backend == "disk":
+            self.cache.set(key, value, expire=ttl)
+            return True
+        if self.backend == "redis":
+            self.cache.setex(key, ttl, value)  # type: ignore[arg-type]
+            return True
+        return False
+
+    def get(self, key: str) -> Any | None:
+        """Get value from cache"""
+        if not self.enabled or self.cache is None:
+            return None
+
+        try:
+            value = self._cache_get_raw(key)
+            if value is None:
+                return None
+
+            decoded = _decode_marshaled_value(value)
+            if decoded is not _CACHE_NOT_MARSHALLED:
+                self.logger.debug(f"Cache hit: {key}")
+                return decoded
+
+            if self.backend == "redis" and isinstance(
+                value, (bytes, bytearray, memoryview)
+            ):
+                self.logger.debug(f"Cache hit: {key}")
+                return pickle.loads(bytes(cast(Any, value)))
+
+            self.logger.debug(f"Cache hit: {key}")
+            return value
+
+        except Exception as e:
+            self.logger.warning(f"Cache get error: {e}")
+            return None
+
+    def set(self, key: str, value: Any, ttl: int | None = None) -> bool:
+        """Set value in cache"""
+        if not self.enabled or self.cache is None:
+            return False
+
+        if ttl is None:
+            ttl = self.ttl
+
+        try:
+            if self.backend == "disk":
+                self.cache.set(key, value, expire=ttl)
+                return True
+
+            if self.backend == "redis":
+                self.cache.setex(key, ttl, pickle.dumps(value))  # type: ignore[arg-type]
+                return True
+
+        except Exception as e:
+            self.logger.warning(f"Cache set error: {e}")
+            return False
+
+        return False
+
+    def delete(self, key: str) -> bool:
+        """Delete key from cache"""
+        if not self.enabled or self.cache is None:
+            return False
+
+        try:
+            if self.backend == "disk":
+                return bool(self.cache.delete(key))
+            if self.backend == "redis":
+                return bool(self.cache.delete(key))
+        except Exception as e:
+            self.logger.warning(f"Cache delete error: {e}")
+            return False
+
+        return False
+
+    def clear(self) -> bool:
+        """Clear all cache"""
+        if not self.enabled or self.cache is None:
+            return False
+
+        try:
+            if self.backend == "disk":
+                self.cache.clear()
+                self.logger.info("Cleared disk cache")
+                return True
+            if self.backend == "redis":
+                self.cache.flushdb()  # type: ignore[union-attr]
+                self.logger.info("Cleared Redis cache")
+                return True
+        except Exception as e:
+            self.logger.error(f"Cache clear error: {e}")
+            return False
+
+        return False
+
+    def get_embedding(self, text: str) -> Any | None:
+        """Get cached embedding"""
+        if not self.cache_embeddings:
+            return None
+        key = self._generate_key("embedding", text)
+        return self.get(key)
+
+    def set_embedding(self, text: str, embedding: Any) -> bool:
+        """Cache embedding"""
+        if not self.cache_embeddings:
+            return False
+        key = self._generate_key("embedding", text)
+        return self.set(key, embedding)
+
+    def get_cached_embedding_payload(self, key: str) -> dict[str, Any] | None:
+        """Get embedding payload stored under an explicit cache key."""
+        value = self.get(key)
+        if isinstance(value, dict):
+            return cast(dict[str, Any], value)
+        return None
+
+    def set_cached_embedding_payload(
+        self, key: str, payload: dict[str, Any], ttl: int | None = None
+    ) -> bool:
+        """Store embedding payload in a buffer-aware cache envelope."""
+        if not self.enabled or self.cache is None:
+            return False
+        ttl_value = int(self.ttl if ttl is None else ttl)
+        try:
+            return self._cache_set_raw(
+                key, _embedding_cache_payload(payload), ttl_value
+            )
+        except Exception as e:
+            self.logger.warning(f"Embedding cache set error: {e}")
+            return False
+
+    def get_query_result_record(
+        self, query: str, repo_hash: str
+    ) -> QueryResultCacheRecord | None:
+        if not self.cache_queries:
+            return None
+        key = self._generate_key("query", query, repo_hash)
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        record = _query_result_record(cast(dict[str, Any], value))
+        if record is None or record.query != query or record.repo_hash != repo_hash:
+            return None
+        return record
+
+    def get_query_result(self, query: str, repo_hash: str) -> Any | None:
+        """Get cached query result"""
+        if not self.cache_queries:
+            return None
+        record = self.get_query_result_record(query, repo_hash)
+        if record is not None:
+            return record.result
+        key = self._generate_key("query", query, repo_hash)
+        return self.get(key)
+
+    def set_query_result_record(self, record: QueryResultCacheRecord) -> bool:
+        if not self.cache_queries:
+            return False
+        key = self._generate_key("query", record.query, record.repo_hash)
+        if not self.enabled or self.cache is None:
+            return False
+        try:
+            ttl = int(self.ttl)
+            return self._cache_set_raw(
+                key,
+                _json_cache_payload(_query_result_payload(record)),
+                ttl,
+            )
+        except Exception as e:
+            self.logger.warning(f"Query cache set error: {e}")
+            return False
+
+    def set_query_result(self, query: str, repo_hash: str, result: Any) -> bool:
+        """Cache query result"""
+        return self.set_query_result_record(
+            QueryResultCacheRecord(
+                query=query,
+                repo_hash=repo_hash,
+                result=result,
+                created_at=time.time(),
+            )
+        )
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get cache statistics"""
+        if not self.enabled or self.cache is None:
+            return {"enabled": False}
+
+        try:
+            if self.backend == "disk":
+                return {
+                    "enabled": True,
+                    "backend": "disk",
+                    "size": self.cache.volume(),
+                    "items": len(self.cache),
+                }
+            if self.backend == "redis":
+                info: Any = self.cache.info()  # type: ignore[union-attr]
+                return {
+                    "enabled": True,
+                    "backend": "redis",
+                    "size": info.get("used_memory", 0),
+                    "items": self.cache.dbsize(),  # type: ignore[union-attr]
+                }
+        except Exception as e:
+            self.logger.error(f"Failed to get cache stats: {e}")
+            return {"enabled": True, "error": str(e)}
+
+        return {"enabled": False}
+
+    # ===== Multi-turn Dialogue Session Cache Methods =====
+
+    def save_dialogue_turn(
+        self,
+        session_id: str,
+        turn_number: int,
+        query: str,
+        answer: str,
+        summary: str,
+        retrieved_elements: list[dict[str, Any]] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        """
+        Save a single dialogue turn to cache
+
+        Args:
+            session_id: Unique session identifier
+            turn_number: Turn number (1-indexed)
+            query: User query
+            answer: Generated answer
+            summary: Brief summary of the dialogue turn
+            retrieved_elements: Retrieved code elements (optional)
+            metadata: Additional metadata (optional)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.enabled:
+            return False
+
+        try:
+            turn_record = DialogueTurnRecord(
+                session_id=session_id,
+                turn_number=turn_number,
+                timestamp=time.time(),
+                query=query,
+                answer=answer,
+                summary=summary,
+                retrieved_elements=list(retrieved_elements or []),
+                metadata=dict(metadata or {}),
+            )
+
+            # Generate key
+            key = f"dialogue_{session_id}_turn_{turn_number}"
+
+            # Save to cache (with longer TTL for dialogue history)
+            # Use configurable dialogue_ttl instead of hardcoded value
+            self._cache_set_raw(
+                key,
+                _json_cache_payload(_dialogue_turn_payload(turn_record)),
+                self.dialogue_ttl,
+            )
+
+            # Update session index (propagate multi_turn flag from metadata)
+            multi_turn = (metadata or {}).get("multi_turn")
+            self._update_session_index(session_id, turn_number, multi_turn=multi_turn)
+
+            self.logger.debug(f"Saved dialogue turn: {session_id} turn {turn_number}")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to save dialogue turn: {e}")
+            return False
+
+    def get_dialogue_turn_record(
+        self, session_id: str, turn_number: int
+    ) -> DialogueTurnRecord | None:
+        if not self.enabled:
+            return None
+        key = f"dialogue_{session_id}_turn_{turn_number}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return _dialogue_turn_record(cast(dict[str, Any], value))
+
+    def get_dialogue_history_records(
+        self, session_id: str, max_turns: int | None = None
+    ) -> list[DialogueTurnRecord]:
+        """
+        Get dialogue history for a session
+
+        Args:
+            session_id: Session identifier
+            max_turns: Maximum number of recent turns to retrieve (None = all)
+
+        Returns:
+            List of turn data dictionaries, ordered from oldest to newest
+        """
+        if not self.enabled:
+            return []
+
+        try:
+            # Get session index
+            session_index = self.get_session_index_record(session_id)
+            if not session_index:
+                return []
+
+            total_turns = session_index.total_turns
+            if total_turns == 0:
+                return []
+
+            # Determine which turns to retrieve
+            if max_turns is None or max_turns >= total_turns:
+                start_turn = 1
+            else:
+                start_turn = total_turns - max_turns + 1
+
+            # Retrieve turns
+            history: list[DialogueTurnRecord] = []
+            for turn_num in range(start_turn, total_turns + 1):
+                turn_record = self.get_dialogue_turn_record(session_id, turn_num)
+                if turn_record is not None:
+                    history.append(turn_record)
+
+            return history
+
+        except Exception as e:
+            self.logger.error(f"Failed to get dialogue history: {e}")
+            return []
+
+    def get_recent_summaries(
+        self, session_id: str, num_rounds: int
+    ) -> list[dict[str, Any]]:
+        """
+        Get recent dialogue summaries for context
+
+        Args:
+            session_id: Session identifier
+            num_rounds: Number of recent rounds to retrieve
+
+        Returns:
+            List of summary data with turn_number, query, and summary
+        """
+        if not self.enabled:
+            return []
+
+        try:
+            history = self.get_dialogue_history_records(
+                session_id, max_turns=num_rounds
+            )
+
+            summaries: list[dict[str, Any]] = []
+            for turn in history:
+                summaries.append(
+                    {
+                        "turn_number": turn.turn_number,
+                        "query": turn.query,
+                        "summary": turn.summary,
+                    }
+                )
+
+            return summaries
+
+        except Exception as e:
+            self.logger.error(f"Failed to get recent summaries: {e}")
+            return []
+
+    def save_turn_journal_record(self, record: TurnJournalRecord) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            key = f"turn_journal_{record.session_id}_turn_{record.turn_number}"
+            self._cache_set_raw(
+                key,
+                _json_cache_payload(_turn_journal_payload(record)),
+                self.dialogue_ttl,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to save turn journal record: {e}")
+            return False
+
+    def get_turn_journal_record(
+        self, session_id: str, turn_number: int
+    ) -> TurnJournalRecord | None:
+        if not self.enabled:
+            return None
+        key = f"turn_journal_{session_id}_turn_{turn_number}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return _turn_journal_record(cast(dict[str, Any], value))
+
+    def get_turn_journal_records(
+        self, session_id: str, max_turns: int | None = None
+    ) -> list[TurnJournalRecord]:
+        if not self.enabled:
+            return []
+        session_index = self.get_session_index_record(session_id)
+        if session_index is None:
+            return []
+        total_turns = session_index.total_turns
+        if total_turns <= 0:
+            return []
+        start_turn = 1
+        if max_turns is not None and max_turns < total_turns:
+            start_turn = total_turns - max_turns + 1
+        records: list[TurnJournalRecord] = []
+        for turn_number in range(start_turn, total_turns + 1):
+            record = self.get_turn_journal_record(session_id, turn_number)
+            if record is not None:
+                records.append(record)
+        return records
+
+    def save_working_memory_record(self, record: WorkingMemoryRecord) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            key = f"working_memory_{record.session_id}_turn_{record.turn_number}"
+            self._cache_set_raw(
+                key,
+                _json_cache_payload(_working_memory_payload(record)),
+                self.dialogue_ttl,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to save working memory record: {e}")
+            return False
+
+    def get_working_memory_record(
+        self, session_id: str, turn_number: int
+    ) -> WorkingMemoryRecord | None:
+        if not self.enabled:
+            return None
+        key = f"working_memory_{session_id}_turn_{turn_number}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return _working_memory_record(cast(dict[str, Any], value))
+
+    def get_working_memory_records(
+        self, session_id: str, max_turns: int | None = None
+    ) -> list[WorkingMemoryRecord]:
+        if not self.enabled:
+            return []
+        session_index = self.get_session_index_record(session_id)
+        if session_index is None:
+            return []
+        total_turns = session_index.total_turns
+        if total_turns <= 0:
+            return []
+        start_turn = 1
+        if max_turns is not None and max_turns < total_turns:
+            start_turn = total_turns - max_turns + 1
+        records: list[WorkingMemoryRecord] = []
+        for turn_number in range(start_turn, total_turns + 1):
+            record = self.get_working_memory_record(session_id, turn_number)
+            if record is not None:
+                records.append(record)
+        return records
+
+    def get_latest_working_memory_record(
+        self, session_id: str
+    ) -> WorkingMemoryRecord | None:
+        session_index = self.get_session_index_record(session_id)
+        if session_index is None or session_index.total_turns <= 0:
+            return None
+        return self.get_working_memory_record(session_id, session_index.total_turns)
+
+    def save_handoff_artifact_record(self, record: HandoffArtifactRecord) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            key = f"handoff_{record.artifact_id}"
+            self._cache_set_raw(
+                key,
+                _json_cache_payload(_handoff_artifact_payload(record)),
+                self.dialogue_ttl,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to save handoff artifact record: {e}")
+            return False
+
+    def get_handoff_artifact_record(
+        self, artifact_id: str
+    ) -> HandoffArtifactRecord | None:
+        if not self.enabled:
+            return None
+        key = f"handoff_{artifact_id}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return _handoff_artifact_record(cast(dict[str, Any], value))
+
+    def list_handoff_artifact_records(
+        self, session_id: str | None = None
+    ) -> list[HandoffArtifactRecord]:
+        if not self.enabled or self.cache is None:
+            return []
+        records: list[HandoffArtifactRecord] = []
+        try:
+            if self.backend == "disk":
+                iterable: Iterable[Any] = self.cache.iterkeys()
+            elif self.backend == "redis":
+                iterable = self.cache.scan_iter(match="handoff_*")
+            else:
+                iterable = []
+
+            for raw_key in iterable:
+                key = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+                if not isinstance(key, str) or not key.startswith("handoff_"):
+                    continue
+                value = self.get(key)
+                if not isinstance(value, dict):
+                    continue
+                record = _handoff_artifact_record(cast(dict[str, Any], value))
+                if session_id is None or record.session_id == session_id:
+                    records.append(record)
+            records.sort(key=lambda record: record.created_at, reverse=True)
+            return records
+        except Exception as e:
+            self.logger.error(f"Failed to list handoff artifact records: {e}")
+            return []
+
+    def save_context_bundle_record(self, record: ContextBundleRecord) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            key = f"context_bundle_{record.session_id}_turn_{record.turn_number}"
+            self._cache_set_raw(
+                key,
+                _json_cache_payload(_context_bundle_payload(record)),
+                self.dialogue_ttl,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to save context bundle record: {e}")
+            return False
+
+    def get_context_bundle_record(
+        self, session_id: str, turn_number: int
+    ) -> ContextBundleRecord | None:
+        if not self.enabled:
+            return None
+        key = f"context_bundle_{session_id}_turn_{turn_number}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return _context_bundle_record(cast(dict[str, Any], value))
+
+    def get_latest_context_bundle_record(
+        self, session_id: str
+    ) -> ContextBundleRecord | None:
+        session_index = self.get_session_index_record(session_id)
+        if session_index is None or session_index.total_turns <= 0:
+            return None
+        return self.get_context_bundle_record(session_id, session_index.total_turns)
+
+    def list_context_bundle_records(
+        self, session_id: str | None = None
+    ) -> list[ContextBundleRecord]:
+        if not self.enabled or self.cache is None:
+            return []
+        records: list[ContextBundleRecord] = []
+        try:
+            if self.backend == "disk":
+                iterable: Iterable[Any] = self.cache.iterkeys()
+            elif self.backend == "redis":
+                iterable = self.cache.scan_iter(match="context_bundle_*")
+            else:
+                iterable = []
+
+            for raw_key in iterable:
+                key = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+                if not isinstance(key, str) or not key.startswith("context_bundle_"):
+                    continue
+                value = self.get(key)
+                if not isinstance(value, dict):
+                    continue
+                record = _context_bundle_record(cast(dict[str, Any], value))
+                if session_id is None or record.session_id == session_id:
+                    records.append(record)
+            records.sort(key=lambda record: record.created_at, reverse=True)
+            return records
+        except Exception as e:
+            self.logger.error(f"Failed to list context bundle records: {e}")
+            return []
+
+    def get_context_bundle_record_by_id(
+        self, bundle_id: str
+    ) -> ContextBundleRecord | None:
+        for record in self.list_context_bundle_records():
+            if record.bundle_id == bundle_id:
+                return record
+        return None
+
+    def save_context_distillation_record(
+        self, record: ContextDistillationRecord
+    ) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            key = f"context_distillation_{record.session_id}_turn_{record.turn_number}"
+            self._cache_set_raw(
+                key,
+                _json_cache_payload(_context_distillation_payload(record)),
+                self.dialogue_ttl,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to save context distillation record: {e}")
+            return False
+
+    def get_context_distillation_record(
+        self, session_id: str, turn_number: int
+    ) -> ContextDistillationRecord | None:
+        if not self.enabled:
+            return None
+        key = f"context_distillation_{session_id}_turn_{turn_number}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return _context_distillation_record(cast(dict[str, Any], value))
+
+    def find_reusable_context_distillation_record(
+        self,
+        session_id: str,
+        *,
+        invalidation_key: str,
+        compiler_fingerprint: str,
+    ) -> ContextDistillationRecord | None:
+        session_index = self.get_session_index_record(session_id)
+        if session_index is None or session_index.total_turns <= 0:
+            return None
+        for turn_number in range(session_index.total_turns, 0, -1):
+            record = self.get_context_distillation_record(session_id, turn_number)
+            if record is None:
+                continue
+            if (
+                record.invalidation_key == invalidation_key
+                and record.compiler_fingerprint == compiler_fingerprint
+            ):
+                return record
+        return None
+
+    def save_context_activation_record(self, record: ContextActivationRecord) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            key = f"context_activation_{record.session_id}_turn_{record.turn_number}"
+            id_key = f"context_activation_id_{record.activation_id}"
+            payload = _json_cache_payload(_context_activation_payload(record))
+            self._cache_set_raw(
+                key,
+                payload,
+                self.dialogue_ttl,
+            )
+            self._cache_set_raw(
+                id_key,
+                payload,
+                self.dialogue_ttl,
+            )
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to save context activation record: {e}")
+            return False
+
+    def get_context_activation_record(
+        self, session_id: str, turn_number: int
+    ) -> ContextActivationRecord | None:
+        if not self.enabled:
+            return None
+        key = f"context_activation_{session_id}_turn_{turn_number}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return _context_activation_record(cast(dict[str, Any], value))
+
+    def get_context_activation_record_by_id(
+        self, activation_id: str
+    ) -> ContextActivationRecord | None:
+        if not self.enabled:
+            return None
+        key = f"context_activation_id_{activation_id}"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return _context_activation_record(cast(dict[str, Any], value))
+
+    def list_context_activation_records(
+        self, session_id: str | None = None
+    ) -> list[ContextActivationRecord]:
+        if not self.enabled or self.cache is None:
+            return []
+        records: list[ContextActivationRecord] = []
+        try:
+            if self.backend == "disk":
+                iterable: Iterable[Any] = self.cache.iterkeys()
+            elif self.backend == "redis":
+                iterable = self.cache.scan_iter(match="context_activation_id_*")
+            else:
+                iterable = []
+
+            for raw_key in iterable:
+                key = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+                if not isinstance(key, str) or not key.startswith(
+                    "context_activation_id_"
+                ):
+                    continue
+                value = self.get(key)
+                if not isinstance(value, dict):
+                    continue
+                record = _context_activation_record(cast(dict[str, Any], value))
+                if session_id is None or record.session_id == session_id:
+                    records.append(record)
+            records.sort(key=lambda record: record.created_at, reverse=True)
+            return records
+        except Exception as e:
+            self.logger.error(f"Failed to list context activation records: {e}")
+            return []
+
+    def _update_session_index(
+        self, session_id: str, turn_number: int, multi_turn: bool | None = None
+    ) -> bool:
+        """Update session index with new turn"""
+        try:
+            key = f"dialogue_session_{session_id}_index"
+            existing_record = self.get_session_index_record(session_id)
+            now = time.time()
+            session_index = DialogueSessionRecord(
+                session_id=session_id,
+                created_at=(
+                    existing_record.created_at if existing_record is not None else now
+                ),
+                total_turns=max(
+                    existing_record.total_turns if existing_record is not None else 0,
+                    turn_number,
+                ),
+                last_updated=now,
+                multi_turn=(
+                    True
+                    if multi_turn is True
+                    else (
+                        existing_record.multi_turn
+                        if existing_record is not None
+                        else False
+                    )
+                ),
+            )
+
+            # Once a session is marked as multi_turn, keep it that way
+            # Use configurable dialogue_ttl instead of hardcoded value
+            self._cache_set_raw(
+                key,
+                _json_cache_payload(_dialogue_session_payload(session_index)),
+                self.dialogue_ttl,
+            )
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to update session index: {e}")
+            return False
+
+    def get_session_index_record(self, session_id: str) -> DialogueSessionRecord | None:
+        key = f"dialogue_session_{session_id}_index"
+        value = self.get(key)
+        if not isinstance(value, dict):
+            return None
+        return _dialogue_session_record(cast(dict[str, Any], value))
+
+    def delete_session(self, session_id: str) -> bool:
+        """
+        Delete an entire dialogue session
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.enabled:
+            return False
+
+        try:
+            # Get session index
+            session_index = self.get_session_index_record(session_id)
+            if not session_index:
+                return False
+
+            total_turns = session_index.total_turns
+
+            # Delete all turns
+            for turn_num in range(1, total_turns + 1):
+                key = f"dialogue_{session_id}_turn_{turn_num}"
+                self.delete(key)
+                self.delete(f"turn_journal_{session_id}_turn_{turn_num}")
+                self.delete(f"working_memory_{session_id}_turn_{turn_num}")
+                self.delete(f"context_bundle_{session_id}_turn_{turn_num}")
+                self.delete(f"context_distillation_{session_id}_turn_{turn_num}")
+                self.delete(f"context_activation_{session_id}_turn_{turn_num}")
+
+            # Delete session index
+            index_key = f"dialogue_session_{session_id}_index"
+            self.delete(index_key)
+
+            for record in self.list_handoff_artifact_records(session_id):
+                self.delete(f"handoff_{record.artifact_id}")
+
+            self.logger.info(f"Deleted session {session_id} with {total_turns} turns")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to delete session: {e}")
+            return False
+
+    def list_session_records(self) -> list[DialogueSessionRecord]:
+        if not self.enabled or self.cache is None:
+            return []
+
+        try:
+            sessions: list[DialogueSessionRecord] = []
+
+            if self.backend == "disk":
+                # Scan for session index keys
+                for key in self.cache.iterkeys():
+                    if (
+                        isinstance(key, str)
+                        and key.startswith("dialogue_session_")
+                        and key.endswith("_index")
+                    ):
+                        session_data = self.get(key)
+                        if isinstance(session_data, dict):
+                            sessions.append(
+                                _dialogue_session_record(
+                                    cast(dict[str, Any], session_data)
+                                )
+                            )
+
+            elif self.backend == "redis":
+                # Scan for session index keys
+                for key in self.cache.scan_iter(match="dialogue_session_*_index"):
+                    session_data = self.get(
+                        key.decode() if isinstance(key, bytes) else key
+                    )
+                    if isinstance(session_data, dict):
+                        sessions.append(
+                            _dialogue_session_record(cast(dict[str, Any], session_data))
+                        )
+
+            # Sort by creation time descending (fallback to last_updated)
+            sessions.sort(
+                key=lambda record: (record.created_at, record.last_updated),
+                reverse=True,
+            )
+            return sessions
+
+        except Exception as e:
+            self.logger.error(f"Failed to list sessions: {e}")
+            return []

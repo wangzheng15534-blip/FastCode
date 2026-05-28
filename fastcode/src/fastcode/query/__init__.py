@@ -1,1 +1,0 @@
-"""Query shell package."""

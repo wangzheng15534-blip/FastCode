@@ -10,9 +10,9 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from ..foundation.byte_count import ByteCount
-from ..foundation.non_empty_string import NonEmptyString
-from ..foundation.positive_int import PositiveInt
+from fastcode.utils.atoms.byte_count import ByteCount
+from fastcode.utils.atoms.non_empty_string import NonEmptyString
+from fastcode.utils.atoms.positive_int import PositiveInt
 
 
 class UnsafeArchiveError(ValueError):

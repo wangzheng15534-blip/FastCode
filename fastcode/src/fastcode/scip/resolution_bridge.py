@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from ..ir.types import IRSnapshot
+from fastcode.ir.types import IRSnapshot
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,772 @@
+"""
+Code Indexer - Multi-level indexing of code repositories
+"""
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from typing import Any
+
+from tqdm import tqdm
+
+from fastcode.ir.element import CodeElement, CodeElementMeta
+from fastcode.ports.embedding import EmbeddingProvider
+from fastcode.app.store.vectors.vector import VectorStore
+from fastcode.utils.filesystem import normalize_path
+from fastcode.app.indexing.loader import RepositoryLoader
+from fastcode.app.indexing.overview import RepositoryOverviewGenerator
+from fastcode.app.indexing.extractors.parser import CodeParser, FileParseResult, ImportInfo
+
+
+class CodeIndexer:
+    """Index code repository at multiple levels"""
+
+    def __init__(
+        self,
+        config: dict[str, Any],
+        loader: RepositoryLoader,
+        parser: CodeParser,
+        embedder: EmbeddingProvider,
+        vector_store: VectorStore | None = None,
+    ) -> None:
+        self.config = config
+        self.indexing_config = config.get("indexing", {})
+        self.logger = logging.getLogger(__name__)
+
+        self.loader = loader
+        self.parser = parser
+        self.embedder = embedder
+        self.vector_store = vector_store
+
+        self.levels = self.indexing_config.get(
+            "levels", ["file", "class", "function", "documentation"]
+        )
+        self.include_imports = self.indexing_config.get("include_imports", True)
+        self.include_class_context = self.indexing_config.get(
+            "include_class_context", True
+        )
+        self.generate_repo_overview = self.indexing_config.get(
+            "generate_repo_overview", True
+        )
+
+        self.elements: list[CodeElement] = []
+
+        # Repository identification
+        self.current_repo_name: str | None = None
+        self.current_repo_url: str | None = None
+
+        # Repository overview generator
+        self.overview_generator = (
+            RepositoryOverviewGenerator(config) if self.generate_repo_overview else None
+        )
+
+    def index_repository(
+        self, repo_name: str | None = None, repo_url: str | None = None
+    ) -> list[CodeElement]:
+        """
+        Backward-compatible wrapper.
+
+        Deprecated semantics: final indexing orchestration should happen in FastCode pipeline.
+        """
+        self.logger.warning(
+            "CodeIndexer.index_repository() is deprecated as a final indexing entrypoint; "
+            "use extract_elements() and orchestrate persistence/graph in the pipeline."
+        )
+        return self.extract_elements(repo_name=repo_name, repo_url=repo_url)
+
+    def extract_elements(
+        self,
+        repo_name: str | None = None,
+        repo_url: str | None = None,
+        file_infos: list[dict[str, Any]] | None = None,
+    ) -> list[CodeElement]:
+        """
+        Extract and embed code elements for a repository.
+
+        Args:
+            repo_name: Optional repository name for identification
+            repo_url: Optional repository URL for identification
+            file_infos: Optional precomputed loader inventory for this run
+
+        Returns:
+            List of indexed code elements
+        """
+        self.logger.info("Starting repository element extraction")
+
+        # Set current repository information
+        self.current_repo_name = repo_name
+        self.current_repo_url = repo_url
+
+        # Scan files unless the snapshot pipeline already did the inventory pass.
+        files = file_infos if file_infos is not None else self.loader.scan_files()
+        self.logger.info(
+            f"Indexing {len(files)} files for repository: {repo_name or 'Unknown'}"
+        )
+
+        self.elements = []
+
+        # Generate repository overview (for multi-repo support)
+        # Store separately, not in self.elements
+        if self.overview_generator and self.loader.repo_path:
+            try:
+                file_structure = self.overview_generator.parse_file_structure(
+                    self.loader.repo_path, files
+                )
+                repo_overview = self.overview_generator.generate_overview(
+                    self.loader.repo_path, repo_name or "Unknown", file_structure
+                )
+
+                # Save repository overview to separate storage
+                self._save_repository_overview(repo_overview)
+                self.logger.info(
+                    f"Generated and saved repository overview for {repo_name}"
+                )
+            except Exception as e:
+                self.logger.warning(f"Failed to generate repository overview: {e}")
+
+        # Process each file
+        for file_info in tqdm(files, desc="Indexing files"):
+            file_path = file_info["path"]
+
+            # Read content
+            content = self.loader.read_file_content(file_path)
+            if content is None:
+                continue
+
+            # Parse file
+            parse_result = self.parser.parse_file(file_path, content)
+            if parse_result is None:
+                continue
+
+            # Index at different levels
+            self._index_file(file_info, content, parse_result)
+
+        self.logger.info(
+            f"Indexed {len(self.elements)} code elements for {repo_name or 'Unknown'}"
+        )
+
+        # Generate embeddings
+        self.logger.info("Generating embeddings for code elements")
+        self._embed_indexed_elements()
+
+        self.logger.info(
+            f"✓ Repository extraction completed for {repo_name or 'Unknown'}: "
+            f"{len(self.elements)} elements with embeddings"
+        )
+
+        return self.elements
+
+    def index_files(
+        self,
+        file_infos: list[dict[str, Any]],
+        repo_name: str,
+        repo_url: str | None = None,
+    ) -> list[CodeElement]:
+        """Index specific files only (for incremental reindexing).
+
+        Reuses existing _index_file() and embedding pipeline.
+        Skips repo overview generation (already exists for this repo).
+
+        Args:
+            file_infos: List of file info dicts from loader.scan_files()
+            repo_name: Repository name for element IDs
+            repo_url: Optional repository URL
+
+        Returns:
+            List of CodeElement objects with embeddings
+        """
+        self.current_repo_name = repo_name
+        self.current_repo_url = repo_url
+        self.elements = []
+
+        for file_info in file_infos:
+            file_path = file_info["path"]
+
+            content = self.loader.read_file_content(file_path)
+            if content is None:
+                continue
+
+            parse_result = self.parser.parse_file(file_path, content)
+            if parse_result is None:
+                continue
+
+            self._index_file(file_info, content, parse_result)
+
+        self.logger.info(
+            f"Parsed {len(self.elements)} elements from {len(file_infos)} changed files"
+        )
+
+        # Generate embeddings for new elements only
+        if self.elements:
+            self._embed_indexed_elements()
+
+        return self.elements
+
+    def _index_file(
+        self, file_info: dict[str, Any], content: str, parse_result: FileParseResult
+    ) -> None:
+        """Index a single file at multiple levels"""
+        file_path = file_info["path"]
+        relative_path = file_info["relative_path"]
+
+        # File level
+        if "file" in self.levels:
+            self._add_file_level_element(file_info, content, parse_result)
+
+        # Class level
+        if "class" in self.levels:
+            for class_info in parse_result.classes:
+                self._add_class_level_element(
+                    file_path, relative_path, content, parse_result, class_info
+                )
+
+        # Function level
+        if "function" in self.levels:
+            # 1. Top-level functions
+            for func_info in parse_result.functions:
+                self._add_function_level_element(
+                    file_path, relative_path, content, parse_result, func_info
+                )
+
+            self.logger.debug(
+                f"[DEBUG INDEXER] Processing methods for file: {file_info['path']}"
+            )
+            # 2. Methods from classes (FIX APPLIED HERE)
+            for class_info in parse_result.classes:
+                self.logger.debug(
+                    f"[DEBUG INDEXER] Checking class '{class_info.name}' with {len(class_info.methods)} methods"
+                )
+                # Now we iterate over the FunctionInfo objects we extracted
+                for method_info in class_info.methods:
+                    if isinstance(method_info, str):
+                        self.logger.debug(
+                            f"[DEBUG INDEXER] ❌ ERROR: Method '{method_info}' is a STRING, not FunctionInfo object!"
+                        )
+                        self.logger.debug(
+                            "               (You missed the fix in parser.py or indexer.py)"
+                        )
+                    else:
+                        self.logger.debug(
+                            f"[DEBUG INDEXER] Indexing method: {class_info.name}.{method_info.name}"
+                        )
+
+                    self._add_function_level_element(
+                        file_path, relative_path, content, parse_result, method_info
+                    )
+
+        # Documentation level
+        if "documentation" in self.levels and parse_result.module_docstring:
+            self._add_documentation_element(file_path, relative_path, parse_result)
+
+    def _add_file_level_element(
+        self, file_info: dict[str, Any], content: str, parse_result: FileParseResult
+    ) -> None:
+        """Add file-level index element"""
+        file_path = file_info["path"]
+        relative_path = file_info["relative_path"]
+
+        # Generate file summary
+        summary = self._generate_file_summary(parse_result)
+        serialized_imports = (
+            self._serialize_imports(parse_result.imports)
+            if self.include_imports
+            else []
+        )
+
+        stable_unit_id = self._stable_unit_id("file", relative_path)
+        signature_hash = self._hash_payload(None)
+        edge_surface_hash = self._hash_payload({"imports": serialized_imports})
+        api_surface_hash = self._hash_payload(
+            {
+                "path": relative_path,
+                "imports": serialized_imports,
+                "language": parse_result.language,
+                "classes": [
+                    {
+                        "name": class_info.name,
+                        "bases": list(class_info.bases),
+                        "decorators": list(class_info.decorators),
+                    }
+                    for class_info in parse_result.classes
+                ],
+                "functions": [
+                    {
+                        "name": func_info.name,
+                        "parameters": list(func_info.parameters),
+                        "return_type": func_info.return_type,
+                        "decorators": list(func_info.decorators),
+                        "class_name": func_info.class_name,
+                    }
+                    for func_info in parse_result.functions
+                ],
+            }
+        )
+
+        # Create element
+        element = CodeElement(
+            id=self._generate_id("file", relative_path),
+            type="file",
+            name=relative_path,
+            file_path=file_path,
+            relative_path=relative_path,
+            language=parse_result.language,
+            start_line=1,
+            end_line=parse_result.total_lines,
+            code=content[:],  # First all chars for context
+            signature=None,
+            docstring=parse_result.module_docstring,
+            summary=summary,
+            metadata={
+                "size": file_info["size"],
+                "extension": file_info["extension"],
+                "total_lines": parse_result.total_lines,
+                "code_lines": parse_result.code_lines,
+                "comment_lines": parse_result.comment_lines,
+                "num_classes": len(parse_result.classes),
+                "num_functions": len(parse_result.functions),
+                "num_imports": len(parse_result.imports),
+                "stable_unit_id": stable_unit_id,
+                "content_hash": self._hash_payload(content),
+                "syntax_hash": self._hash_payload(
+                    {
+                        "classes": [
+                            {
+                                "name": class_info.name,
+                                "bases": list(class_info.bases),
+                                "decorators": list(class_info.decorators),
+                                "methods": [
+                                    method.name for method in class_info.methods
+                                ],
+                            }
+                            for class_info in parse_result.classes
+                        ],
+                        "functions": [
+                            {
+                                "name": func_info.name,
+                                "parameters": list(func_info.parameters),
+                                "return_type": func_info.return_type,
+                                "decorators": list(func_info.decorators),
+                                "class_name": func_info.class_name,
+                                "is_async": func_info.is_async,
+                            }
+                            for func_info in parse_result.functions
+                        ],
+                    }
+                ),
+                "signature_hash": signature_hash,
+                "edge_surface_hash": edge_surface_hash,
+                "api_surface_hash": api_surface_hash,
+                "imports": serialized_imports,
+            },
+            repo_name=self.current_repo_name,
+            repo_url=self.current_repo_url,
+        )
+
+        self.elements.append(element)
+
+    def _add_class_level_element(
+        self,
+        file_path: str,
+        relative_path: str,
+        content: str,
+        parse_result: FileParseResult,
+        class_info: Any,
+    ) -> None:
+        """Add class-level index element"""
+        # Extract class code
+        class_code = self._extract_lines(
+            content, class_info.start_line, class_info.end_line
+        )
+
+        # Generate signature
+        signature = f"class {class_info.name}"
+        if class_info.bases:
+            signature += f"({', '.join(class_info.bases)})"
+
+        # Generate summary
+        summary = f"Class {class_info.name} with {len(class_info.methods)} methods"
+        if class_info.bases:
+            summary += f", inherits from {', '.join(class_info.bases)}"
+
+        stable_unit_id = self._stable_unit_id("class", relative_path, class_info.name)
+        signature_hash = self._hash_payload(
+            {
+                "name": class_info.name,
+                "bases": list(class_info.bases),
+                "decorators": list(class_info.decorators),
+            }
+        )
+        edge_surface_hash = self._hash_payload(
+            {
+                "bases": list(class_info.bases),
+                "methods": [method.name for method in class_info.methods],
+            }
+        )
+
+        element = CodeElement(
+            id=self._generate_id("class", relative_path, class_info.name),
+            type="class",
+            name=class_info.name,
+            file_path=file_path,
+            relative_path=relative_path,
+            language=parse_result.language,
+            start_line=class_info.start_line,
+            end_line=class_info.end_line,
+            code=class_code,
+            signature=signature,
+            docstring=class_info.docstring,
+            summary=summary,
+            metadata={
+                "bases": class_info.bases,
+                # Convert back to list of names for metadata to keep it clean
+                "methods": [m.name for m in class_info.methods],
+                "decorators": class_info.decorators,
+                "num_methods": len(class_info.methods),
+                "stable_unit_id": stable_unit_id,
+                "content_hash": self._hash_payload(class_code),
+                "syntax_hash": self._hash_payload(
+                    {
+                        "name": class_info.name,
+                        "bases": list(class_info.bases),
+                        "methods": [
+                            {
+                                "name": method.name,
+                                "parameters": list(method.parameters),
+                                "return_type": method.return_type,
+                                "decorators": list(method.decorators),
+                                "is_async": method.is_async,
+                            }
+                            for method in class_info.methods
+                        ],
+                    }
+                ),
+                "signature_hash": signature_hash,
+                "edge_surface_hash": edge_surface_hash,
+                "api_surface_hash": signature_hash,
+            },
+            repo_name=self.current_repo_name,
+            repo_url=self.current_repo_url,
+        )
+
+        self.elements.append(element)
+
+    def _add_function_level_element(
+        self,
+        file_path: str,
+        relative_path: str,
+        content: str,
+        parse_result: FileParseResult,
+        func_info: Any,
+    ) -> None:
+        """Add function-level index element"""
+        # Extract function code
+        func_code = self._extract_lines(
+            content, func_info.start_line, func_info.end_line
+        )
+
+        # Generate signature
+        signature = f"{'async ' if func_info.is_async else ''}def {func_info.name}"
+        signature += f"({', '.join(func_info.parameters)})"
+        if func_info.return_type:
+            signature += f" -> {func_info.return_type}"
+
+        # Generate summary
+        summary = f"Function {func_info.name}"
+        if func_info.parameters:
+            summary += f" with {len(func_info.parameters)} parameters"
+
+        id_parts = [relative_path]
+        if func_info.class_name:
+            id_parts.append(func_info.class_name)
+        id_parts.append(func_info.name)
+
+        generated_id = self._generate_id("function", *id_parts)
+        stable_unit_id = self._stable_unit_id("function", *id_parts)
+        signature_hash = self._hash_payload(
+            {
+                "name": func_info.name,
+                "parameters": list(func_info.parameters),
+                "return_type": func_info.return_type,
+                "decorators": list(func_info.decorators),
+                "class_name": func_info.class_name,
+                "is_async": func_info.is_async,
+            }
+        )
+
+        element = CodeElement(
+            id=generated_id,
+            type="function",
+            name=func_info.name,
+            file_path=file_path,
+            relative_path=relative_path,
+            language=parse_result.language,
+            start_line=func_info.start_line,
+            end_line=func_info.end_line,
+            code=func_code,
+            signature=signature,
+            docstring=func_info.docstring,
+            summary=summary,
+            metadata={
+                "parameters": func_info.parameters,
+                "return_type": func_info.return_type,
+                "is_async": func_info.is_async,
+                "is_method": func_info.is_method,
+                "class_name": func_info.class_name,
+                "decorators": func_info.decorators,
+                "complexity": func_info.complexity,
+                "stable_unit_id": stable_unit_id,
+                "content_hash": self._hash_payload(func_code),
+                "syntax_hash": self._hash_payload(
+                    {
+                        "name": func_info.name,
+                        "parameters": list(func_info.parameters),
+                        "return_type": func_info.return_type,
+                        "decorators": list(func_info.decorators),
+                        "class_name": func_info.class_name,
+                        "is_async": func_info.is_async,
+                        "complexity": func_info.complexity,
+                    }
+                ),
+                "signature_hash": signature_hash,
+                "edge_surface_hash": self._hash_payload(
+                    {
+                        "name": func_info.name,
+                        "class_name": func_info.class_name,
+                    }
+                ),
+                "api_surface_hash": signature_hash,
+            },
+            repo_name=self.current_repo_name,
+            repo_url=self.current_repo_url,
+        )
+
+        self.elements.append(element)
+
+    def _add_documentation_element(
+        self, file_path: str, relative_path: str, parse_result: FileParseResult
+    ) -> None:
+        """Add documentation-level index element"""
+        stable_unit_id = self._stable_unit_id("doc", relative_path)
+        doc_content = parse_result.module_docstring or ""
+        element = CodeElement(
+            id=self._generate_id("doc", relative_path),
+            type="documentation",
+            name=f"Documentation: {relative_path}",
+            file_path=file_path,
+            relative_path=relative_path,
+            language=parse_result.language,
+            start_line=1,
+            end_line=1,
+            code="",
+            signature=None,
+            docstring=parse_result.module_docstring,
+            summary=f"Module documentation for {relative_path}",
+            metadata={
+                "is_module_doc": True,
+                "stable_unit_id": stable_unit_id,
+                "content_hash": self._hash_payload(doc_content),
+                "syntax_hash": self._hash_payload({"is_module_doc": True}),
+                "signature_hash": self._hash_payload(None),
+                "edge_surface_hash": self._hash_payload(None),
+                "api_surface_hash": self._hash_payload(None),
+            },
+            repo_name=self.current_repo_name,
+            repo_url=self.current_repo_url,
+        )
+
+        self.elements.append(element)
+
+    def _save_repository_overview(self, repo_overview: dict[str, Any]) -> None:
+        """Save repository overview to separate storage (not in regular elements)"""
+        repo_name: str = repo_overview.get("repo_name", "Unknown")
+        summary = repo_overview.get("summary", "")
+        structure_text = repo_overview.get("structure_text", "")
+        readme_content = repo_overview.get("readme_content", "")
+
+        # # Combine all textual information for embedding
+        # overview_text = f"{summary}\n\n{structure_text}"
+        # if readme_content:
+        #     overview_text += f"\n\nREADME:\n{readme_content[:3000]}"  # Include truncated README
+
+        # Combine all textual information for embedding
+        overview_text = f"{summary}"
+        if readme_content:
+            overview_text += (
+                f"\n\nREADME:\n{readme_content[:2000]}"  # Include truncated README
+            )
+
+        # Generate embedding for the overview
+        embedding = self.embedder.embed_many([overview_text])[0]
+
+        # Prepare metadata
+        metadata = {
+            "summary": summary,
+            "file_structure": repo_overview.get("file_structure", {}),
+            "structure_text": structure_text,
+            "readme_content": readme_content,
+            "has_readme": repo_overview.get("has_readme", False),
+            "repo_url": self.current_repo_url,
+        }
+        metadata["embedding_fingerprint"] = self.embedder.fingerprint(
+            resolve_dimension=True
+        )
+
+        # Save to separate storage via vector_store
+        if self.vector_store:
+            self.vector_store.save_repo_overview(
+                repo_name=repo_name or self.current_repo_name or "Unknown",
+                overview_content=overview_text,
+                embedding=embedding,
+                metadata=metadata,
+            )
+        else:
+            self.logger.warning(
+                "Vector store not provided, repository overview not saved separately"
+            )
+
+    def _extract_lines(self, content: str, start_line: int, end_line: int) -> str:
+        """Extract lines from content"""
+        lines = content.split("\n")
+        # Convert to 0-indexed
+        start = max(0, start_line - 1)
+        end = min(len(lines), end_line)
+        return "\n".join(lines[start:end])
+
+    def _generate_file_summary(self, parse_result: FileParseResult) -> str:
+        """Generate summary for a file"""
+        parts = []
+
+        if parse_result.module_docstring:
+            # Use first line of docstring
+            first_line = parse_result.module_docstring.split("\n")[0]
+            parts.append(first_line)
+
+        # Add class/function counts
+        if parse_result.classes:
+            parts.append(f"{len(parse_result.classes)} classes")
+        if parse_result.functions:
+            parts.append(f"{len(parse_result.functions)} functions")
+
+        # Add language
+        parts.append(f"{parse_result.language} file")
+
+        return ", ".join(parts) if parts else f"{parse_result.language} source file"
+
+    def _generate_id(self, type_: str, *parts: str) -> str:
+        """
+        Generate deterministic unique ID for code element using hashing.
+        Format: {repo}_{type}_{hash(path+identifier)}
+        """
+        repo_prefix = (
+            normalize_path(self.current_repo_name)
+            if self.current_repo_name
+            else "default"
+        )
+        unique_string = f"{repo_prefix}/{type_}/{'/'.join(str(p) for p in parts)}"
+
+        hash_suffix = hashlib.md5(unique_string.encode("utf-8")).hexdigest()[:16]
+
+        return f"{repo_prefix}_{type_}_{hash_suffix}"
+
+    def _stable_unit_id(self, type_: str, *parts: str) -> str:
+        """Generate a cross-snapshot stable unit identifier."""
+        repo_prefix = (
+            normalize_path(self.current_repo_name)
+            if self.current_repo_name
+            else "default"
+        )
+        stable_string = f"{repo_prefix}/{type_}/{'/'.join(str(p) for p in parts)}"
+        digest = hashlib.sha256(stable_string.encode("utf-8")).hexdigest()[:24]
+        return f"unit:{type_}:{digest}"
+
+    @staticmethod
+    def _hash_payload(payload: Any) -> str:
+        serialized = json.dumps(
+            payload, sort_keys=True, ensure_ascii=False, default=str
+        )
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    def _embed_indexed_elements(self) -> None:
+        element_payloads = [
+            self._serialize_element_for_embedding(element) for element in self.elements
+        ]
+        elements_with_embeddings = self.embedder.embed_elements(element_payloads)
+
+        for element, embedded_payload in zip(
+            self.elements, elements_with_embeddings, strict=True
+        ):
+            element.metadata["embedding"] = embedded_payload.get("embedding")
+            element.metadata["embedding_text"] = embedded_payload.get("embedding_text")
+            element.metadata["embedding_text_hash"] = (
+                embedded_payload.get("metadata", {}) or {}
+            ).get("embedding_text_hash")
+            element.metadata["embedding_artifact_ref"] = embedded_payload.get(
+                "embedding_artifact_ref"
+            )
+            element.metadata["embedding_fingerprint"] = (
+                embedded_payload.get("metadata", {}) or {}
+            ).get("embedding_fingerprint")
+
+    @staticmethod
+    def _serialize_element_for_embedding(element: CodeElement) -> CodeElementMeta:
+        # The embedder only needs the textual fields used to prepare embedding text.
+        # Keeping metadata empty avoids deep-copying large per-element metadata trees.
+        return {
+            "id": element.id,
+            "type": element.type,
+            "name": element.name,
+            "file_path": element.file_path,
+            "relative_path": element.relative_path,
+            "language": element.language,
+            "start_line": element.start_line,
+            "end_line": element.end_line,
+            "code": element.code,
+            "signature": element.signature,
+            "docstring": element.docstring,
+            "summary": element.summary,
+            "metadata": {},
+            "repo_name": element.repo_name,
+            "repo_url": element.repo_url,
+        }
+
+    @staticmethod
+    def _serialize_import(import_info: ImportInfo) -> dict[str, Any]:
+        return {
+            "module": import_info.module,
+            "names": list(import_info.names),
+            "is_from": import_info.is_from,
+            "line": import_info.line,
+            "level": import_info.level,
+        }
+
+    @classmethod
+    def _serialize_imports(cls, imports: list[ImportInfo]) -> list[dict[str, Any]]:
+        return [cls._serialize_import(import_info) for import_info in imports]
+
+    def get_elements_by_type(self, element_type: str) -> list[CodeElement]:
+        """Get all elements of a specific type"""
+        return [elem for elem in self.elements if elem.type == element_type]
+
+    def get_elements_by_file(self, file_path: str) -> list[CodeElement]:
+        """Get all elements from a specific file"""
+        return [elem for elem in self.elements if elem.file_path == file_path]
+
+    def get_element_by_id(self, element_id: str) -> CodeElement | None:
+        """Get element by ID"""
+        for elem in self.elements:
+            if elem.id == element_id:
+                return elem
+        return None
+
+    def get_repository_overview(self) -> dict[str, Any] | None:
+        """
+        Get repository overview from separate storage
+        Note: Repository overviews are no longer stored in self.elements
+        """
+        if self.vector_store and self.current_repo_name:
+            overviews = self.vector_store.load_repo_overviews(include_embeddings=False)
+            return overviews.get(self.current_repo_name)
+        return None

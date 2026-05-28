@@ -1,4 +1,4 @@
-"""Tests for inbound configuration DTO validation."""
+"""Tests for configuration DTO validation."""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ def test_config_dto_rejects_invalid_external_values() -> None:
 def test_config_dto_module_does_not_construct_runtime_contracts() -> None:
     import importlib
 
-    config_schema = importlib.import_module("fastcode.inbound.config_schema")
+    config_schema = importlib.import_module("fastcode.main.config_schema")
 
     assert not hasattr(config_schema, "config_from_mapping")
     assert not hasattr(config_schema, "config_to_dict")

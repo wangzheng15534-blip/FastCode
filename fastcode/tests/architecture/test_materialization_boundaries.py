@@ -8,55 +8,55 @@ from pathlib import Path
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
 
 HOT_PATHS = [
-    PACKAGE_ROOT / "indexing" / "pipeline.py",
-    PACKAGE_ROOT / "indexing" / "projection_transform.py",
+    PACKAGE_ROOT / "app" / "indexing" / "pipeline" / "service.py",
+    PACKAGE_ROOT / "app" / "indexing" / "projection" / "transform.py",
     PACKAGE_ROOT / "mcp" / "graph_tools.py",
     PACKAGE_ROOT / "semantic" / "symbol_index.py",
-    PACKAGE_ROOT / "semantic" / "resolvers" / "patching.py",
-    PACKAGE_ROOT / "store" / "pg_retrieval.py",
-    PACKAGE_ROOT / "store" / "snapshot.py",
-    PACKAGE_ROOT / "store" / "vector.py",
-    PACKAGE_ROOT / "query" / "retriever.py",
+    PACKAGE_ROOT / "semantic" / "resolvers" / "core" / "patching.py",
+    PACKAGE_ROOT / "app" / "store" / "vectors" / "pg_retrieval.py",
+    PACKAGE_ROOT / "app" / "store" / "snapshots" / "snapshot.py",
+    PACKAGE_ROOT / "app" / "store" / "vectors" / "vector.py",
+    PACKAGE_ROOT / "app" / "query" / "selection" / "retriever.py",
 ]
 VECTOR_INSERTION_PATHS = [
     PACKAGE_ROOT / "main" / "fastcode.py",
-    PACKAGE_ROOT / "indexing" / "pipeline.py",
-    PACKAGE_ROOT / "store" / "vector.py",
+    PACKAGE_ROOT / "app" / "indexing" / "pipeline" / "service.py",
+    PACKAGE_ROOT / "app" / "store" / "vectors" / "vector.py",
 ]
 
 ALLOWED_SAFE_JSONABLE: set[tuple[str, int]] = set()
 ALLOWED_SAFE_JSONABLE_FUNCTIONS = {
     # Snapshot JSON files are an explicit persistence boundary. These helpers
     # normalize arbitrary metadata/support payloads before json.dump().
-    ("store/snapshot.py", "_json_mapping_payload"),
-    ("store/snapshot.py", "_json_list_payload"),
+    ("app/store/snapshots/snapshot.py", "_json_mapping_payload"),
+    ("app/store/snapshots/snapshot.py", "_json_list_payload"),
 }
 ALLOWED_TOLIST_FUNCTIONS = {
     # Repository overview manifests are a storage/export boundary for string labels,
     # not embedding vectors or ranked candidate rows.
-    ("store/vector.py", "_load_repo_overview_embeddings"),
+    ("app/store/vectors/vector.py", "_load_repo_overview_embeddings"),
 }
 ALLOWED_GENERIC_DICT_CALLS = {
     # SCIP cache payloads are an explicit artifact boundary.
-    ("indexing/pipeline.py", "_load_scoped_scip_cache", "from_dict"),
-    ("indexing/pipeline.py", "_save_scoped_scip_cache", "to_dict"),
+    ("app/indexing/pipeline/service.py", "_load_scoped_scip_cache", "from_dict"),
+    ("app/indexing/pipeline/service.py", "_save_scoped_scip_cache", "to_dict"),
     # Legacy object fallback and typed config adapters are compatibility/config
     # boundaries, not row-shaped persistence or vector materialization paths.
-    ("indexing/pipeline.py", "_legacy_element_mapping", "to_dict"),
-    ("query/retriever.py", "_project_doc_priors", "from_dict"),
-    ("query/retriever.py", "_apply_doc_projection_to_code", "from_dict"),
-    ("query/retriever.py", "_adaptive_fuse_channels", "from_dict"),
-    ("query/retriever.py", "_compute_adaptive_fusion_params", "from_dict"),
+    ("app/indexing/pipeline/service.py", "_legacy_element_mapping", "to_dict"),
+    ("app/query/selection/retriever.py", "_project_doc_priors", "from_dict"),
+    ("app/query/selection/retriever.py", "_apply_doc_projection_to_code", "from_dict"),
+    ("app/query/selection/retriever.py", "_adaptive_fuse_channels", "from_dict"),
+    ("app/query/selection/retriever.py", "_compute_adaptive_fusion_params", "from_dict"),
 }
 ALLOWED_NETWORKX_IMPORTS = {
     # Compatibility and explicit graph materialization boundaries. New hot paths
     # should use IRGraphView/native handles before this allowlist grows.
     "graph/build.py",
-    "indexing/projection_transform.py",
+    "app/indexing/projection/transform.py",
     "ir/graph.py",
     "mcp/graph_tools.py",
-    "query/retriever.py",
-    "store/snapshot.py",
+    "app/query/selection/retriever.py",
+    "app/store/snapshots/snapshot.py",
 }
 
 
@@ -124,7 +124,7 @@ def test_hot_paths_do_not_use_generic_safe_jsonable() -> None:
 
 
 def test_pg_retrieval_does_not_materialize_embedding_lists_on_active_path() -> None:
-    path = PACKAGE_ROOT / "store" / "pg_retrieval.py"
+    path = PACKAGE_ROOT / "app" / "store" / "vectors" / "pg_retrieval.py"
     tree = ast.parse(path.read_text())
     violations: list[str] = []
 
@@ -203,7 +203,7 @@ def test_hot_paths_do_not_use_generic_row_or_record_round_trips() -> None:
 
 
 def test_incremental_pipeline_does_not_call_full_element_graph_fallback() -> None:
-    path = PACKAGE_ROOT / "indexing" / "pipeline.py"
+    path = PACKAGE_ROOT / "app" / "indexing" / "pipeline" / "service.py"
     tree = ast.parse(path.read_text())
     violations: list[str] = []
     for node in ast.walk(tree):
@@ -218,7 +218,7 @@ def test_incremental_pipeline_does_not_call_full_element_graph_fallback() -> Non
 
 
 def test_incremental_pipeline_does_not_reintroduce_full_element_fallback_helper() -> None:
-    path = PACKAGE_ROOT / "indexing" / "pipeline.py"
+    path = PACKAGE_ROOT / "app" / "indexing" / "pipeline" / "service.py"
     tree = ast.parse(path.read_text())
     violations = [
         f"{_rel(path)}:{node.lineno}"
@@ -233,7 +233,7 @@ def test_incremental_pipeline_does_not_reintroduce_full_element_fallback_helper(
 
 
 def test_semantic_patch_does_not_eagerly_copy_snapshot_collections() -> None:
-    path = PACKAGE_ROOT / "semantic" / "resolvers" / "patching.py"
+    path = PACKAGE_ROOT / "semantic" / "resolvers" / "core" / "patching.py"
     tree = ast.parse(path.read_text())
     parents = _parents(tree)
     violations: list[str] = []
@@ -256,7 +256,7 @@ def test_semantic_patch_does_not_eagerly_copy_snapshot_collections() -> None:
 
 
 def test_shard_native_bm25_retrieval_helpers_do_not_construct_bm25okapi() -> None:
-    path = PACKAGE_ROOT / "query" / "retriever.py"
+    path = PACKAGE_ROOT / "app" / "query" / "selection" / "retriever.py"
     tree = ast.parse(path.read_text())
     parents = _parents(tree)
     guarded_functions = {

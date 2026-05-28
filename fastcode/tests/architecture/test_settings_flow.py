@@ -10,15 +10,15 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
 NO_ENV_PACKAGES = [
     "ir",
     "graph",
-    "indexing",
+    "app/indexing",
     "mcp",
-    "query",
+    "app/query",
     "retrieval/core",
     "retrieval",
-    "runtime",
-    "inbound",
-    "store",
-    "store/infrastructure",
+    "kernel",
+    "runtime_support",
+    "app/store",
+    "infrastructure",
     "schemas",
 ]
 

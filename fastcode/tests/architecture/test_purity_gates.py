@@ -32,7 +32,6 @@ BANNED_IMPORTS_BY_PACKAGE = {
         "fastcode.mcp": "The graph layer must not depend on transport shells.",
         "fastcode.query": "Graph construction must stay independent of query orchestration.",
         "fastcode.retrieval": "Graph construction must stay independent of retrieval orchestration.",
-        "fastcode.inbound": "Graph construction should depend on IR and helpers, not inbound schemas.",
         "fastcode.schemas": "Graph construction should depend on IR and helpers, not deleted schema compatibility modules.",
         "fastcode.store": "Graph construction must stay independent of storage orchestration.",
     },
@@ -48,7 +47,6 @@ BANNED_IMPORTS_BY_PACKAGE = {
         "fastcode.mcp": "The IR layer must not depend on transport shells.",
         "fastcode.query": "Query orchestration depends on IR, not vice versa.",
         "fastcode.retrieval": "Retrieval orchestration depends on IR, not vice versa.",
-        "fastcode.inbound": "IR is canonical; inbound DTOs must not be imported by IR.",
         "fastcode.schemas": "IR is canonical; deleted schema compatibility modules must stay out of IR.",
         "fastcode.scip": "SCIP adapters depend on IR, not vice versa.",
         "fastcode.semantic": "Semantic adapters depend on IR, not vice versa.",
@@ -65,28 +63,44 @@ BANNED_IMPORTS_BY_PACKAGE = {
         "fastcode.main": "retrieval must not depend on the composition root.",
         "fastcode.mcp": "retrieval must not depend on transport shells.",
         "fastcode.query": "retrieval must stay independent of query orchestration.",
-        "fastcode.inbound": "retrieval must not depend on inbound schemas or mappers.",
         "fastcode.schemas": "retrieval must not depend on deleted schema compatibility modules.",
         "fastcode.scip": "retrieval must stay independent of SCIP loading and adapters.",
         "fastcode.semantic": "retrieval must stay independent of semantic adapters.",
         "fastcode.store": "retrieval must stay independent of storage orchestration.",
     },
-    "inbound": {
-        "pydantic": "Only inbound config schema modules may import Pydantic; mappers consume DTOs directly.",
-        "dotenv": "Inbound mappers must not load environment files.",
-        "sqlite3": "Inbound mappers must stay independent of database I/O.",
-        "subprocess": "Inbound mappers must stay independent of process execution.",
-        "urllib": "Inbound mappers must stay independent of network I/O.",
-        "fastcode.api": "Inbound mappers must not depend on entrypoint shells.",
-        "fastcode.graph": "Inbound mappers must not depend on domain orchestration.",
-        "fastcode.indexing": "Inbound mappers must not depend on shell orchestration.",
-        "fastcode.main": "Inbound mappers must not depend on the composition root.",
-        "fastcode.mcp": "Inbound mappers must not depend on transport shells.",
-        "fastcode.query": "Inbound mappers must not depend on query orchestration.",
-        "fastcode.retrieval": "Inbound mappers must not depend on retrieval logic.",
-        "fastcode.scip": "Inbound mappers must not depend on SCIP adapters.",
-        "fastcode.semantic": "Inbound mappers must not depend on semantic adapters.",
-        "fastcode.store": "Inbound mappers must not depend on storage orchestration.",
+    "kernel": {
+        "pydantic": "kernel contracts must stay dataclass-based and Pydantic-free.",
+        "dotenv": "kernel contracts must not load environment files.",
+        "sqlite3": "kernel contracts must stay independent of database I/O.",
+        "subprocess": "kernel contracts must stay independent of process execution.",
+        "urllib": "kernel contracts must stay independent of network I/O.",
+        "fastcode.api": "kernel contracts must not depend on entrypoint shells.",
+        "fastcode.graph": "kernel contracts must not depend on domain orchestration.",
+        "fastcode.indexing": "kernel contracts must not depend on shell orchestration.",
+        "fastcode.main": "kernel contracts must not depend on the composition root.",
+        "fastcode.mcp": "kernel contracts must not depend on transport shells.",
+        "fastcode.query": "kernel contracts must not depend on query orchestration.",
+        "fastcode.retrieval": "kernel contracts must not depend on retrieval logic.",
+        "fastcode.scip": "kernel contracts must not depend on SCIP adapters.",
+        "fastcode.semantic": "kernel contracts must not depend on semantic adapters.",
+        "fastcode.store": "kernel contracts must not depend on storage orchestration.",
+    },
+    "runtime_support": {
+        "pydantic": "runtime_support helpers must stay Pydantic-free.",
+        "dotenv": "runtime_support must not load environment files.",
+        "sqlite3": "runtime_support must stay independent of database I/O.",
+        "subprocess": "runtime_support must stay independent of process execution.",
+        "urllib": "runtime_support must stay independent of network I/O.",
+        "fastcode.api": "runtime_support must not depend on entrypoint shells.",
+        "fastcode.graph": "runtime_support must not depend on domain orchestration.",
+        "fastcode.indexing": "runtime_support must not depend on shell orchestration.",
+        "fastcode.main": "runtime_support must not depend on the composition root.",
+        "fastcode.mcp": "runtime_support must not depend on transport shells.",
+        "fastcode.query": "runtime_support must not depend on query orchestration.",
+        "fastcode.retrieval": "runtime_support must not depend on retrieval logic.",
+        "fastcode.scip": "runtime_support must not depend on SCIP adapters.",
+        "fastcode.semantic": "runtime_support must not depend on semantic adapters.",
+        "fastcode.store": "runtime_support must not depend on storage orchestration.",
     },
     "store/infrastructure": {
         "pydantic": "store.infrastructure should operate on frozen dataclasses and primitives.",
@@ -97,29 +111,9 @@ BANNED_IMPORTS_BY_PACKAGE = {
         "fastcode.mcp": "store.infrastructure must stay independent of transport shells.",
         "fastcode.query": "store.infrastructure must stay independent of query orchestration.",
         "fastcode.retrieval": "store.infrastructure must stay independent of retrieval orchestration.",
-        "fastcode.inbound": "store.infrastructure must not depend on inbound schemas or mappers.",
         "fastcode.schemas": "store.infrastructure must not depend on deleted schema compatibility modules.",
         "fastcode.scip": "store.infrastructure must stay independent of SCIP adapters.",
         "fastcode.semantic": "store.infrastructure must stay independent of semantic adapters.",
-    },
-    "runtime": {
-        "pydantic": "runtime contracts must stay Pydantic-free.",
-        "dotenv": "runtime contracts must not load environment files.",
-        "sqlite3": "runtime contracts must stay independent of database I/O.",
-        "subprocess": "runtime contracts must stay independent of process execution.",
-        "urllib": "runtime contracts must stay independent of network I/O.",
-        "fastcode.api": "runtime contracts must not depend on entrypoint shells.",
-        "fastcode.graph": "runtime contracts must not depend on domain orchestration.",
-        "fastcode.indexing": "runtime contracts must not depend on shell orchestration.",
-        "fastcode.main": "runtime contracts must not depend on the composition root.",
-        "fastcode.mcp": "runtime contracts must not depend on transport shells.",
-        "fastcode.query": "runtime contracts must not depend on query orchestration.",
-        "fastcode.retrieval": "runtime contracts must not depend on retrieval logic.",
-        "fastcode.inbound": "runtime contracts must not depend on inbound schemas or mappers.",
-        "fastcode.schemas": "runtime contracts must not depend on deleted schema compatibility modules.",
-        "fastcode.scip": "runtime contracts must not depend on SCIP adapters.",
-        "fastcode.semantic": "runtime contracts must not depend on semantic adapters.",
-        "fastcode.store": "runtime contracts must not depend on storage orchestration.",
     },
 }
 PACKAGE_ROOTS = [
@@ -290,13 +284,13 @@ def test_package_boundary_import_bans() -> None:
                     continue
                 for imported in _import_candidates(py_file, node):
                     for banned, message in banned_imports.items():
-                        is_inbound_config_schema = rel == Path(
-                            "inbound/config_schema.py"
+                        is_main_config_schema = rel == Path(
+                            "main/config_schema.py"
                         ) or (
-                            rel.parent == Path("inbound")
+                            rel.parent == Path("main")
                             and rel.name.startswith("_config_schema")
                         )
-                        if is_inbound_config_schema and banned == "pydantic":
+                        if is_main_config_schema and banned == "pydantic":
                             continue
                         if _matches_banned_import(imported, banned):
                             violations.append(
@@ -309,10 +303,11 @@ def test_package_boundary_import_bans() -> None:
 
 
 def test_runtime_contracts_do_not_load_env_or_dotenv() -> None:
-    """Runtime contracts receive resolved values; loaders stay in shell packages."""
+    """Kernel and runtime_support receive resolved values; loaders stay in shell packages."""
     violations: list[str] = []
-    for py_file in _iter_python_files("runtime"):
-        violations.extend(_has_env_loading(py_file))
+    for package in ("kernel", "runtime_support"):
+        for py_file in _iter_python_files(package):
+            violations.extend(_has_env_loading(py_file))
     assert not violations, "Runtime env access violations:\n" + "\n".join(violations)
 
 

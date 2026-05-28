@@ -12,10 +12,10 @@ ROOT_INIT = PACKAGE_ROOT / "__init__.py"
 MAIN_INIT = PACKAGE_ROOT / "main" / "__init__.py"
 FORBIDDEN_GENERIC_LAYOUT_NAMES = {"config", "core", "events"}
 ALLOWED_ROLE_SPECIFIC_LAYOUT_FILES = {
-    Path("inbound/config_schema.py"),
+    Path("main/config_schema.py"),
     Path("main/config.py"),
-    Path("runtime/config.py"),
-    Path("runtime/events.py"),
+    Path("kernel/config.py"),
+    Path("runtime_support/events.py"),
 }
 DELETED_COMPATIBILITY_MODULES = {
     "fastcode.db_runtime",

@@ -73,19 +73,19 @@ root_package = "fastcode"
 exclude_type_checking_imports = true
 
 [[tool.importlinter.contracts]]
-id = "inbound-private-config-schema"
-name = "Inbound private config schema modules stay inside inbound"
+id = "main-private-config-schema"
+name = "Main private config schema modules stay inside main"
 type = "protected"
 protected_modules = [
-    "fastcode.inbound._config_schema_base",
-    "fastcode.inbound._config_schema_indexing",
-    "fastcode.inbound._config_schema_operations",
-    "fastcode.inbound._config_schema_persistence",
-    "fastcode.inbound._config_schema_querying",
-    "fastcode.inbound._config_schema_root",
+    "fastcode.main._config_schema_base",
+    "fastcode.main._config_schema_indexing",
+    "fastcode.main._config_schema_operations",
+    "fastcode.main._config_schema_persistence",
+    "fastcode.main._config_schema_querying",
+    "fastcode.main._config_schema_root",
 ]
 allowed_importers = [
-    "fastcode.inbound.*",
+    "fastcode.main.*",
 ]
 as_packages = false
 

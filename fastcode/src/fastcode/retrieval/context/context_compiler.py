@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from fastcode.retrieval.contracts import SourceCitation
-from fastcode.retrieval.ranking import fcx as _fcx
+from fastcode.retrieval.ranking.fcx import render_block as _render_block, render_record as _render_record
 
 from .agent_context import (
     AcceptanceContract,
@@ -189,7 +189,7 @@ def compile_working_memory(
     if isinstance(l0, Mapping):
         summary = _mapping_summary(l0)
         stable_records.append(
-            _fcx.render_record(
+            _render_record(
                 "L0",
                 fields={
                     "p": projection_id or "proj",
@@ -201,7 +201,7 @@ def compile_working_memory(
     if isinstance(l1, Mapping):
         summary = _mapping_summary(l1)
         stable_records.append(
-            _fcx.render_record(
+            _render_record(
                 "L1",
                 fields={
                     "p": projection_id or "proj",
@@ -211,7 +211,7 @@ def compile_working_memory(
             )
         )
     stable_records.append(
-        _fcx.render_record(
+        _render_record(
             "C",
             fields={
                 "out": contract.requested_outcome,
@@ -224,7 +224,7 @@ def compile_working_memory(
     )
     for fact in accepted_facts:
         stable_records.append(
-            _fcx.render_record(
+            _render_record(
                 "F",
                 fact.fact_id,
                 fields={"scope": fact.scope, "refs": fact.ref_ids},
@@ -232,16 +232,16 @@ def compile_working_memory(
             )
         )
     stable_records.append(
-        _fcx.render_record("END", fields={"refs": len(stable_records)})
+        _render_record("END", fields={"refs": len(stable_records)})
     )
     stable_fcx = (
         "<fcx:stable>\n"
-        + _fcx.render_block(mode="stable", header_fields=header, records=stable_records)
+        + _render_block(mode="stable", header_fields=header, records=stable_records)
         + "\n</fcx:stable>"
     )
 
     turn_records: list[str] = [
-        _fcx.render_record(
+        _render_record(
             "I",
             "i1",
             fields={
@@ -250,7 +250,7 @@ def compile_working_memory(
                 "q": intent.question,
             },
         ),
-        _fcx.render_record(
+        _render_record(
             "R",
             fields={
                 "eg": risk_state.evidence_gap,
@@ -262,7 +262,7 @@ def compile_working_memory(
                 "act": risk_state.action_bias,
             },
         ),
-        _fcx.render_record(
+        _render_record(
             "P",
             "p1",
             fields={
@@ -275,7 +275,7 @@ def compile_working_memory(
     ]
     for hypothesis in hypotheses:
         turn_records.append(
-            _fcx.render_record(
+            _render_record(
                 "H",
                 hypothesis.hypothesis_id,
                 fields={
@@ -289,7 +289,7 @@ def compile_working_memory(
         )
     for question_index, question in enumerate(unresolved_questions, 1):
         turn_records.append(
-            _fcx.render_record(
+            _render_record(
                 "Q",
                 f"q{question_index}",
                 fields={"need": "evidence"},
@@ -298,7 +298,7 @@ def compile_working_memory(
         )
     for rejected in rejected_hypotheses:
         turn_records.append(
-            _fcx.render_record(
+            _render_record(
                 "X",
                 rejected.entry_id,
                 fields={
@@ -310,7 +310,7 @@ def compile_working_memory(
             )
         )
     turn_records.append(
-        _fcx.render_record(
+        _render_record(
             "W",
             fields={
                 "keep": working_set.keep_ids,
@@ -321,7 +321,7 @@ def compile_working_memory(
         )
     )
     turn_records.append(
-        _fcx.render_record(
+        _render_record(
             "N",
             fields={
                 "act": plan.allowed_actions,
@@ -332,17 +332,17 @@ def compile_working_memory(
             },
         )
     )
-    turn_records.append(_fcx.render_record("END", fields={"refs": len(turn_records)}))
+    turn_records.append(_render_record("END", fields={"refs": len(turn_records)}))
     turn_fcx = (
         "<fcx:turn>\n"
-        + _fcx.render_block(mode="turn", header_fields=header, records=turn_records)
+        + _render_block(mode="turn", header_fields=header, records=turn_records)
         + "\n</fcx:turn>"
     )
 
     obs_records: list[str] = []
     for observation in observations:
         obs_records.append(
-            _fcx.render_record(
+            _render_record(
                 "O",
                 observation.observation_id,
                 fields={
@@ -356,10 +356,10 @@ def compile_working_memory(
                 tail=observation.summary,
             )
         )
-    obs_records.append(_fcx.render_record("END", fields={"refs": len(obs_records)}))
+    obs_records.append(_render_record("END", fields={"refs": len(obs_records)}))
     obs_fcx = (
         "<fcx:obs>\n"
-        + _fcx.render_block(mode="tool", header_fields=header, records=obs_records)
+        + _render_block(mode="tool", header_fields=header, records=obs_records)
         + "\n</fcx:obs>"
     )
 

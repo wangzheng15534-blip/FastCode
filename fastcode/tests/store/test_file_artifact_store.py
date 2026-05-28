@@ -5,8 +5,8 @@ from typing import Any
 
 import pytest
 
-from fastcode.app.store.artifacts.file_contracts import FileArtifactRecord
 from fastcode.app.store.artifacts.file import FileArtifactStore
+from fastcode.app.store.artifacts.file_contracts import FileArtifactRecord
 from fastcode.infrastructure.storage.runtime import DBRuntime
 
 

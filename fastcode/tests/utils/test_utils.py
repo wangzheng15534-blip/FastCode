@@ -12,8 +12,8 @@ from _pytest.monkeypatch import MonkeyPatch
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fastcode.main.config import prepare_runtime_config_mapping, resolve_config_paths
 from fastcode.app.query.tokens import truncate_to_tokens
+from fastcode.main.config import prepare_runtime_config_mapping, resolve_config_paths
 from fastcode.utils.clock import utc_now
 from fastcode.utils.filesystem import (
     compute_file_hash,

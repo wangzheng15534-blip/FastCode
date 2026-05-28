@@ -13,10 +13,10 @@ import pytest
 from hypothesis import HealthCheck, settings
 from hypothesis import strategies as st
 
+from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
 from fastcode.scip.models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
-from fastcode.infrastructure.storage.runtime import DBRuntime
 
 # Schemathesis fuzzing is intentionally opt-in because it is slow and uses
 # separate pytest plugin wiring. Keep it out of default collection instead of

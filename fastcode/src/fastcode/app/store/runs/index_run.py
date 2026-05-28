@@ -11,6 +11,7 @@ from fastcode.ports.runtime import Clock, IdGenerator
 from fastcode.ports.storage import StoreDatabaseRuntime
 from fastcode.utils.clock import SystemClock
 from fastcode.utils.ids import PrefixedIdGenerator
+
 from .index_run_contracts import IndexRunRecord, PublishTaskRecord
 
 

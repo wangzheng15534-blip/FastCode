@@ -8,7 +8,9 @@ import time
 from collections.abc import Mapping
 from typing import Any, cast
 
+from fastcode.retrieval.contracts import SourceCitation
 from fastcode.retrieval.ranking import fcx as _fcx
+
 from .agent_context import (
     AcceptanceContract,
     AcceptedFact,
@@ -27,7 +29,6 @@ from .agent_context import (
     WorkingMemoryArtifact,
     WorkingSet,
 )
-from fastcode.retrieval.contracts import SourceCitation
 
 COMPILER_FINGERPRINT = "fcx-v1"
 DEFAULT_PROJECTION_FINGERPRINT = "projection:none"

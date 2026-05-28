@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from fastcode.ir.element import CodeElementMeta
-
 from fastcode.retrieval.contracts import Hit, RetrievalSource
 
 

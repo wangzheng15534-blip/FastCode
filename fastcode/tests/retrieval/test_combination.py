@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 
-from fastcode.retrieval.ranking.combination import combine_results
 from fastcode.retrieval.contracts import Hit, RetrievalSource
+from fastcode.retrieval.ranking.combination import combine_results
 
 
 def _mk_meta(elem_id: str, **extra) -> dict[str, Any]:

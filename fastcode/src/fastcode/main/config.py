@@ -10,8 +10,8 @@ from typing import Any, cast
 import yaml
 from dotenv import load_dotenv
 
-from fastcode.inbound.config_mapper import config_from_mapping, config_to_dict
-from fastcode.runtime.config import FastCodeConfig
+from fastcode.kernel.config import FastCodeConfig
+from fastcode.main.config_mapper import config_from_mapping, config_to_dict
 from fastcode.runtime_support.observability import setup_logging_from_config
 
 

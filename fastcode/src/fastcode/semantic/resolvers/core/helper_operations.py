@@ -12,6 +12,11 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
+from fastcode.semantic.resolution import ToolDiagnostic
+from fastcode.semantic.resolvers.core.resolver_support import (
+    _normalize_path,
+    validate_helper_paths,
+)
 from fastcode.utils.filesystem import (
     compute_file_sha256,
     file_content_identity,
@@ -19,8 +24,6 @@ from fastcode.utils.filesystem import (
     resolve_absolute_root,
 )
 from fastcode.utils.json import load_json_object, write_json_object_atomic
-from fastcode.semantic.resolution import ToolDiagnostic
-from fastcode.semantic.resolvers.core.resolver_support import _normalize_path, validate_helper_paths
 
 logger = logging.getLogger(__name__)
 

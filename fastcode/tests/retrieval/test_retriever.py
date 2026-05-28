@@ -15,10 +15,13 @@ import numpy as np
 import pytest
 from rank_bm25 import BM25Okapi
 
+from fastcode.app.query.selection.retriever import (
+    HybridRetriever,
+    _fusion_config_from_runtime,
+)
+from fastcode.app.store.vectors.vector import VectorStore
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs, IRGraphView
-from fastcode.app.query.selection.retriever import HybridRetriever, _fusion_config_from_runtime
-from fastcode.app.store.vectors.vector import VectorStore
 
 
 def _mk_row(

@@ -17,10 +17,6 @@ from fastcode.app.store.runs.index_run_contracts import (
     PublishTaskRecord,
 )
 from fastcode.app.store.snapshots.manifest_contracts import ManifestRecord
-from fastcode.app.store.vectors.pg_retrieval_contracts import (
-    PgRetrievalElementRecord,
-    PgRetrievalResultRecord,
-)
 from fastcode.app.store.snapshots.projection_contracts import (
     ProjectionBuildRecord,
     ProjectionDirtyScopeRecord,
@@ -31,6 +27,10 @@ from fastcode.app.store.snapshots.snapshot_contracts import (
     SCIPArtifactRecord,
     SnapshotRecord,
     SnapshotRefRecord,
+)
+from fastcode.app.store.vectors.pg_retrieval_contracts import (
+    PgRetrievalElementRecord,
+    PgRetrievalResultRecord,
 )
 from fastcode.app.store.vectors.vector_contracts import (
     RepositoryOverviewRecord,

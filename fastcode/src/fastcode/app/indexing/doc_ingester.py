@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from fastcode.ir.types import IRSnapshot
 from fastcode.app.indexing.embedder import CodeEmbedder
+from fastcode.ir.types import IRSnapshot
 
 logger = logging.getLogger(__name__)
 

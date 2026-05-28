@@ -12,10 +12,10 @@ from fastcode.ports.jobs import IndexRunStore as IndexRunStorePort
 from fastcode.ports.publishing import LineagePublisher
 
 if TYPE_CHECKING:
-    from fastcode.ports.jobs import IndexRunView
+    from fastcode.app.indexing.pipeline.redo_worker import RedoWorker
     from fastcode.app.store.snapshots.manifest import ManifestStore
     from fastcode.app.store.snapshots.snapshot import SnapshotStore
-    from fastcode.app.indexing.pipeline.redo_worker import RedoWorker
+    from fastcode.ports.jobs import IndexRunView
 
 
 class PublishingService:

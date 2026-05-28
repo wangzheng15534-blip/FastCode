@@ -28,29 +28,29 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fastcode.graph.build import CodeGraphBuilder
-from fastcode.inbound.config_mapper import config_from_mapping
 from fastcode.app.indexing.doc_ingester import KeyDocIngester
 from fastcode.app.indexing.embedder import CodeEmbedder
-from fastcode.app.indexing.pipeline.indexer import CodeIndexer
-from fastcode.app.indexing.loader import RepositoryLoader
 from fastcode.app.indexing.extractors.parser import CodeParser
+from fastcode.app.indexing.loader import RepositoryLoader
+from fastcode.app.indexing.pipeline.indexer import CodeIndexer
 from fastcode.app.indexing.pipeline.service import IndexPipeline
 from fastcode.app.indexing.terminus import TerminusPublisher
+from fastcode.app.store.runs.index_run import IndexRunStore
+from fastcode.app.store.snapshots.manifest import ManifestStore
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
+from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
+from fastcode.app.store.vectors.vector import VectorStore
+from fastcode.graph.build import CodeGraphBuilder
+from fastcode.infrastructure.graph_runtime.ladybug import LadybugGraphRuntime
+from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.main.config import config_to_runtime_mapping
+from fastcode.main.config_mapper import config_from_mapping
 from fastcode.main.fastcode import FastCode
 from fastcode.semantic.resolvers.core.registry import (
     build_default_semantic_resolver_registry,
 )
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
-from fastcode.app.store.runs.index_run import IndexRunStore
-from fastcode.infrastructure.graph_runtime.ladybug import LadybugGraphRuntime
-from fastcode.infrastructure.storage.runtime import DBRuntime
-from fastcode.app.store.snapshots.manifest import ManifestStore
-from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
-from fastcode.app.store.snapshots.snapshot import SnapshotStore
-from fastcode.app.store.vectors.vector import VectorStore
 
 pytestmark = [pytest.mark.e2e]
 

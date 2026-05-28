@@ -9,14 +9,15 @@ from unittest.mock import MagicMock
 import networkx as nx
 import pytest
 
-from fastcode.ir.element import CodeElement
-from fastcode.ir.graph import IRGraphs
-from fastcode.ir.types import IRSnapshot
-from fastcode.main.fastcode import FastCode
 from fastcode.app.query.context_payloads import distillation_payload
 from fastcode.app.query.orchestration.handler import QueryPipeline
 from fastcode.app.query.orchestration.processor import ProcessedQuery
 from fastcode.app.query.selection.retriever import HybridRetriever
+from fastcode.app.store.cache.contracts import ContextDistillationRecord
+from fastcode.ir.element import CodeElement
+from fastcode.ir.graph import IRGraphs
+from fastcode.ir.types import IRSnapshot
+from fastcode.main.fastcode import FastCode
 from fastcode.retrieval.context.agent_context import (
     AcceptanceContract,
     AcceptedFact,
@@ -35,7 +36,6 @@ from fastcode.retrieval.context.agent_context import (
     WorkingSet,
 )
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
-from fastcode.app.store.cache.contracts import ContextDistillationRecord
 
 AGENT_CONTEXT_RECORD_CLASSES = (
     EvidenceRef,

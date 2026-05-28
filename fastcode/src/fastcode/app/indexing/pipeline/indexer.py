@@ -12,13 +12,17 @@ from typing import Any
 
 from tqdm import tqdm
 
-from fastcode.ir.element import CodeElement, CodeElementMeta
-from fastcode.ports.embedding import EmbeddingProvider
-from fastcode.app.store.vectors.vector import VectorStore
-from fastcode.utils.filesystem import normalize_path
+from fastcode.app.indexing.extractors.parser import (
+    CodeParser,
+    FileParseResult,
+    ImportInfo,
+)
 from fastcode.app.indexing.loader import RepositoryLoader
 from fastcode.app.indexing.overview import RepositoryOverviewGenerator
-from fastcode.app.indexing.extractors.parser import CodeParser, FileParseResult, ImportInfo
+from fastcode.app.store.vectors.vector import VectorStore
+from fastcode.ir.element import CodeElement, CodeElementMeta
+from fastcode.ports.embedding import EmbeddingProvider
+from fastcode.utils.filesystem import normalize_path
 
 
 class CodeIndexer:

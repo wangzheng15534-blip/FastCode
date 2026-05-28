@@ -13,8 +13,26 @@ from collections.abc import Callable, Generator, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 import fastcode.retrieval.context.snapshot as _snapshot
-
+from fastcode.app.query.boundary import processed_query_payload
+from fastcode.app.query.context_payloads import (
+    activation_payload,
+    context_bundle_payload,
+    distillation_from_payload,
+    distillation_payload,
+    turn_journal_payload,
+    working_memory_payload,
+)
 from fastcode.app.query.selection.retriever import HybridRetriever
+from fastcode.app.store.cache.contracts import (
+    ContextActivationRecord,
+    ContextBundleRecord,
+    ContextDistillationRecord,
+    TurnJournalRecord,
+    WorkingMemoryRecord,
+)
+from fastcode.app.store.cache.service import CacheManager
+from fastcode.app.store.snapshots.manifest import ManifestStore
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
 from fastcode.retrieval.context.agent_context import (
     DistillationRecord,
     ToolObservation,
@@ -39,26 +57,8 @@ from fastcode.retrieval.context.context_compiler import (
 )
 from fastcode.retrieval.contracts import Hit, SourceCitation
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
-from fastcode.app.store.cache.service import CacheManager
-from fastcode.app.store.cache.contracts import (
-    ContextActivationRecord,
-    ContextBundleRecord,
-    ContextDistillationRecord,
-    TurnJournalRecord,
-    WorkingMemoryRecord,
-)
-from fastcode.app.store.snapshots.manifest import ManifestStore
-from fastcode.app.store.snapshots.snapshot import SnapshotStore
+
 from .answer import AnswerGenerator
-from fastcode.app.query.boundary import processed_query_payload
-from fastcode.app.query.context_payloads import (
-    activation_payload,
-    context_bundle_payload,
-    distillation_from_payload,
-    distillation_payload,
-    turn_journal_payload,
-    working_memory_payload,
-)
 from .processor import QueryProcessor
 
 if TYPE_CHECKING:
@@ -385,7 +385,9 @@ class QueryPipeline:
                 if use_iterative_enhancement:
                     # Iterative agent will handle all query enhancement
                     # Create minimal ProcessedQuery object
-                    from fastcode.app.query.orchestration.processor import ProcessedQuery
+                    from fastcode.app.query.orchestration.processor import (
+                        ProcessedQuery,
+                    )
 
                     intent = "unknown"
                     detect_intent = getattr(

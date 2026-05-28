@@ -6,12 +6,12 @@ from typing import Any
 
 import pytest
 
-from fastcode.ir.projection import ProjectionBuildResult, ProjectionScope
 from fastcode.app.store.snapshots.projection import ProjectionStore
 from fastcode.app.store.snapshots.projection_contracts import (
     ProjectionBuildRecord,
     ProjectionDirtyScopeRecord,
 )
+from fastcode.ir.projection import ProjectionBuildResult, ProjectionScope
 
 
 class _FakeCursor:

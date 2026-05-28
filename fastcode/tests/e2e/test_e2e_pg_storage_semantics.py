@@ -17,6 +17,9 @@ from typing import Any
 
 import pytest
 
+from fastcode.app.store.snapshots.manifest import ManifestStore
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
+from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.types import (
     IRCodeUnit,
     IRRelation,
@@ -24,9 +27,6 @@ from fastcode.ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from fastcode.infrastructure.storage.runtime import DBRuntime
-from fastcode.app.store.snapshots.manifest import ManifestStore
-from fastcode.app.store.snapshots.snapshot import SnapshotStore
 
 pytestmark = [pytest.mark.e2e, pytest.mark.integration]
 

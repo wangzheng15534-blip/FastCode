@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from fastcode.runtime.events import (
+from fastcode.runtime_support.events import (
     AgentContextEvent,
     AgentContextEventType,
     PipelineStageEvent,

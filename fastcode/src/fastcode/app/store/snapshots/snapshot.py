@@ -43,6 +43,7 @@ from fastcode.utils.materialization import (
     BOUNDARY_SNAPSHOT_FULL_LOAD,
     increment_materialization_boundary,
 )
+
 from .ir_payloads import (
     _attachment_payload,
     _code_unit_from_payload,

@@ -12,6 +12,17 @@ from typing import Any, cast
 
 from diskcache import Cache as DiskCache
 
+from .contracts import (
+    ContextActivationRecord,
+    ContextBundleRecord,
+    ContextDistillationRecord,
+    DialogueSessionRecord,
+    DialogueTurnRecord,
+    HandoffArtifactRecord,
+    QueryResultCacheRecord,
+    TurnJournalRecord,
+    WorkingMemoryRecord,
+)
 from .payloads import (
     _CACHE_NOT_MARSHALLED,
     _context_activation_payload,
@@ -35,17 +46,6 @@ from .payloads import (
     _turn_journal_record,
     _working_memory_payload,
     _working_memory_record,
-)
-from .contracts import (
-    ContextActivationRecord,
-    ContextBundleRecord,
-    ContextDistillationRecord,
-    DialogueSessionRecord,
-    DialogueTurnRecord,
-    HandoffArtifactRecord,
-    QueryResultCacheRecord,
-    TurnJournalRecord,
-    WorkingMemoryRecord,
 )
 
 

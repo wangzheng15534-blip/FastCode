@@ -23,37 +23,40 @@ from fastcode.ir.types import (
 )
 from fastcode.main.fastcode import FastCode
 from fastcode.semantic.resolution import ResolutionPatch
+from fastcode.semantic.resolvers.core.helper_backed import HelperBackedSemanticResolver
 from fastcode.semantic.resolvers.core.helper_operations import (
     SemanticHelperInvocation,
+)
+from fastcode.semantic.resolvers.core.patching import (
+    _source_preference,
+    apply_resolution_patch,
+)
+from fastcode.semantic.resolvers.core.registry import (
+    SemanticResolverRegistry,
+    build_default_semantic_resolver_registry,
 )
 from fastcode.semantic.resolvers.core.resolver_support import (
     _hash_id,
     _normalize_path,
     validate_helper_paths,
 )
-from fastcode.semantic.resolvers.languages.c_family import CppSemanticResolver, CSemanticResolver
+from fastcode.semantic.resolvers.languages.c_family import (
+    CppSemanticResolver,
+    CSemanticResolver,
+)
 from fastcode.semantic.resolvers.languages.csharp import CSharpCompilerResolver
 from fastcode.semantic.resolvers.languages.fortran import FortranCompilerResolver
 from fastcode.semantic.resolvers.languages.go import GoCompilerResolver
-from fastcode.semantic.resolvers.core.helper_backed import HelperBackedSemanticResolver
 from fastcode.semantic.resolvers.languages.java import JavaCompilerResolver
 from fastcode.semantic.resolvers.languages.js_ts import (
     JavaScriptCompilerResolver,
     TypeScriptCompilerResolver,
 )
 from fastcode.semantic.resolvers.languages.julia import JuliaCompilerResolver
-from fastcode.semantic.resolvers.core.patching import (
-    _source_preference,
-    apply_resolution_patch,
-)
 from fastcode.semantic.resolvers.languages.python import (
     PYTHON_RESOLVER_EXTRACTOR,
     PYTHON_RESOLVER_SOURCE,
     PythonSemanticResolver,
-)
-from fastcode.semantic.resolvers.core.registry import (
-    SemanticResolverRegistry,
-    build_default_semantic_resolver_registry,
 )
 from fastcode.semantic.resolvers.languages.rust import RustCompilerResolver
 from fastcode.semantic.resolvers.languages.zig import ZigCompilerResolver

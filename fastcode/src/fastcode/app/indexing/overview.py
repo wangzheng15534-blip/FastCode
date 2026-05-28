@@ -10,7 +10,6 @@ from anthropic import Anthropic
 from openai import OpenAI
 
 import fastcode.retrieval.graph.repo_analysis as _repo_analysis
-
 from fastcode.app.query.llm import openai_chat_completion
 from fastcode.utils.paths import get_language_from_extension
 

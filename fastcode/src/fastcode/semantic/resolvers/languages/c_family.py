@@ -10,10 +10,14 @@ from typing import Any
 
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
-from fastcode.utils.paths import infer_language_from_file_context
 from fastcode.semantic.contracts import SemanticGraphContext
-from fastcode.semantic.resolution import ResolutionPatch, SemanticResolver, ToolDiagnostic
+from fastcode.semantic.resolution import (
+    ResolutionPatch,
+    SemanticResolver,
+    ToolDiagnostic,
+)
 from fastcode.semantic.resolvers.core.resolver_support import _hash_id, _normalize_path
+from fastcode.utils.paths import infer_language_from_file_context
 
 HEADER_EXTENSIONS = (".h", ".hh", ".hpp", ".hxx", ".inl")
 SOURCE_EXTENSIONS = (".c", ".cc", ".cpp", ".cxx")

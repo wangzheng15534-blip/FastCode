@@ -12,6 +12,8 @@ from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, rule
 
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
+from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.types import (
     IRDocument,
     IREdge,
@@ -19,8 +21,6 @@ from fastcode.ir.types import (
     IRSnapshot,
     IRSymbol,
 )
-from fastcode.infrastructure.storage.runtime import DBRuntime
-from fastcode.app.store.snapshots.snapshot import SnapshotStore
 
 # --- Strategies (self-contained) ---
 

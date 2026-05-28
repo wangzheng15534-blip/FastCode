@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from fastcode.inbound.config_schema import (
+from fastcode.main.config_schema import (
     FastCodeConfigDTO,
     StorageBackendDTO,
     VectorShardStorageDTO,

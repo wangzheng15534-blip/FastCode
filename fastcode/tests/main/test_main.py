@@ -13,8 +13,29 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from fastcode.app.query.context_payloads import (
+    context_bundle_payload,
+    turn_journal_payload,
+    working_memory_from_payload,
+    working_memory_payload,
+)
+from fastcode.app.query.selection.retriever import HybridRetriever
+from fastcode.app.store.artifacts.graph import GraphArtifactStore
+from fastcode.app.store.cache.contracts import (
+    ContextActivationRecord,
+    ContextBundleRecord,
+    TurnJournalRecord,
+    WorkingMemoryRecord,
+)
+from fastcode.app.store.runs.index_run_contracts import IndexRunRecord
+from fastcode.app.store.snapshots.manifest_contracts import ManifestRecord
+from fastcode.app.store.snapshots.snapshot_contracts import (
+    SCIPArtifactRecord,
+    SnapshotRecord,
+    SnapshotRefRecord,
+)
+from fastcode.app.store.vectors.vector import VectorStore
 from fastcode.graph.build import CodeGraphBuilder
-from fastcode.inbound.config_mapper import config_from_mapping
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs, IRGraphView
 from fastcode.ir.types import (
@@ -25,14 +46,8 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.main.config import config_to_runtime_mapping
+from fastcode.main.config_mapper import config_from_mapping
 from fastcode.main.fastcode import FastCode
-from fastcode.app.query.context_payloads import (
-    context_bundle_payload,
-    turn_journal_payload,
-    working_memory_from_payload,
-    working_memory_payload,
-)
-from fastcode.app.query.selection.retriever import HybridRetriever
 from fastcode.retrieval.context.agent_context import (
     AcceptedFact,
     EvidenceRef,
@@ -48,21 +63,6 @@ from fastcode.retrieval.context.context_compiler import (
     compile_working_memory,
 )
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
-from fastcode.app.store.cache.contracts import (
-    ContextActivationRecord,
-    ContextBundleRecord,
-    TurnJournalRecord,
-    WorkingMemoryRecord,
-)
-from fastcode.app.store.artifacts.graph import GraphArtifactStore
-from fastcode.app.store.runs.index_run_contracts import IndexRunRecord
-from fastcode.app.store.snapshots.manifest_contracts import ManifestRecord
-from fastcode.app.store.snapshots.snapshot_contracts import (
-    SCIPArtifactRecord,
-    SnapshotRecord,
-    SnapshotRefRecord,
-)
-from fastcode.app.store.vectors.vector import VectorStore
 
 # ---------------------------------------------------------------------------
 # Helpers (basic / doc pipeline tests)

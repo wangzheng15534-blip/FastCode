@@ -9,9 +9,9 @@ import tempfile
 import pytest
 from hypothesis import strategies as st
 
-from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.app.store.snapshots.manifest import ManifestStore
 from fastcode.app.store.snapshots.manifest_contracts import ManifestRecord
+from fastcode.infrastructure.storage.runtime import DBRuntime
 
 # --- Helpers ---
 

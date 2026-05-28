@@ -13,6 +13,7 @@ from git import InvalidGitRepositoryError, NoSuchPathError, Repo
 
 from fastcode.utils.filesystem import compute_file_hash, normalize_path
 from fastcode.utils.paths import get_language_from_extension
+
 from .ignore import should_ignore_path
 
 _PACKAGE_SCOPE_MARKERS = (

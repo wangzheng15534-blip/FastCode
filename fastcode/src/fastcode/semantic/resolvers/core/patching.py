@@ -12,12 +12,12 @@ from fastcode.ir.types import (
     IRUnitSupport,
     resolution_rank,
 )
+from fastcode.semantic.resolution import ResolutionPatch, ResolutionTier
 from fastcode.utils.materialization import (
     BOUNDARY_SEMANTIC_PATCH_CHANGED_OBJECTS,
     BOUNDARY_SEMANTIC_PATCH_PRESERVED_OBJECTS,
     increment_materialization_boundary,
 )
-from fastcode.semantic.resolution import ResolutionPatch, ResolutionTier
 
 JSONScalar = bool | int | float | str | None
 _T = TypeVar("_T")

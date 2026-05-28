@@ -12,6 +12,15 @@ from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 import fastcode.app.store.snapshots.snapshot as snapshot_module
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
+from fastcode.app.store.snapshots.snapshot_contracts import (
+    OutboxEventRecord,
+    RedoTaskRecord,
+    SCIPArtifactRecord,
+    SnapshotRecord,
+    SnapshotRefRecord,
+)
+from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.graph import IRGraphBuilder, IRGraphs
 from fastcode.ir.types import (
     IRAttachment,
@@ -26,15 +35,6 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.scip.models import SCIPArtifactRef
-from fastcode.infrastructure.storage.runtime import DBRuntime
-from fastcode.app.store.snapshots.snapshot import SnapshotStore
-from fastcode.app.store.snapshots.snapshot_contracts import (
-    OutboxEventRecord,
-    RedoTaskRecord,
-    SCIPArtifactRecord,
-    SnapshotRecord,
-    SnapshotRefRecord,
-)
 
 # --- Strategies ---
 

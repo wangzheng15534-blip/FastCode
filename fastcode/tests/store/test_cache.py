@@ -5,13 +5,6 @@ from typing import Any
 
 import pytest
 
-from fastcode.app.store.cache.payloads import (
-    _CACHE_EMBEDDING_KIND,
-    _CACHE_JSON_KIND,
-    _CACHE_RECORD_MAGIC,
-    _json_cache_payload,
-)
-from fastcode.app.store.cache.service import CacheManager
 from fastcode.app.store.cache.contracts import (
     ContextActivationRecord,
     ContextBundleRecord,
@@ -23,6 +16,13 @@ from fastcode.app.store.cache.contracts import (
     TurnJournalRecord,
     WorkingMemoryRecord,
 )
+from fastcode.app.store.cache.payloads import (
+    _CACHE_EMBEDDING_KIND,
+    _CACHE_JSON_KIND,
+    _CACHE_RECORD_MAGIC,
+    _json_cache_payload,
+)
+from fastcode.app.store.cache.service import CacheManager
 
 
 def _cache_config(

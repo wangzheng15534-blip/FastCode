@@ -13,6 +13,7 @@ from typing import Any
 from fastcode.ir.projection import ProjectionBuildResult, ProjectionScope
 from fastcode.ports.runtime import Clock
 from fastcode.utils.clock import SystemClock, utc_now
+
 from .projection_contracts import ProjectionBuildRecord, ProjectionDirtyScopeRecord
 
 try:

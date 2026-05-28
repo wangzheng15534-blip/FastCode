@@ -6,13 +6,7 @@ import dataclasses
 
 import pytest
 
-from fastcode.inbound.config_mapper import (
-    config_from_dto,
-    config_from_mapping,
-    config_to_dict,
-)
-from fastcode.inbound.config_schema import FastCodeConfigDTO
-from fastcode.runtime.config import (
+from fastcode.kernel.config import (
     DocsIntegrationConfig,
     FastCodeConfig,
     IndexingConfig,
@@ -25,6 +19,12 @@ from fastcode.runtime.config import (
     VectorShardStorage,
     VectorStoreConfig,
 )
+from fastcode.main.config_mapper import (
+    config_from_dto,
+    config_from_mapping,
+    config_to_dict,
+)
+from fastcode.main.config_schema import FastCodeConfigDTO
 
 
 def test_config_from_mapping_translates_validated_dto_to_frozen_runtime_config() -> (

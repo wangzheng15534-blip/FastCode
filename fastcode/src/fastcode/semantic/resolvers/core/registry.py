@@ -13,13 +13,6 @@ from __future__ import annotations
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import IRSnapshot
 from fastcode.semantic.resolution import SemanticResolver
-from fastcode.semantic.resolvers.languages.c_family import CppSemanticResolver, CSemanticResolver
-from fastcode.semantic.resolvers.languages.csharp import CSharpCompilerResolver
-from fastcode.semantic.resolvers.languages.fortran import FortranCompilerResolver
-from fastcode.semantic.resolvers.languages.go import GoCompilerResolver
-from fastcode.semantic.resolvers.languages.java import JavaCompilerResolver
-from fastcode.semantic.resolvers.languages.js_ts import JavaScriptCompilerResolver, TypeScriptCompilerResolver
-from fastcode.semantic.resolvers.languages.julia import JuliaCompilerResolver
 from fastcode.semantic.resolvers.core.language_graph import (
     CSharpSemanticResolver,
     FortranSemanticResolver,
@@ -31,6 +24,19 @@ from fastcode.semantic.resolvers.core.language_graph import (
     TypeScriptSemanticResolver,
     ZigSemanticResolver,
 )
+from fastcode.semantic.resolvers.languages.c_family import (
+    CppSemanticResolver,
+    CSemanticResolver,
+)
+from fastcode.semantic.resolvers.languages.csharp import CSharpCompilerResolver
+from fastcode.semantic.resolvers.languages.fortran import FortranCompilerResolver
+from fastcode.semantic.resolvers.languages.go import GoCompilerResolver
+from fastcode.semantic.resolvers.languages.java import JavaCompilerResolver
+from fastcode.semantic.resolvers.languages.js_ts import (
+    JavaScriptCompilerResolver,
+    TypeScriptCompilerResolver,
+)
+from fastcode.semantic.resolvers.languages.julia import JuliaCompilerResolver
 from fastcode.semantic.resolvers.languages.python import PythonSemanticResolver
 from fastcode.semantic.resolvers.languages.rust import RustCompilerResolver
 from fastcode.semantic.resolvers.languages.zig import ZigCompilerResolver

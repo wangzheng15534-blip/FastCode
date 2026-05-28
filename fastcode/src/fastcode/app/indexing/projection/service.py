@@ -12,10 +12,11 @@ from typing import TYPE_CHECKING, Any, cast
 from fastcode.app.store.snapshots.projection_contracts import ProjectionBuildRecord
 
 if TYPE_CHECKING:
-    from fastcode.ir.projection import ProjectionScope
     from fastcode.app.store.snapshots.manifest import ManifestStore
     from fastcode.app.store.snapshots.projection import ProjectionStore
     from fastcode.app.store.snapshots.snapshot import SnapshotStore
+    from fastcode.ir.projection import ProjectionScope
+
     from .transform import ProjectionTransformer
 
 from fastcode.utils.filesystem import ensure_dir

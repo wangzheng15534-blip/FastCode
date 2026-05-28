@@ -13,7 +13,13 @@ import pytest
 from git import Repo
 
 from fastcode.app.indexing.pipeline.service import IndexPipeline
+from fastcode.app.store.artifacts.file import FileArtifactStore
+from fastcode.app.store.artifacts.unit import UnitArtifactStore
+from fastcode.app.store.runs.index_run import IndexRunStore
+from fastcode.app.store.snapshots.manifest import ManifestStore
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
 from fastcode.infrastructure.execution.scip_runner import SubprocessScipIndexerRuntime
+from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import (
     IRAttachment,
@@ -23,12 +29,6 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.scip.models import SCIPDocument, SCIPIndex
-from fastcode.app.store.artifacts.file import FileArtifactStore
-from fastcode.app.store.runs.index_run import IndexRunStore
-from fastcode.infrastructure.storage.runtime import DBRuntime
-from fastcode.app.store.snapshots.manifest import ManifestStore
-from fastcode.app.store.snapshots.snapshot import SnapshotStore
-from fastcode.app.store.artifacts.unit import UnitArtifactStore
 from fastcode.utils.materialization import (
     BOUNDARY_PICKLE_LOAD,
     increment_materialization_boundary,

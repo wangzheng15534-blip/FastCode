@@ -9,9 +9,9 @@ from unittest.mock import patch
 
 import networkx as nx
 
+from fastcode.app.store.artifacts.graph import GraphArtifactStore
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.ir.element import CodeElement
-from fastcode.app.store.artifacts.graph import GraphArtifactStore
 
 
 def _config(tmp_path: Path) -> dict[str, Any]:

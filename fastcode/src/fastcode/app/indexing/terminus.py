@@ -12,7 +12,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 import fastcode.retrieval.graph.graph_build as _graph_build
-
 from fastcode.ir.types import IRRelation, IRSnapshot
 from fastcode.ports.publishing import EventSink, LineagePublisher
 from fastcode.utils.hashing import deterministic_event_id

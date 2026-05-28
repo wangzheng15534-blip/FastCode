@@ -23,16 +23,14 @@ The runtime package is a layered monolith rooted at `fastcode/src/fastcode/`.
 The current branch is a hardened pre-release, not a stable release.
 
 - `utils/`: generic primitives and stdlib-only helper APIs.
-- `kernel/`: shared repo, snapshot, and artifact identity vocabulary.
-- `runtime_support/`: generic retry, health, and observability helpers.
-- `runtime/`: frozen runtime config and lifecycle event contracts (split deferred).
+- `kernel/`: shared identity vocabulary and frozen config contracts.
+- `runtime_support/`: generic retry, health, observability, and lifecycle event helpers.
 - `ports/`: narrow shared capability contract surfaces.
 - `ir/`: canonical frozen IR dataclasses, graph views, merge, validation.
 - `graph/`: graph-domain construction, tree-sitter helpers, call extraction.
 - `retrieval/`: pure retrieval scoring, fusion, context, iteration logic.
 - `semantic/`: semantic resolver contracts and helper-backed upgrades.
 - `scip/`: SCIP models, loaders, indexers, symbol resolution, IR adapters.
-- `inbound/`: inbound DTO/schema validation and frozen contract mappers.
 - `app/indexing/`: repository loading, parsing, indexing, projection, publishing.
 - `app/query/`: query orchestration, retriever shell, agent tools, LLM answering.
 - `app/store/`: persistence, snapshots, vectors, manifests, cache, records.
@@ -40,7 +38,7 @@ The current branch is a hardened pre-release, not a stable release.
 - `infrastructure/execution/`: execution runners.
 - `infrastructure/llm/`: LLM SDK wrappers.
 - `infrastructure/graph_runtime/`: graph runtime adapter.
-- `main/`: config preparation, CLI wiring, `FastCode` composition root.
+- `main/`: config preparation, CLI wiring, config DTO shaping, `FastCode` composition root.
 - `api/`: HTTP API shell, CORS, web entrypoint, response serialization.
 - `mcp/`: MCP transport shell and graph/query tool adapters.
 
@@ -70,13 +68,13 @@ pure domain types or domain polymorphism.
 
 Inner packages do not read env directly. Config flows through
 `prepare_runtime_config_mapping(...)`,
-`fastcode.inbound.config_schema.FastCodeConfigDTO`, explicit inbound mappers in
-`fastcode.inbound.config_mapper`, `fastcode.runtime.config.FastCodeConfig`,
+`fastcode.main.config_schema.FastCodeConfigDTO`, explicit mappers in
+`fastcode.main.config_mapper`, `fastcode.kernel.config.FastCodeConfig`,
 then `FastCode`.
 
-Events and config are not miscellaneous hub layers. Runtime events/config live
-under `runtime/`; inbound config schemas and schema-to-contract translation live
-under `inbound/`; config loading stays in `main/`; future domain events/config
+Events and config are not miscellaneous hub layers. Runtime events live
+under `runtime_support/`; frozen config contracts live under `kernel/`;
+config DTO shaping and loading live in `main/`; future domain events/config
 should live near their owning domain.
 
 Keep package roots thin. Avoid compatibility exports, `__getattr__` shims, and

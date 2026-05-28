@@ -14,9 +14,13 @@ from typing import Any
 
 from git import GitCommandError, Repo
 
+from fastcode.app.indexing.file_inventory import (
+    FileFingerprint,
+    FileInventory,
+    build_file_inventory,
+)
 from fastcode.utils.archive import safe_extract_zip
 from fastcode.utils.filesystem import ensure_dir, get_repo_name_from_url
-from fastcode.app.indexing.file_inventory import FileFingerprint, FileInventory, build_file_inventory
 
 
 class RepositoryLoader:

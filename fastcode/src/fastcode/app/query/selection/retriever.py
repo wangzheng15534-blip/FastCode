@@ -27,7 +27,9 @@ import fastcode.retrieval.ranking.combination as _combination
 import fastcode.retrieval.ranking.filtering as _filtering
 import fastcode.retrieval.ranking.fusion as _fusion
 import fastcode.retrieval.ranking.scoring as _scoring
-
+from fastcode.app.query.agent.iterative import IterativeAgent
+from fastcode.app.query.orchestration.processor import ProcessedQuery
+from fastcode.app.query.selection.selector import RepositorySelector
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.ir.element import (
     CodeElement,
@@ -42,8 +44,6 @@ from fastcode.ports.retrieval import (
     VectorSearchStore,
     VectorSearchStoreFactory,
 )
-from fastcode.app.query.orchestration.processor import ProcessedQuery
-from fastcode.app.query.selection.selector import RepositorySelector
 from fastcode.retrieval.contracts import (
     DocProjectionPriors,
     ElementFilter,
@@ -54,7 +54,6 @@ from fastcode.retrieval.contracts import (
     TraceLink,
 )
 from fastcode.utils.filesystem import ensure_dir
-from fastcode.app.query.agent.iterative import IterativeAgent
 
 _BM25_SHARD_STORAGE_VERSION = 1
 

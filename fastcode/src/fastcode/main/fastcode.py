@@ -22,32 +22,17 @@ from urllib.parse import urlsplit, urlunsplit
 from rank_bm25 import BM25Okapi
 
 import fastcode.retrieval.context.snapshot as _snapshot
-
-from fastcode.graph.build import CodeGraphBuilder
-from fastcode.inbound.config_mapper import config_from_mapping
 from fastcode.app.indexing.doc_ingester import KeyDocIngester
 from fastcode.app.indexing.embedder import CodeEmbedder
-from fastcode.app.indexing.pipeline.indexer import CodeIndexer
-from fastcode.app.indexing.loader import RepositoryLoader
 from fastcode.app.indexing.extractors.parser import CodeParser
+from fastcode.app.indexing.loader import RepositoryLoader
+from fastcode.app.indexing.pipeline.indexer import CodeIndexer
+from fastcode.app.indexing.pipeline.redo_worker import RedoWorker
 from fastcode.app.indexing.pipeline.service import IndexPipeline
 from fastcode.app.indexing.projection.service import ProjectionService
 from fastcode.app.indexing.projection.transform import ProjectionTransformer
 from fastcode.app.indexing.publishing import PublishingService
-from fastcode.app.indexing.pipeline.redo_worker import RedoWorker
-from fastcode.infrastructure.execution.scip_runner import SubprocessScipIndexerRuntime
 from fastcode.app.indexing.terminus import TerminusPublisher
-from fastcode.ir.code_status import build_code_status_pack
-from fastcode.ir.element import (
-    CodeElement,
-    CodeElementMeta,
-    deserialize_code_element,
-    serialize_code_element,
-)
-from fastcode.ir.graph import IRGraphBuilder
-from fastcode.ir.types import IRSnapshot, IRSymbol
-from fastcode.ports.storage import DocumentGraphRuntime
-from fastcode.app.query.orchestration.answer import AnswerGenerator
 from fastcode.app.query.context_payloads import (
     activation_payload,
     context_bundle_from_payload,
@@ -58,9 +43,51 @@ from fastcode.app.query.context_payloads import (
     working_memory_from_payload,
     working_memory_payload,
 )
+from fastcode.app.query.orchestration.answer import AnswerGenerator
 from fastcode.app.query.orchestration.handler import QueryPipeline
 from fastcode.app.query.orchestration.processor import QueryProcessor
 from fastcode.app.query.selection.retriever import HybridRetriever
+from fastcode.app.store.artifacts.file import FileArtifactStore
+from fastcode.app.store.artifacts.graph import GraphArtifactStore
+from fastcode.app.store.artifacts.unit import UnitArtifactStore
+from fastcode.app.store.cache.contracts import (
+    ContextActivationRecord,
+    DialogueTurnRecord,
+    HandoffArtifactRecord,
+)
+from fastcode.app.store.cache.service import CacheManager
+from fastcode.app.store.runs.index_run import IndexRunStore
+from fastcode.app.store.runs.index_run_contracts import IndexRunRecord
+from fastcode.app.store.snapshots.manifest import ManifestStore
+from fastcode.app.store.snapshots.manifest_contracts import ManifestRecord
+from fastcode.app.store.snapshots.projection import ProjectionStore
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
+from fastcode.app.store.snapshots.snapshot_contracts import (
+    SCIPArtifactRecord,
+    SnapshotRefRecord,
+)
+from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
+from fastcode.app.store.vectors.vector import VectorStore
+from fastcode.app.store.vectors.vector_math import as_float32_matrix
+from fastcode.graph.build import CodeGraphBuilder
+from fastcode.infrastructure.execution.scip_runner import SubprocessScipIndexerRuntime
+from fastcode.infrastructure.execution.semantic_helper import (
+    SubprocessSemanticHelperRuntime,
+)
+from fastcode.infrastructure.graph_runtime.ladybug import LadybugGraphRuntime
+from fastcode.infrastructure.storage.runtime import DBRuntime
+from fastcode.ir.code_status import build_code_status_pack
+from fastcode.ir.element import (
+    CodeElement,
+    CodeElementMeta,
+    deserialize_code_element,
+    serialize_code_element,
+)
+from fastcode.ir.graph import IRGraphBuilder
+from fastcode.ir.types import IRSnapshot, IRSymbol
+from fastcode.kernel.config import FastCodeConfig
+from fastcode.main.config_mapper import config_from_mapping
+from fastcode.ports.storage import DocumentGraphRuntime
 from fastcode.retrieval.context.agent_context import (
     ContextBundle,
     HandoffArtifact,
@@ -79,37 +106,17 @@ from fastcode.retrieval.context.context_compiler import (
     render_context_bundle as render_context_bundle_artifact,
 )
 from fastcode.retrieval.contracts import Hit, SourceCitation
-from fastcode.runtime.config import FastCodeConfig
 from fastcode.scip.global_builder import GlobalIndexBuilder
 from fastcode.scip.module_resolver import ModuleResolver
 from fastcode.scip.symbol_resolver import SymbolResolver
-from fastcode.semantic.resolvers.core.registry import build_default_semantic_resolver_registry
-from fastcode.semantic.symbol_index import SnapshotSymbolIndex
-from fastcode.app.store.cache.service import CacheManager
-from fastcode.app.store.cache.contracts import (
-    ContextActivationRecord,
-    DialogueTurnRecord,
-    HandoffArtifactRecord,
+from fastcode.semantic.resolvers.core.registry import (
+    build_default_semantic_resolver_registry,
 )
-from fastcode.app.store.artifacts.file import FileArtifactStore
-from fastcode.app.store.artifacts.graph import GraphArtifactStore
-from fastcode.app.store.runs.index_run import IndexRunStore
-from fastcode.app.store.runs.index_run_contracts import IndexRunRecord
-from fastcode.infrastructure.execution.semantic_helper import SubprocessSemanticHelperRuntime
-from fastcode.infrastructure.graph_runtime.ladybug import LadybugGraphRuntime
-from fastcode.infrastructure.storage.runtime import DBRuntime
-from fastcode.app.store.snapshots.manifest import ManifestStore
-from fastcode.app.store.snapshots.manifest_contracts import ManifestRecord
-from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
-from fastcode.app.store.snapshots.projection import ProjectionStore
-from fastcode.app.store.snapshots.snapshot import SnapshotStore
-from fastcode.app.store.snapshots.snapshot_contracts import SCIPArtifactRecord, SnapshotRefRecord
-from fastcode.app.store.artifacts.unit import UnitArtifactStore
-from fastcode.app.store.vectors.vector import VectorStore
-from fastcode.app.store.vectors.vector_math import as_float32_matrix
+from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.utils.clock import utc_now
 from fastcode.utils.filesystem import ensure_dir, normalize_path
 from fastcode.utils.json import safe_jsonable
+
 from .config import (
     config_to_runtime_mapping,
     load_runtime_config,

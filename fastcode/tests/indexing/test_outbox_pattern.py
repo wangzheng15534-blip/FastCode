@@ -13,8 +13,8 @@ import pytest
 
 from fastcode.app.indexing.pipeline.redo_worker import RedoWorker
 from fastcode.app.indexing.terminus import TerminusPublisher
-from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.app.store.snapshots.snapshot import SnapshotStore
+from fastcode.infrastructure.storage.runtime import DBRuntime
 
 pytestmark = [pytest.mark.test_double]
 

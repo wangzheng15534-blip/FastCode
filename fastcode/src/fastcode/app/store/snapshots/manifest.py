@@ -10,6 +10,7 @@ from fastcode.ports.runtime import Clock, IdGenerator
 from fastcode.ports.storage import StoreDatabaseRuntime
 from fastcode.utils.clock import SystemClock
 from fastcode.utils.ids import PrefixedIdGenerator
+
 from .manifest_contracts import ManifestRecord
 
 

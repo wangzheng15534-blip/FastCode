@@ -8,6 +8,7 @@ import hashlib
 from typing import Any, cast
 
 from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot, IRUnitSupport
+
 from .models import SCIPIndex
 
 SCIP_SOURCE = "scip"

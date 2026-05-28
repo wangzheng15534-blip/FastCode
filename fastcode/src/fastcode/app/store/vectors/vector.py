@@ -28,6 +28,7 @@ from fastcode.utils.materialization import (
     BOUNDARY_VECTOR_LIST_CONVERSION,
     increment_materialization_boundary,
 )
+
 from .vector_contracts import RepositoryOverviewRecord, VectorSearchResultRecord
 from .vector_math import as_float32_matrix, as_float32_vector
 

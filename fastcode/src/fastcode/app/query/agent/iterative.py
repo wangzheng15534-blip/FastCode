@@ -19,23 +19,8 @@ if TYPE_CHECKING:
     from fastcode.ir.element import CodeElement
 from openai import OpenAI
 
-import fastcode.retrieval.graph.iteration as _iteration
 import fastcode.retrieval.context.prompts as _prompts
-
-from fastcode.ir.element import serialize_code_element
-from fastcode.retrieval.contracts import (
-    Hit,
-    IterationConfig,
-    IterationHistoryEntry,
-    ToolHistoryEntry,
-)
-from fastcode.utils.json import (
-    extract_json_from_response,
-    remove_json_comments,
-    robust_json_parse,
-    sanitize_json_string,
-)
-from fastcode.utils.path_utils import PathUtils
+import fastcode.retrieval.graph.iteration as _iteration
 from fastcode.app.query.agent.tools import AgentTools
 from fastcode.app.query.boundary import (
     ElementSelectionResponseDTO,
@@ -55,6 +40,20 @@ from fastcode.app.query.contracts import (
     element_selection_payload,
 )
 from fastcode.app.query.llm import openai_chat_completion
+from fastcode.ir.element import serialize_code_element
+from fastcode.retrieval.contracts import (
+    Hit,
+    IterationConfig,
+    IterationHistoryEntry,
+    ToolHistoryEntry,
+)
+from fastcode.utils.json import (
+    extract_json_from_response,
+    remove_json_comments,
+    robust_json_parse,
+    sanitize_json_string,
+)
+from fastcode.utils.path_utils import PathUtils
 
 
 def _hit_records_from_rows(rows: list[dict[str, Any]]) -> tuple[Hit, ...]:

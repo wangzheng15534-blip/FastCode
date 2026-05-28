@@ -7,10 +7,10 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from fastcode.ir.element import CodeElement
-from fastcode.app.query.contracts import AgentRoundResult, ElementSelectionRecord
 from fastcode.app.query.agent.iterative import IterativeAgent
+from fastcode.app.query.contracts import AgentRoundResult, ElementSelectionRecord
 from fastcode.app.query.orchestration.processor import ProcessedQuery
+from fastcode.ir.element import CodeElement
 
 
 def _make_iterative_agent(

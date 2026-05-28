@@ -8,8 +8,8 @@ from typing import Any, cast
 import pytest
 
 from fastcode.app.indexing.publishing import PublishingService
-from fastcode.ir.types import IRSnapshot
 from fastcode.app.store.runs.index_run_contracts import IndexRunRecord
+from fastcode.ir.types import IRSnapshot
 
 
 class NoDictSnapshot(IRSnapshot):

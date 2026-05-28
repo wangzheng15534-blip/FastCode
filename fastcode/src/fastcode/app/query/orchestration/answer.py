@@ -12,10 +12,9 @@ from openai import OpenAI
 
 import fastcode.retrieval.context.context as _context
 import fastcode.retrieval.context.summary as _summary
-from fastcode.retrieval.contracts import AnswerDisplayResult, Hit, SourceCitation
-
 from fastcode.app.query.llm import openai_chat_completion
 from fastcode.app.query.tokens import count_tokens, truncate_to_tokens
+from fastcode.retrieval.contracts import AnswerDisplayResult, Hit, SourceCitation
 
 
 def _hits_from_rows(rows: list[dict[str, Any]]) -> tuple[Hit, ...]:

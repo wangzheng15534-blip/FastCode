@@ -30,6 +30,18 @@ from urllib.parse import urlparse
 import numpy as np
 from git import GitCommandError, Repo
 
+from fastcode.app.indexing.doc_ingester import KeyDocIngester
+from fastcode.app.indexing.embedder import CodeEmbedder
+from fastcode.app.indexing.file_inventory import FileInventory
+from fastcode.app.indexing.loader import RepositoryLoader
+from fastcode.app.query.selection.retriever import HybridRetriever
+from fastcode.app.store.artifacts.graph import GraphArtifactStore
+from fastcode.app.store.runs.index_run import IndexRunStore
+from fastcode.app.store.snapshots.manifest import ManifestStore
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
+from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
+from fastcode.app.store.vectors.vector import VectorStore
+from fastcode.app.store.vectors.vector_math import as_float32_matrix, as_float32_vector
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.ir.element import (
     CodeElement,
@@ -55,7 +67,6 @@ from fastcode.ports.execution import (
 )
 from fastcode.ports.publishing import LineagePublisher
 from fastcode.ports.storage import DocumentGraphRuntime
-from fastcode.app.query.selection.retriever import HybridRetriever
 from fastcode.scip.ast_adapter import build_ir_from_ast
 from fastcode.scip.global_builder import GlobalIndexBuilder
 from fastcode.scip.models import SCIPIndex
@@ -64,15 +75,10 @@ from fastcode.scip.scip_adapter import build_ir_from_scip
 from fastcode.scip.symbol_resolver import SymbolResolver
 from fastcode.semantic.contracts import SemanticGraphContext
 from fastcode.semantic.resolvers.core.patching import apply_resolution_patch
-from fastcode.semantic.resolvers.core.registry import build_default_semantic_resolver_registry
+from fastcode.semantic.resolvers.core.registry import (
+    build_default_semantic_resolver_registry,
+)
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
-from fastcode.app.store.artifacts.graph import GraphArtifactStore
-from fastcode.app.store.runs.index_run import IndexRunStore
-from fastcode.app.store.snapshots.manifest import ManifestStore
-from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
-from fastcode.app.store.snapshots.snapshot import SnapshotStore
-from fastcode.app.store.vectors.vector import VectorStore
-from fastcode.app.store.vectors.vector_math import as_float32_matrix, as_float32_vector
 from fastcode.utils.filesystem import compute_file_hash, ensure_dir, normalize_path
 from fastcode.utils.materialization import (
     BOUNDARY_JSON_DECODE,
@@ -83,9 +89,7 @@ from fastcode.utils.materialization import (
     reset_materialization_counters,
     set_materialization_counters,
 )
-from fastcode.app.indexing.doc_ingester import KeyDocIngester
-from fastcode.app.indexing.embedder import CodeEmbedder
-from fastcode.app.indexing.file_inventory import FileInventory
+
 from .incremental import (
     FileChangeSet,
     PlanChanges,
@@ -93,7 +97,6 @@ from .incremental import (
     diff_changed_files,
 )
 from .indexer import CodeIndexer
-from fastcode.app.indexing.loader import RepositoryLoader
 
 logger = logging.getLogger(__name__)
 

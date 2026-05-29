@@ -16,7 +16,7 @@ from fastcode.semantic.resolution import (
     SemanticResolver,
     ToolDiagnostic,
 )
-from fastcode.semantic.resolvers.core.resolver_support import _hash_id, _normalize_path
+from fastcode.semantic.resolvers.engine.resolver_support import _hash_id, _normalize_path
 from fastcode.utils.paths import infer_language_from_file_context
 
 HEADER_EXTENSIONS = (".h", ".hh", ".hpp", ".hxx", ".inl")

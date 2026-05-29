@@ -13,7 +13,7 @@ from __future__ import annotations
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import IRSnapshot
 from fastcode.semantic.resolution import SemanticResolver
-from fastcode.semantic.resolvers.core.language_graph import (
+from fastcode.semantic.resolvers.engine.language_graph import (
     CSharpSemanticResolver,
     FortranSemanticResolver,
     GoSemanticResolver,

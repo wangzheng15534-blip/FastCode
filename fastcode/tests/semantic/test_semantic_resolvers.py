@@ -23,19 +23,19 @@ from fastcode.ir.types import (
 )
 from fastcode.main.fastcode import FastCode
 from fastcode.semantic.resolution import ResolutionPatch
-from fastcode.semantic.resolvers.core.helper_backed import HelperBackedSemanticResolver
-from fastcode.semantic.resolvers.core.helper_operations import (
+from fastcode.semantic.resolvers.engine.helper_backed import HelperBackedSemanticResolver
+from fastcode.semantic.resolvers.engine.helper_operations import (
     SemanticHelperInvocation,
 )
-from fastcode.semantic.resolvers.core.patching import (
+from fastcode.semantic.resolvers.engine.patching import (
     _source_preference,
     apply_resolution_patch,
 )
-from fastcode.semantic.resolvers.core.registry import (
+from fastcode.semantic.resolvers.engine.registry import (
     SemanticResolverRegistry,
     build_default_semantic_resolver_registry,
 )
-from fastcode.semantic.resolvers.core.resolver_support import (
+from fastcode.semantic.resolvers.engine.resolver_support import (
     _hash_id,
     _normalize_path,
     validate_helper_paths,
@@ -2538,7 +2538,7 @@ def test_helper_backed_resolver_falls_back_on_helper_nonzero_exit(
     with (
         caplog.at_level(
             logging.WARNING,
-            logger="fastcode.semantic.resolvers.core.helper_backed",
+            logger="fastcode.semantic.resolvers.engine.helper_backed",
         ),
         patch.object(resolver, "_has_tools", return_value=True),
         patch(
@@ -3070,20 +3070,18 @@ def test_helper_backed_resolver_degrades_gracefully_when_helper_file_missing(
 
 
 @pytest.mark.regression
-def test_helper_path_co_located_with_resolver_module() -> None:
-    """All helper assets must live in the same directory as their resolver
-    module.  _helper_path() uses Path(__file__).with_name(), so the helper
-    must be co-located.
-    """
-    import fastcode.semantic.resolvers.core.helper_backed as _hb_mod
+def test_helper_path_resolves_into_shared_helper_assets_directory() -> None:
+    """Helper-backed resolvers must resolve into the shared helper assets tree."""
+    import fastcode.semantic.resolvers.engine.helper_backed as _hb_mod
     from fastcode.semantic.resolvers.languages.java import JavaCompilerResolver
 
-    module_dir = Path(_hb_mod.__file__).parent
+    module_dir = Path(_hb_mod.__file__).resolve().parent
+    helper_dir = module_dir.parent / "helpers"
     resolver = JavaCompilerResolver()
     helper_path = resolver._helper_path()
-    assert helper_path.parent == module_dir, (
-        f"Helper {helper_path} is not co-located with helper_backed.py "
-        f"(expected parent {module_dir})"
+    assert helper_path.parent == helper_dir, (
+        f"Helper {helper_path} is not under the shared helpers directory "
+        f"(expected parent {helper_dir})"
     )
 
 

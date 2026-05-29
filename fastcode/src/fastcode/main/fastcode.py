@@ -109,7 +109,7 @@ from fastcode.retrieval.contracts import Hit, SourceCitation
 from fastcode.scip.global_builder import GlobalIndexBuilder
 from fastcode.scip.module_resolver import ModuleResolver
 from fastcode.scip.symbol_resolver import SymbolResolver
-from fastcode.semantic.resolvers.core.registry import (
+from fastcode.semantic.resolvers.engine.registry import (
     build_default_semantic_resolver_registry,
 )
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex

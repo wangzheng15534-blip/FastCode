@@ -47,7 +47,7 @@ from fastcode.ir.graph import IRGraphBuilder
 from fastcode.main.config import config_to_runtime_mapping
 from fastcode.main.config_mapper import config_from_mapping
 from fastcode.main.fastcode import FastCode
-from fastcode.semantic.resolvers.core.registry import (
+from fastcode.semantic.resolvers.engine.registry import (
     build_default_semantic_resolver_registry,
 )
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex

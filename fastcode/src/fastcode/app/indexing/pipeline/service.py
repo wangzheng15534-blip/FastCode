@@ -74,8 +74,8 @@ from fastcode.scip.module_resolver import ModuleResolver
 from fastcode.scip.scip_adapter import build_ir_from_scip
 from fastcode.scip.symbol_resolver import SymbolResolver
 from fastcode.semantic.contracts import SemanticGraphContext
-from fastcode.semantic.resolvers.core.patching import apply_resolution_patch
-from fastcode.semantic.resolvers.core.registry import (
+from fastcode.semantic.resolvers.engine.patching import apply_resolution_patch
+from fastcode.semantic.resolvers.engine.registry import (
     build_default_semantic_resolver_registry,
 )
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex

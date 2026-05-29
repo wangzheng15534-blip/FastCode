@@ -13,7 +13,7 @@ from fastcode.semantic.resolution import (
     SemanticResolver,
     ToolDiagnostic,
 )
-from fastcode.semantic.resolvers.core.resolver_support import _hash_id
+from fastcode.semantic.resolvers.engine.resolver_support import _hash_id
 
 
 class GraphBackedSemanticResolver(SemanticResolver):

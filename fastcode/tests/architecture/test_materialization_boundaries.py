@@ -12,7 +12,7 @@ HOT_PATHS = [
     PACKAGE_ROOT / "app" / "indexing" / "projection" / "transform.py",
     PACKAGE_ROOT / "mcp" / "graph_tools.py",
     PACKAGE_ROOT / "semantic" / "symbol_index.py",
-    PACKAGE_ROOT / "semantic" / "resolvers" / "core" / "patching.py",
+    PACKAGE_ROOT / "semantic" / "resolvers" / "engine" / "patching.py",
     PACKAGE_ROOT / "app" / "store" / "vectors" / "pg_retrieval.py",
     PACKAGE_ROOT / "app" / "store" / "snapshots" / "snapshot.py",
     PACKAGE_ROOT / "app" / "store" / "vectors" / "vector.py",
@@ -233,7 +233,7 @@ def test_incremental_pipeline_does_not_reintroduce_full_element_fallback_helper(
 
 
 def test_semantic_patch_does_not_eagerly_copy_snapshot_collections() -> None:
-    path = PACKAGE_ROOT / "semantic" / "resolvers" / "core" / "patching.py"
+    path = PACKAGE_ROOT / "semantic" / "resolvers" / "engine" / "patching.py"
     tree = ast.parse(path.read_text())
     parents = _parents(tree)
     violations: list[str] = []

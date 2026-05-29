@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from fastcode.semantic.resolution import ToolDiagnostic
-from fastcode.semantic.resolvers.core.resolver_support import (
+from fastcode.semantic.resolvers.engine.resolver_support import (
     _normalize_path,
     validate_helper_paths,
 )

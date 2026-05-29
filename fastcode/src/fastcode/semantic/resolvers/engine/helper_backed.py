@@ -30,12 +30,12 @@ from fastcode.semantic.resolution import (
     SemanticResolver,
     ToolDiagnostic,
 )
-from fastcode.semantic.resolvers.core.graph_backed import GraphBackedSemanticResolver
-from fastcode.semantic.resolvers.core.helper_operations import (
+from fastcode.semantic.resolvers.engine.graph_backed import GraphBackedSemanticResolver
+from fastcode.semantic.resolvers.engine.helper_operations import (
     SemanticHelperOperations,
     SemanticHelperSpec,
 )
-from fastcode.semantic.resolvers.core.resolver_support import _hash_id, _normalize_path
+from fastcode.semantic.resolvers.engine.resolver_support import _hash_id, _normalize_path
 
 logger = logging.getLogger(__name__)
 

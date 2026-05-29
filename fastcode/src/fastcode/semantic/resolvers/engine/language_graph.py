@@ -10,7 +10,7 @@ facts.
 from __future__ import annotations
 
 from fastcode.semantic.resolution import SemanticCapability
-from fastcode.semantic.resolvers.core.graph_backed import GraphBackedSemanticResolver
+from fastcode.semantic.resolvers.engine.graph_backed import GraphBackedSemanticResolver
 
 
 class JavaScriptSemanticResolver(GraphBackedSemanticResolver):

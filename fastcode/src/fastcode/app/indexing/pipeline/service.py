@@ -1449,15 +1449,23 @@ class IndexPipeline:
         current_files: Sequence[Mapping[str, Any]] | None,
     ) -> dict[str, Any]:
         files = list(current_files or [])
+        total_size_bytes = sum(int(file.get("size") or 0) for file in files)
         git_blob_count = sum(1 for file in files if file.get("git_blob_oid"))
         content_hash_count = sum(
             1
             for file in files
             if file.get("content_hash") and not file.get("git_blob_oid")
         )
+        hashed_bytes = sum(
+            int(file.get("size") or 0)
+            for file in files
+            if file.get("content_hash") and not file.get("git_blob_oid")
+        )
         return {
             "file_count": len(files),
-            "total_size_bytes": sum(int(file.get("size") or 0) for file in files),
+            "total_size_bytes": total_size_bytes,
+            "scanned_bytes": total_size_bytes,
+            "hashed_bytes": hashed_bytes,
             "git_blob_oid_count": git_blob_count,
             "content_hash_count": content_hash_count,
             "fingerprinted_file_count": git_blob_count + content_hash_count,

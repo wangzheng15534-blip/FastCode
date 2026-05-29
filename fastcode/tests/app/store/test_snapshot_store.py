@@ -799,6 +799,38 @@ class TestSnapshotSaveLoadProperties:
             for k in ("units", "supports", "relations", "embeddings")
         ] == [0, 0, 0, 0]
 
+    def test_file_ir_shard_metadata_does_not_use_generic_safe_jsonable(self) -> None:
+        class OpaqueMetadata:
+            def to_dict(self) -> dict[str, Any]:
+                raise AssertionError("IR shard metadata must not call to_dict()")
+
+            def __repr__(self) -> str:
+                return "OpaqueMetadata(value)"
+
+        snap = IRSnapshot(
+            repo_name="repo",
+            snapshot_id="snap:repo:file-ir-explicit-json",
+            units=[
+                IRCodeUnit(
+                    unit_id="unit:file:a.py",
+                    kind="file",
+                    path="pkg/a.py",
+                    language="python",
+                    display_name="a.py",
+                    metadata={
+                        "opaque": OpaqueMetadata(),
+                        "tags": {"b", "a"},
+                    },
+                )
+            ],
+        )
+
+        shards = SnapshotStore.file_ir_shard_payloads(snap)
+
+        metadata = shards[0]["units"][0]["metadata"]
+        assert metadata["opaque"] == "OpaqueMetadata(value)"
+        assert metadata["tags"] == ["a", "b"]
+
     def test_file_ir_shard_paths_include_relation_owner_shards(self) -> None:
         snap = IRSnapshot(
             repo_name="repo",

@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      include-heavy-extras:
+        description: Include heavy optional extras in the release gate
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   lint:
@@ -26,11 +33,36 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --frozen
+      - run: uv sync --frozen --python ${{ matrix.python-version }}
       - run: uv run pytest fastcode/tests/ tests/ -q -n auto --timeout=60 -k "not (_property or _snapshot or _perf or _integration or _e2e)"
+
+  release-gate:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen --python 3.13
+      - name: Run release gate
+        run: |
+          args=()
+          if [[ "${{ inputs.include-heavy-extras }}" == "true" ]]; then
+            args+=(--include-heavy-extras)
+          fi
+          python scripts/release_gate.py "${args[@]}"
 
   extended:
     runs-on: ubuntu-latest

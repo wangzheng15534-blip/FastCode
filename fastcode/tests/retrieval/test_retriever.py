@@ -694,8 +694,16 @@ def test_reload_specific_repositories_uses_explicit_deserializer(
         "repo_name": "repo",
         "repo_url": None,
     }
+    helper_payload = {**payload, "id": "file:helper", "name": "helper.py"}
+    other_payload = {**payload, "id": "file:other", "name": "other.py"}
     with open(tmp_path / "repo_bm25.pkl", "wb") as handle:
-        pickle.dump({"bm25_corpus": [["service"]], "bm25_elements": [payload]}, handle)
+        pickle.dump(
+            {
+                "bm25_corpus": [["service"], ["helper"], ["other"]],
+                "bm25_elements": [payload, helper_payload, other_payload],
+            },
+            handle,
+        )
 
     calls: list[dict[str, Any]] = []
 
@@ -707,16 +715,26 @@ def test_reload_specific_repositories_uses_explicit_deserializer(
             metadata=element_payload["metadata"],
         )
 
-    with patch(
-        "fastcode.app.query.selection.retriever.deserialize_code_element",
-        side_effect=_deserialize,
-    ) as mock_deserialize:
+    with (
+        patch(
+            "fastcode.app.query.selection.retriever.deserialize_code_element",
+            side_effect=_deserialize,
+        ) as mock_deserialize,
+        patch(
+            "fastcode.app.query.selection.retriever.BM25Okapi",
+            side_effect=AssertionError(
+                "legacy filtered reload must use shard-runtime scoring"
+            ),
+        ),
+    ):
         assert retriever.reload_specific_repositories(["repo"]) is True
 
-    assert mock_deserialize.call_count == 1
-    assert calls == [payload]
+    assert mock_deserialize.call_count == 3
+    assert calls == [payload, helper_payload, other_payload]
     assert retriever.filtered_bm25_elements[0].id == "file:service"
-    assert retriever.filtered_bm25_corpus == [["service"]]
+    assert retriever.filtered_bm25_corpus == []
+    assert retriever._filtered_bm25_shard_runtime is not None
+    assert retriever._keyword_search("service", top_k=1)[0][0]["id"] == "file:service"
 
 
 def test_reload_specific_repositories_uses_shard_native_bm25_without_rebuild(
@@ -939,7 +957,9 @@ def test_reload_specific_repositories_real_vector_and_bm25_artifacts_update_filt
 
     retriever = HybridRetriever(
         {"vector_store": {"persist_directory": str(tmp_path)}},
-        vector_store=VectorStore({"vector_store": {"persist_directory": str(tmp_path)}}),
+        vector_store=VectorStore(
+            {"vector_store": {"persist_directory": str(tmp_path)}}
+        ),
         embedder=SimpleNamespace(
             embedding_dim=2,
             embed_many=lambda texts: np.asarray([[0.0, 1.0]], dtype=np.float32),
@@ -1362,7 +1382,8 @@ def test_shard_native_bm25_search_reads_only_query_term_shards(
         return real_pickle_load(handle)
 
     with patch(
-        "fastcode.app.query.selection.retriever.pickle.load", side_effect=_counting_pickle_load
+        "fastcode.app.query.selection.retriever.pickle.load",
+        side_effect=_counting_pickle_load,
     ):
         results = loaded._keyword_search("alpha", top_k=3)
 

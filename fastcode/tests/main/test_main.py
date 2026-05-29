@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from dataclasses import is_dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -1084,7 +1084,7 @@ def test_process_semantic_repair_frontier_widens_topology_dirty_scopes():
     assert all_dirty
 
 
-def test_load_multi_repo_cache_uses_explicit_code_element_deserializer(
+def test_load_multi_repo_cache_delegates_legacy_bm25_without_rebuild(
     tmp_path: Path,
 ) -> None:
     fc = FastCode.__new__(FastCode)
@@ -1102,6 +1102,33 @@ def test_load_multi_repo_cache_uses_explicit_code_element_deserializer(
         get_count=lambda: 1,
         scan_available_indexes=lambda _use_cache=False: [{"name": "repo"}],
     )
+    legacy_calls: list[tuple[list[str], bool]] = []
+
+    def _load_legacy(names: Sequence[str], *, filtered: bool) -> bool:
+        legacy_calls.append((list(names), filtered))
+        fc.retriever.full_bm25_elements = [
+            CodeElement(
+                id="file:service",
+                type="file",
+                name="service.py",
+                file_path="/repo/service.py",
+                relative_path="service.py",
+                language="python",
+                start_line=1,
+                end_line=2,
+                code="pass\n",
+                signature=None,
+                docstring=None,
+                summary=None,
+                metadata={"stable_unit_id": "unit:file:service"},
+                repo_name="repo",
+                repo_url=None,
+            )
+        ]
+        fc.retriever.full_bm25_corpus = []
+        fc.retriever.full_bm25 = None
+        return True
+
     fc.retriever = SimpleNamespace(
         persist_dir=str(tmp_path),
         full_bm25_elements=[],
@@ -1109,10 +1136,8 @@ def test_load_multi_repo_cache_uses_explicit_code_element_deserializer(
         full_bm25=None,
         index_for_bm25=lambda _elements: None,
         build_repo_overview_bm25=lambda: None,
-        load_bm25_payload=lambda _repo_name: {
-            "bm25_corpus": [["service"]],
-            "bm25_elements": [payload],
-        },
+        load_bm25_sources=lambda _names, *, filtered: False,
+        load_bm25_legacy_sources=_load_legacy,
     )
     fc.graph_builder = SimpleNamespace()
     fc.graph_artifact_store = SimpleNamespace(
@@ -1121,56 +1146,12 @@ def test_load_multi_repo_cache_uses_explicit_code_element_deserializer(
     )
     fc._reconstruct_elements_from_metadata = lambda: []
 
-    payload = {
-        "id": "file:service",
-        "type": "file",
-        "name": "service.py",
-        "file_path": "/repo/service.py",
-        "relative_path": "service.py",
-        "language": "python",
-        "start_line": 1,
-        "end_line": 2,
-        "code": "pass\n",
-        "signature": None,
-        "docstring": None,
-        "summary": None,
-        "metadata": {"stable_unit_id": "unit:file:service"},
-        "repo_name": "repo",
-        "repo_url": None,
-    }
+    assert fc._load_multi_repo_cache(["repo"]) is True
 
-    calls: list[dict[str, Any]] = []
-
-    def _deserialize(element_payload: dict[str, Any]) -> CodeElement:
-        calls.append(element_payload)
-        return CodeElement(
-            id=element_payload["id"],
-            type=element_payload["type"],
-            name=element_payload["name"],
-            file_path=element_payload["file_path"],
-            relative_path=element_payload["relative_path"],
-            language=element_payload["language"],
-            start_line=element_payload["start_line"],
-            end_line=element_payload["end_line"],
-            code=element_payload["code"],
-            signature=element_payload["signature"],
-            docstring=element_payload["docstring"],
-            summary=element_payload["summary"],
-            metadata=element_payload["metadata"],
-            repo_name=element_payload["repo_name"],
-            repo_url=element_payload["repo_url"],
-        )
-
-    with patch(
-        "fastcode.main.fastcode.deserialize_code_element",
-        side_effect=_deserialize,
-    ) as mock_deserialize:
-        assert fc._load_multi_repo_cache(["repo"]) is True
-
-    assert mock_deserialize.call_count == 1
-    assert calls == [payload]
+    assert legacy_calls == [(["repo"], False)]
     assert fc.retriever.full_bm25_elements[0].id == "file:service"
-    assert fc.retriever.full_bm25_corpus == [["service"]]
+    assert fc.retriever.full_bm25_corpus == []
+    assert fc.retriever.full_bm25 is None
 
 
 def test_load_multi_repo_cache_uses_shard_native_bm25_when_available(
@@ -1198,10 +1179,9 @@ def test_load_multi_repo_cache_uses_shard_native_bm25_when_available(
         full_bm25_corpus=[],
         full_bm25=None,
         build_repo_overview_bm25=lambda: None,
-        load_bm25_sources=lambda names, *, filtered: load_calls.append(
-            (list(names), filtered)
-        )
-        or True,
+        load_bm25_sources=lambda names, *, filtered: (
+            load_calls.append((list(names), filtered)) or True
+        ),
     )
     fc.graph_builder = SimpleNamespace()
     fc.graph_artifact_store = SimpleNamespace(
@@ -1213,7 +1193,7 @@ def test_load_multi_repo_cache_uses_shard_native_bm25_when_available(
     )
 
     with patch(
-        "fastcode.main.fastcode.BM25Okapi",
+        "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("shard-native multi-repo load should not rebuild"),
     ):
         assert fc._load_multi_repo_cache(["repo"]) is True
@@ -1386,7 +1366,7 @@ def test_load_multi_repo_cache_real_shard_artifacts_use_retriever_runtime(
     )
 
     with patch(
-        "fastcode.main.fastcode.BM25Okapi",
+        "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("main multi-repo load should not rebuild BM25"),
     ):
         assert fc._load_multi_repo_cache(["repo_a", "repo_b"]) is True
@@ -1492,7 +1472,7 @@ def test_load_multi_repo_cache_real_shard_artifacts_respects_requested_subset(
     )
 
     with patch(
-        "fastcode.main.fastcode.BM25Okapi",
+        "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("subset shard-native load should not rebuild"),
     ):
         assert fc._load_multi_repo_cache(["repo_b"]) is True
@@ -1621,7 +1601,7 @@ def test_load_multi_repo_cache_real_vector_and_bm25_artifacts_merge_subset(
     )
 
     with patch(
-        "fastcode.main.fastcode.BM25Okapi",
+        "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("subset load should not rebuild BM25"),
     ):
         assert fc._load_multi_repo_cache(["repo_b"]) is True
@@ -1769,7 +1749,7 @@ def test_load_multi_repo_cache_real_vector_bm25_and_graph_artifacts_merge_subset
     )
 
     with patch(
-        "fastcode.main.fastcode.BM25Okapi",
+        "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("subset load should not rebuild BM25"),
     ):
         assert fc._load_multi_repo_cache(["repo_b"]) is True
@@ -1922,7 +1902,7 @@ def test_load_multi_repo_cache_real_vector_bm25_and_graph_artifacts_merge_all_re
     )
 
     with patch(
-        "fastcode.main.fastcode.BM25Okapi",
+        "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("multi-repo load should not rebuild BM25"),
     ):
         assert fc._load_multi_repo_cache(["repo_a", "repo_b"]) is True

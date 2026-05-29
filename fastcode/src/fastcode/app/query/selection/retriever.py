@@ -15,7 +15,7 @@ import os
 import pickle
 import shutil
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -1757,21 +1757,28 @@ class HybridRetriever:
         source_order = runtime.get("source_order", {})
         if not isinstance(source_order, dict):
             source_order = {}
+        inline_shards = runtime.get("inline_shards", {})
         scored: list[tuple[float, int, int, dict[str, Any]]] = []
         seen_sequences: set[tuple[str, int]] = set()
         for source_name, shard_file in sorted(
             shard_refs,
             key=lambda item: (int(source_order.get(item[0], 0) or 0), item[1]),
         ):
-            shard_dir = source_dirs.get(source_name)
-            if not isinstance(shard_dir, str) or not shard_dir:
-                continue
-            shard_path = os.path.join(shard_dir, shard_file)
-            if not os.path.exists(shard_path):
-                continue
-            with open(shard_path, "rb") as handle:
-                payload = pickle.load(handle)
-            entries = payload.get("entries", []) if isinstance(payload, dict) else []
+            entries: Any = None
+            if isinstance(inline_shards, dict):
+                entries = inline_shards.get((source_name, shard_file))
+            if entries is None:
+                shard_dir = source_dirs.get(source_name)
+                if not isinstance(shard_dir, str) or not shard_dir:
+                    continue
+                shard_path = os.path.join(shard_dir, shard_file)
+                if not os.path.exists(shard_path):
+                    continue
+                with open(shard_path, "rb") as handle:
+                    payload = pickle.load(handle)
+                entries = (
+                    payload.get("entries", []) if isinstance(payload, dict) else []
+                )
             if not isinstance(entries, list):
                 continue
             for entry in entries:
@@ -1942,6 +1949,97 @@ class HybridRetriever:
             "source_order": source_order,
         }
 
+    @staticmethod
+    def _bm25_statistics_from_document_frequencies(
+        *,
+        term_document_frequencies: Counter[str],
+        doc_lengths: list[int],
+    ) -> dict[str, Any] | None:
+        doc_count = len(doc_lengths)
+        if doc_count == 0:
+            return None
+        avgdl = float(sum(doc_lengths) / doc_count)
+        idf: dict[str, float] = {}
+        idf_sum = 0.0
+        negative_terms: list[str] = []
+        for term, frequency in sorted(term_document_frequencies.items()):
+            value = math.log(doc_count - frequency + 0.5) - math.log(frequency + 0.5)
+            idf[term] = value
+            idf_sum += value
+            if value < 0:
+                negative_terms.append(term)
+        average_idf = idf_sum / len(idf) if idf else 0.0
+        epsilon = 0.25
+        epsilon_value = epsilon * average_idf
+        for term in negative_terms:
+            idf[term] = epsilon_value
+        return {
+            "schema_version": "bm25_statistics.v1",
+            "doc_count": doc_count,
+            "avgdl": avgdl,
+            "idf": idf,
+            "average_idf": average_idf,
+            "epsilon": epsilon,
+            "k1": 1.5,
+            "b": 0.75,
+        }
+
+    def _build_bm25_inline_runtime(
+        self,
+        sources: Sequence[tuple[str, list[list[str]], list[dict[str, Any]]]],
+    ) -> dict[str, Any] | None:
+        term_document_frequencies: Counter[str] = Counter()
+        term_shards: dict[str, list[tuple[str, str]]] = {}
+        doc_lengths: list[int] = []
+        inline_shards: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        source_order: dict[str, int] = {}
+
+        for source_index, (source_name, corpus, elements) in enumerate(sources):
+            source_order[source_name] = source_index
+            shard_file = "__legacy_bm25_payload__"
+            entries: list[dict[str, Any]] = []
+            for sequence_no, (tokens, element) in enumerate(
+                zip(corpus, elements, strict=False)
+            ):
+                normalized_tokens = [str(token) for token in tokens]
+                entries.append(
+                    {
+                        "sequence_no": sequence_no,
+                        "tokens": normalized_tokens,
+                        "element": dict(element),
+                    }
+                )
+                doc_lengths.append(len(normalized_tokens))
+                unique_terms = set(normalized_tokens)
+                term_document_frequencies.update(unique_terms)
+                for term in unique_terms:
+                    term_shards.setdefault(term, []).append((source_name, shard_file))
+            inline_shards[(source_name, shard_file)] = entries
+
+        statistics = self._bm25_statistics_from_document_frequencies(
+            term_document_frequencies=term_document_frequencies,
+            doc_lengths=doc_lengths,
+        )
+        if statistics is None:
+            return None
+        return {
+            "statistics": statistics,
+            "term_shards": {
+                term: sorted(set(refs)) for term, refs in sorted(term_shards.items())
+            },
+            "source_dirs": {},
+            "source_order": source_order,
+            "inline_shards": inline_shards,
+        }
+
+    def _load_legacy_bm25_payload(self, name: str) -> dict[str, Any] | None:
+        bm25_path = self._legacy_bm25_path(name)
+        if not os.path.exists(bm25_path):
+            return None
+        with open(bm25_path, "rb") as handle:
+            payload = pickle.load(handle)
+        return cast(dict[str, Any], payload) if isinstance(payload, dict) else None
+
     def load_bm25_sources(
         self,
         names: Sequence[str],
@@ -1981,6 +2079,55 @@ class HybridRetriever:
         else:
             self._bm25_shard_name = None
             self._bm25_shard_manifest = None
+        return True
+
+    def load_bm25_legacy_sources(
+        self,
+        names: Sequence[str],
+        *,
+        filtered: bool,
+    ) -> bool:
+        sources: list[tuple[str, list[list[str]], list[dict[str, Any]]]] = []
+        elements: list[CodeElement] = []
+        for name in names:
+            data = self._load_legacy_bm25_payload(name)
+            if data is None:
+                return False
+            corpus = [
+                [str(token) for token in tokens]
+                for tokens in cast(list[Any], data.get("bm25_corpus", []))
+                if isinstance(tokens, list)
+            ]
+            element_payloads = [
+                dict(cast(Mapping[str, Any], element_payload))
+                for element_payload in cast(list[Any], data.get("bm25_elements", []))
+                if isinstance(element_payload, Mapping)
+            ]
+            if not corpus or not element_payloads:
+                return False
+            sources.append((name, corpus, element_payloads))
+            elements.extend(
+                deserialize_code_element(element_payload)
+                for element_payload in element_payloads
+            )
+
+        runtime = self._build_bm25_inline_runtime(sources)
+        if runtime is None:
+            return False
+
+        if filtered:
+            self.filtered_bm25 = None
+            self.filtered_bm25_corpus = []
+            self.filtered_bm25_elements = elements
+            self._filtered_bm25_shard_runtime = runtime
+            return True
+
+        self.full_bm25 = None
+        self.full_bm25_corpus = []
+        self.full_bm25_elements = elements
+        self._full_bm25_shard_runtime = runtime
+        self._bm25_shard_name = None
+        self._bm25_shard_manifest = None
         return True
 
     def _combine_results(
@@ -2360,42 +2507,14 @@ class HybridRetriever:
                     "Loaded shard-native filtered BM25 for %d repositories",
                     len(repo_names),
                 )
+            elif self.load_bm25_legacy_sources(repo_names, filtered=True):
+                self.logger.info(
+                    "Loaded legacy filtered BM25 through shard-runtime scorer "
+                    "for %d repositories",
+                    len(repo_names),
+                )
             else:
-                all_bm25_elements = []
-                all_bm25_corpus = []
-                for repo_name in repo_names:
-                    data = self._load_bm25_payload(repo_name)
-                    if data is None:
-                        self.logger.warning(f"BM25 index not found for {repo_name}")
-                        continue
-                    try:
-                        all_bm25_corpus.extend(
-                            cast(list[list[str]], data.get("bm25_corpus", []))
-                        )
-                        for elem_payload in cast(
-                            list[dict[str, Any]], data.get("bm25_elements", [])
-                        ):
-                            all_bm25_elements.append(
-                                deserialize_code_element(elem_payload)
-                            )
-                        self.logger.info(f"Loaded BM25 index for {repo_name}")
-                    except Exception as e:
-                        self.logger.warning(
-                            f"Failed to load BM25 index for {repo_name}: {e}"
-                        )
-
-                if all_bm25_elements and all_bm25_corpus:
-                    self.filtered_bm25_elements = all_bm25_elements
-                    self.filtered_bm25_corpus = all_bm25_corpus
-                    self.filtered_bm25 = BM25Okapi(all_bm25_corpus)
-                    self.logger.info(
-                        "Rebuilt filtered BM25 index with %d elements",
-                        len(all_bm25_elements),
-                    )
-                else:
-                    self.logger.warning(
-                        "No BM25 data found for the specified repositories"
-                    )
+                self.logger.warning("No BM25 data found for the specified repositories")
 
             # Optionally reload graph data (if needed)
             # Note: Graph reloading is commented out since it might not be necessary for all use cases

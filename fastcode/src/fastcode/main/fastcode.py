@@ -19,8 +19,6 @@ from importlib import util as importlib_util
 from typing import Any, cast
 from urllib.parse import urlsplit, urlunsplit
 
-from rank_bm25 import BM25Okapi
-
 import fastcode.retrieval.context.snapshot as _snapshot
 from fastcode.app.indexing.doc_ingester import KeyDocIngester
 from fastcode.app.indexing.embedder import CodeEmbedder
@@ -80,7 +78,6 @@ from fastcode.ir.code_status import build_code_status_pack
 from fastcode.ir.element import (
     CodeElement,
     CodeElementMeta,
-    deserialize_code_element,
     serialize_code_element,
 )
 from fastcode.ir.graph import IRGraphBuilder
@@ -2880,6 +2877,9 @@ class FastCode:
                     self.logger.warning(f"Failed to merge graph data from {repo_name}")
                     # TODO: Merge additional repository graphs if needed
             load_bm25_sources = getattr(self.retriever, "load_bm25_sources", None)
+            load_bm25_legacy_sources = getattr(
+                self.retriever, "load_bm25_legacy_sources", None
+            )
             if callable(load_bm25_sources) and load_bm25_sources(
                 repos_to_load, filtered=False
             ):
@@ -2887,72 +2887,29 @@ class FastCode:
                     "Loaded shard-native multi-repo BM25 for %d repositories",
                     len(repos_to_load),
                 )
+            elif callable(load_bm25_legacy_sources) and load_bm25_legacy_sources(
+                repos_to_load, filtered=False
+            ):
+                self.logger.info(
+                    "Loaded legacy multi-repo BM25 through shard-runtime scorer "
+                    "for %d repositories",
+                    len(repos_to_load),
+                )
             else:
-                all_bm25_elements: list[CodeElement] = []
-                all_bm25_corpus: list[list[str]] = []
-                load_bm25_payload = getattr(self.retriever, "load_bm25_payload", None)
-                for repo_name in repos_to_load:
-                    data: dict[str, Any] | None = None
-                    if callable(load_bm25_payload):
-                        try:
-                            payload = load_bm25_payload(repo_name)
-                            if isinstance(payload, dict):
-                                data = payload
-                        except Exception as e:
-                            self.logger.warning(
-                                f"Failed to load BM25 data for {repo_name}: {e}"
-                            )
-                    else:
-                        bm25_path = os.path.join(
-                            self.retriever.persist_dir, f"{repo_name}_bm25.pkl"
-                        )
-                        if os.path.exists(bm25_path):
-                            try:
-                                with open(bm25_path, "rb") as f:
-                                    payload = pickle.load(f)
-                                if isinstance(payload, dict):
-                                    data = payload
-                            except Exception as e:
-                                self.logger.warning(
-                                    f"Failed to load BM25 data for {repo_name}: {e}"
-                                )
+                self.logger.info("No BM25 data found, reconstructing from metadata...")
+                elements = self._reconstruct_elements_from_metadata()
 
-                    if data is None:
-                        continue
-                    all_bm25_corpus.extend(
-                        cast(list[list[str]], data.get("bm25_corpus", []))
-                    )
-                    for elem_payload in cast(
-                        list[dict[str, Any]], data.get("bm25_elements", [])
-                    ):
-                        all_bm25_elements.append(deserialize_code_element(elem_payload))
-
-                if all_bm25_elements and all_bm25_corpus:
-                    self.retriever.full_bm25_elements = all_bm25_elements
-                    self.retriever.full_bm25_corpus = all_bm25_corpus
-                    self.retriever.full_bm25 = BM25Okapi(all_bm25_corpus)
+                if elements:
+                    self.retriever.index_for_bm25(elements)
                     self.logger.info(
-                        "Rebuilt full BM25 index with %d merged elements",
-                        len(all_bm25_elements),
+                        f"Rebuilt BM25 index with {len(elements)} elements"
                     )
+
+                    if not graphs_loaded:
+                        self.graph_builder.build_graphs(elements)
+                        self.logger.info("Rebuilt code graph")
                 else:
-                    # Fallback: reconstruct from metadata
-                    self.logger.info(
-                        "No BM25 data found, reconstructing from metadata..."
-                    )
-                    elements = self._reconstruct_elements_from_metadata()
-
-                    if elements:
-                        self.retriever.index_for_bm25(elements)
-                        self.logger.info(
-                            f"Rebuilt BM25 index with {len(elements)} elements"
-                        )
-
-                        if not graphs_loaded:
-                            self.graph_builder.build_graphs(elements)
-                            self.logger.info("Rebuilt code graph")
-                    else:
-                        self.logger.warning("No elements reconstructed from metadata")
+                    self.logger.warning("No elements reconstructed from metadata")
 
             # Build separate BM25 index for repository overviews
             self.retriever.build_repo_overview_bm25()

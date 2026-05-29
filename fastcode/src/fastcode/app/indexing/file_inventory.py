@@ -107,6 +107,14 @@ class FileInventory:
     def total_size_bytes(self) -> int:
         return sum(file.size for file in self.files)
 
+    @property
+    def hashed_size_bytes(self) -> int:
+        return sum(
+            file.size
+            for file in self.files
+            if file.content_hash and not file.git_blob_oid
+        )
+
     def to_file_info_list(self) -> list[dict[str, Any]]:
         return [file.to_mapping() for file in self.files]
 
@@ -118,6 +126,8 @@ class FileInventory:
         return {
             "file_count": self.file_count,
             "total_size_bytes": self.total_size_bytes,
+            "scanned_bytes": self.total_size_bytes,
+            "hashed_bytes": self.hashed_size_bytes,
             "git_blob_oid_count": git_blob_count,
             "content_hash_count": content_hash_count,
             "fingerprinted_file_count": git_blob_count + content_hash_count,

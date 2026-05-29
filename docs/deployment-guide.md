@@ -48,6 +48,51 @@ FastCode once so idempotent schema checks run, then rerun the storage gate.
 Release notes must state whether existing schema/artifact families are readable,
 migrated, or require rebuild.
 
+## Operator Runbooks
+
+### Backup And Restore
+
+Back up PostgreSQL and filesystem artifacts from the same point in time. Stop
+indexing workers or hold the deployment lock, run `pg_dump` or a managed
+database snapshot, and archive the configured repository, cache, vector, and
+snapshot artifact directories. Restore the database first, restore artifact
+directories to the same configured paths, start FastCode once so idempotent
+schema checks run, then execute the PostgreSQL storage gate above.
+
+### Migration And Rollback
+
+Before upgrading, record the FastCode version, git SHA, Python version, storage
+backend, and artifact roots. Take a paired database/artifact backup. After
+upgrade, run schema initialization and the storage gate. If the gate fails,
+rollback by stopping workers, restoring the paired backup, redeploying the prior
+FastCode build, and forcing a fresh index only for artifact families explicitly
+marked rebuild-required in release notes.
+
+### Cache Invalidation
+
+Invalidate caches when embedding model, tokenizer, vector dimension, retrieval
+ranking policy, or artifact format changes. Prefer deleting the configured
+cache directory and affected vector/BM25 artifact keys while preserving
+snapshot records. After invalidation, run a forced index for the repository and
+verify query results against the restored snapshot before re-enabling traffic.
+
+### Lock Recovery
+
+For PostgreSQL mode, inspect resource-lock rows and active workers before
+clearing a lock. If the owning worker is dead and the fencing token is stale,
+release the lock through `SnapshotStore.release_lock(...)` or clear the specific
+expired row, then retry the failed index run. Do not clear a lock while a worker
+with the same token is still writing staged snapshot or artifact data.
+
+### Failed Upload Or Index Remediation
+
+For upload failures, keep the original upload artifact until an operator has
+captured logs and request metadata. For failed index runs, check the index-run
+record, redo queue, outbox rows, and staged snapshot state. Retry redo-safe
+tasks first. If staged artifacts are partial or the fencing token is invalid,
+discard the staged snapshot/artifact key and rerun indexing from the previous
+published manifest.
+
 ## Docker Deployment
 
 ### Two-Service Architecture

@@ -39,6 +39,8 @@ def test_scan_files_can_emit_fingerprints(tmp_path: Path) -> None:
     assert files[0]["supported_tool_eligible"] is True
     assert files[0]["mtime"] > 0
     assert inventory.metrics()["content_hash_count"] == 1
+    assert inventory.metrics()["scanned_bytes"] == source.stat().st_size
+    assert inventory.metrics()["hashed_bytes"] == source.stat().st_size
 
 
 def test_scan_file_inventory_prefers_git_blob_oid_for_tracked_clean_files(
@@ -98,12 +100,14 @@ def test_scan_file_inventory_hashes_untracked_git_files(
         lambda _path: "content-hash",
     )
 
-    files = loader.scan_files(include_fingerprints=True)
+    inventory = loader.scan_file_inventory(include_fingerprints=True)
+    files = inventory.to_file_info_list()
 
     assert files[0]["content_hash"] == "content-hash"
     assert files[0]["blob_oid"] is None
     assert files[0]["content_identity"] == "content-hash"
     assert files[0]["fingerprint_source"] == "content_hash"
+    assert inventory.metrics()["hashed_bytes"] == (repo / "a.py").stat().st_size
 
 
 def test_pipeline_scan_files_exposes_typed_inventory_metrics() -> None:
@@ -140,6 +144,8 @@ def test_pipeline_scan_files_exposes_typed_inventory_metrics() -> None:
     assert pipeline._file_inventory_metrics_payload(files) == {
         "file_count": 1,
         "total_size_bytes": 12,
+        "scanned_bytes": 12,
+        "hashed_bytes": 0,
         "git_blob_oid_count": 1,
         "content_hash_count": 0,
         "fingerprinted_file_count": 1,

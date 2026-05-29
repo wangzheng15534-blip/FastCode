@@ -9,7 +9,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from fastcode.ir.graph import IRGraphBuilder
+from fastcode.ir.graph import IRGraphBuilder, IRGraphView
 from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot
 from fastcode.mcp.graph_tools import (
     GraphToolContext,
@@ -242,6 +242,38 @@ class TestCompactGraphToolContext:
         assert result["error"] is None
         assert result["compact_graph_context"] is True
         assert result["total_clusters"] >= 1
+
+    def test_snapshot_fallback_uses_compact_views_without_networkx_materialization(
+        self,
+    ):
+        units = [
+            _unit("u:A", name="entry", qualified_name="pkg.entry", path="a.py"),
+            _unit("u:B", name="middle", path="b.py"),
+            _unit("u:C", name="target", path="c.py"),
+        ]
+        snap = _snapshot(
+            units,
+            [
+                _rel("u:A", "u:B", "call"),
+                _rel("u:B", "u:C", "call"),
+            ],
+        )
+
+        with patch.object(
+            IRGraphView,
+            "to_networkx",
+            side_effect=AssertionError("snapshot MCP fallback must stay compact"),
+        ):
+            path = compute_directed_path("pkg.entry", "target", snap)
+            impact = compute_impact_analysis("target", snap)
+            callers = compute_find_callers("target", snap)
+            steiner = compute_steiner_path(["entry", "target"], snap)
+
+        assert path["found"] is True
+        assert path["path_length"] == 2
+        assert impact["total_count"] == 2
+        assert callers["total_count"] == 2
+        assert steiner["found"] is True
 
 
 # ===========================================================================

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
@@ -22,11 +23,12 @@ from fastcode.ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from fastcode.utils.json import safe_jsonable
 from fastcode.utils.materialization import (
     BOUNDARY_JSON_DECODE,
     increment_materialization_boundary,
 )
+
+_MAX_JSON_PAYLOAD_DEPTH = 12
 
 
 def _source_set_payload(values: set[str]) -> list[str]:
@@ -160,18 +162,43 @@ def _string_set_payload(values: Any) -> set[str]:
     return {str(value) for value in _sequence_items(values) if value}
 
 
+def _json_value_payload(value: Any, *, depth: int = 0) -> Any:
+    if depth > _MAX_JSON_PAYLOAD_DEPTH:
+        return repr(value)
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else repr(value)
+    if isinstance(value, np.generic):
+        return _json_value_payload(value.item(), depth=depth + 1)
+    if isinstance(value, Mapping):
+        return {
+            str(key): _json_value_payload(nested, depth=depth + 1)
+            for key, nested in value.items()
+        }
+    if isinstance(value, (set, frozenset)):
+        return [
+            _json_value_payload(item, depth=depth + 1)
+            for item in sorted(value, key=repr)
+        ]
+    if isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes, bytearray, memoryview)
+    ):
+        return [_json_value_payload(item, depth=depth + 1) for item in value]
+    return repr(value)
+
+
 def _json_mapping_payload(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
-    normalized = {str(key): nested for key, nested in value.items()}
-    jsonable = safe_jsonable(normalized)
+    jsonable = _json_value_payload(value)
     return jsonable if isinstance(jsonable, dict) else {}
 
 
 def _json_list_payload(value: Any) -> list[Any] | None:
     if value is None:
         return None
-    jsonable = safe_jsonable(value)
+    jsonable = _json_value_payload(value)
     return jsonable if isinstance(jsonable, list) else None
 
 

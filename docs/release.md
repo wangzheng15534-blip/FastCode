@@ -6,11 +6,10 @@ out in the release notes.
 
 ## Supported Matrix
 
-Current package metadata declares Python `>=3.11`.
-
-The package/install gate currently proves the active release-host interpreter
-only. The latest checked run was on Python 3.13.13. Before a stable release, run
-the same gates across every Python version that will be listed as supported.
+Current package metadata declares Python `>=3.11`. CI runs the default test gate
+on Python 3.11, 3.12, and 3.13. The manual `release-gate` workflow runs the
+artifact/package smoke on Python 3.13 and can include heavy optional extras via
+the workflow input.
 
 The default package gate now keeps the local embedding stack and Nanobot stack
 out of the core install path. Service extras are installed separately, and the
@@ -145,7 +144,17 @@ are readable or require rebuild.
 
 ### External Tool Gate
 
-Status: open.
+Status: availability-gated command smokes are automated; full per-language
+indexing evidence is still required before stable release claims.
+
+CI includes `fastcode/tests/scip/test_scip_tool_smoke.py`, which runs
+`--version` command smokes for installed stable SCIP tool binaries and skips
+tools that are unavailable on the runner. Set
+`FASTCODE_SCIP_SMOKE_LANGUAGES=python,rust` to restrict a local run:
+
+```bash
+uv run pytest fastcode/tests/scip/test_scip_tool_smoke.py -q
+```
 
 Before stable release, run availability-gated command smokes for every language
 listed as stable in release notes. Languages without command evidence must be

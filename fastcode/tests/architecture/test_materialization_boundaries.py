@@ -15,6 +15,7 @@ HOT_PATHS = [
     PACKAGE_ROOT / "semantic" / "resolvers" / "engine" / "patching.py",
     PACKAGE_ROOT / "app" / "store" / "vectors" / "pg_retrieval.py",
     PACKAGE_ROOT / "app" / "store" / "snapshots" / "snapshot.py",
+    PACKAGE_ROOT / "app" / "store" / "snapshots" / "ir_payloads.py",
     PACKAGE_ROOT / "app" / "store" / "vectors" / "vector.py",
     PACKAGE_ROOT / "app" / "query" / "selection" / "retriever.py",
 ]
@@ -46,7 +47,11 @@ ALLOWED_GENERIC_DICT_CALLS = {
     ("app/query/selection/retriever.py", "_project_doc_priors", "from_dict"),
     ("app/query/selection/retriever.py", "_apply_doc_projection_to_code", "from_dict"),
     ("app/query/selection/retriever.py", "_adaptive_fuse_channels", "from_dict"),
-    ("app/query/selection/retriever.py", "_compute_adaptive_fusion_params", "from_dict"),
+    (
+        "app/query/selection/retriever.py",
+        "_compute_adaptive_fusion_params",
+        "from_dict",
+    ),
 }
 ALLOWED_NETWORKX_IMPORTS = {
     # Compatibility and explicit graph materialization boundaries. New hot paths
@@ -217,7 +222,9 @@ def test_incremental_pipeline_does_not_call_full_element_graph_fallback() -> Non
     )
 
 
-def test_incremental_pipeline_does_not_reintroduce_full_element_fallback_helper() -> None:
+def test_incremental_pipeline_does_not_reintroduce_full_element_fallback_helper() -> (
+    None
+):
     path = PACKAGE_ROOT / "app" / "indexing" / "pipeline" / "service.py"
     tree = ast.parse(path.read_text())
     violations = [
@@ -245,7 +252,10 @@ def test_semantic_patch_does_not_eagerly_copy_snapshot_collections() -> None:
         first_arg = node.args[0] if node.args else None
         if not isinstance(first_arg, ast.Attribute):
             continue
-        if not isinstance(first_arg.value, ast.Name) or first_arg.value.id != "snapshot":
+        if (
+            not isinstance(first_arg.value, ast.Name)
+            or first_arg.value.id != "snapshot"
+        ):
             continue
         if first_arg.attr in {"units", "supports", "relations", "embeddings"}:
             violations.append(f"{_rel(path)}:{node.lineno}:{first_arg.attr}")
@@ -261,6 +271,8 @@ def test_shard_native_bm25_retrieval_helpers_do_not_construct_bm25okapi() -> Non
     parents = _parents(tree)
     guarded_functions = {
         "load_bm25_sources",
+        "load_bm25_legacy_sources",
+        "reload_specific_repositories",
         "_keyword_search_sharded",
         "_keyword_search_sharded_runtime",
     }
@@ -274,8 +286,7 @@ def test_shard_native_bm25_retrieval_helpers_do_not_construct_bm25okapi() -> Non
         if function_name in guarded_functions:
             violations.append(f"{_rel(path)}:{node.lineno}:{function_name}")
     assert not violations, (
-        "shard-native BM25 helpers must stay rebuild-free:\n"
-        + "\n".join(violations)
+        "shard-native BM25 helpers must stay rebuild-free:\n" + "\n".join(violations)
     )
 
 

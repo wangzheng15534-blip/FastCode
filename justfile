@@ -31,13 +31,9 @@ lint:
 type-check:
     uv run pyright
 
-# Quick compile-time architecture gate.
-check:
-    uv run python scripts/check_deps.py --group layer-dag
-
 # Dependency direction + hexagonal role enforcement.
-check-deps:
-    uv run python scripts/check_deps.py
+check:
+    python3 scripts/fcis_project.py check --root .
 
 # Full architecture policy suite.
 arch-check:

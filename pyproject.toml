@@ -94,11 +94,13 @@ id = "semantic-resolver-private-implementation"
 name = "Semantic resolver private implementation stays inside resolvers"
 type = "protected"
 protected_modules = [
-    "fastcode.semantic.resolvers.core.helper_operations",
-    "fastcode.semantic.resolvers.core.resolver_support",
+    "fastcode.semantic.resolvers.engine.helper_operations",
+    "fastcode.semantic.resolvers.engine.resolver_support",
 ]
 allowed_importers = [
     "fastcode.semantic.resolvers.*",
+    "fastcode.semantic.resolvers.engine.*",
+    "fastcode.semantic.resolvers.languages.*",
 ]
 as_packages = false
 
@@ -114,8 +116,42 @@ protected_modules = [
 ]
 allowed_importers = [
     "fastcode.app.store.*",
+    "fastcode.app.store.cache.*",
+    "fastcode.app.store.artifacts.*",
+    "fastcode.app.store.snapshots.*",
+    "fastcode.app.store.vectors.*",
 ]
 as_packages = false
+
+[[tool.importlinter.contracts]]
+id = "domain-no-app-upward"
+name = "Domain packages must not import app use-flow"
+type = "forbidden"
+source_modules = [
+    "fastcode.ir",
+    "fastcode.graph",
+    "fastcode.retrieval",
+    "fastcode.semantic",
+]
+forbidden_modules = [
+    "fastcode.app",
+]
+as_packages = true
+
+[[tool.importlinter.contracts]]
+id = "domain-no-infra-upward"
+name = "Domain packages must not import infrastructure"
+type = "forbidden"
+source_modules = [
+    "fastcode.ir",
+    "fastcode.graph",
+    "fastcode.retrieval",
+    "fastcode.semantic",
+]
+forbidden_modules = [
+    "fastcode.infrastructure",
+]
+as_packages = true
 
 # Tests: known-good literals, untyped fixtures/mocks — Rust cfg(test) equivalent
 [[tool.pyright.executionEnvironments]]

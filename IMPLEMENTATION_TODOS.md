@@ -73,7 +73,7 @@ This audit checked current source and regression tests directly, not git history
   `fastcode/src/fastcode/api/cors.py`, `fastcode/src/fastcode/api/routes.py`
 - agent turn/context v0: `fastcode/src/fastcode/retrieval/agent_context.py`,
   `fastcode/src/fastcode/retrieval/context_compiler.py`,
-  `fastcode/src/fastcode/store/records.py`, `fastcode/src/fastcode/store/cache.py`
+  `fastcode/src/fastcode/store/snapshots/snapshot_contracts.py`, `fastcode/src/fastcode/store/cache/contracts.py`
 
 **Really implemented:**
 - Architecture gates are active and green for import layers, no Pydantic in domain/common packages,
@@ -94,14 +94,11 @@ This audit checked current source and regression tests directly, not git history
   tests plus touched-file ruff and pyright checks.
 
 **Still only partially implemented against the non-functional goals:**
-- Incremental update is not file-shard-native end to end. The pipeline still
-  rehydrates a full combined element list and builds temporary whole-snapshot
-  artifacts, but persisted vector/BM25 shards, conservative legacy graph
-  shards, and safe PostgreSQL relational fact publication now reuse prior
-  snapshot work for unchanged paths. Incremental plans now also expose explicit
-  per-file interface digests, dependency-frontier metadata, and deterministic
-  degraded-mode reasons. Scoped SCIP still widens or falls back to repo/tool
-  scope in important cases.
+- Incremental update is delta-first with shard reuse: temporary artifacts are
+  built from changed elements only, `publish_delta()` hardlinks unchanged shards,
+  and persisted vector/BM25/graph shards reuse prior snapshot work. The former
+  `_full_elements_for_incremental_fallback()` has been eliminated. Scoped SCIP
+  still widens or falls back to repo/tool scope in important cases.
 - Embedding identity is closer to a uniform serving contract: snapshot/vector
   artifacts persist fingerprints, repository overviews carry fingerprints,
   `CodeEmbedder` now implements an explicit `EmbeddingService` boundary, and
@@ -188,10 +185,11 @@ release-level implications.
   dimension is not configured. Ollama provider-native batching is landed with
   bounded per-text fallback; provider timing separation and benchmark evidence
   remain open performance work.
-- Semantic resolver patching remains copy-heavy: applying a resolver patch
-  still copies whole snapshot collections, but the old generic
-  `to_dict() -> from_dict()` clone path and generic JSON cleanup have been
-  replaced with explicit field copies and patch-local serializers.
+- Semantic resolver patching uses copy-on-write deferred sequences and
+  structural sharing: applying a resolver patch no longer eagerly copies
+  snapshot collections; `_DeferredSequence` and `_sequence_with_replacements()`
+  share unchanged objects by reference with lazy materialization, enforced by
+  an architecture test via AST analysis.
 - Shell graph tools are partially aligned with compact graph design. MCP
   directed path, impact, caller, and Steiner tools now use saved IR graph
   handles plus sidecar symbol maps when available; legacy snapshots, missing
@@ -270,8 +268,8 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
   - `SnapshotRecord` frozen dataclass with `to_dict()`/`from_dict()`
   - `get_snapshot_record()` and `save_snapshot()` return typed records instead of raw dicts
   - All call sites migrated from bracket access to attribute access
-  - `store.records` now also defines typed `SCIPArtifactRecord`, `RedoTaskRecord`, and `OutboxEventRecord` boundaries for active snapshot-store queue/artifact flows
-  - `store.records` now also defines typed `ProjectionBuildRecord` and `ProjectionDirtyScopeRecord` boundaries for active projection-store lookup/dirty-scope flows
+  - `store.snapshots.snapshot_contracts` now also defines typed `SCIPArtifactRecord`, `RedoTaskRecord`, and `OutboxEventRecord` boundaries for active snapshot-store queue/artifact flows
+  - `store.snapshots.snapshot_contracts` now also defines typed `ProjectionBuildRecord` and `ProjectionDirtyScopeRecord` boundaries for active projection-store lookup/dirty-scope flows
 - Snapshot query concurrency safety:
   - `query_snapshot` serializes load+query with a `threading.Lock`
   - Thread-barrier regression tests (2 and 3 concurrent callers) verify artifact isolation
@@ -386,7 +384,7 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
 - Agent-context v0 hardening:
   - pure typed turn/context records now live in `retrieval/agent_context.py`
   - `retrieval/context_compiler.py` renders stable/turn/observation FCX working-memory artifacts and typed handoff artifacts
-  - `store.records` and `store/cache.py` persist typed working-memory, turn-journal, and handoff records through explicit payload serializers
+  - `store.records` and `store.cache.contracts` persist typed working-memory, turn-journal, and handoff records through explicit payload serializers
   - REST, web, MCP, and `FastCode` facades expose latest/specific turn context, evidence-ref expansion, and handoff creation/fetch
 - Lock fencing hardening:
   - PostgreSQL same-owner lock refresh preserves the current fencing token instead of invalidating in-flight work
@@ -441,12 +439,14 @@ until the new TODOs have implementation, enforcement, and benchmark evidence.
 - manifest-first incremental planning now disables reuse when prior or current file entries lack required fingerprints.
 
 **What is not yet true:**
-- the pipeline still rehydrates a full combined `elements` list and builds temporary downstream vector/BM25/legacy graph objects from that set, but persisted path shards now avoid rewriting unchanged vector/BM25 and conservative graph artifacts.
+- temporary artifact builders do not carry previous shard handles for fallback
+  paths; the old `_full_elements_for_incremental_fallback()` has been
+  eliminated, so temp structures are built from changed elements only.
 - optional SCIP now has scoped paths, but language detection and unsupported/widened cases can still pay near full compiler/indexer cost.
 - file-unit `content_hash` / `blob_oid` metadata exists, but file identity is not yet a single canonical planner anchor shared by inventory, incremental planning, SCIP, file-artifact reuse, and downstream publication.
 - helper-backed runtimes still pay per-run process startup cost; the Go helper currently uses `go run`, which also implies repeated compile/build overhead.
 
-**Release implication:** current behavior materially reduces repeated parse and embedding work for unchanged files, but stable-release claims must still say compiler/tooling cost is only partially incremental.
+**Release implication:** current behavior materially reduces repeated parse, embedding, and artifact-build work for unchanged files, but stable-release claims must still say compiler/tooling cost is only partially incremental.
 
 ## Architecture contract in force
 
@@ -784,16 +784,27 @@ The template philosophy remains correct for Python: use one importable package w
 
 ### P0.2 True incremental source/index caching
 
-**Gap:** The current release path is partially incremental, not gracefully incremental end to end. The manifest-driven prefilter can skip unchanged-file parse and embedding, changed AST IR can be merged with the previous snapshot, persisted vector/BM25/selected graph shards can reuse unchanged path artifacts, and some semantic/SCIP work can be scoped. The pipeline still materializes combined in-memory repo-level artifacts, and widened SCIP/helper/tool startup costs can still scale close to a full reindex.
+**Gap:** The current release path is delta-first for artifact construction with
+shard reuse on the primary path. The manifest-driven prefilter skips
+unchanged-file parse and embedding, changed AST IR is merged with the previous
+snapshot, persisted vector/BM25/selected graph shards reuse unchanged path
+artifacts, and some semantic/SCIP work can be scoped. The
+`_full_elements_for_incremental_fallback()` function has been eliminated;
+temporary artifacts are now built from changed elements only and `publish_delta()`
+hardlinks unchanged shards. Widened SCIP/helper/tool startup costs can still
+scale close to a full reindex.
 
-**Why this is core-level:** This is the largest remaining architecture gap between a hardened prototype and a stable release. On medium and large repos, important parts of “incremental” behavior can still scale like full reindex even when parse and embedding reuse are working.
+**Why this is core-level:** On medium and large repos, widened SCIP/helper and
+compiler/indexer startup costs can still dominate even when parse, embedding,
+and artifact reuse are working efficiently.
 
 **Current failure modes:**
 - incremental diff output is represented by a typed `PlanChanges` artifact, but
   repository inventory and file hashing are still not one canonical planner
   object across snapshot identity, incremental planning, SCIP language
   detection, file-artifact reuse, and publication.
-- `run_index_pipeline()` still rehydrates unchanged metadata into one full `elements` list and builds temporary whole-snapshot vector/BM25/legacy graph objects before persistence.
+- temporary artifact builders do not yet carry previous shard handles for
+  fallback paths; the old full-element reconstruction function has been removed.
 - persisted vector/BM25 path shards reuse compatible previous artifact files
   for unchanged paths, and legacy graph shard reuse is intentionally
   conservative; PostgreSQL relational facts have a safe changed-path delta, but
@@ -1046,15 +1057,15 @@ has a real backend gate for the release-critical primitives listed below.
 Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 
 **Current gaps visible in code:**
-- `store/manifest.py` and `store/snapshot.py` still expose mixed record/dict APIs instead of converging on typed records
-- `store/projection.py`, `store/cache.py`, `store/vector.py`, and `store/pg_retrieval.py` remain heavily dict-oriented at public compatibility boundaries even where active row materialization is now typed
+- `store/manifest.py` and `store/snapshot.py` expose typed record APIs alongside compatibility dict-return helpers
+- `store/projection.py`, `store/cache.py`, `store/vector.py`, and `store/pg_retrieval.py` expose typed record APIs on active paths with dict-return compatibility helpers retained at public boundaries
 - query/retrieval paths still use dict-shaped rows as a primary interchange format instead of a small typed boundary model set
 - `api/contracts.py` and `schemas/config.py` isolate Pydantic, but the rest of the system has not fully converged on explicit translation adapters
 
 **Required work:**
 - define the canonical schema flow explicitly in code/docs:
   - `api.contracts` / `schemas.config` for Pydantic boundary types
-  - owning domain contracts and `store.records` for frozen dataclass interchange
+  - owning domain contracts and `store.snapshots.snapshot_contracts` / `store.cache.contracts` for frozen dataclass interchange
   - adapters that translate field-by-field between boundary, core, and persistence forms
 - eliminate mixed dict/record public APIs where possible:
   - promote typed snapshot artifact/redo/outbox records into public `*_record()` accessors where those surfaces are stable
@@ -1080,7 +1091,7 @@ Without that, layout cleanup is cosmetic; runtime contracts remain implicit.
 
 **Current audit findings:**
 - generic JSON normalization is now narrower, but still present in remaining shell/storage edges:
-  - `utils/json.py:safe_jsonable()` recursively converts dict/list/set/object trees
+  - `utils/json.py:safe_jsonable()` recursively converts dict/list/set/object trees; still used for IR metadata serialization in `store/snapshots/ir_payloads.py:163,174` on hot save paths
   - `api/routes.py` and `api/web.py` now use explicit source/dialogue serializers, but other API payloads still pass through dict-shaped records
 - store persistence still serializes JSON payloads at DB boundaries, but some hot rows now avoid full object expansion:
 - `store/snapshot.py` relational facts now use explicit field serializers
@@ -1453,11 +1464,12 @@ These currently emit useful structured facts, but they are still narrower than f
 
 ### P1.5 Continue store-boundary typing
 
-Typed records now exist for manifests, snapshot refs, snapshot records, index
-runs, publish tasks, SCIP artifact refs, unit artifacts, repository overviews,
-vector search results, pg-retrieval result rows, redo tasks, outbox events,
-dialogue turns, dialogue sessions, query result cache records, and active
-projection build/dirty-scope rows.
+Typed records now exist for manifests (`store.snapshots.manifest_contracts`),
+snapshot refs, snapshot records, index runs, publish tasks, SCIP artifact refs,
+unit artifacts, repository overviews, vector search results, pg-retrieval
+result rows, redo tasks, outbox events, dialogue turns, dialogue sessions,
+query result cache records (`store.cache.contracts`), and active projection
+build/dirty-scope rows.
 
 The previously listed compatibility payload adapters are now covered by
 explicit field serializers and regressions that make generic `row_to_dict()` or
@@ -1626,7 +1638,7 @@ activation feedback, and reuse metadata.
   `TurnJournal`, and `HandoffArtifact`.
 - `context_compiler.py` renders stable/turn/observation FCX sections from typed
   state and builds typed handoff artifacts.
-- `store.records` and `store/cache.py` persist working-memory, turn-journal, and
+- `store.snapshots.snapshot_contracts` and `store.cache.contracts` persist working-memory, turn-journal, and
   handoff records through explicit payload serializers.
 - `query/handler.py` feeds prior compiled context into subsequent query turns and
   saves typed working-memory plus journal records.

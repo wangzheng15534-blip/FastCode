@@ -14,10 +14,12 @@ unless they directly affect these three goals.
 ## Audit Verdict - May 24, 2026
 
 FastCode has real partial passes. The implementation is closer to
-performance-native but three structural gaps remain open: P0.2 temporary
-artifact construction is hybrid (delta-first for embedding-only changes, full
-reconstruction for structural changes), P0.14 BM25 still rebuilds full corpus,
-and P0.18 semantic patching still copies whole collections at the list level.
+performance-native but two structural gaps remain open: P0.2 temporary
+artifact construction is delta-first with fallback only for structural changes,
+and P0.10 NetworkX compatibility surfaces (`copy()`/`to_undirected()`,
+`graph/build.py`) still materialize NetworkX graphs. P0.14 BM25 is shard-native
+on the primary path with full-rebuild as an explicit fallback. P0.18 semantic
+patching now uses deferred sequences and structural sharing.
 
 Implementation update through May 14, 2026:
 
@@ -107,9 +109,10 @@ Implementation update through May 14, 2026:
 
 - Incremental indexing can skip unchanged-file parse and embedding work, reuse
   changed-unit embeddings, merge changed AST IR with a previous snapshot, and
-  reuse persisted vector/BM25 and limited graph shards. The pipeline is hybrid:
-  delta-first for embedding-only changes, but `_full_elements_for_incremental_fallback()`
-  reconstructs full element lists on structural/API changes.
+  reuse persisted vector/BM25 and limited graph shards. The pipeline is
+  delta-first: temporary artifacts are built from changed elements only and
+  `publish_delta()` hardlinks unchanged shards; the former
+  `_full_elements_for_incremental_fallback()` has been eliminated.
 - Vector flow uses NumPy/FAISS/pgvector in important places. Shard hardlinking
   avoids loading unchanged shards (`store/vector.py:1994-2003`), mmap lazy
   loading exists (`store/vector.py:1538-1543`). Compression-vs-mmap is now
@@ -122,10 +125,12 @@ Implementation update through May 14, 2026:
 - Snapshot persistence is manifest + shard based with lazy readers. Embedding
   JSON lists are removed from active persistence (vectors stored as `.npy`
   artifacts with `vector_ref`).
-- BM25 shard-native load still rebuilds full `BM25Okapi` corpus on query
-  (`query/retriever.py:2016`).
-- Semantic patching uses object-level structural sharing but still copies whole
-  collections at the list level (`patching.py:444-446`).
+- BM25 shard-native load scores on shards directly on the primary path; full
+  `BM25Okapi` corpus reconstruction remains as fallback at `retriever.py:2390`.
+- Semantic patching uses copy-on-write deferred sequences (`_DeferredSequence`,
+  `_sequence_with_replacements()`) for structural sharing at the collection level;
+  unchanged objects are shared by reference without list-level copying
+  (`patching.py:99-195, 658-675`).
 - Materialization boundary guards, runtime counters, architecture tests, and
   edit-class benchmarks are in place. Budget-enforcement gates are not yet
   active.
@@ -151,10 +156,10 @@ New or sharpened findings:
   were found in this audit and are now fixed for the compatibility and
   all-cache-hit paths that previously touched `embedding_dim` before actual
   embedding work.
-- Semantic resolver patching remains a full-collection copy path, but the
-  generic `to_dict() -> from_dict()` object clones and generic `safe_jsonable()`
-  calls found in this audit have been replaced with explicit field copies and
-  patch-local serializers.
+- Semantic resolver patching now uses copy-on-write deferred sequences and
+  structural sharing; the old `list(snapshot.units)` eager-copy path has been
+  replaced with `_DeferredSequence` and `_sequence_with_replacements()`
+  (`patching.py:99-195, 658-675`), enforced by an architecture test.
 - MCP graph tools now have a compact-artifact path for directed path, impact,
   caller, and Steiner queries. Legacy snapshots, missing compact graph/symbol
   artifacts, and projection rebuild fallbacks still load a full `IRSnapshot`.
@@ -226,27 +231,22 @@ Exit criteria:
 
 ### P0.2 Replace Full Temporary Artifacts With Delta-First Builders
 
-**Status:** HYBRID — delta-first for embedding-only changes, full reconstruction
-for structural/API changes. Temporary artifacts are now built from changed
-elements only (`pipeline.py:3323` returns `new_elements` not all elements), and
-`publish_delta()` functions exist for vector/BM25/graph shard reuse
-(`pipeline.py:5065-5164`). However, when non-embedding changes occur (API
-surface, edge changes), `_full_elements_for_incremental_fallback()` reconstructs
-the full element list (`pipeline.py:4407-4423`), and temporary artifacts lack
-reuse handles to reference previous unchanged shards.
+**Status:** DELTA-FIRST — temporary artifacts are built from changed elements
+only, and `publish_delta()` functions reuse previous unchanged shards. The
+former `_full_elements_for_incremental_fallback()` function has been eliminated.
+`_plan_incremental_elements()` returns changed elements only, `temp_store` /
+`temp_graph` / `temp_retriever` are built from changed elements only, and
+`publish_delta()` hardlinks unchanged shards from the previous snapshot.
 
 Evidence:
 
 - `_plan_incremental_elements()` returns `new_elements` (changed only), not
-  `unchanged + changed` (`pipeline.py:3323`).
+  `unchanged + changed` (`service.py:3495`).
 - Temporary `temp_store`, `temp_graph`, `temp_retriever` are built from changed
-  elements only (`pipeline.py:4389-4439`).
-- `publish_delta()` functions exist and accept `previous_name` +
-  `reusable_path_keys` for shard reuse (`pipeline.py:5065-5164`).
-- `_full_elements_for_incremental_fallback()` reconstructs full element list on
-  non-embedding changes (`pipeline.py:4407-4423`).
-- `artifact_shard_reuse` metrics track reused/linked shards
-  (`pipeline.py:5689-5691`).
+  elements only (`service.py:4593-4650`).
+- `publish_delta()` functions accept `previous_name` + `reusable_path_keys` for
+  shard reuse (`store/vector.py:855`, `store/artifacts/graph.py:82`).
+- `artifact_shard_reuse` metrics track reused/linked shards.
 
 TODO:
 
@@ -262,7 +262,7 @@ TODO:
   paths and affected cross-file edges only.
 - [x] Keep a compatibility path for full rebuilds, but record degraded/full
   fallback reasons in metrics.
-- [ ] Eliminate `_full_elements_for_incremental_fallback()` reconstruction for
+- [x] Eliminate `_full_elements_for_incremental_fallback()` reconstruction for
   structural changes; instead pass shard reuse handles through to temporary
   artifact builders so they reference previous unchanged shards directly.
 - [ ] Make temporary artifact builders (VectorStore, HybridRetriever,
@@ -720,17 +720,22 @@ Exit criteria:
 
 ### P0.14 Lexical Retrieval Must Stop Rebuilding Full BM25 On Load
 
-**Gap:** BM25 artifacts can be sharded, but query load reconstructs a full
-`BM25Okapi` object from materialized corpus and element lists.
+**Status:** SHARD-NATIVE ON PRIMARY PATH — `_keyword_search_sharded_runtime()`
+scores directly on shards without rebuilding a full `BM25Okapi` object. Full
+corpus reconstruction (`BM25Okapi(all_bm25_corpus)`) remains only as an
+explicit fallback at `retriever.py:2390` when shard-native loading fails.
 
 Evidence:
 
-- `index_for_bm25()` builds a full corpus and `BM25Okapi`
-  (`fastcode/src/fastcode/query/retriever.py`).
-- `load_bm25()` reloads all corpus and element payloads and rebuilds
-  `BM25Okapi` (`fastcode/src/fastcode/query/retriever.py`).
+- `_keyword_search_sharded_runtime()` scores BM25 directly on shards
+  (`retriever.py:1709-1819`).
+- `load_bm25_sources()` loads BM25 sources in shard-native mode
+  (`retriever.py:1945-1984`).
+- `reload_specific_repositories()` tries shard-native first, falls back to
+  `BM25Okapi(all_bm25_corpus)` at `retriever.py:2390` only when shard-native
+  loading fails.
 - `_load_bm25_payload()` materializes ordered corpus and element lists from
-  shards (`fastcode/src/fastcode/query/retriever.py`).
+  shards (`retriever.py:3171-3220`), used only in the fallback path.
 
 TODO:
 
@@ -744,8 +749,9 @@ TODO:
 Exit criteria:
 
 - loading lexical retrieval for a snapshot does not rebuild a full corpus object
-  — NOT MET: `reload_specific_repositories()` still calls
-  `BM25Okapi(all_bm25_corpus)` (`query/retriever.py:2016`)
+  — MET on primary path: `_keyword_search_sharded_runtime()` scores on shards
+  directly. FALLBACK: `BM25Okapi(all_bm25_corpus)` at `retriever.py:2390`
+  when shard-native loading fails.
 - one-file update changes only lexical shards for affected paths and global
   statistics
 - query benchmark reports lexical load time separately from ranking time
@@ -873,23 +879,31 @@ Exit criteria:
 
 ### P0.18 Make Semantic Patch Application Delta-Native
 
-**Status:** PARTIAL — object-level structural sharing works (unchanged objects
-reused by reference), but collection-level copying still occurs. The function
-creates `list(snapshot.units)`, `list(snapshot.supports)`, etc. for ALL items
-even when only a few changed (`patching.py:444-446`). Materialization counters
-exist (`patching.py:432-442, 533-537`). Generic dict round trips are removed.
-Patch-local serializers are in place.
+**Status:** MET — semantic patching uses copy-on-write deferred sequences and
+structural sharing at both the object and collection level. Unchanged objects
+are shared by reference. Unchanged collections use `_DeferredSequence` (lazy
+materialization) and `_sequence_with_replacements()` (structural sharing).
+`snapshot.embeddings` is referenced directly without copy. An architecture test
+enforces no eager list copying via AST analysis.
 
 Evidence:
 
-- `apply_resolution_patch()` creates new list containers for ALL collections
-  (`patching.py:444-446`), even though unchanged objects within those lists are
-  reused by reference (confirmed by test at
-  `tests/semantic/test_semantic_resolvers.py:421-513`).
+- `_DeferredSequence` provides lazy materialization for collections
+  (`patching.py:99-163`).
+- `_sequence_with_replacements()` returns the original list when no changes are
+  needed, or a deferred sequence that applies replacements on access
+  (`patching.py:166-195`).
+- `apply_resolution_patch()` builds updated collections with
+  `_sequence_with_replacements()` for units, supports, and relations
+  (`patching.py:658-672`), and references `snapshot.embeddings` directly
+  (`patching.py:674-675`).
 - `_clone_unit()`, `_clone_support()`, `_clone_relation()` exist as explicit
-  clone helpers (`patching.py:275-344`), used only for changed items.
+  clone helpers (`patching.py:375-427`), used only for changed items.
 - Materialization counters track `preserved_object_count` and
   `changed_object_count` separately.
+- `test_semantic_patch_does_not_eagerly_copy_snapshot_collections` in
+  `test_materialization_boundaries.py` enforces no `list(snapshot.X)` calls via
+  AST analysis.
 
 TODO:
 
@@ -898,7 +912,7 @@ TODO:
 - [x] Replace patch-local recursive metadata normalization with explicit
   metadata serializers for resolver patch payloads.
 - [x] Add runtime materialization counters around semantic patch application.
-- [ ] Replace full snapshot cloning with structural sharing or path/unit-scoped
+- [x] Replace full snapshot cloning with structural sharing or path/unit-scoped
   copy-on-write updates at the collection level, so the list containers
   themselves do not copy all items.
 - [ ] Benchmark helper-backed semantic upgrade on unchanged, body-only,
@@ -908,7 +922,8 @@ TODO:
 Exit criteria:
 
 - applying a small resolver patch does not copy every unchanged IR unit and
-  relation — NOT MET: list-level copy still occurs
+  relation — MET: deferred sequences and structural sharing avoid eager
+  list-level copies; architecture test enforces via AST analysis
 - materialization metrics report changed IR objects separately from preserved
   objects — MET
 
@@ -995,21 +1010,21 @@ Exit criteria:
 
 ## Do Not Count These As Done
 
-Reconciled May 24, 2026:
+Reconciled May 29, 2026:
 
-- P0.2: shard reuse after full temporary artifact construction does not satisfy
-  delta-first execution. The pipeline is hybrid: delta-first for embedding-only
-  changes, full reconstruction for structural changes via
-  `_full_elements_for_incremental_fallback()`.
+- P0.2: the remaining gap is that temporary artifact builders (VectorStore,
+  HybridRetriever, CodeGraphBuilder) do not yet carry previous shard handles
+  for fallback paths; the old `_full_elements_for_incremental_fallback()`
+  function has been eliminated.
 - P0.10: compact graph persistence does not satisfy graph materialization
   minimization when `copy()` and `to_undirected()` still materialize NetworkX
   via `to_networkx()` (`ir/graph.py:338-342`).
-- P0.14: BM25 shard-native load does not satisfy the exit criterion when
-  `reload_specific_repositories()` still calls `BM25Okapi(all_bm25_corpus)`
-  (`query/retriever.py:2016`).
-- P0.18: object-level structural sharing does not satisfy delta-native patching
-  when `list(snapshot.units)` copies all items into new containers
-  (`patching.py:444-446`).
+- P0.14: BM25 shard-native load satisfies the exit criterion on the primary
+  path; full `BM25Okapi(all_bm25_corpus)` reconstruction remains only as an
+  explicit fallback at `retriever.py:2390` when shard-native loading fails.
+- P0.18: semantic patching now uses deferred sequences and structural sharing
+  at both the object and collection level; the exit criterion is MET with
+  architecture test enforcement.
 - Buffer-backed embedding cache entries do not satisfy zero-copy vector flow if
   active paths still create list vectors, JSON vector lists, or full stacked
   matrices for unchanged data.

@@ -1,11 +1,11 @@
-"""Map inbound config DTOs into frozen runtime config contracts."""
+"""Bidirectional config DTO/runtime-schema mapper for the composition root."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import fastcode.kernel.config as runtime_config
-from fastcode.main.config_schema import (
+from fastcode.main.schema import (
     AgentConfigDTO,
     CacheConfigDTO,
     DocsIntegrationConfigDTO,

@@ -1,13 +1,20 @@
 # main
 
-Composition root, user entrypoints, and config shaping.
+Composition root, user entrypoints, and persistent config ingress.
 
-- Owns CLI wiring, config loading/preparation, config DTO validation, and the
-  `FastCode` runtime object.
-- Raw YAML and `.env` input enters here, then flows through
-  `fastcode.main.config_schema.FastCodeConfigDTO` and
-  `fastcode.main.config_mapper.config_from_mapping(...)` into
+- Owns CLI wiring, persistent config loading, merge, validation, mapping, and
+  the `FastCode` runtime object.
+- Raw YAML and `.env` input enters only here, then flows through
+  `fastcode.main.config.prepare_runtime_config_mapping(...)`,
+  `fastcode.main.schema.FastCodeConfigDTO`, and
+  `fastcode.main.mapper.config_from_mapping(...)` into
   `fastcode.kernel.config.FastCodeConfig`.
+- After composition-root mapping, pass typed config to entry frames and let
+  internal modules apply their local config and propagate smaller typed config
+  or capability handles to the next layer.
+- CLI/command roots parse arguments, load persistent config, build typed command
+  state, and then dispatch to an entry facade; pure entry frames must not call
+  config loaders or read persistent config.
 - It is acceptable for `config.py` to use env and dotenv APIs; do not copy those
   reads into inner packages.
 - Keep import-time side effects low. Heavy runtime construction belongs behind

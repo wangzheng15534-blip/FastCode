@@ -12,7 +12,7 @@ ROOT_INIT = PACKAGE_ROOT / "__init__.py"
 MAIN_INIT = PACKAGE_ROOT / "main" / "__init__.py"
 FORBIDDEN_GENERIC_LAYOUT_NAMES = {"config", "core", "events"}
 ALLOWED_ROLE_SPECIFIC_LAYOUT_FILES = {
-    Path("main/config_schema.py"),
+    Path("main/schema.py"),
     Path("main/config.py"),
     Path("kernel/config.py"),
     Path("runtime_support/events.py"),

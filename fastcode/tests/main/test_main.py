@@ -46,8 +46,8 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.main.config import config_to_runtime_mapping
-from fastcode.main.config_mapper import config_from_mapping
 from fastcode.main.fastcode import FastCode
+from fastcode.main.mapper import config_from_mapping
 from fastcode.retrieval.context.agent_context import (
     AcceptedFact,
     EvidenceRef,

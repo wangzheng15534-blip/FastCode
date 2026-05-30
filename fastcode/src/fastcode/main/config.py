@@ -1,4 +1,4 @@
-"""Runtime configuration loading for the FastCode composition layer."""
+"""Composition-root config loading, merge, validation, and local application."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import yaml
 from dotenv import load_dotenv
 
 from fastcode.kernel.config import FastCodeConfig
-from fastcode.main.config_mapper import config_from_mapping, config_to_dict
+from fastcode.main.mapper import config_from_mapping, config_to_dict
 from fastcode.runtime_support.observability import setup_logging_from_config
 
 

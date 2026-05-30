@@ -1,7 +1,7 @@
-"""Public inbound runtime configuration DTO facade.
+"""Public inbound runtime configuration schema facade.
 
-Pydantic implementations live in private section modules so the config boundary
-is split by owner while callers import a stable public schema facade.
+Pydantic implementations live in private section modules so the composition-root
+schema stays split by owner while callers import a stable public schema facade.
 """
 
 from __future__ import annotations

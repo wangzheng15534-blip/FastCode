@@ -35,6 +35,9 @@ type-check:
 check:
     python3 scripts/fcis_project.py check --root .
 
+check-deps:
+    uv run lint-imports --config pyproject.toml
+
 # Full architecture policy suite.
 arch-check:
     uv run pytest -q fastcode/tests/architecture

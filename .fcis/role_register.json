@@ -1,0 +1,176 @@
+{
+  "schema_version": 3,
+  "units": [
+    {
+      "path": "fastcode/src/fastcode/utils",
+      "roles": [
+        "base_atoms",
+        "base_kit"
+      ],
+      "names": ["utils"]
+    },
+    {
+      "path": "fastcode/src/fastcode/kernel",
+      "roles": [
+        "meaning_seed"
+      ],
+      "names": ["kernel"]
+    },
+    {
+      "path": "fastcode/src/fastcode/runtime_support",
+      "roles": [
+        "run_kit"
+      ],
+      "names": ["runtime_support"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/ports",
+      "roles": [
+        "axis_surface"
+      ],
+      "names": ["ports"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/ir",
+      "roles": [
+        "meaning_core"
+      ],
+      "names": ["ir"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/graph",
+      "roles": [
+        "meaning_core"
+      ],
+      "names": ["graph"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/retrieval",
+      "roles": [
+        "meaning_core"
+      ],
+      "names": ["retrieval"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/semantic",
+      "roles": [
+        "meaning_core"
+      ],
+      "names": ["semantic"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/scip",
+      "roles": [
+        "effect_tool"
+      ],
+      "names": ["scip"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/app/indexing",
+      "roles": [
+        "use_flow"
+      ],
+      "names": ["indexing"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/app/query",
+      "roles": [
+        "use_flow"
+      ],
+      "names": ["query"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/app/store",
+      "roles": [
+        "use_flow"
+      ],
+      "names": ["store"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/infrastructure/storage",
+      "roles": [
+        "effect_facility"
+      ],
+      "names": ["storage"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/infrastructure/execution",
+      "roles": [
+        "effect_tool"
+      ],
+      "names": ["execution"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/infrastructure/llm",
+      "roles": [
+        "effect_tool"
+      ],
+      "names": ["llm"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/infrastructure/graph_runtime",
+      "roles": [
+        "effect_facility"
+      ],
+      "names": ["graph_runtime"]
+    },
+    {
+      "path": "fastcode/src/fastcode/main",
+      "roles": [
+        "assembly_root"
+      ],
+      "names": ["main"],
+      "sources": [
+        {"path": "fastcode/src/fastcode/main/__init__.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/_config_schema_base.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/_config_schema_indexing.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/_config_schema_operations.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/_config_schema_persistence.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/_config_schema_querying.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/_config_schema_root.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/config.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/fastcode.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/mapper.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/schema.py", "roles": ["assembly_root"]}
+      ]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/main/cli.py",
+      "roles": [
+        "assembly_root",
+        "entry_frame"
+      ],
+      "names": ["cli"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/api",
+      "roles": [
+        "entry_frame"
+      ],
+      "names": ["api"]
+    },
+    {
+      "axis": "default",
+      "path": "fastcode/src/fastcode/mcp",
+      "roles": [
+        "entry_frame"
+      ],
+      "names": ["mcp"]
+    }
+  ]
+}

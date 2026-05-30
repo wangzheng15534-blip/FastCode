@@ -45,8 +45,8 @@ from fastcode.infrastructure.graph_runtime.ladybug import LadybugGraphRuntime
 from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.main.config import config_to_runtime_mapping
-from fastcode.main.config_mapper import config_from_mapping
 from fastcode.main.fastcode import FastCode
+from fastcode.main.mapper import config_from_mapping
 from fastcode.semantic.resolvers.engine.registry import (
     build_default_semantic_resolver_registry,
 )

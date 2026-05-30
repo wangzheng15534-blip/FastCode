@@ -19,12 +19,12 @@ from fastcode.kernel.config import (
     VectorShardStorage,
     VectorStoreConfig,
 )
-from fastcode.main.mapper import (
+from fastcode.main._config_schema_root import FastCodeConfigDTO
+from fastcode.main.config import (
     config_from_dto,
     config_from_mapping,
     config_to_dict,
 )
-from fastcode.main.schema import FastCodeConfigDTO
 
 
 def test_config_from_mapping_translates_validated_dto_to_frozen_runtime_config() -> (

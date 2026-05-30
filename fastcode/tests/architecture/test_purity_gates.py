@@ -284,7 +284,7 @@ def test_package_boundary_import_bans() -> None:
                     continue
                 for imported in _import_candidates(py_file, node):
                     for banned, message in banned_imports.items():
-                        is_main_config_schema = rel == Path("main/schema.py") or (
+                        is_main_config_schema = (
                             rel.parent == Path("main")
                             and rel.name.startswith("_config_schema")
                         )

@@ -296,7 +296,7 @@ def _smoke_core_imports(venv_python: Path) -> None:
             "-c",
             (
                 "import fastcode; "
-                "import fastcode.main.cli; "
+                "import fastcode.client.cli; "
                 "import fastcode.app.indexing.embedder; "
                 "print(fastcode.__name__)"
             ),

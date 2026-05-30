@@ -50,10 +50,10 @@ dependencies = [
 nanobot-ai = { workspace = true }
 
 [project.scripts]
-fastcode = "fastcode.main.cli:cli"
-fastcode-api = "fastcode.api.routes:main"
-fastcode-mcp = "fastcode.mcp.server:main"
-fastcode-web = "fastcode.api.web:main"
+fastcode = "fastcode.client.cli:cli"
+fastcode-api = "fastcode.client.api_server:main"
+fastcode-mcp = "fastcode.client.mcp_server:main"
+fastcode-web = "fastcode.client.web_server:main"
 
 [project.optional-dependencies]
 api = [
@@ -347,7 +347,7 @@ packages = ["src/fastcode"]                                               # pack
     "S311",    # design: random module for non-crypto session ID generation
     "RUF013",  # design: implicit Optional in Pydantic model fields
 ]
-"src/fastcode/main/cli.py" = [
+"src/fastcode/client/cli.py" = [
     "ANN001",  # complexity: Click callback args need types (track: annotate all public methods)
     "ANN201",  # complexity: Click commands need return types (track: annotate all public methods)
     "ANN202",  # complexity: private helpers need return types (track: annotate all public methods)

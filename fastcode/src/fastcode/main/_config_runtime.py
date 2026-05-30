@@ -1,31 +1,37 @@
-"""Bidirectional config DTO/runtime-schema mapper for the composition root."""
+"""Config DTO to frozen runtime config translation for the composition root."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import fastcode.kernel.config as runtime_config
-from fastcode.main.schema import (
-    AgentConfigDTO,
-    CacheConfigDTO,
+from fastcode.main._config_schema_indexing import (
     DocsIntegrationConfigDTO,
     EmbeddingConfigDTO,
-    EvaluationConfigDTO,
-    FastCodeConfigDTO,
-    GenerationConfigDTO,
     GraphConfigDTO,
     IndexingConfigDTO,
-    LoggingConfigDTO,
     ParserConfigDTO,
-    ProjectionConfigDTO,
-    QueryConfigDTO,
     RepositoryConfigDTO,
-    RetrievalConfigDTO,
-    StorageConfigDTO,
+)
+from fastcode.main._config_schema_operations import (
+    EvaluationConfigDTO,
+    LoggingConfigDTO,
     TerminusConfigDTO,
+)
+from fastcode.main._config_schema_persistence import (
+    CacheConfigDTO,
+    ProjectionConfigDTO,
+    StorageConfigDTO,
     VectorShardStorageDTO,
     VectorStoreConfigDTO,
 )
+from fastcode.main._config_schema_querying import (
+    AgentConfigDTO,
+    GenerationConfigDTO,
+    QueryConfigDTO,
+    RetrievalConfigDTO,
+)
+from fastcode.main._config_schema_root import FastCodeConfigDTO
 
 
 def _string_list(values: list[str]) -> tuple[str, ...]:

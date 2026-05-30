@@ -141,20 +141,18 @@
         {"path": "fastcode/src/fastcode/main/_config_schema_persistence.py", "roles": ["assembly_root"]},
         {"path": "fastcode/src/fastcode/main/_config_schema_querying.py", "roles": ["assembly_root"]},
         {"path": "fastcode/src/fastcode/main/_config_schema_root.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/_config_runtime.py", "roles": ["assembly_root"]},
         {"path": "fastcode/src/fastcode/main/config.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/fastcode.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/mapper.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/schema.py", "roles": ["assembly_root"]}
+        {"path": "fastcode/src/fastcode/main/fastcode.py", "roles": ["assembly_root"]}
       ]
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/main/cli.py",
+      "path": "fastcode/src/fastcode/client",
       "roles": [
-        "assembly_root",
         "entry_frame"
       ],
-      "names": ["cli"]
+      "names": ["client"]
     },
     {
       "axis": "default",

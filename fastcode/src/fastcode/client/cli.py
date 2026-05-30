@@ -3,7 +3,7 @@
 FastCode 2.0 - Command Line Interface
 """
 
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportAttributeAccessIssue=false
 
 import os
 import platform
@@ -18,7 +18,7 @@ import sys
 
 import click
 
-from .fastcode import FastCode
+from fastcode.main.fastcode import FastCode
 
 
 @click.group()

@@ -11,8 +11,24 @@ import yaml
 from dotenv import load_dotenv
 
 from fastcode.kernel.config import FastCodeConfig
-from fastcode.main.mapper import config_from_mapping, config_to_dict
+from fastcode.main._config_runtime import (
+    config_from_dto,
+    config_from_mapping,
+    config_to_dict,
+)
 from fastcode.runtime_support.observability import setup_logging_from_config
+
+__all__ = [
+    "config_from_dto",
+    "config_from_mapping",
+    "config_to_dict",
+    "config_to_runtime_mapping",
+    "load_config",
+    "load_runtime_config",
+    "prepare_runtime_config_mapping",
+    "resolve_config_paths",
+    "setup_logging",
+]
 
 
 def setup_logging(config: dict[str, Any]) -> logging.Logger:

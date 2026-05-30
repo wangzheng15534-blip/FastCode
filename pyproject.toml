@@ -83,6 +83,7 @@ protected_modules = [
     "fastcode.main._config_schema_persistence",
     "fastcode.main._config_schema_querying",
     "fastcode.main._config_schema_root",
+    "fastcode.main._config_runtime",
 ]
 allowed_importers = [
     "fastcode.main.*",

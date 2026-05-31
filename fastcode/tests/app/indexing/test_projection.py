@@ -542,7 +542,8 @@ def test_api_prefix_endpoint_success_double():
 
     import fastcode.api.routes as api_mod
 
-    with patch.object(api_mod, "_ensure_fastcode_initialized", return_value=fc):
+    with patch.object(api_mod, "_fc", return_value=fc):
+        api_mod.app.state.fastcode = fc
         client = TestClient(api_mod.app)
         resp = client.get("/projection/snapshot/snap:repo:api_test/prefix")
 
@@ -565,7 +566,8 @@ def test_api_prefix_endpoint_not_found_double():
 
     import fastcode.api.routes as api_mod
 
-    with patch.object(api_mod, "_ensure_fastcode_initialized", return_value=fc):
+    with patch.object(api_mod, "_fc", return_value=fc):
+        api_mod.app.state.fastcode = fc
         client = TestClient(api_mod.app)
         resp = client.get("/projection/snapshot/snap:repo:notfound/prefix")
 
@@ -616,7 +618,8 @@ def test_api_prefix_endpoint_existing_layer_route_unaffected_double():
 
     import fastcode.api.routes as api_mod
 
-    with patch.object(api_mod, "_ensure_fastcode_initialized", return_value=fc):
+    with patch.object(api_mod, "_fc", return_value=fc):
+        api_mod.app.state.fastcode = fc
         client = TestClient(api_mod.app)
         resp = client.get("/projection/proj_exist123/L0")
 

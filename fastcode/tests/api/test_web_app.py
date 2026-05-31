@@ -198,7 +198,7 @@ def test_load_endpoint_offloads_blocking_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeFastCode()
-    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
     monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
 
     client = TestClient(web_app.app)
@@ -221,7 +221,7 @@ def test_load_and_index_endpoint_delegates_to_facade(
         offloaded.append(func)
         return func(*args, **kwargs)
 
-    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
     monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
 
     client = TestClient(web_app.app)
@@ -244,7 +244,7 @@ def test_query_endpoint_offloads_blocking_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeFastCode()
-    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
     monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
     monkeypatch.setattr(web_app.uuid, "uuid4", lambda: "abcd1234-uuid")
 
@@ -277,7 +277,7 @@ def test_query_endpoint_serializes_sources_explicitly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeFastCode()
-    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
     monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
     monkeypatch.setattr(web_app.uuid, "uuid4", lambda: "abcd1234-uuid")
 
@@ -335,7 +335,7 @@ def test_session_endpoint_serializes_history_explicitly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeFastCode()
-    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
 
     client = TestClient(web_app.app)
     response = client.get("/api/session/abcd1234")
@@ -387,7 +387,7 @@ def test_upload_zip_endpoint_delegates_to_facade(
         offloaded.append(func)
         return func(*args, **kwargs)
 
-    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
     monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
 
     client = TestClient(web_app.app)
@@ -420,7 +420,7 @@ def test_upload_endpoints_reject_path_traversal_zip(
     else:
         fake.upload_and_index = raise_unsafe_archive  # type: ignore[assignment]
 
-    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
     monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
 
     client = TestClient(web_app.app)
@@ -450,7 +450,7 @@ def test_upload_and_index_endpoint_delegates_to_facade(
         offloaded.append(func)
         return func(*args, **kwargs)
 
-    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
     monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
 
     client = TestClient(web_app.app)
@@ -477,7 +477,7 @@ def test_mutating_maintenance_endpoints_offload_blocking_work(
         offloaded.append(func)
         return func(*args, **kwargs)
 
-    monkeypatch.setattr(web_app, "fastcode_instance", fake)
+    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
     monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
 
     client = TestClient(web_app.app)

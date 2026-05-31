@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -67,9 +67,6 @@ from fastcode.utils.archive import (
     UnsafeArchiveError,
 )
 
-# Global FastCode instance
-fastcode_instance: FastCode | None = None
-
 # Setup logging
 log_dir = Path("./logs")
 logger = configure_logging(
@@ -81,23 +78,26 @@ logger = configure_logging(
 )
 
 
-def _ensure_fastcode_initialized() -> FastCode:
-    if fastcode_instance is None:
+def _fc(request: Request) -> FastCode:
+    """Get FastCode instance from app state."""
+    fc = getattr(request.app.state, "fastcode", None)
+    if fc is None:
         raise HTTPException(status_code=500, detail="FastCode not initialized")
-    return fastcode_instance
+    return fc
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown"""
-    global fastcode_instance
     logger.info("Initializing FastCode system")
-    fastcode_instance = FastCode()
+    app.state.fastcode = FastCode()
     yield
-    try:
-        fastcode_instance.shutdown()
-    except Exception as e:
-        logger.warning(f"FastCode shutdown hook failed: {e}")
+    fc = getattr(app, "state", None) and getattr(app.state, "fastcode", None)
+    if fc is not None:
+        try:
+            fc.shutdown()
+        except Exception as e:
+            logger.warning(f"FastCode shutdown hook failed: {e}")
     logger.info("FastCode Web UI shutting down")
 
 
@@ -131,15 +131,14 @@ async def get_web_interface():
 
 
 @app.get("/api/status", response_model=StatusResponse)
-async def get_status(full_scan: bool = False):
+async def get_status(request: Request, full_scan: bool = False):
     """
     Get system status
 
     Args:
         full_scan: If True, force a full scan of available indexes (slower but fresh data)
     """
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
 
     info = fastcode_instance.get_status_info(full_scan=full_scan)
 
@@ -156,15 +155,14 @@ async def get_status(full_scan: bool = False):
 
 
 @app.get("/api/health")
-async def health_check():
+async def health_check(request: Request):
     """Lightweight health check endpoint (no expensive operations)"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fc = _fc(request)
 
     health = readiness_health(
-        repo_loaded=fastcode_instance.repo_loaded,
-        repo_indexed=fastcode_instance.repo_indexed,
-        details={"multi_repo_mode": fastcode_instance.multi_repo_mode},
+        repo_loaded=fc.repo_loaded,
+        repo_indexed=fc.repo_indexed,
+        details={"multi_repo_mode": fc.multi_repo_mode},
     )
     return {
         "status": health.status,
@@ -173,15 +171,14 @@ async def health_check():
 
 
 @app.get("/api/repositories")
-async def list_repositories(full_scan: bool = False):
+async def list_repositories(request: Request, full_scan: bool = False):
     """
     List available (indexed on disk) and loaded repositories
 
     Args:
         full_scan: If True, force a full scan of available indexes (slower but fresh data)
     """
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
 
     try:
         info = fastcode_instance.get_status_info(full_scan=full_scan)
@@ -197,10 +194,10 @@ async def list_repositories(full_scan: bool = False):
 
 
 @app.post("/api/load")
-async def load_repository(request: LoadRepositoryRequest):
+async def load_repository(request: Request, req: LoadRepositoryRequest):
     """Load a repository"""
-    fastcode = _ensure_fastcode_initialized()
-    command = map_load_repository_request(request)
+    fastcode = _fc(request)
+    command = map_load_repository_request(req)
 
     try:
         logger.info(f"Loading repository: {command.source}")
@@ -220,9 +217,9 @@ async def load_repository(request: LoadRepositoryRequest):
 
 
 @app.post("/api/index")
-async def index_repository(force: bool = False):
+async def index_repository(request: Request, force: bool = False):
     """Index the loaded repository"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
     if not fastcode.repo_loaded:
         raise HTTPException(status_code=400, detail="No repository loaded")
@@ -243,15 +240,15 @@ async def index_repository(force: bool = False):
 
 
 @app.post("/api/index-multiple")
-async def index_multiple(request: IndexMultipleRequest):
+async def index_multiple(request: Request, req: IndexMultipleRequest):
     """Load and index multiple repositories"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
-    if not request.sources:
+    if not req.sources:
         raise HTTPException(status_code=400, detail="No repositories provided")
 
     try:
-        logger.info(f"Indexing {len(request.sources)} repositories")
+        logger.info(f"Indexing {len(req.sources)} repositories")
         await asyncio.to_thread(
             fastcode.load_multiple_repositories,
             [
@@ -260,7 +257,7 @@ async def index_multiple(request: IndexMultipleRequest):
                     "is_url": command.is_url,
                 }
                 for command in (
-                    map_load_repository_request(source) for source in request.sources
+                    map_load_repository_request(source) for source in req.sources
                 )
             ],
         )
@@ -281,10 +278,10 @@ async def index_multiple(request: IndexMultipleRequest):
 
 
 @app.post("/api/load-and-index")
-async def load_and_index(request: LoadRepositoryRequest, force: bool = False):
+async def load_and_index(request: Request, req: LoadRepositoryRequest, force: bool = False):
     """Load and index repository in one call"""
-    fastcode = _ensure_fastcode_initialized()
-    command = map_load_repository_request(request)
+    fastcode = _fc(request)
+    command = map_load_repository_request(req)
 
     try:
         logger.info(f"Loading and indexing repository: {command.source}")
@@ -301,15 +298,15 @@ async def load_and_index(request: LoadRepositoryRequest, force: bool = False):
 
 
 @app.post("/api/load-repositories")
-async def load_repositories(request: LoadRepositoriesRequest):
+async def load_repositories(request: Request, req: LoadRepositoriesRequest):
     """Load existing indexed repositories from cache"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
-    if not request.repo_names:
+    if not req.repo_names:
         raise HTTPException(status_code=400, detail="No repository names provided")
 
     try:
-        logger.info(f"Loading repositories from cache: {request.repo_names}")
+        logger.info(f"Loading repositories from cache: {req.repo_names}")
         success = await asyncio.to_thread(
             fastcode._load_multi_repo_cache, repo_names=request.repo_names
         )
@@ -332,10 +329,9 @@ async def load_repositories(request: LoadRepositoriesRequest):
 
 
 @app.post("/api/upload-zip")
-async def upload_repository_zip(file: UploadFile = File(...)):
+async def upload_repository_zip(request: Request, file: UploadFile = File(...)):
     """Upload and extract repository ZIP file to repos directory (same as URL download)"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
 
     # Validate file type
     filename = file.filename
@@ -361,10 +357,9 @@ async def upload_repository_zip(file: UploadFile = File(...)):
 
 
 @app.post("/api/upload-and-index")
-async def upload_and_index(file: UploadFile = File(...), force: bool = False):
+async def upload_and_index(request: Request, file: UploadFile = File(...), force: bool = False):
     """Upload ZIP and index in one call"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
 
     filename = file.filename
     if not filename or not filename.lower().endswith(".zip"):
@@ -393,10 +388,10 @@ async def upload_and_index(file: UploadFile = File(...), force: bool = False):
 
 
 @app.post("/api/query", response_model=QueryResponse)
-async def query_repository(request: QueryRequest):
+async def query_repository(request: Request, req: QueryRequest):
     """Query the repository"""
-    fastcode = _ensure_fastcode_initialized()
-    query_request = map_repository_query_request(request)
+    fastcode = _fc(request)
+    query_request = map_repository_query_request(req)
 
     if not fastcode.repo_indexed:
         raise HTTPException(status_code=400, detail="Repository not indexed")
@@ -431,34 +426,31 @@ async def query_repository(request: QueryRequest):
 
 
 @app.post("/api/query-stream")
-async def query_repository_stream(request: QueryRequest):
+async def query_repository_stream(request: Request, req: QueryRequest):
     """Query the repository with streaming response (SSE)"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fc = _fc(request)
 
-    fc = fastcode_instance  # narrowed for closure capture
+    # Derive session handling
+    session_id = req.session_id or str(uuid.uuid4())[:8]
+    if req.multi_turn and not req.session_id:
+        logger.info(f"Generated new multi-turn session: {session_id}")
+    elif not req.session_id:
+        logger.info(f"Generated session for single-turn request: {session_id}")
+
+    logger.info(f"Processing streaming query: {req.question}")
 
     if not fc.repo_indexed:
         raise HTTPException(status_code=400, detail="Repository not indexed")
-
-    # Derive session handling
-    session_id = request.session_id or str(uuid.uuid4())[:8]
-    if request.multi_turn and not request.session_id:
-        logger.info(f"Generated new multi-turn session: {session_id}")
-    elif not request.session_id:
-        logger.info(f"Generated session for single-turn request: {session_id}")
-
-    logger.info(f"Processing streaming query: {request.question}")
 
     async def event_generator():
         """Generate SSE events from query_stream"""
         try:
             for chunk, metadata in fc.query_stream(
-                request.question,
-                request.filters,
-                repo_filter=request.repo_filter,
+                req.question,
+                req.filters,
+                repo_filter=req.repo_filter,
                 session_id=session_id,
-                enable_multi_turn=request.multi_turn,
+                enable_multi_turn=req.multi_turn,
             ):
                 if metadata:
                     # Send metadata as JSON event
@@ -509,10 +501,9 @@ async def query_repository_stream(request: QueryRequest):
 
 
 @app.get("/api/summary")
-async def get_repository_summary():
+async def get_repository_summary(request: Request):
     """Get repository summary"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
 
     if not fastcode_instance.repo_loaded:
         raise HTTPException(status_code=400, detail="No repository loaded")
@@ -534,10 +525,9 @@ async def get_repository_summary():
 
 
 @app.post("/api/clear-cache")
-async def clear_cache():
+async def clear_cache(request: Request):
     """Clear cache"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
 
     success = await asyncio.to_thread(fastcode_instance.clear_cache)
 
@@ -550,10 +540,9 @@ async def clear_cache():
 
 
 @app.post("/api/refresh-index-cache")
-async def refresh_index_cache():
+async def refresh_index_cache(request: Request):
     """Force refresh the index scan cache"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
 
     try:
         available_repos = await asyncio.to_thread(
@@ -571,10 +560,9 @@ async def refresh_index_cache():
 
 
 @app.post("/api/new-session", response_model=NewSessionResponse)
-async def new_session(clear_session_id: str | None = None):
+async def new_session(request: Request, clear_session_id: str | None = None):
     """Start a new conversation session"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
 
     if clear_session_id:
         fastcode_instance.delete_session(clear_session_id)
@@ -584,10 +572,9 @@ async def new_session(clear_session_id: str | None = None):
 
 
 @app.get("/api/agent-context/session/{session_id}/latest")
-async def get_latest_turn_context(session_id: str, format: str = "fcx"):
+async def get_latest_turn_context(request: Request, session_id: str, format: str = "fcx"):
     """Fetch the latest typed working-memory artifact for a session."""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode_instance.get_turn_context,
@@ -603,13 +590,13 @@ async def get_latest_turn_context(session_id: str, format: str = "fcx"):
 
 @app.get("/api/agent-context/session/{session_id}/turn/{turn_number}")
 async def get_turn_context(
+    request: Request,
     session_id: str,
     turn_number: int,
     format: str = "fcx",
 ):
     """Fetch a specific typed working-memory artifact for a session turn."""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode_instance.get_turn_context,
@@ -625,13 +612,13 @@ async def get_turn_context(
 
 @app.get("/api/agent-context/session/{session_id}/bundle/latest")
 async def get_latest_context_bundle(
+    request: Request,
     session_id: str,
     format: str = "json",
     token_budget: int = 2048,
 ):
     """Fetch the latest durable context bundle for a session."""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode_instance.get_context_bundle,
@@ -648,14 +635,14 @@ async def get_latest_context_bundle(
 
 @app.get("/api/agent-context/session/{session_id}/bundle/{turn_number}")
 async def get_context_bundle(
+    request: Request,
     session_id: str,
     turn_number: int,
     format: str = "json",
     token_budget: int = 2048,
 ):
     """Fetch a durable context bundle for a session turn."""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode_instance.get_context_bundle,
@@ -672,13 +659,13 @@ async def get_context_bundle(
 
 @app.get("/api/agent-context/bundle/{bundle_id}")
 async def get_context_bundle_by_id(
+    request: Request,
     bundle_id: str,
     format: str = "json",
     token_budget: int = 2048,
 ):
     """Fetch a durable context bundle by bundle ID."""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode_instance.get_context_bundle_by_id,
@@ -693,18 +680,17 @@ async def get_context_bundle_by_id(
 
 
 @app.post("/api/agent-context/bundle/expand")
-async def expand_agent_context_bundle_ref(request: ExpandContextBundleRefRequest):
+async def expand_agent_context_bundle_ref(request: Request, req: ExpandContextBundleRefRequest):
     """Expand a single source ref from a durable context bundle."""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode_instance.expand_context_bundle_ref,
-            request.ref_id,
-            session_id=request.session_id,
-            turn_number=request.turn_number,
-            bundle_id=request.bundle_id,
-            depth=request.depth,
+            req.ref_id,
+            session_id=req.session_id,
+            turn_number=req.turn_number,
+            bundle_id=req.bundle_id,
+            depth=req.depth,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -713,20 +699,19 @@ async def expand_agent_context_bundle_ref(request: ExpandContextBundleRefRequest
 
 
 @app.post("/api/agent-context/bundle/activation")
-async def create_agent_context_activation(request: ContextActivationRequest):
+async def create_agent_context_activation(request: Request, req: ContextActivationRequest):
     """Create and persist an activation record for a context bundle."""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode_instance.create_context_activation,
-            session_id=request.session_id,
-            turn_number=request.turn_number,
-            bundle_id=request.bundle_id,
-            active_ref_ids=request.active_ref_ids,
-            active_fact_ids=request.active_fact_ids,
-            active_hypothesis_ids=request.active_hypothesis_ids,
-            reason=request.reason,
+            session_id=req.session_id,
+            turn_number=req.turn_number,
+            bundle_id=req.bundle_id,
+            active_ref_ids=req.active_ref_ids,
+            active_fact_ids=req.active_fact_ids,
+            active_hypothesis_ids=req.active_hypothesis_ids,
+            reason=req.reason,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -735,16 +720,15 @@ async def create_agent_context_activation(request: ContextActivationRequest):
 
 
 @app.post("/api/agent-context/handoff")
-async def create_agent_context_handoff(request: AgentContextHandoffRequest):
+async def create_agent_context_handoff(request: Request, req: AgentContextHandoffRequest):
     """Create and persist a handoff artifact from a session turn."""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode_instance.create_handoff,
-            request.session_id,
-            request.turn_number,
-            request.mode,
+            req.session_id,
+            req.turn_number,
+            req.mode,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -753,10 +737,9 @@ async def create_agent_context_handoff(request: AgentContextHandoffRequest):
 
 
 @app.get("/api/agent-context/handoff/{artifact_id}")
-async def get_agent_context_handoff(artifact_id: str):
+async def get_agent_context_handoff(request: Request, artifact_id: str):
     """Fetch a persisted handoff artifact."""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode_instance.get_handoff_artifact,
@@ -769,17 +752,16 @@ async def get_agent_context_handoff(artifact_id: str):
 
 
 @app.post("/api/agent-context/expand")
-async def expand_agent_context_ref(request: ExpandContextRefRequest):
+async def expand_agent_context_ref(request: Request, req: ExpandContextRefRequest):
     """Expand a single evidence ref from working memory."""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode_instance.expand_context_ref,
-            request.session_id,
-            request.turn_number,
-            request.ref_id,
-            request.depth,
+            req.session_id,
+            req.turn_number,
+            req.ref_id,
+            req.depth,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -788,10 +770,9 @@ async def expand_agent_context_ref(request: ExpandContextRefRequest):
 
 
 @app.get("/api/sessions")
-async def list_sessions():
+async def list_sessions(request: Request):
     """List all dialogue sessions with titles (sorted by last update time)"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
     try:
         sessions = fastcode_instance.list_sessions()
 
@@ -817,10 +798,9 @@ async def list_sessions():
 
 
 @app.get("/api/session/{session_id}")
-async def get_session(session_id: str):
+async def get_session(request: Request, session_id: str):
     """Get full dialogue history for a session"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
     try:
         history = fastcode_instance.get_session_history(session_id) or []
 
@@ -843,21 +823,20 @@ async def get_session(session_id: str):
 
 
 @app.post("/api/delete-repos")
-async def delete_repositories(request: DeleteReposRequest):
+async def delete_repositories(request: Request, req: DeleteReposRequest):
     """Delete one or more repositories and all associated data"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
 
-    if not request.repo_names:
+    if not req.repo_names:
         raise HTTPException(status_code=400, detail="No repository names provided")
 
     try:
         results = []
-        for repo_name in request.repo_names:
+        for repo_name in req.repo_names:
             result = await asyncio.to_thread(
                 fastcode_instance.remove_repository,
                 repo_name,
-                delete_source=request.delete_source,
+                delete_source=req.delete_source,
             )
             results.append(result)
             logger.info(
@@ -877,10 +856,9 @@ async def delete_repositories(request: DeleteReposRequest):
 
 
 @app.delete("/api/session/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(request: Request, session_id: str):
     """Delete a single dialogue session"""
-    if fastcode_instance is None:
-        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    fastcode_instance = _fc(request)
 
     try:
         history = fastcode_instance.get_session_history(session_id)

@@ -34,6 +34,15 @@ from fastcode.utils.archive import UnsafeArchiveError
 # ---------------------------------------------------------------------------
 
 
+def _mock_request(*, app: Any = None) -> MagicMock:
+    """Create a mock Request with app.state wired to the real api.app."""
+    req = MagicMock()
+    if app is None:
+        app = api.app
+    req.app = app
+    return req
+
+
 def _zip_bytes(entries: dict[str, bytes]) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as zip_ref:
@@ -196,15 +205,20 @@ def inline_to_thread(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def stores(tmp_path: Any) -> Any:
-    """Yield real storage wired into the module-global FastCode handle."""
+    """Yield real storage wired into the app state FastCode handle."""
     store = _make_snapshot_store(tmp_path)
     fake = _FakeFastCode(store)
-    original = api.fastcode_instance
-    api.fastcode_instance = fake
+    # Store on app.state instead of module global
+    app = api.app
+    original = getattr(app.state, "fastcode", None)
+    app.state.fastcode = fake
     try:
         yield fake, store
     finally:
-        api.fastcode_instance = original
+        if original is not None:
+            app.state.fastcode = original
+        else:
+            delattr(app.state, "fastcode")
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +230,7 @@ class TestRepoRefs:
     """GET /repos/{repo_name}/refs"""
 
     def test_returns_empty_list_for_unknown_repo(self, stores: Any) -> None:
-        body = asyncio.run(api.get_repo_refs("unknown-repo"))
+        body = asyncio.run(api.get_repo_refs(_mock_request(), "unknown-repo"))
         assert body["refs"] == []
         assert body["repo_name"] == "unknown-repo"
 
@@ -230,7 +244,7 @@ class TestRepoRefs:
         )
         store.save_snapshot(snap)
 
-        refs = asyncio.run(api.get_repo_refs("my-repo"))["refs"]
+        refs = asyncio.run(api.get_repo_refs(_mock_request(), "my-repo"))["refs"]
         assert len(refs) == 1
         assert refs[0]["branch"] == "develop"
         assert refs[0]["snapshot_id"] == "snap:my-repo:deadbeef"
@@ -253,7 +267,7 @@ class TestRepoRefs:
                 commit_id="c2",
             )
         )
-        refs = asyncio.run(api.get_repo_refs("r"))["refs"]
+        refs = asyncio.run(api.get_repo_refs(_mock_request(), "r"))["refs"]
         assert len(refs) == 2
         assert refs[0]["snapshot_id"] == "snap:r:second"
         assert refs[1]["snapshot_id"] == "snap:r:first"
@@ -264,7 +278,7 @@ class TestScipArtifacts:
 
     def test_returns_404_when_not_found(self, stores: Any) -> None:
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(api.get_scip_artifact("snap:x:nonexistent"))
+            asyncio.run(api.get_scip_artifact(_mock_request(), "snap:x:nonexistent"))
         assert exc_info.value.status_code == 404
 
     def test_returns_artifact_after_save(self, stores: Any) -> None:
@@ -281,7 +295,7 @@ class TestScipArtifacts:
             checksum="abc123",
         )
 
-        body = asyncio.run(api.get_scip_artifact("snap:repo:with-scip"))
+        body = asyncio.run(api.get_scip_artifact(_mock_request(), "snap:repo:with-scip"))
         assert body["status"] == "success"
         artifact = cast(dict[str, Any], body["artifact"])
         artifacts = cast(list[dict[str, Any]], body["artifacts"])
@@ -313,7 +327,7 @@ class TestScipArtifacts:
             ],
         )
 
-        body = asyncio.run(api.get_scip_artifact("snap:repo:multi-scip"))
+        body = asyncio.run(api.get_scip_artifact(_mock_request(), "snap:repo:multi-scip"))
         artifact = cast(dict[str, Any], body["artifact"])
         artifacts = cast(list[dict[str, Any]], body["artifacts"])
         assert artifact["artifact_path"] == "/tmp/python.scip"
@@ -328,7 +342,7 @@ class TestManifests:
 
     def test_branch_manifest_returns_404_when_not_found(self, stores: Any) -> None:
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(api.get_branch_manifest("no-repo", "main"))
+            asyncio.run(api.get_branch_manifest(_mock_request(), "no-repo", "main"))
         assert exc_info.value.status_code == 404
 
     def test_branch_manifest_returns_data_after_publish(self, stores: Any) -> None:
@@ -348,7 +362,7 @@ class TestManifests:
             index_run_id="run_001",
         )
 
-        body = asyncio.run(api.get_branch_manifest("manifest-repo", "main"))
+        body = asyncio.run(api.get_branch_manifest(_mock_request(), "manifest-repo", "main"))
         assert body["status"] == "success"
         assert body["manifest"]["snapshot_id"] == "snap:manifest-repo:m1"
         assert body["manifest"]["repo_name"] == "manifest-repo"
@@ -363,7 +377,7 @@ class TestManifests:
         )
         store.save_snapshot(snap)
 
-        fake_fc = api.fastcode_instance
+        fake_fc = api.app.state.fastcode
         assert fake_fc is not None
         fake_fc.manifest_store.publish_record(
             repo_name="manifest-repo2",
@@ -372,7 +386,7 @@ class TestManifests:
             index_run_id="run_002",
         )
 
-        body = asyncio.run(api.get_snapshot_manifest("snap:manifest-repo2:s1"))
+        body = asyncio.run(api.get_snapshot_manifest(_mock_request(), "snap:manifest-repo2:s1"))
         assert body["manifest"]["snapshot_id"] == "snap:manifest-repo2:s1"
 
 
@@ -397,11 +411,12 @@ class TestCodeStatusPack:
         monkeypatch.setattr(api.asyncio, "to_thread", record_to_thread)
 
         with patch(
-            "fastcode.api.routes._ensure_fastcode_initialized",
+            "fastcode.api.routes._fc",
             return_value=fake_fastcode,
         ):
             body = asyncio.run(
                 api.get_code_status_pack(
+                    _mock_request(),
                     "snap:repo:1",
                     include_graph_facts=False,
                 )
@@ -456,7 +471,7 @@ class TestIndexMultiple:
     """POST /index-multiple explicit source mapping behavior."""
 
     def test_maps_sources_explicitly_without_model_dump(self) -> None:
-        request = api.IndexMultipleRequest(
+        req = api.IndexMultipleRequest(
             sources=[
                 api.LoadRepositoryRequest(
                     source="https://example.com/repo.git", is_url=True
@@ -468,10 +483,10 @@ class TestIndexMultiple:
         fake_fastcode.get_repository_stats.return_value = {"repos": 2}
 
         with patch(
-            "fastcode.api.routes._ensure_fastcode_initialized",
+            "fastcode.api.routes._fc",
             return_value=fake_fastcode,
         ):
-            result = asyncio.run(api.index_multiple(request))
+            result = asyncio.run(api.index_multiple(_mock_request(), req))
 
         fake_fastcode.load_multiple_repositories.assert_called_once_with(
             [
@@ -512,35 +527,40 @@ class TestBlockingEndpointOffloads:
         monkeypatch.setattr(api.asyncio, "to_thread", record_to_thread)
 
         with patch(
-            "fastcode.api.routes._ensure_fastcode_initialized",
+            "fastcode.api.routes._fc",
             return_value=fake_fastcode,
         ):
             asyncio.run(
                 api.load_repository(
-                    api.LoadRepositoryRequest(source="/tmp/repo", is_url=False)
+                    _mock_request(),
+                    api.LoadRepositoryRequest(source="/tmp/repo", is_url=False),
                 )
             )
-            asyncio.run(api.index_repository(force=True))
+            asyncio.run(api.index_repository(_mock_request(), force=True))
             asyncio.run(
-                api.load_repositories(api.LoadRepositoriesRequest(repo_names=["repo"]))
+                api.load_repositories(
+                    _mock_request(), api.LoadRepositoriesRequest(repo_names=["repo"])
+                )
             )
             asyncio.run(
                 api.index_multiple(
+                    _mock_request(),
                     api.IndexMultipleRequest(
                         sources=[
                             api.LoadRepositoryRequest(source="/tmp/repo", is_url=False)
                         ]
-                    )
+                    ),
                 )
             )
             asyncio.run(
                 api.delete_repositories(
-                    api.DeleteReposRequest(repo_names=["repo"], delete_source=False)
+                    _mock_request(),
+                    api.DeleteReposRequest(repo_names=["repo"], delete_source=False),
                 )
             )
-            asyncio.run(api.clear_cache())
-            asyncio.run(api.get_cache_stats())
-            asyncio.run(api.refresh_index_cache())
+            asyncio.run(api.clear_cache(_mock_request()))
+            asyncio.run(api.get_cache_stats(_mock_request()))
+            asyncio.run(api.refresh_index_cache(_mock_request()))
 
         assert offloaded == [
             fake_fastcode.load_repository,
@@ -571,7 +591,7 @@ class TestUploadSecurity:
         )
 
         with patch(
-            "fastcode.api.routes._ensure_fastcode_initialized",
+            "fastcode.api.routes._fc",
             return_value=fake_fastcode,
         ):
             client = TestClient(api.app)
@@ -625,7 +645,7 @@ class TestApiSerializationBoundaries:
 
         monkeypatch.setattr(api.asyncio, "to_thread", _executor_to_thread)
         with patch(
-            "fastcode.api.routes._ensure_fastcode_initialized",
+            "fastcode.api.routes._fc",
             return_value=_ConcurrentFastCode(),
         ):
 
@@ -633,6 +653,7 @@ class TestApiSerializationBoundaries:
                 await asyncio.wait_for(
                     asyncio.gather(
                         api.query_repository(
+                            _mock_request(),
                             api.QueryRequest(
                                 question="Where is auth?",
                                 snapshot_id="snap:1",
@@ -642,9 +663,10 @@ class TestApiSerializationBoundaries:
                                 repo_filter=None,
                                 multi_turn=False,
                                 session_id="sess-1",
-                            )
+                            ),
                         ),
                         api.query_repository(
+                            _mock_request(),
                             api.QueryRequest(
                                 question="Where is config?",
                                 snapshot_id="snap:2",
@@ -654,7 +676,7 @@ class TestApiSerializationBoundaries:
                                 repo_filter=None,
                                 multi_turn=False,
                                 session_id="sess-2",
-                            )
+                            ),
                         ),
                     ),
                     timeout=10,
@@ -674,11 +696,12 @@ class TestApiSerializationBoundaries:
         }
 
         with patch(
-            "fastcode.api.routes._ensure_fastcode_initialized",
+            "fastcode.api.routes._fc",
             return_value=fake_fastcode,
         ):
             result = asyncio.run(
                 api.query_repository(
+                    _mock_request(),
                     api.QueryRequest(
                         question="Where is config loaded?",
                         snapshot_id="snap:1",
@@ -688,7 +711,7 @@ class TestApiSerializationBoundaries:
                         repo_filter=None,
                         multi_turn=False,
                         session_id=None,
-                    )
+                    ),
                 )
             )
 
@@ -718,11 +741,12 @@ class TestApiSerializationBoundaries:
         }
 
         with patch(
-            "fastcode.api.routes._ensure_fastcode_initialized",
+            "fastcode.api.routes._fc",
             return_value=fake_fastcode,
         ):
             result = asyncio.run(
                 api.query_repository(
+                    _mock_request(),
                     api.QueryRequest(
                         question="Where is config loaded?",
                         snapshot_id="snap:1",
@@ -732,7 +756,7 @@ class TestApiSerializationBoundaries:
                         repo_filter=None,
                         multi_turn=False,
                         session_id=None,
-                    )
+                    ),
                 )
             )
 
@@ -743,10 +767,10 @@ class TestApiSerializationBoundaries:
         fake_fastcode.get_session_history.return_value = [_NoDictTurn()]
 
         with patch(
-            "fastcode.api.routes._ensure_fastcode_initialized",
+            "fastcode.api.routes._fc",
             return_value=fake_fastcode,
         ):
-            result = asyncio.run(api.get_session("sess-1"))
+            result = asyncio.run(api.get_session(_mock_request(), "sess-1"))
 
         assert result == {
             "status": "success",
@@ -845,13 +869,14 @@ class TestAgentContextRoutes:
         }
 
         with patch(
-            "fastcode.api.routes._ensure_fastcode_initialized",
+            "fastcode.api.routes._fc",
             return_value=fake_fastcode,
         ):
-            latest = asyncio.run(api.get_latest_turn_context("sess-1", format="fcx"))
-            turn = asyncio.run(api.get_turn_context("sess-1", 2, format="json"))
+            latest = asyncio.run(api.get_latest_turn_context(_mock_request(), "sess-1", format="fcx"))
+            turn = asyncio.run(api.get_turn_context(_mock_request(), "sess-1", 2, format="json"))
             latest_bundle = asyncio.run(
                 api.get_latest_context_bundle(
+                    _mock_request(),
                     "sess-1",
                     format="rendered",
                     token_budget=32,
@@ -859,6 +884,7 @@ class TestAgentContextRoutes:
             )
             bundle = asyncio.run(
                 api.get_context_bundle(
+                    _mock_request(),
                     "sess-1",
                     2,
                     format="json",
@@ -867,6 +893,7 @@ class TestAgentContextRoutes:
             )
             bundle_by_id = asyncio.run(
                 api.get_context_bundle_by_id(
+                    _mock_request(),
                     "ctxb_123",
                     format="json",
                     token_budget=2048,
@@ -874,17 +901,19 @@ class TestAgentContextRoutes:
             )
             expanded_bundle = asyncio.run(
                 api.expand_agent_context_bundle_ref(
+                    _mock_request(),
                     api.ExpandContextBundleRefRequest(
                         ref_id="e1",
                         session_id=None,
                         turn_number=None,
                         bundle_id="ctxb_123",
                         depth="L2",
-                    )
+                    ),
                 )
             )
             activation = asyncio.run(
                 api.create_agent_context_activation(
+                    _mock_request(),
                     api.ContextActivationRequest(
                         session_id=None,
                         turn_number=None,
@@ -893,27 +922,29 @@ class TestAgentContextRoutes:
                         active_fact_ids=["f1"],
                         active_hypothesis_ids=["h1"],
                         reason="focused_answer",
-                    )
+                    ),
                 )
             )
             handoff = asyncio.run(
                 api.create_agent_context_handoff(
+                    _mock_request(),
                     api.AgentContextHandoffRequest(
                         session_id="sess-1",
                         turn_number=2,
                         mode="delegate",
-                    )
+                    ),
                 )
             )
-            restored = asyncio.run(api.get_agent_context_handoff("hf_123"))
+            restored = asyncio.run(api.get_agent_context_handoff(_mock_request(), "hf_123"))
             expanded = asyncio.run(
                 api.expand_agent_context_ref(
+                    _mock_request(),
                     api.ExpandContextRefRequest(
                         session_id="sess-1",
                         turn_number=2,
                         ref_id="e1",
                         depth="L2",
-                    )
+                    ),
                 )
             )
 
@@ -973,19 +1004,20 @@ class TestAgentContextRoutes:
 
         with (
             patch(
-                "fastcode.api.routes._ensure_fastcode_initialized",
+                "fastcode.api.routes._fc",
                 return_value=fake_fastcode,
             ),
             pytest.raises(HTTPException) as exc_info,
         ):
             asyncio.run(
                 api.expand_agent_context_ref(
+                    _mock_request(),
                     api.ExpandContextRefRequest(
                         session_id="sess-1",
                         turn_number=2,
                         ref_id="e9",
                         depth="L2",
-                    )
+                    ),
                 )
             )
 

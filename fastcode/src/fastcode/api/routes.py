@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from fastcode.api.cors import cors_middleware_options
@@ -81,13 +81,15 @@ from fastcode.utils.archive import (
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown"""
     # Startup
-    logger.info("FastCode API started - system will initialize on first request")
+    logger.info("FastCode API started — initializing system")
+    if not hasattr(app.state, "fastcode"):
+        app.state.fastcode = FastCode()
     yield
     # Shutdown
-    global fastcode_instance
-    if fastcode_instance is not None:
+    fc = getattr(app, "state", None) and getattr(app.state, "fastcode", None)
+    if fc is not None:
         try:
-            fastcode_instance.shutdown()
+            fc.shutdown()
         except Exception as e:
             logger.warning(f"FastCode shutdown hook failed: {e}")
     logger.info("FastCode API shutting down")
@@ -106,9 +108,6 @@ app.add_middleware(
     **cors_middleware_options(),
 )
 
-# Global FastCode instance
-fastcode_instance: FastCode | None = None
-
 # Setup logging
 log_dir = Path("./logs")
 logger = configure_logging(
@@ -120,13 +119,12 @@ logger = configure_logging(
 )
 
 
-def _ensure_fastcode_initialized():
-    """Ensure FastCode is initialized (lazy initialization)"""
-    global fastcode_instance
-    if fastcode_instance is None:
-        logger.info("Initializing FastCode system (lazy initialization)")
-        fastcode_instance = FastCode()
-    return fastcode_instance
+def _fc(request: Request) -> FastCode:
+    """Get FastCode instance from app state."""
+    fc = getattr(request.app.state, "fastcode", None)
+    if fc is None:
+        raise HTTPException(status_code=500, detail="FastCode not initialized")
+    return fc
 
 
 @app.get("/")
@@ -141,9 +139,10 @@ async def root():
 
 
 @app.get("/health")
-async def health_check():
+async def health_check(request: Request):
     """Lightweight health check endpoint"""
-    if fastcode_instance is None:
+    fc = getattr(request.app.state, "fastcode", None)
+    if fc is None:
         return {
             "status": "initializing",
             "message": "FastCode system will initialize on first use",
@@ -152,12 +151,12 @@ async def health_check():
         }
 
     health = readiness_health(
-        repo_loaded=fastcode_instance.repo_loaded,
-        repo_indexed=fastcode_instance.repo_indexed,
+        repo_loaded=fc.repo_loaded,
+        repo_indexed=fc.repo_indexed,
         details={
-            "multi_repo_mode": fastcode_instance.multi_repo_mode,
-            "storage_backend": fastcode_instance.snapshot_store.db_runtime.backend,
-            "retrieval_backend": fastcode_instance.config.get("retrieval", {}).get(
+            "multi_repo_mode": fc.multi_repo_mode,
+            "storage_backend": fc.snapshot_store.db_runtime.backend,
+            "retrieval_backend": fc.config.get("retrieval", {}).get(
                 "retrieval_backend", "local"
             ),
         },
@@ -169,9 +168,9 @@ async def health_check():
 
 
 @app.get("/status", response_model=StatusResponse)
-async def get_status(full_scan: bool = False):
+async def get_status(request: Request, full_scan: bool = False):
     """Get system status."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     info = fastcode.get_status_info(full_scan=full_scan)
     return serialize_status_response(
         serialize_status_response_record(
@@ -189,9 +188,9 @@ async def get_status(full_scan: bool = False):
 
 
 @app.get("/diagnostics", response_model=DiagnosticBundleResponse)
-async def get_diagnostics():
+async def get_diagnostics(request: Request):
     """Return a support-safe diagnostic bundle for operators."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         bundle = await asyncio.to_thread(fastcode.build_diagnostic_bundle)
         return serialize_diagnostic_bundle_response(
@@ -203,14 +202,14 @@ async def get_diagnostics():
 
 
 @app.get("/repositories")
-async def list_repositories(full_scan: bool = False):
+async def list_repositories(request: Request, full_scan: bool = False):
     """
     List available (indexed on disk) and loaded repositories
 
     Args:
         full_scan: If True, force a full scan of available indexes (slower but fresh data)
     """
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
     try:
         available_repos = fastcode.vector_store.scan_available_indexes(
@@ -229,10 +228,10 @@ async def list_repositories(full_scan: bool = False):
 
 
 @app.post("/load")
-async def load_repository(request: LoadRepositoryRequest):
+async def load_repository(request: Request, req: LoadRepositoryRequest):
     """Load a repository"""
-    fastcode = _ensure_fastcode_initialized()
-    command = map_load_repository_request(request)
+    fastcode = _fc(request)
+    command = map_load_repository_request(req)
 
     try:
         logger.info(f"Loading repository: {command.source}")
@@ -252,9 +251,9 @@ async def load_repository(request: LoadRepositoryRequest):
 
 
 @app.post("/index")
-async def index_repository(force: bool = False):
+async def index_repository(request: Request, force: bool = False):
     """Index the loaded repository"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
     if not fastcode.repo_loaded:
         raise HTTPException(status_code=400, detail="No repository loaded")
@@ -277,10 +276,10 @@ async def index_repository(force: bool = False):
 
 
 @app.post("/index/run", response_model=IndexRunResponse)
-async def run_index_pipeline(request: IndexRunRequest):
+async def run_index_pipeline(request: Request, req: IndexRunRequest):
     """Run snapshot-based indexing pipeline."""
-    fastcode = _ensure_fastcode_initialized()
-    command = map_index_run_request(request)
+    fastcode = _fc(request)
+    command = map_index_run_request(req)
     try:
         result = await asyncio.to_thread(
             fastcode.run_index_pipeline,
@@ -301,9 +300,9 @@ async def run_index_pipeline(request: IndexRunRequest):
 
 
 @app.get("/index/runs/{run_id}")
-async def get_index_run(run_id: str):
+async def get_index_run(request: Request, run_id: str):
     """Get index run status/details."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     run = fastcode.get_index_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
@@ -311,9 +310,9 @@ async def get_index_run(run_id: str):
 
 
 @app.post("/index/publish/{run_id}")
-async def publish_index_run(run_id: str, ref_name: str | None = None):
+async def publish_index_run(request: Request, run_id: str, ref_name: str | None = None):
     """Publish an existing index run into manifest and lineage."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(fastcode.publish_index_run, run_id, ref_name)
         return {"status": "success", "result": result}
@@ -323,9 +322,9 @@ async def publish_index_run(run_id: str, ref_name: str | None = None):
 
 
 @app.post("/index/publish/retry")
-async def retry_publish_tasks(limit: int = 10):
+async def retry_publish_tasks(request: Request, limit: int = 10):
     """Retry pending Terminus lineage publish tasks."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(fastcode.retry_pending_publishes, limit)
         return {"status": "success", "result": result}
@@ -335,9 +334,9 @@ async def retry_publish_tasks(limit: int = 10):
 
 
 @app.post("/redo/process")
-async def process_redo_tasks(limit: int = 10):
+async def process_redo_tasks(request: Request, limit: int = 10):
     """Admin endpoint to process pending redo tasks immediately."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(fastcode.process_redo_tasks, limit)
         return {"status": "success", "result": result}
@@ -347,10 +346,10 @@ async def process_redo_tasks(limit: int = 10):
 
 
 @app.post("/load-and-index")
-async def load_and_index(request: LoadRepositoryRequest, force: bool = False):
+async def load_and_index(request: Request, req: LoadRepositoryRequest, force: bool = False):
     """Load and index repository in one call"""
-    fastcode = _ensure_fastcode_initialized()
-    command = map_load_repository_request(request)
+    fastcode = _fc(request)
+    command = map_load_repository_request(req)
 
     try:
         logger.info(f"Loading and indexing repository: {command.source}")
@@ -364,15 +363,15 @@ async def load_and_index(request: LoadRepositoryRequest, force: bool = False):
 
 
 @app.post("/load-repositories")
-async def load_repositories(request: LoadRepositoriesRequest):
+async def load_repositories(request: Request, req: LoadRepositoriesRequest):
     """Load existing indexed repositories from cache"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
-    if not request.repo_names:
+    if not req.repo_names:
         raise HTTPException(status_code=400, detail="No repository names provided")
 
     try:
-        logger.info(f"Loading repositories from cache: {request.repo_names}")
+        logger.info(f"Loading repositories from cache: {req.repo_names}")
         success = await asyncio.to_thread(
             fastcode._load_multi_repo_cache, repo_names=request.repo_names
         )
@@ -395,15 +394,15 @@ async def load_repositories(request: LoadRepositoriesRequest):
 
 
 @app.post("/index-multiple")
-async def index_multiple(request: IndexMultipleRequest):
+async def index_multiple(request: Request, req: IndexMultipleRequest):
     """Load and index multiple repositories"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
-    if not request.sources:
+    if not req.sources:
         raise HTTPException(status_code=400, detail="No repositories provided")
 
     try:
-        logger.info(f"Indexing {len(request.sources)} repositories")
+        logger.info(f"Indexing {len(req.sources)} repositories")
         await asyncio.to_thread(
             fastcode.load_multiple_repositories,
             [
@@ -412,7 +411,7 @@ async def index_multiple(request: IndexMultipleRequest):
                     "is_url": command.is_url,
                 }
                 for command in (
-                    map_load_repository_request(source) for source in request.sources
+                    map_load_repository_request(source) for source in req.sources
                 )
             ],
         )
@@ -430,9 +429,9 @@ async def index_multiple(request: IndexMultipleRequest):
 
 
 @app.post("/upload-zip")
-async def upload_repository_zip(file: UploadFile = File(...)):
+async def upload_repository_zip(request: Request, file: UploadFile = File(...)):
     """Upload and extract repository ZIP file"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
     filename = file.filename
     if not filename or not filename.lower().endswith(".zip"):
@@ -455,9 +454,9 @@ async def upload_repository_zip(file: UploadFile = File(...)):
 
 
 @app.post("/upload-and-index")
-async def upload_and_index(file: UploadFile = File(...), force: bool = False):
+async def upload_and_index(request: Request, file: UploadFile = File(...), force: bool = False):
     """Upload ZIP and index in one call"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
     filename = file.filename
     if not filename or not filename.lower().endswith(".zip"):
@@ -481,10 +480,10 @@ async def upload_and_index(file: UploadFile = File(...), force: bool = False):
 
 
 @app.post("/query", response_model=QueryResponse)
-async def query_repository(request: QueryRequest):
+async def query_repository(request: Request, req: QueryRequest):
     """Query by snapshot scope (snapshot_id or repo_name+ref_name)."""
-    fastcode = _ensure_fastcode_initialized()
-    query_request = map_snapshot_query_request(request)
+    fastcode = _fc(request)
+    query_request = map_snapshot_query_request(req)
 
     if not query_request.snapshot_id and not (
         query_request.repo_name and query_request.ref_name
@@ -526,10 +525,10 @@ async def query_repository(request: QueryRequest):
 
 
 @app.post("/query-snapshot", response_model=QueryResponse)
-async def query_snapshot(request: QuerySnapshotRequest):
+async def query_snapshot(request: Request, req: QuerySnapshotRequest):
     """Query a specific snapshot or repo/ref manifest head."""
-    fastcode = _ensure_fastcode_initialized()
-    query_request = map_snapshot_query_request(request)
+    fastcode = _fc(request)
+    query_request = map_snapshot_query_request(req)
     try:
         session_id = query_request.session_id or str(uuid.uuid4())[:8]
         result = await asyncio.to_thread(
@@ -554,7 +553,7 @@ async def query_snapshot(request: QuerySnapshotRequest):
 
 
 @app.post("/query-stream")
-async def query_repository_stream(request: QueryRequest):
+async def query_repository_stream(request: Request, _req: QueryRequest):
     """Deprecated in snapshot-cutover mode."""
     raise HTTPException(
         status_code=501,
@@ -563,9 +562,9 @@ async def query_repository_stream(request: QueryRequest):
 
 
 @app.get("/summary")
-async def get_repository_summary():
+async def get_repository_summary(request: Request):
     """Get repository summary"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
     if not fastcode.repo_loaded:
         raise HTTPException(status_code=400, detail="No repository loaded")
@@ -587,9 +586,9 @@ async def get_repository_summary():
 
 
 @app.get("/manifests/{repo_name}/{ref_name}")
-async def get_branch_manifest(repo_name: str, ref_name: str):
+async def get_branch_manifest(request: Request, repo_name: str, ref_name: str):
     """Get latest published manifest for repo/ref."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     manifest = fastcode.get_branch_manifest(repo_name, ref_name)
     if not manifest:
         raise HTTPException(status_code=404, detail="Manifest not found")
@@ -597,8 +596,8 @@ async def get_branch_manifest(repo_name: str, ref_name: str):
 
 
 @app.get("/repos/{repo_name}/refs")
-async def get_repo_refs(repo_name: str):
-    fastcode = _ensure_fastcode_initialized()
+async def get_repo_refs(request: Request, repo_name: str):
+    fastcode = _fc(request)
     try:
         refs = await asyncio.to_thread(fastcode.list_repo_refs, repo_name)
         return {"status": "success", "repo_name": repo_name, "refs": refs}
@@ -608,9 +607,9 @@ async def get_repo_refs(repo_name: str):
 
 
 @app.get("/manifests/snapshot/{snapshot_id}")
-async def get_snapshot_manifest(snapshot_id: str):
+async def get_snapshot_manifest(request: Request, snapshot_id: str):
     """Get latest published manifest for snapshot ID."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     manifest = fastcode.get_snapshot_manifest(snapshot_id)
     if not manifest:
         raise HTTPException(status_code=404, detail="Manifest not found")
@@ -619,11 +618,12 @@ async def get_snapshot_manifest(snapshot_id: str):
 
 @app.get("/code-status/{snapshot_id}")
 async def get_code_status_pack(
+    request: Request,
     snapshot_id: str,
     include_graph_facts: bool = True,
 ):
     """Get a DocKG-facing code_status_pack.v0 artifact for a snapshot."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         pack = await asyncio.to_thread(
             fastcode.get_code_status_pack,
@@ -639,9 +639,9 @@ async def get_code_status_pack(
 
 
 @app.get("/scip/artifacts/{snapshot_id}")
-async def get_scip_artifact(snapshot_id: str):
+async def get_scip_artifact(request: Request, snapshot_id: str):
     """Get preserved SCIP artifact metadata for a snapshot."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     artifact = fastcode.get_scip_artifact_ref(snapshot_id)
     if not artifact:
         raise HTTPException(status_code=404, detail="SCIP artifact not found")
@@ -651,12 +651,13 @@ async def get_scip_artifact(snapshot_id: str):
 
 @app.get("/symbols/find")
 async def find_symbol(
+    request: Request,
     snapshot_id: str,
     symbol_id: str | None = None,
     name: str | None = None,
     path: str | None = None,
 ):
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         symbol = await asyncio.to_thread(
             fastcode.find_symbol,
@@ -676,8 +677,8 @@ async def find_symbol(
 
 
 @app.get("/graph/callees")
-async def get_graph_callees(snapshot_id: str, symbol_id: str, max_hops: int = 1):
-    fastcode = _ensure_fastcode_initialized()
+async def get_graph_callees(request: Request, snapshot_id: str, symbol_id: str, max_hops: int = 1):
+    fastcode = _fc(request)
     try:
         callees = await asyncio.to_thread(
             fastcode.get_graph_callees, snapshot_id, symbol_id, max_hops
@@ -694,8 +695,8 @@ async def get_graph_callees(snapshot_id: str, symbol_id: str, max_hops: int = 1)
 
 
 @app.get("/graph/callers")
-async def get_graph_callers(snapshot_id: str, symbol_id: str, max_hops: int = 1):
-    fastcode = _ensure_fastcode_initialized()
+async def get_graph_callers(request: Request, snapshot_id: str, symbol_id: str, max_hops: int = 1):
+    fastcode = _fc(request)
     try:
         callers = await asyncio.to_thread(
             fastcode.get_graph_callers, snapshot_id, symbol_id, max_hops
@@ -712,8 +713,8 @@ async def get_graph_callers(snapshot_id: str, symbol_id: str, max_hops: int = 1)
 
 
 @app.get("/graph/dependencies")
-async def get_graph_dependencies(snapshot_id: str, doc_id: str, max_hops: int = 1):
-    fastcode = _ensure_fastcode_initialized()
+async def get_graph_dependencies(request: Request, snapshot_id: str, doc_id: str, max_hops: int = 1):
+    fastcode = _fc(request)
     try:
         deps = await asyncio.to_thread(
             fastcode.get_graph_dependencies, snapshot_id, doc_id, max_hops
@@ -730,20 +731,20 @@ async def get_graph_dependencies(snapshot_id: str, doc_id: str, max_hops: int = 
 
 
 @app.post("/projection/build")
-async def build_projection(request: ProjectionBuildRequest):
+async def build_projection(request: Request, req: ProjectionBuildRequest):
     """Build or reuse a cached projection artifact."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode.build_projection,
-            scope_kind=request.scope_kind,
-            snapshot_id=request.snapshot_id,
-            repo_name=request.repo_name,
-            ref_name=request.ref_name,
-            query=request.query,
-            target_id=request.target_id,
-            filters=request.filters,
-            force=request.force,
+            scope_kind=req.scope_kind,
+            snapshot_id=req.snapshot_id,
+            repo_name=req.repo_name,
+            ref_name=req.ref_name,
+            query=req.query,
+            target_id=req.target_id,
+            filters=req.filters,
+            force=req.force,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -752,9 +753,9 @@ async def build_projection(request: ProjectionBuildRequest):
 
 
 @app.get("/projection/{projection_id}/{layer}")
-async def get_projection_layer(projection_id: str, layer: str):
+async def get_projection_layer(request: Request, projection_id: str, layer: str):
     """Fetch a specific projection layer (L0/L1/L2)."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode.get_projection_layer, projection_id, layer
@@ -766,9 +767,9 @@ async def get_projection_layer(projection_id: str, layer: str):
 
 
 @app.get("/projection/{projection_id}/chunks/{chunk_id}")
-async def get_projection_chunk(projection_id: str, chunk_id: str):
+async def get_projection_chunk(request: Request, projection_id: str, chunk_id: str):
     """Fetch a single projection L2 chunk payload."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode.get_projection_chunk, projection_id, chunk_id
@@ -780,14 +781,14 @@ async def get_projection_chunk(projection_id: str, chunk_id: str):
 
 
 @app.get("/projection/snapshot/{snapshot_id}/prefix")
-async def get_projection_prefix(snapshot_id: str):
+async def get_projection_prefix(request: Request, snapshot_id: str):
     """Get L0+L1 projection as compact JSON for system prompt injection.
 
     Returns the architectural overview (L0) and navigation structure (L1)
     combined into a single response suitable for injecting into an AI
     agent's system prompt at session start.
     """
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(fastcode.get_session_prefix, snapshot_id)
         if result.get("error"):
@@ -801,9 +802,9 @@ async def get_projection_prefix(snapshot_id: str):
 
 
 @app.get("/agent-context/session/{session_id}/latest")
-async def get_latest_turn_context(session_id: str, format: str = "fcx"):
+async def get_latest_turn_context(request: Request, session_id: str, format: str = "fcx"):
     """Fetch the latest typed working-memory artifact for a session."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode.get_turn_context,
@@ -819,12 +820,13 @@ async def get_latest_turn_context(session_id: str, format: str = "fcx"):
 
 @app.get("/agent-context/session/{session_id}/turn/{turn_number}")
 async def get_turn_context(
+    request: Request,
     session_id: str,
     turn_number: int,
     format: str = "fcx",
 ):
     """Fetch a specific typed working-memory artifact for a session turn."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode.get_turn_context,
@@ -840,12 +842,13 @@ async def get_turn_context(
 
 @app.get("/agent-context/session/{session_id}/bundle/latest")
 async def get_latest_context_bundle(
+    request: Request,
     session_id: str,
     format: str = "json",
     token_budget: int = 2048,
 ):
     """Fetch the latest durable context bundle for a session."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode.get_context_bundle,
@@ -862,13 +865,14 @@ async def get_latest_context_bundle(
 
 @app.get("/agent-context/session/{session_id}/bundle/{turn_number}")
 async def get_context_bundle(
+    request: Request,
     session_id: str,
     turn_number: int,
     format: str = "json",
     token_budget: int = 2048,
 ):
     """Fetch a durable context bundle for a session turn."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode.get_context_bundle,
@@ -885,12 +889,13 @@ async def get_context_bundle(
 
 @app.get("/agent-context/bundle/{bundle_id}")
 async def get_context_bundle_by_id(
+    request: Request,
     bundle_id: str,
     format: str = "json",
     token_budget: int = 2048,
 ):
     """Fetch a durable context bundle by bundle ID."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode.get_context_bundle_by_id,
@@ -905,17 +910,17 @@ async def get_context_bundle_by_id(
 
 
 @app.post("/agent-context/bundle/expand")
-async def expand_agent_context_bundle_ref(request: ExpandContextBundleRefRequest):
+async def expand_agent_context_bundle_ref(request: Request, req: ExpandContextBundleRefRequest):
     """Expand a single source ref from a durable context bundle."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode.expand_context_bundle_ref,
-            request.ref_id,
-            session_id=request.session_id,
-            turn_number=request.turn_number,
-            bundle_id=request.bundle_id,
-            depth=request.depth,
+            req.ref_id,
+            session_id=req.session_id,
+            turn_number=req.turn_number,
+            bundle_id=req.bundle_id,
+            depth=req.depth,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -924,19 +929,19 @@ async def expand_agent_context_bundle_ref(request: ExpandContextBundleRefRequest
 
 
 @app.post("/agent-context/bundle/activation")
-async def create_agent_context_activation(request: ContextActivationRequest):
+async def create_agent_context_activation(request: Request, req: ContextActivationRequest):
     """Create and persist an activation record for a context bundle."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode.create_context_activation,
-            session_id=request.session_id,
-            turn_number=request.turn_number,
-            bundle_id=request.bundle_id,
-            active_ref_ids=request.active_ref_ids,
-            active_fact_ids=request.active_fact_ids,
-            active_hypothesis_ids=request.active_hypothesis_ids,
-            reason=request.reason,
+            session_id=req.session_id,
+            turn_number=req.turn_number,
+            bundle_id=req.bundle_id,
+            active_ref_ids=req.active_ref_ids,
+            active_fact_ids=req.active_fact_ids,
+            active_hypothesis_ids=req.active_hypothesis_ids,
+            reason=req.reason,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -945,15 +950,15 @@ async def create_agent_context_activation(request: ContextActivationRequest):
 
 
 @app.post("/agent-context/handoff")
-async def create_agent_context_handoff(request: AgentContextHandoffRequest):
+async def create_agent_context_handoff(request: Request, req: AgentContextHandoffRequest):
     """Create and persist a handoff artifact from a session turn."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode.create_handoff,
-            request.session_id,
-            request.turn_number,
-            request.mode,
+            req.session_id,
+            req.turn_number,
+            req.mode,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -962,9 +967,9 @@ async def create_agent_context_handoff(request: AgentContextHandoffRequest):
 
 
 @app.get("/agent-context/handoff/{artifact_id}")
-async def get_agent_context_handoff(artifact_id: str):
+async def get_agent_context_handoff(request: Request, artifact_id: str):
     """Fetch a persisted handoff artifact."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(fastcode.get_handoff_artifact, artifact_id)
         return {"status": "success", "result": result}
@@ -974,16 +979,16 @@ async def get_agent_context_handoff(artifact_id: str):
 
 
 @app.post("/agent-context/expand")
-async def expand_agent_context_ref(request: ExpandContextRefRequest):
+async def expand_agent_context_ref(request: Request, req: ExpandContextRefRequest):
     """Expand a single evidence ref from working memory."""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
             fastcode.expand_context_ref,
-            request.session_id,
-            request.turn_number,
-            request.ref_id,
-            request.depth,
+            req.session_id,
+            req.turn_number,
+            req.ref_id,
+            req.depth,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -992,9 +997,9 @@ async def expand_agent_context_ref(request: ExpandContextRefRequest):
 
 
 @app.post("/new-session", response_model=NewSessionResponse)
-async def new_session(clear_session_id: str | None = None):
+async def new_session(request: Request, clear_session_id: str | None = None):
     """Start a new conversation session"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
     if clear_session_id:
         fastcode.delete_session(clear_session_id)
@@ -1004,9 +1009,9 @@ async def new_session(clear_session_id: str | None = None):
 
 
 @app.get("/sessions")
-async def list_sessions():
+async def list_sessions(request: Request):
     """List all dialogue sessions with titles (sorted by last update time)"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         sessions = fastcode.list_sessions()
 
@@ -1030,9 +1035,9 @@ async def list_sessions():
 
 
 @app.get("/session/{session_id}")
-async def get_session(session_id: str):
+async def get_session(request: Request, session_id: str):
     """Get full dialogue history for a session"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
     try:
         history = fastcode.get_session_history(session_id) or []
         return {
@@ -1046,9 +1051,9 @@ async def get_session(session_id: str):
 
 
 @app.delete("/session/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(request: Request, session_id: str):
     """Delete a single dialogue session"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
     try:
         history = fastcode.get_session_history(session_id)
@@ -1072,20 +1077,20 @@ async def delete_session(session_id: str):
 
 
 @app.post("/delete-repos")
-async def delete_repositories(request: DeleteReposRequest):
+async def delete_repositories(request: Request, req: DeleteReposRequest):
     """Delete one or more repositories and all associated data"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
-    if not request.repo_names:
+    if not req.repo_names:
         raise HTTPException(status_code=400, detail="No repository names provided")
 
     try:
         results = []
-        for repo_name in request.repo_names:
+        for repo_name in req.repo_names:
             result = await asyncio.to_thread(
                 fastcode.remove_repository,
                 repo_name,
-                delete_source=request.delete_source,
+                delete_source=req.delete_source,
             )
             results.append(result)
             logger.info(
@@ -1105,9 +1110,9 @@ async def delete_repositories(request: DeleteReposRequest):
 
 
 @app.post("/clear-cache")
-async def clear_cache():
+async def clear_cache(request: Request):
     """Clear cache"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
     success = await asyncio.to_thread(fastcode.clear_cache)
 
@@ -1120,17 +1125,17 @@ async def clear_cache():
 
 
 @app.get("/cache-stats")
-async def get_cache_stats():
+async def get_cache_stats(request: Request):
     """Get cache statistics"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
     return await asyncio.to_thread(fastcode.get_cache_stats)
 
 
 @app.post("/refresh-index-cache")
-async def refresh_index_cache():
+async def refresh_index_cache(request: Request):
     """Force refresh the index scan cache"""
-    fastcode = _ensure_fastcode_initialized()
+    fastcode = _fc(request)
 
     try:
         available_repos = await asyncio.to_thread(fastcode.refresh_index_cache)
@@ -1146,13 +1151,12 @@ async def refresh_index_cache():
 
 
 @app.delete("/repository")
-async def unload_repository():
+async def unload_repository(request: Request):
     """Unload current repository"""
-    global fastcode_instance
-
-    if fastcode_instance:
-        await asyncio.to_thread(fastcode_instance.cleanup)
-        fastcode_instance = FastCode()
+    fc = getattr(request.app.state, "fastcode", None)
+    if fc is not None:
+        await asyncio.to_thread(fc.cleanup)
+        request.app.state.fastcode = FastCode()
 
     return {"status": "success", "message": "Repository unloaded"}
 

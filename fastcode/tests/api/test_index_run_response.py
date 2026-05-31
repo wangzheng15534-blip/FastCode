@@ -3,11 +3,18 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 import fastcode.api.routes as api
 from fastcode.api.outbound import DiagnosticBundleResponse, IndexRunResponse
+
+
+def _mock_request() -> MagicMock:
+    req = MagicMock()
+    req.app = api.app
+    return req
 
 
 class _FakeFastCode:
@@ -88,10 +95,11 @@ def test_index_run_promotes_pipeline_and_resolver_diagnostics(
         return func(*args, **kwargs)
 
     monkeypatch.setattr(api.asyncio, "to_thread", _run_inline)
-    monkeypatch.setattr(api, "_ensure_fastcode_initialized", lambda: fake)
+    monkeypatch.setattr(api, "_fc", lambda _request: fake)
 
     body = asyncio.run(
         api.run_index_pipeline(
+            _mock_request(),
             api.IndexRunRequest(
                 source="repo",
                 is_url=None,
@@ -149,9 +157,9 @@ def test_diagnostics_endpoint_returns_support_bundle(
         return func(*args, **kwargs)
 
     monkeypatch.setattr(api.asyncio, "to_thread", _run_inline)
-    monkeypatch.setattr(api, "_ensure_fastcode_initialized", lambda: fake)
+    monkeypatch.setattr(api, "_fc", lambda _request: fake)
 
-    body = asyncio.run(api.get_diagnostics())
+    body = asyncio.run(api.get_diagnostics(_mock_request()))
 
     assert body.status == "success"
     assert body.bundle["schema_version"] == "fastcode.diagnostic_bundle.v1"

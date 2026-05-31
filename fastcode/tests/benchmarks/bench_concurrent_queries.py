@@ -151,7 +151,7 @@ def _run_query_endpoint_workload(
     started = time.perf_counter()
     with (
         patch(
-            "fastcode.api.routes._ensure_fastcode_initialized",
+            "fastcode.api.routes._fc",
             return_value=fastcode,
         ),
         ThreadPoolExecutor(max_workers=1) as pool,

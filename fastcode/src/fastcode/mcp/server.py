@@ -65,18 +65,22 @@ logger = configure_logging(
 )
 
 # ---------------------------------------------------------------------------
-# Lazy FastCode singleton
+# FastCode instance injection
 # ---------------------------------------------------------------------------
-_fastcode_instance = None
+_fastcode_instance: FastCode | None = None
 
 
-def _get_fastcode():
-    """Lazy-init the FastCode engine (heavy imports happen here)."""
+def init_server(fc: FastCode) -> None:
+    """Inject a shared FastCode instance. Called by the process main."""
     global _fastcode_instance
+    _fastcode_instance = fc
+
+
+def _get_fastcode() -> FastCode:
     if _fastcode_instance is None:
-        logger.info("Initializing FastCode engine …")
-        _fastcode_instance = FastCode()
-        logger.info("FastCode engine ready.")
+        raise RuntimeError(
+            "FastCode MCP server not initialized. Call init_server(fc) first."
+        )
     return _fastcode_instance
 
 
@@ -766,6 +770,8 @@ def main():
         help="Port for SSE transport (default: 8080)",
     )
     args = parser.parse_args()
+
+    init_server(FastCode())
 
     if args.transport == "sse":
         mcp.settings.port = args.port

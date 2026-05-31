@@ -8,7 +8,10 @@ import shutil
 import subprocess
 from collections.abc import Sequence
 
-from fastcode.ports.execution import ScipFileInfoView, ScipIndexerProfileView
+from fastcode.infrastructure.execution.ports import (
+    ScipFileInfoView,
+    ScipIndexerProfileView,
+)
 from fastcode.scip.indexers import (
     detect_scip_languages_from_file_infos,
     detect_scip_languages_in_paths,

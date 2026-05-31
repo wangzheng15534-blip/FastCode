@@ -7,7 +7,7 @@ import subprocess
 from collections.abc import Sequence
 from typing import Any
 
-from fastcode.ports.execution import SemanticHelperRuntime
+from fastcode.infrastructure.execution.ports import SemanticHelperRuntime
 
 
 class SubprocessSemanticHelperRuntime(SemanticHelperRuntime):

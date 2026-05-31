@@ -60,7 +60,7 @@ from fastcode.ports.artifacts import (
 from fastcode.ports.artifacts import (
     UnitArtifactStore as UnitArtifactStorePort,
 )
-from fastcode.ports.execution import (
+from fastcode.infrastructure.execution.ports import (
     ScipFileInfoView,
     ScipIndexerRuntime,
     SemanticHelperRuntime,

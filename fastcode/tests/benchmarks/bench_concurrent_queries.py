@@ -116,9 +116,12 @@ def _run_query_lock_workload(
 
 
 async def _run_query_endpoint_requests(query_count: int) -> int:
+    from types import SimpleNamespace
+    mock_req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(fastcode=None)))
     responses = await asyncio.gather(
         *(
             api.query_repository(
+                mock_req,
                 api.QueryRequest(
                     question=f"Where is component {index}?",
                     snapshot_id=f"snap:{index}",

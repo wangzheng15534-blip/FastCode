@@ -373,7 +373,7 @@ async def load_repositories(request: Request, req: LoadRepositoriesRequest):
     try:
         logger.info(f"Loading repositories from cache: {req.repo_names}")
         success = await asyncio.to_thread(
-            fastcode._load_multi_repo_cache, repo_names=request.repo_names
+            fastcode._load_multi_repo_cache, repo_names=req.repo_names
         )
 
         if not success:

@@ -2295,6 +2295,7 @@ def test_snapshot_query_stream_releases_service_lock_after_handle_capture() -> N
         query_stream=_query_stream,
     )
     fc._index_repository_unlocked = lambda **_kwargs: _enter_critical("index")
+    fc.vector_store = SimpleNamespace(invalidate_scan_cache=lambda: None)
 
     def _run_stream() -> None:
         try:

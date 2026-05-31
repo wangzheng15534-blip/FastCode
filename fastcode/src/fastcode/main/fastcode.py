@@ -7,15 +7,16 @@ Main FastCode Class - Orchestrate all components
 import json
 import logging
 import os
-import pickle
 import re
 import shutil
+import tempfile
 import threading
 import time
+import zipfile
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager
-from datetime import datetime
 from importlib import util as importlib_util
+from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit, urlunsplit
 
@@ -24,7 +25,17 @@ from fastcode.app.indexing.doc_ingester import KeyDocIngester
 from fastcode.app.indexing.embedder import CodeEmbedder
 from fastcode.app.indexing.extractors.parser import CodeParser
 from fastcode.app.indexing.loader import RepositoryLoader
+from fastcode.app.indexing.pipeline.direct_indexer import DirectIndexer
 from fastcode.app.indexing.pipeline.indexer import CodeIndexer
+from fastcode.app.indexing.pipeline.manifest import (
+    build_file_manifest,
+    collect_unchanged_elements,
+    detect_file_changes,
+    load_existing_metadata,
+    load_file_manifest,
+    save_file_manifest,
+)
+from fastcode.app.indexing.pipeline.multi_repo_direct import MultiRepoDirectIndexer
 from fastcode.app.indexing.pipeline.redo_worker import RedoWorker
 from fastcode.app.indexing.pipeline.service import IndexPipeline
 from fastcode.app.indexing.projection.service import ProjectionService
@@ -53,6 +64,18 @@ from fastcode.app.store.cache.contracts import (
     DialogueTurnRecord,
     HandoffArtifactRecord,
 )
+from fastcode.app.store.cache.rehydration import (
+    load_multi_repo_cache as _load_multi_repo_cache_impl,
+)
+from fastcode.app.store.cache.rehydration import (
+    reconstruct_elements_from_metadata,
+)
+from fastcode.app.store.cache.rehydration import (
+    save_to_cache as _save_to_cache_impl,
+)
+from fastcode.app.store.cache.rehydration import (
+    try_load_from_cache as _try_load_from_cache_impl,
+)
 from fastcode.app.store.cache.service import CacheManager
 from fastcode.app.store.runs.index_run import IndexRunStore
 from fastcode.app.store.runs.index_run_contracts import IndexRunRecord
@@ -66,25 +89,20 @@ from fastcode.app.store.snapshots.snapshot_contracts import (
 )
 from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
 from fastcode.app.store.vectors.vector import VectorStore
-from fastcode.app.store.vectors.vector_math import as_float32_matrix
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.infrastructure.execution.scip_runner import SubprocessScipIndexerRuntime
 from fastcode.infrastructure.execution.semantic_helper import (
     SubprocessSemanticHelperRuntime,
 )
+from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
 from fastcode.infrastructure.graph_runtime.ladybug import LadybugGraphRuntime
 from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.code_status import build_code_status_pack
-from fastcode.ir.element import (
-    CodeElement,
-    CodeElementMeta,
-    serialize_code_element,
-)
+from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.types import IRSnapshot, IRSymbol
 from fastcode.kernel.config import FastCodeConfig
 from fastcode.main.config import config_from_mapping
-from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
 from fastcode.retrieval.context.agent_context import (
     ContextBundle,
     HandoffArtifact,
@@ -110,6 +128,7 @@ from fastcode.semantic.resolvers.engine.registry import (
     build_default_semantic_resolver_registry,
 )
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
+from fastcode.utils.archive import safe_extract_zip, safe_repo_name_from_archive
 from fastcode.utils.clock import utc_now
 from fastcode.utils.filesystem import ensure_dir, normalize_path
 from fastcode.utils.json import safe_jsonable
@@ -512,6 +531,35 @@ class FastCode:
             scip_indexer_runtime=self.scip_indexer_runtime,
         )
 
+        # --- Direct indexing (use_flow delegate) ---
+        self._direct_indexer = DirectIndexer(
+            config=self.config,
+            loader=self.loader,
+            indexer=self.indexer,
+            embedder=self.embedder,
+            vector_store=self.vector_store,
+            graph_builder=self.graph_builder,
+            retriever=self.retriever,
+            graph_artifact_store=self.graph_artifact_store,
+            should_use_cache_fn=self._should_use_cache,
+            try_load_from_cache_fn=self._try_load_from_cache,
+            should_persist_fn=self._should_persist_indexes,
+            save_to_cache_fn=self._save_to_cache,
+            set_repo_root_fn=self._set_repo_root,
+            log_statistics_fn=self._log_statistics,
+        )
+        self._multi_repo_direct_indexer = MultiRepoDirectIndexer(
+            config=self.config,
+            loader=self.loader,
+            parser=self.parser,
+            embedder=self.embedder,
+            vector_store=self.vector_store,
+            graph_builder=self.graph_builder,
+            graph_artifact_store=self.graph_artifact_store,
+            set_repo_root_fn=self._set_repo_root,
+            infer_is_url_fn=self._infer_is_url,
+        )
+
         # --- Services ---
         self.projection_service = ProjectionService(
             config=self.config,
@@ -665,9 +713,450 @@ class FastCode:
             self.logger.error(f"Failed to load repository: {e}")
             raise
 
+    def upload_repository_zip(self, file_bytes: bytes, filename: str) -> dict[str, Any]:
+        """Upload a ZIP archive, extract, and load the repository.
+
+        Receives raw bytes so the caller (entry frame) owns the protocol-
+        specific file reading. Returns a result dict with status, repo_info,
+        and repo_path.
+        """
+        with self._state_lock():
+            return self._upload_repository_zip_unlocked(file_bytes, filename)
+
+    def _upload_repository_zip_unlocked(
+        self, file_bytes: bytes, filename: str
+    ) -> dict[str, Any]:
+        max_size = 100 * 1024 * 1024  # 100MB
+        if len(file_bytes) > max_size:
+            raise ValueError(
+                f"File too large. Maximum size is {max_size / (1024 * 1024)}MB"
+            )
+
+        archive_filename = Path(filename).name
+        repo_name = safe_repo_name_from_archive(archive_filename)
+
+        repo_workspace = getattr(self.loader, "safe_repo_root", "./repos")
+        repos_dir = Path(repo_workspace)
+        repos_dir.mkdir(parents=True, exist_ok=True)
+        repo_path = repos_dir / repo_name
+
+        if repo_path.exists():
+            self.loader._backup_existing_repo(str(repo_path))
+
+        temp_dir = tempfile.mkdtemp(prefix="fastcode_upload_")
+        try:
+            zip_path = Path(temp_dir) / archive_filename
+
+            self.logger.info(
+                "Saving uploaded ZIP file: %s (%d bytes)",
+                archive_filename,
+                len(file_bytes),
+            )
+            zip_path.write_bytes(file_bytes)
+
+            extract_dir = Path(temp_dir) / "extracted"
+            extract_dir.mkdir(exist_ok=True)
+
+            self.logger.info(
+                "Extracting ZIP file to temporary directory: %s", extract_dir
+            )
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                safe_extract_zip(zip_ref, extract_dir)
+
+            extracted_items = list(extract_dir.iterdir())
+            if len(extracted_items) == 1 and extracted_items[0].is_dir():
+                source_repo_path = extracted_items[0]
+            else:
+                source_repo_path = extract_dir
+
+            self.logger.info("Moving repository to: %s", repo_path)
+            shutil.move(str(source_repo_path), str(repo_path))
+
+            self.logger.info("Loading repository from: %s", repo_path)
+            self._load_repository_unlocked(str(repo_path), False)
+
+            return {
+                "status": "success",
+                "message": f"ZIP file '{archive_filename}' uploaded and extracted to repos/{repo_name}",
+                "repo_info": self.repo_info,
+                "repo_path": str(repo_path),
+            }
+        finally:
+            try:
+                shutil.rmtree(temp_dir)
+                self.logger.info("Cleaned up temporary directory: %s", temp_dir)
+            except Exception as cleanup_error:
+                self.logger.warning(
+                    "Failed to clean up temp directory: %s", cleanup_error
+                )
+
     def index_repository(self, force: bool = False):
         with self._state_lock():
-            return self._index_repository_unlocked(force=force)
+            result = self._index_repository_unlocked(force=force)
+            self.vector_store.invalidate_scan_cache()
+        return result
+
+    def load_and_index(
+        self, source: str, is_url: bool | None = None, *, force: bool = False
+    ) -> dict[str, Any]:
+        """Load and index a repository in one call. Handles locking and
+        cache invalidation."""
+        with self._state_lock():
+            self._load_repository_unlocked(source, is_url)
+            self._index_repository_unlocked(force=force)
+            self.vector_store.invalidate_scan_cache()
+            return {
+                "status": "success",
+                "message": "Repository loaded and indexed successfully",
+                "summary": self.get_repository_summary(),
+            }
+
+    def upload_and_index(
+        self, file_bytes: bytes, filename: str, *, force: bool = False
+    ) -> dict[str, Any]:
+        """Upload a ZIP archive, load, and index in one call."""
+        with self._state_lock():
+            upload_result = self._upload_repository_zip_unlocked(file_bytes, filename)
+            if upload_result.get("status") != "success":
+                return upload_result
+            self._index_repository_unlocked(force=force)
+            self.vector_store.invalidate_scan_cache()
+            return {
+                "status": "success",
+                "message": "Repository uploaded and indexed successfully",
+                "summary": self.get_repository_summary(),
+            }
+
+    def refresh_index_cache(self) -> list[dict[str, Any]]:
+        """Invalidate and rescan available indexes."""
+        with self._state_lock():
+            self.vector_store.invalidate_scan_cache()
+            return self.vector_store.scan_available_indexes(use_cache=False)
+
+    # -- Facade methods: narrow API for entry frames --
+
+    def get_status_info(self, *, full_scan: bool = False) -> dict[str, Any]:
+        """Return all status fields needed by entry frames."""
+        available_repos = self.vector_store.scan_available_indexes(
+            use_cache=not full_scan
+        )
+        loaded_repos = self.list_repositories()
+        retrieval_cfg = self.config.get("retrieval", {}) or {}
+        return {
+            "repo_loaded": self.repo_loaded,
+            "repo_indexed": self.repo_indexed,
+            "repo_info": self.repo_info,
+            "multi_repo_mode": self.multi_repo_mode,
+            "storage_backend": self.snapshot_store.db_runtime.backend,
+            "retrieval_backend": retrieval_cfg.get("retrieval_backend", "local"),
+            "graph_expansion_backend": retrieval_cfg.get(
+                "graph_expansion_backend", "graph_builder"
+            ),
+            "available_repositories": available_repos,
+            "loaded_repositories": loaded_repos,
+        }
+
+    def search_symbols(
+        self, name: str, *, symbol_type: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Search symbols by name with ranking: exact > prefix > contains."""
+        query_lower = name.lower()
+        exact: list[Any] = []
+        prefix: list[Any] = []
+        contains: list[Any] = []
+        for meta in self.vector_store.metadata:
+            elem_name = meta.get("name", "")
+            elem_type = meta.get("type", "")
+            if elem_type == "repository_overview":
+                continue
+            if symbol_type and elem_type != symbol_type:
+                continue
+            name_lower = elem_name.lower()
+            if name_lower == query_lower:
+                exact.append(meta)
+            elif name_lower.startswith(query_lower):
+                prefix.append(meta)
+            elif query_lower in name_lower:
+                contains.append(meta)
+        return (exact + prefix + contains)[:20]
+
+    def get_file_structure(
+        self, file_path: str
+    ) -> dict[str, Any] | None:
+        """Get structure summary of a file from loaded metadata."""
+        matching: list[Any] = []
+        for meta in self.vector_store.metadata:
+            rel = meta.get("relative_path", "")
+            if meta.get("type") == "repository_overview":
+                continue
+            if rel.endswith(file_path) or file_path in rel:
+                matching.append(meta)
+        if not matching:
+            return None
+        files = [m for m in matching if m.get("type") == "file"]
+        classes = [m for m in matching if m.get("type") == "class"]
+        functions = [m for m in matching if m.get("type") == "function"]
+        return {
+            "file": files[0] if files else matching[0],
+            "files": files,
+            "classes": classes,
+            "functions": functions,
+        }
+
+    def walk_call_chain(
+        self,
+        symbol_name: str,
+        *,
+        direction: str = "both",
+        max_hops: int = 2,
+    ) -> dict[str, Any] | None:
+        """Trace call chain for a symbol using the graph builder.
+
+        Returns a structured dict with target info and caller/callee lists,
+        or None if the symbol is not found.
+        """
+        max_hops = min(max_hops, 5)
+        gb = self.graph_builder
+        name_lower = symbol_name.lower()
+        target_id: str | None = None
+        target_elem: Any = None
+
+        # Exact match via element_by_name
+        elem = gb.element_by_name.get(symbol_name)
+        if elem:
+            target_elem, target_id = elem, elem.id
+
+        # Case-insensitive fallback
+        if not target_id:
+            for eid, e in gb.element_by_id.items():
+                if e.name.lower() == name_lower:
+                    target_elem, target_id = e, eid
+                    break
+
+        # Partial match fallback
+        if not target_id:
+            for eid, e in gb.element_by_id.items():
+                if name_lower in e.name.lower():
+                    target_elem, target_id = e, eid
+                    break
+
+        if not target_id or not target_elem:
+            return None
+
+        result: dict[str, Any] = {
+            "name": target_elem.name,
+            "type": target_elem.type,
+            "path": getattr(target_elem, "relative_path", ""),
+            "start_line": getattr(target_elem, "start_line", ""),
+            "callers": [],
+            "callees": [],
+        }
+
+        def _walk(
+            element_id: str,
+            walk_direction: str,
+            hops_left: int,
+            entries: list[dict[str, Any]],
+            visited: set[str] | None = None,
+            indent: int = 2,
+        ) -> None:
+            if visited is None:
+                visited = {element_id}
+            neighbors = (
+                gb.get_callers(element_id)
+                if walk_direction == "callers"
+                else gb.get_callees(element_id)
+            )
+            if not neighbors:
+                entries.append({"name": "(none)", "indent": indent})
+                return
+            for nid in neighbors:
+                if nid in visited:
+                    continue
+                visited.add(nid)
+                n_elem = gb.element_by_id.get(nid)
+                if n_elem:
+                    loc = (
+                        f"{getattr(n_elem, 'relative_path', '')}:L{getattr(n_elem, 'start_line', '')}"
+                        if getattr(n_elem, "relative_path", "")
+                        else ""
+                    )
+                    entries.append({
+                        "name": n_elem.name,
+                        "loc": loc,
+                        "indent": indent,
+                    })
+                    if hops_left > 1:
+                        _walk(nid, walk_direction, hops_left - 1, entries, visited, indent + 1)
+
+        if direction in ("callers", "both"):
+            _walk(target_id, "callers", max_hops, result["callers"])
+
+        if direction in ("callees", "both"):
+            _walk(target_id, "callees", max_hops, result["callees"])
+
+        return result
+
+    def reindex_repository(self, source: str) -> str:
+        """Force re-index a repository. Returns a result message."""
+        self.apply_env_ignore_patterns()
+        resolved_is_url = self._infer_is_url(source)
+        name = self.repo_name_from_source(source, resolved_is_url)
+        self.logger.info("Force re-indexing '%s' from %s", name, source)
+
+        if resolved_is_url:
+            self.load_repository(source, is_url=True)
+        else:
+            abs_path = os.path.abspath(source)
+            if not os.path.isdir(abs_path):
+                return f"Error: Local path does not exist: {abs_path}"
+            self.load_repository(abs_path, is_url=False)
+
+        self.index_repository(force=True)
+        count = self.vector_store.get_count()
+
+        # Reset in-memory state for clean reload
+        self.repo_indexed = False
+        self.loaded_repositories.clear()
+
+        return f"Successfully re-indexed '{name}': {count} elements indexed."
+
+    def list_available_repos(self) -> list[dict[str, Any]]:
+        """List all indexed repositories with metadata."""
+        return self.vector_store.scan_available_indexes(use_cache=False)
+
+    def get_repo_overview(self, repo_name: str) -> dict[str, Any] | None:
+        """Get overview for an indexed repository."""
+        overviews = self.vector_store.load_repo_overviews(include_embeddings=False)
+        return overviews.get(repo_name)
+
+    def clear_cache(self) -> bool:
+        """Clear the query cache. Returns True if successful."""
+        with self._state_lock():
+            return bool(self.cache_manager.clear())
+
+    def get_cache_stats(self) -> dict[str, Any]:
+        """Get cache statistics."""
+        return self.cache_manager.get_stats()
+
+    def is_repo_indexed(self, repo_name: str) -> bool:
+        """Check whether a persisted index exists for a repo."""
+        has_saved_index = getattr(self.vector_store, "has_saved_index", None)
+        if callable(has_saved_index):
+            return bool(has_saved_index(repo_name))
+        persist_dir = self.vector_store.persist_dir
+        faiss_path = os.path.join(persist_dir, f"{repo_name}.faiss")
+        meta_path = os.path.join(persist_dir, f"{repo_name}_metadata.pkl")
+        return os.path.exists(faiss_path) and os.path.exists(meta_path)
+
+    def repo_name_from_source(self, source: str, is_url: bool) -> str:
+        """Derive a canonical repo name from a URL or local path."""
+        from fastcode.utils.filesystem import get_repo_name_from_url
+
+        if is_url:
+            return get_repo_name_from_url(source)
+        return os.path.basename(os.path.normpath(source))
+
+    def apply_env_ignore_patterns(self) -> None:
+        """Force-ignore environment-related paths before indexing."""
+        repo_cfg = self.config.get("repository", {})
+        ignore_patterns = list(repo_cfg.get("ignore_patterns", []))
+
+        forced_patterns = [
+            ".venv",
+            "venv",
+            ".env",
+            "env",
+            "**/.venv/**",
+            "**/venv/**",
+            "**/.env/**",
+            "**/env/**",
+        ]
+
+        if repo_cfg.get("exclude_site_packages", False):
+            forced_patterns.extend(
+                [
+                    "site-packages",
+                    "**/site-packages/**",
+                ]
+            )
+
+        added = []
+        for pattern in forced_patterns:
+            if pattern not in ignore_patterns:
+                ignore_patterns.append(pattern)
+                added.append(pattern)
+
+        if added:
+            self.apply_repository_runtime_overrides(
+                ignore_patterns=tuple(ignore_patterns)
+            )
+            self.logger.info("Added forced ignore patterns: %s", added)
+
+    def ensure_repos_ready(
+        self, repos: list[str], *, allow_incremental: bool = True
+    ) -> list[str]:
+        """Ensure all repos are cloned (if URL), loaded, and indexed.
+
+        Returns the list of canonical repo names that are ready.
+        """
+        self.apply_env_ignore_patterns()
+        ready_names: list[str] = []
+
+        for source in repos:
+            resolved_is_url = self._infer_is_url(source)
+            name = self.repo_name_from_source(source, resolved_is_url)
+
+            if self.is_repo_indexed(name):
+                if not resolved_is_url and allow_incremental:
+                    abs_path = os.path.abspath(source)
+                    if os.path.isdir(abs_path):
+                        try:
+                            result = self.run_index_pipeline(
+                                source=abs_path,
+                                is_url=False,
+                                publish=True,
+                                enable_scip=True,
+                            )
+                            if result and result.get("status") not in {"reused"}:
+                                self.logger.info(
+                                    "Graceful update for '%s': %s", name, result
+                                )
+                        except Exception as e:
+                            self.logger.warning(
+                                "Graceful update failed for '%s': %s", name, e
+                            )
+                self.logger.info("Repo '%s' ready.", name)
+                ready_names.append(name)
+                continue
+
+            self.logger.info("Repo '%s' not indexed. Preparing …", name)
+
+            if resolved_is_url:
+                self.logger.info("Cloning %s …", source)
+                self.load_repository(source, is_url=True)
+            else:
+                abs_path = os.path.abspath(source)
+                if not os.path.isdir(abs_path):
+                    self.logger.error("Local path does not exist: %s", abs_path)
+                    continue
+                self.load_repository(abs_path, is_url=False)
+
+            self.logger.info("Indexing '%s' …", name)
+            self.index_repository(force=False)
+            self.logger.info("Indexing '%s' complete.", name)
+            ready_names.append(name)
+
+        return ready_names
+
+    def ensure_loaded(self, repo_names: list[str]) -> bool:
+        """Ensure repos are loaded into memory (vectors + BM25 + graphs)."""
+        if not self.repo_indexed or set(repo_names) != set(
+            self.loaded_repositories.keys()
+        ):
+            self.logger.info("Loading repos into memory: %s", repo_names)
+            return self._load_multi_repo_cache(repo_names=repo_names)
+        return True
 
     def _direct_index_enabled(self) -> bool:
         indexing_config = self.config.get("indexing", {})
@@ -695,146 +1184,20 @@ class FastCode:
         )
 
     def _index_repository_direct_unlocked(self, force: bool = False):
-        """
-        Direct repository indexing path.
-
-        The default public path uses the snapshot pipeline. This method is an
-        explicit internal escape hatch for callers that set
-        indexing.allow_direct_index=true.
-
-        Args:
-            force: Force re-indexing even if cache exists
-        """
-        # Evaluation can request forced re-indexing to respect commit checkouts
-        force = force or self.eval_config.get("force_reindex", False)
-
-        if not self.repo_loaded:
-            raise RuntimeError("No repository loaded. Call load_repository() first.")
-
-        self.logger.info("Indexing repository")
-
-        repo_name = self.repo_info.get("name", "default")
-
-        # Check cache
-        if not force and self._should_use_cache():
-            loaded = self._try_load_from_cache()
-            if loaded:
-                self.repo_indexed = True
-                return
-
-        try:
-            # Get repository name for indexing
-            repo_url = self.repo_info.get("url")
-
-            # Index code elements with repository information
-            elements = self.indexer.extract_elements(
-                repo_name=repo_name, repo_url=repo_url
-            )
-
-            # Initialize vector store if not already done
-            if self.vector_store.dimension is None:
-                self.vector_store.initialize(self.embedder.embedding_dim)
-
-            # Add embeddings to vector store
-            vectors: list[Any] = []
-            metadata: list[CodeElementMeta] = []
-
-            for elem in elements:
-                embedding = elem.metadata.get("embedding")
-                if embedding is not None:
-                    vectors.append(embedding)
-                    metadata.append(serialize_code_element(elem))
-
-            if vectors:
-                vectors_array = as_float32_matrix(vectors, copy_policy="contiguous")
-                self.vector_store.add_vectors(vectors_array, metadata)
-
-            # Initialize resolvers for complete graph building
-            # This fixes the "0 edges" issue by providing the necessary context for resolution
-            try:
-                self.logger.info("Initializing resolvers for precise graph building...")
-
-                # Ensure repo_root is set
-                repo_root = self.config.get("repo_root")
-                if not repo_root and self.loader.repo_path:
-                    repo_root = self.loader.repo_path
-                    self._set_repo_root(repo_root)
-
-                # 1. Create GlobalIndexBuilder
-                self.global_index_builder = GlobalIndexBuilder(self.config)
-
-                # 2. Build global maps
-                self.logger.info(
-                    f"Building global index maps (Repo Root: {repo_root})..."
-                )
-                self.global_index_builder.build_maps(elements, repo_root or "")
-                self.logger.info(
-                    f"  - Mapped {len(self.global_index_builder.file_map)} files"
-                )
-                self.logger.info(
-                    f"  - Mapped {len(self.global_index_builder.module_map)} modules"
-                )
-
-                # 3. Create ModuleResolver
-                self.module_resolver = ModuleResolver(self.global_index_builder)
-
-                # 4. Create SymbolResolver
-                self.symbol_resolver = SymbolResolver(
-                    self.global_index_builder, self.module_resolver
-                )
-
-                self.logger.info("Resolvers initialized successfully")
-
-            except Exception as e:
-                self.logger.warning(f"Resolver initialization failed: {e}")
-                self.logger.warning("Using fallback graph building (less accurate)")
-                import traceback
-
-                self.logger.error(traceback.format_exc())
-                self.module_resolver = None
-                self.symbol_resolver = None
-
-            # Build code graphs with resolvers
-            # This will now use the initialized resolvers to build precise graphs
-            self.graph_builder.build_graphs(
-                elements, self.module_resolver, self.symbol_resolver
-            )
-
-            # Index for BM25
-            self.retriever.index_for_bm25(elements)
-
-            # Build separate BM25 index for repository overviews
-            self.retriever.build_repo_overview_bm25()
-
-            # Save artifacts only when persistence is enabled
-            if self._should_persist_indexes():
-                # Save to cache with repository-specific name
-                self._save_to_cache(cache_name=repo_name)
-
-                # Save BM25 and graph data
-                self.retriever.save_bm25(repo_name)
-                self.graph_artifact_store.save(self.graph_builder, repo_name)
-                self._save_file_manifest(
-                    repo_name,
-                    self._build_file_manifest(elements, self.loader.repo_path or "."),
-                )
-            else:
-                self.logger.info(
-                    "Skipping on-disk persistence (ephemeral/evaluation mode)"
-                )
-
-            self.repo_indexed = True
-            self.logger.info(f"Repository indexing complete for {repo_name}")
-
-            # Log statistics
-            self._log_statistics()
-
-        except Exception as e:
-            self.logger.error(f"Failed to index repository: {e}")
-            import traceback
-
-            self.logger.error(traceback.format_exc())
-            raise
+        """Direct repository indexing path — delegates to DirectIndexer (use_flow)."""
+        indexed, gib, mr, sr = self._direct_indexer.run(
+            repo_loaded=self.repo_loaded,
+            repo_info=self.repo_info,
+            eval_config=self.eval_config,
+            force=force,
+        )
+        if gib is not None:
+            self.global_index_builder = gib
+        if mr is not None:
+            self.module_resolver = mr
+        if sr is not None:
+            self.symbol_resolver = sr
+        self.repo_indexed = indexed
 
     def _checkout_target_ref(
         self, ref: str | None = None, commit: str | None = None
@@ -1742,82 +2105,28 @@ class FastCode:
         return "\n".join(summary_parts)
 
     def _try_load_from_cache(self) -> bool:
-        """Try to load indexed data from cache for single repository"""
+        """Try to load indexed data from cache for single repository."""
         if not self._should_use_cache():
             self.logger.info("Cache loading disabled (ephemeral/evaluation mode)")
             return False
-
-        try:
-            cache_name = self._get_cache_name()
-
-            # Try to load vector store
-            if self.vector_store.load(cache_name):
-                self.logger.info(f"Loaded vector store from cache for {cache_name}")
-
-                # Load BM25 index
-                bm25_loaded = self.retriever.load_bm25(cache_name)
-                if not bm25_loaded:
-                    self.logger.warning(
-                        "Failed to load BM25 index, will need to rebuild"
-                    )
-
-                # Build separate repo overview BM25 index
-                self.retriever.build_repo_overview_bm25()
-
-                # Load graph data
-                graph_loaded = self.graph_artifact_store.load(
-                    self.graph_builder, cache_name
-                )
-                if not graph_loaded:
-                    self.logger.warning(
-                        "Failed to load graph data, will need to rebuild"
-                    )
-
-                # If BM25 or graph failed to load, reconstruct from metadata
-                if not bm25_loaded or not graph_loaded:
-                    self.logger.info(
-                        "Reconstructing missing components from metadata..."
-                    )
-                    elements = self._reconstruct_elements_from_metadata()
-
-                    if elements:
-                        if not bm25_loaded:
-                            self.retriever.index_for_bm25(elements)
-                            self.logger.info(
-                                f"Rebuilt BM25 index with {len(elements)} elements"
-                            )
-
-                        if not graph_loaded:
-                            # Note: Rebuilding graph from metadata is a fallback.
-                            # Precise linking might be limited if repo_root context is lost.
-                            self.graph_builder.build_graphs(elements)
-                            self.logger.info("Rebuilt code graph (fallback mode)")
-                    else:
-                        self.logger.warning("No elements reconstructed from metadata")
-
-                self.logger.info("Cache loaded successfully")
-                self._log_statistics()
-                return True
-
-            return False
-
-        except Exception as e:
-            self.logger.warning(f"Failed to load from cache: {e}")
-            return False
+        return _try_load_from_cache_impl(
+            cache_name=self._get_cache_name(),
+            vector_store=self.vector_store,
+            retriever=self.retriever,
+            graph_builder=self.graph_builder,
+            graph_artifact_store=self.graph_artifact_store,
+            log_statistics_fn=self._log_statistics,
+        )
 
     def _save_to_cache(self, cache_name: str | None = None):
-        """Save indexed data to cache"""
+        """Save indexed data to cache."""
         if not self._should_persist_indexes():
             self.logger.info("Cache save disabled (ephemeral/evaluation mode)")
             return
-
-        try:
-            if cache_name is None:
-                cache_name = self._get_cache_name()
-            self.vector_store.save(cache_name)
-            self.logger.info(f"Saved index to cache: {cache_name}")
-        except Exception as e:
-            self.logger.warning(f"Failed to save to cache: {e}")
+        _save_to_cache_impl(
+            cache_name=cache_name or self._get_cache_name(),
+            vector_store=self.vector_store,
+        )
 
     def _get_cache_name(self) -> str:
         """Get cache name for current repository"""
@@ -1828,47 +2137,8 @@ class FastCode:
         return self.repo_info.get("commit", self.repo_info.get("name", "default"))
 
     def _reconstruct_elements_from_metadata(self) -> list[CodeElement]:
-        """
-        Reconstruct CodeElement objects from vector store metadata
-        Excludes repository_overview elements (they're in separate storage)
-
-        Returns:
-            List of CodeElement objects
-        """
-        elements: list[CodeElement] = []
-        for meta in self.vector_store.metadata:
-            try:
-                # Skip repository_overview elements
-                if meta.get("type") == "repository_overview":
-                    continue
-
-                # Reconstruct CodeElement from metadata dictionary
-                element = CodeElement(
-                    id=meta.get("id", ""),
-                    type=meta.get("type", ""),
-                    name=meta.get("name", ""),
-                    file_path=meta.get("file_path", ""),
-                    relative_path=meta.get("relative_path", ""),
-                    language=meta.get("language", ""),
-                    start_line=meta.get("start_line", 0),
-                    end_line=meta.get("end_line", 0),
-                    code=meta.get("code", ""),
-                    signature=meta.get("signature"),
-                    docstring=meta.get("docstring"),
-                    summary=meta.get("summary"),
-                    metadata=meta.get("metadata", {}),
-                    repo_name=meta.get("repo_name"),
-                    repo_url=meta.get("repo_url"),
-                )
-                elements.append(element)
-            except Exception as e:
-                self.logger.warning(f"Failed to reconstruct element: {e}")
-                continue
-
-        self.logger.info(
-            f"Reconstructed {len(elements)} elements from metadata (excluding repository_overview)"
-        )
-        return elements
+        """Reconstruct CodeElement objects from vector store metadata."""
+        return reconstruct_elements_from_metadata(self.vector_store)
 
     def _log_statistics(self):
         """Log indexing statistics"""
@@ -2157,188 +2427,14 @@ class FastCode:
     def _load_multiple_repositories_direct_unlocked(
         self, sources: list[dict[str, Any]]
     ):
-        """
-        Direct multi-repository indexing path.
-
-        The default multi-repository path uses the snapshot pipeline. This
-        direct vector/BM25/graph staging path is enabled only for callers that
-        set indexing.allow_direct_index=true.
-
-        Args:
-            sources: List of dictionaries with 'source', 'is_url', and optionally 'is_zip' keys
-                    Example: [{'source': 'https://github.com/user/repo1', 'is_url': True},
-                             {'source': '/path/to/repo2', 'is_url': False},
-                             {'source': '/path/to/repo3.zip', 'is_url': False, 'is_zip': True}]
-        """
-        self.logger.info(f"Loading {len(sources)} repositories")
+        """Direct multi-repo indexing — delegates to MultiRepoDirectIndexer (use_flow)."""
         self.multi_repo_mode = True
-
-        successfully_indexed = []
-
-        for i, source_info in enumerate(sources):
-            source: str = str(source_info.get("source") or "")
-            is_url: bool | None = source_info.get("is_url")
-            is_zip: bool = bool(source_info.get("is_zip", False))
-
-            try:
-                self.logger.info(
-                    f"[{i + 1}/{len(sources)}] Loading repository: {source}"
-                )
-
-                resolved_is_url = is_url
-                if not is_zip and resolved_is_url is None:
-                    resolved_is_url = self._infer_is_url(source)
-                    source_type = "URL" if resolved_is_url else "local path"
-                    self.logger.info(
-                        f"[{i + 1}/{len(sources)}] Auto-detected source type as {source_type}"
-                    )
-
-                # Load repository
-                if is_zip:
-                    self.loader.load_from_zip(source)
-                elif resolved_is_url:
-                    self.loader.load_from_url(source)
-                else:
-                    self.loader.load_from_path(source)
-
-                repo_info = self.loader.get_repository_info()
-                repo_name: str = str(repo_info.get("name") or "")
-                repo_url: str = str(repo_info.get("url") or source)
-
-                # Update config with repo_root for each repo (Critical for graph building)
-                if self.loader.repo_path:
-                    self._set_repo_root(self.loader.repo_path)
-
-                # Store repository info
-                self.loaded_repositories[repo_name] = repo_info
-
-                self.logger.info(f"Indexing repository: {repo_name}")
-
-                # Create a fresh vector store for this repository
-                temp_vector_store = VectorStore(self.config)
-                temp_vector_store.initialize(self.embedder.embedding_dim)
-
-                # Create a temporary indexer with the temp vector store for this repo
-                temp_indexer = CodeIndexer(
-                    self.config,
-                    self.loader,
-                    self.parser,
-                    self.embedder,
-                    temp_vector_store,
-                )
-
-                # Index with repository information
-                elements = temp_indexer.extract_elements(
-                    repo_name=repo_name, repo_url=repo_url
-                )
-
-                # Add to temporary vector store
-                vectors: list[list[float]] = []
-                metadata: list[CodeElementMeta] = []
-
-                for elem in elements:
-                    embedding = elem.metadata.get("embedding")
-                    if embedding is not None:
-                        vectors.append(embedding)
-                        metadata.append(serialize_code_element(elem))
-
-                if vectors:
-                    vectors_array = as_float32_matrix(vectors, copy_policy="contiguous")
-                    temp_vector_store.add_vectors(vectors_array, metadata)
-
-                    # Save this repository's vector index separately
-                    temp_vector_store.save(repo_name)
-
-                    # Build and save BM25 index for this repository
-                    temp_retriever = HybridRetriever(
-                        self.config,
-                        temp_vector_store,
-                        self.embedder,
-                        self.graph_builder,
-                        repo_root=self.loader.repo_path,
-                    )
-                    temp_retriever.index_for_bm25(elements)
-                    temp_retriever.save_bm25(repo_name)
-                    self.logger.info(f"Saved BM25 index for {repo_name}")
-
-                    # Build separate BM25 index for repository overviews
-                    temp_retriever.build_repo_overview_bm25()
-                    self.logger.info("Built repo overview BM25 index")
-
-                    # Build and save graph for this repository (Using temporary graph builder)
-                    # We need a fresh graph builder to avoid mixing graphs between repos during this loop
-                    # unless we want to support cross-repo graphs immediately
-                    temp_graph_builder = CodeGraphBuilder(self.config)
-
-                    # Initialize resolvers for precise graph building
-                    repo_root = self.loader.repo_path
-                    temp_module_resolver = None
-                    temp_symbol_resolver = None
-
-                    try:
-                        self.logger.info(f"Initializing resolvers for {repo_name}...")
-                        temp_global_index = GlobalIndexBuilder(self.config)
-                        temp_global_index.build_maps(elements, repo_root or ".")
-                        temp_module_resolver = ModuleResolver(temp_global_index)
-                        temp_symbol_resolver = SymbolResolver(
-                            temp_global_index, temp_module_resolver
-                        )
-                        self.logger.info(f"Resolvers initialized for {repo_name}")
-                    except Exception as e:
-                        self.logger.warning(
-                            f"Failed to initialize resolvers for {repo_name}: {e}"
-                        )
-                        temp_module_resolver = None
-                        temp_symbol_resolver = None
-
-                    temp_graph_builder.build_graphs(
-                        elements, temp_module_resolver, temp_symbol_resolver
-                    )
-                    self.graph_artifact_store.save(temp_graph_builder, repo_name)
-                    self.logger.info(f"Saved graph data for {repo_name}")
-
-                    successfully_indexed.append(repo_name)
-
-                    self.logger.info(
-                        f"Successfully indexed and saved {repo_name}: {len(elements)} elements"
-                    )
-                else:
-                    self.logger.warning(f"No vectors generated for {repo_name}")
-
-            except Exception as e:
-                self.logger.error(f"Failed to load repository {source}: {e}")
-                import traceback
-
-                self.logger.error(traceback.format_exc())
-                # Continue with next repository
-                continue
-
-        if successfully_indexed:
-            self.logger.info(
-                f"Successfully indexed {len(successfully_indexed)} repositories:"
-            )
-            for repo_name in successfully_indexed:
-                self.logger.info(f"  - {repo_name}")
-
-            # Merge all indexed repositories into the main vector store for statistics
-            self.logger.info(
-                "Merging repositories into main vector store for statistics..."
-            )
-            if self.vector_store.dimension is None:
-                self.vector_store.initialize(self.embedder.embedding_dim)
-
-            for repo_name in successfully_indexed:
-                if self.vector_store.merge_from_index(repo_name):
-                    self.logger.info(f"Merged {repo_name} into main store")
-                else:
-                    self.logger.warning(f"Failed to merge {repo_name}")
-        else:
-            self.logger.error("No repositories were successfully indexed")
-
-        self.repo_indexed = len(successfully_indexed) > 0
-        self.repo_loaded = len(successfully_indexed) > 0
-
-        self.logger.info("Indexing complete. Each repository saved separately.")
+        result = self._multi_repo_direct_indexer.run(
+            sources,
+            loaded_repositories=self.loaded_repositories,
+        )
+        self.repo_indexed = result["has_success"]
+        self.repo_loaded = result["has_success"]
 
     def list_repositories(self) -> list[dict[str, Any]]:
         """
@@ -2773,163 +2869,16 @@ class FastCode:
     def _load_multi_repo_cache_unlocked(
         self, repo_names: list[str] | None = None
     ) -> bool:
-        """
-        Load multi-repository index from cache by merging individual repository indices
-
-        Args:
-            repo_names: Optional list of specific repository names to load.
-                       If None, loads all available repositories.
-
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            # Discover available repository indexes
-            available_repos: list[str] = []
-            scan_available_indexes = getattr(
-                self.vector_store, "scan_available_indexes", None
-            )
-            if callable(scan_available_indexes):
-                for repo in cast(list[dict[str, Any]], scan_available_indexes(False)):
-                    repo_name = str(repo.get("name") or repo.get("repo_name") or "")
-                    if repo_name:
-                        available_repos.append(repo_name)
-            else:
-                persist_dir = self.vector_store.persist_dir
-                if os.path.exists(persist_dir):
-                    for file in os.listdir(persist_dir):
-                        if file.endswith(".faiss"):
-                            repo_name = file.replace(".faiss", "")
-                            metadata_file = os.path.join(
-                                persist_dir, f"{repo_name}_metadata.pkl"
-                            )
-                            if os.path.exists(metadata_file):
-                                available_repos.append(repo_name)
-
-            if not available_repos:
-                self.logger.error("No repository indexes found")
-                return False
-
-            # Filter repositories if specific ones are requested
-            if repo_names:
-                repos_to_load = [r for r in available_repos if r in repo_names]
-                if not repos_to_load:
-                    self.logger.error(
-                        f"None of the requested repositories found: {repo_names}"
-                    )
-                    return False
-            else:
-                repos_to_load = available_repos
-
-            self.logger.info(
-                f"Found {len(repos_to_load)} repository indexes: {', '.join(repos_to_load)}"
-            )
-
-            # Always reinitialize for clean merge
-            self.vector_store.initialize(self.embedder.embedding_dim)
-
-            # Load each repository index and merge them
-            for repo_name in repos_to_load:
-                self.logger.info(f"Loading index for {repo_name}...")
-                try:
-                    # Merge this repository's index into the main vector store
-                    if self.vector_store.merge_from_index(repo_name):
-                        self.logger.info(f"Successfully merged {repo_name}")
-                    else:
-                        self.logger.warning(f"Failed to merge index for {repo_name}")
-
-                except Exception as e:
-                    self.logger.error(f"Error loading {repo_name}: {e}")
-                    continue
-
-            # Check if we successfully loaded any repositories
-            if self.vector_store.get_count() == 0:
-                self.logger.error("Failed to load any repository indexes")
-                return False
-
-            # Register loaded repositories
-            # We know which repos were successfully loaded from repos_to_load
-            for repo_name in repos_to_load:
-                if repo_name not in self.loaded_repositories:
-                    self.loaded_repositories[repo_name] = {
-                        "name": repo_name,
-                        "file_count": 0,  # Will be updated if needed
-                        "total_size_mb": 0,
-                    }
-
-            # Try to load BM25 and graph data from saved files
-            # For multi-repo, we merge BM25 data from all loaded repositories
-            self.logger.info("Loading BM25 and graph data...")
-
-            graphs_loaded = False
-
-            for repo_name in repos_to_load:
-                # Load graph data (merge into main graph)
-                if not graphs_loaded:
-                    # Load the first repository's graph as base
-                    if self.graph_artifact_store.load(self.graph_builder, repo_name):
-                        graphs_loaded = True
-                        self.logger.info(f"Loaded graph data from {repo_name} as base")
-                # Merge additional repository graphs
-                elif self.graph_artifact_store.merge(self.graph_builder, repo_name):
-                    self.logger.info(f"Merged graph data from {repo_name}")
-                else:
-                    self.logger.warning(f"Failed to merge graph data from {repo_name}")
-                    # TODO: Merge additional repository graphs if needed
-            load_bm25_sources = getattr(self.retriever, "load_bm25_sources", None)
-            load_bm25_legacy_sources = getattr(
-                self.retriever, "load_bm25_legacy_sources", None
-            )
-            if callable(load_bm25_sources) and load_bm25_sources(
-                repos_to_load, filtered=False
-            ):
-                self.logger.info(
-                    "Loaded shard-native multi-repo BM25 for %d repositories",
-                    len(repos_to_load),
-                )
-            elif callable(load_bm25_legacy_sources) and load_bm25_legacy_sources(
-                repos_to_load, filtered=False
-            ):
-                self.logger.info(
-                    "Loaded legacy multi-repo BM25 through shard-runtime scorer "
-                    "for %d repositories",
-                    len(repos_to_load),
-                )
-            else:
-                self.logger.info("No BM25 data found, reconstructing from metadata...")
-                elements = self._reconstruct_elements_from_metadata()
-
-                if elements:
-                    self.retriever.index_for_bm25(elements)
-                    self.logger.info(
-                        f"Rebuilt BM25 index with {len(elements)} elements"
-                    )
-
-                    if not graphs_loaded:
-                        self.graph_builder.build_graphs(elements)
-                        self.logger.info("Rebuilt code graph")
-                else:
-                    self.logger.warning("No elements reconstructed from metadata")
-
-            # Build separate BM25 index for repository overviews
-            self.retriever.build_repo_overview_bm25()
-            self.logger.info("Built separate BM25 index for repository overviews")
-
-            self.multi_repo_mode = True
-            self.repo_indexed = True
-            self.repo_loaded = True
-
-            self.logger.info(
-                f"Successfully loaded {len(repos_to_load)} repositories with {self.vector_store.get_count()} total vectors"
-            )
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Failed to load multi-repo cache: {e}")
-            import traceback
-
-            self.logger.error(traceback.format_exc())
-            return False
+        """Load multi-repo cache — delegates to rehydration (use_flow)."""
+        return _load_multi_repo_cache_impl(
+            repo_names=repo_names,
+            vector_store=self.vector_store,
+            embedder=self.embedder,
+            retriever=self.retriever,
+            graph_builder=self.graph_builder,
+            graph_artifact_store=self.graph_artifact_store,
+            loaded_repositories=self.loaded_repositories,
+        )
 
     # ------------------------------------------------------------------
     # Incremental indexing
@@ -2938,87 +2887,20 @@ class FastCode:
     def _build_file_manifest(
         self, elements: list[CodeElement], repo_root: str
     ) -> dict[str, Any]:
-        """Build a file manifest mapping files to their mtime/size and element IDs."""
-        manifest: dict[str, Any] = {
-            "repo_name": self.repo_info.get("name", ""),
-            "created_at": datetime.now().isoformat(),
-            "files": {},
-        }
-
-        for elem in elements:
-            rel_path = elem.relative_path
-            if rel_path not in manifest["files"]:
-                abs_path = os.path.join(repo_root, rel_path)
-                try:
-                    stat = os.stat(abs_path)
-                    manifest["files"][rel_path] = {
-                        "mtime": stat.st_mtime,
-                        "size": stat.st_size,
-                        "element_ids": [],
-                    }
-                except OSError:
-                    manifest["files"][rel_path] = {
-                        "mtime": 0.0,
-                        "size": 0,
-                        "element_ids": [],
-                    }
-            manifest["files"][rel_path]["element_ids"].append(elem.id)
-
-        return manifest
+        return build_file_manifest(
+            elements, repo_root, repo_name=self.repo_info.get("name", "")
+        )
 
     def _save_file_manifest(self, repo_name: str, manifest: dict[str, Any]) -> None:
-        """Save file manifest to disk as JSON."""
-        manifest_path = os.path.join(
-            self.vector_store.persist_dir, f"{repo_name}_manifest.json"
-        )
-        with open(manifest_path, "w") as f:
-            json.dump(manifest, f, indent=2)
-        self.logger.info(f"Saved file manifest: {manifest_path}")
+        save_file_manifest(manifest, repo_name, self.vector_store.persist_dir)
 
     def _load_file_manifest(self, repo_name: str) -> dict[str, Any] | None:
-        """Load file manifest from disk. Returns None if missing."""
-        manifest_path = os.path.join(
-            self.vector_store.persist_dir, f"{repo_name}_manifest.json"
-        )
-        if not os.path.exists(manifest_path):
-            return None
-        try:
-            with open(manifest_path) as f:
-                return json.load(f)
-        except Exception as e:
-            self.logger.warning(f"Failed to load manifest for '{repo_name}': {e}")
-            return None
+        return load_file_manifest(repo_name, self.vector_store.persist_dir)
 
     def _load_existing_metadata(self, repo_name: str) -> list[dict[str, Any]]:
-        """Load existing vector store metadata for a repo directly from disk."""
-        try:
-            load_metadata_payload = getattr(
-                self.vector_store, "load_metadata_payload", None
-            )
-            if callable(load_metadata_payload):
-                data = load_metadata_payload(repo_name)
-                metadata = data.get("metadata", []) if isinstance(data, dict) else []
-                if isinstance(metadata, list):
-                    return cast(list[dict[str, Any]], metadata)
-        except Exception as e:
-            self.logger.warning(f"Failed to load metadata for '{repo_name}': {e}")
-        meta_path = os.path.join(
-            self.vector_store.persist_dir, f"{repo_name}_metadata.pkl"
+        return load_existing_metadata(
+            repo_name, self.vector_store, self.vector_store.persist_dir
         )
-        if not os.path.exists(meta_path):
-            return []
-        try:
-            with open(meta_path, "rb") as f:
-                data = pickle.load(f)
-            metadata = data.get("metadata", []) if isinstance(data, dict) else []
-            return (
-                cast(list[dict[str, Any]], metadata)
-                if isinstance(metadata, list)
-                else []
-            )
-        except Exception as e:
-            self.logger.warning(f"Failed to load metadata for '{repo_name}': {e}")
-        return []
 
     @staticmethod
     def _artifact_size_bytes(path: str) -> int:
@@ -3124,56 +3006,9 @@ class FastCode:
     def _detect_file_changes(
         self, repo_name: str, current_files: list[dict[str, Any]]
     ) -> dict[str, Any] | None:
-        """Compare current files against saved manifest to detect changes.
-
-        Returns dict with added/modified/deleted/unchanged lists, or None
-        if no manifest exists.
-        """
-        manifest = self._load_file_manifest(repo_name)
-        if manifest is None:
-            return None
-
-        manifest_files = manifest.get("files", {})
-
-        # Build lookup of current files with stat info
-        current_lookup = {}
-        for file_info in current_files:
-            rel_path = file_info["relative_path"]
-            abs_path = file_info["path"]
-            try:
-                stat = os.stat(abs_path)
-                current_lookup[rel_path] = {
-                    "mtime": stat.st_mtime,
-                    "size": stat.st_size,
-                    "file_info": file_info,
-                }
-            except OSError:
-                continue
-
-        added, modified, deleted, unchanged = [], [], [], []
-
-        for rel_path, info in current_lookup.items():
-            if rel_path not in manifest_files:
-                added.append(rel_path)
-            else:
-                saved = manifest_files[rel_path]
-                if info["mtime"] != saved["mtime"] or info["size"] != saved["size"]:
-                    modified.append(rel_path)
-                else:
-                    unchanged.append(rel_path)
-
-        for rel_path in manifest_files:
-            if rel_path not in current_lookup:
-                deleted.append(rel_path)
-
-        return {
-            "added": added,
-            "modified": modified,
-            "deleted": deleted,
-            "unchanged": unchanged,
-            "manifest": manifest,
-            "current_lookup": current_lookup,
-        }
+        return detect_file_changes(
+            repo_name, current_files, self.vector_store.persist_dir
+        )
 
     def _collect_unchanged_elements(
         self,
@@ -3181,20 +3016,7 @@ class FastCode:
         unchanged_files: list[str],
         existing_metadata: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], list[str]]:
-        """Collect element dicts and IDs for unchanged files from existing metadata."""
-        unchanged_element_ids: set[str] = set()
-        for rel_path in unchanged_files:
-            file_entry: dict[str, Any] = manifest.get("files", {}).get(rel_path, {})
-            for elem_id in file_entry.get("element_ids", []):
-                unchanged_element_ids.add(elem_id)
-
-        unchanged_elements = [
-            meta
-            for meta in existing_metadata
-            if meta.get("id") in unchanged_element_ids
-        ]
-
-        return unchanged_elements, list(unchanged_element_ids)
+        return collect_unchanged_elements(manifest, unchanged_files, existing_metadata)
 
     def incremental_reindex(
         self, repo_name: str, repo_path: str | None = None

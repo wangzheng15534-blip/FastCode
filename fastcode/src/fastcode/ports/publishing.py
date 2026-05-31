@@ -5,7 +5,37 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Protocol
 
-from fastcode.ir.types import IRSnapshot
+
+class SnapshotView(Protocol):
+    """Read-only snapshot surface used by lineage publishing workflows.
+
+    Narrow Protocol so axis_surface does not depend on meaning_core (ir.types).
+    IRSnapshot satisfies this structurally.
+    """
+
+    @property
+    def repo_name(self) -> str: ...
+
+    @property
+    def snapshot_id(self) -> str: ...
+
+    @property
+    def branch(self) -> str | None: ...
+
+    @property
+    def commit_id(self) -> str | None: ...
+
+    @property
+    def documents(self) -> list[Any]: ...
+
+    @property
+    def symbols(self) -> list[Any]: ...
+
+    @property
+    def units(self) -> list[Any]: ...
+
+    @property
+    def relations(self) -> list[Any]: ...
 
 
 class OutboxEventView(Protocol):
@@ -74,7 +104,7 @@ class LineagePublisher(Protocol):
 
     def publish_snapshot_lineage_for_snapshot(
         self,
-        snapshot: IRSnapshot,
+        snapshot: SnapshotView,
         manifest: Any,
         git_meta: dict[str, Any],
         previous_snapshot_symbols: dict[str, str] | None = None,

@@ -152,7 +152,8 @@
       "roles": [
         "entry_frame"
       ],
-      "names": ["client"]
+      "names": ["client"],
+      "notes": "CLI thin shell — parses args, delegates to assembly_root facades"
     },
     {
       "axis": "default",
@@ -160,7 +161,8 @@
       "roles": [
         "entry_frame"
       ],
-      "names": ["api"]
+      "names": ["api"],
+      "notes": "Pure entry frame — parse HTTP request → delegate to facade → format response. Zero FastCode internals access. Mapper modules: inbound (request DTOs), outbound (response DTOs), serialization (domain→API conversion)"
     },
     {
       "axis": "default",
@@ -168,7 +170,8 @@
       "roles": [
         "entry_frame"
       ],
-      "names": ["mcp"]
+      "names": ["mcp"],
+      "notes": "Pure entry frame — init_server(fc) injection, all handlers delegate to facades. Owner-local mapper: formatting.py"
     }
   ]
 }

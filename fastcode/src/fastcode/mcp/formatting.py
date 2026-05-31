@@ -32,7 +32,7 @@ def format_code_qa_response(
                 parts.append(f"  - {repo}/{file_path}:{loc} ({name})")
             else:
                 parts.append(f"  - {file_path}:{loc} ({name})")
-    parts.append(f"\n[session_id: {session_id}]")
+    parts.append(f"[session_id: {session_id}]")
     return "\n".join(parts)
 
 

@@ -11,7 +11,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from fastcode.ir.projection import ProjectionBuildResult, ProjectionScope
-from fastcode.ports.runtime import Clock
 from fastcode.utils.clock import SystemClock, utc_now
 
 from .projection_contracts import ProjectionBuildRecord, ProjectionDirtyScopeRecord
@@ -32,7 +31,7 @@ class ProjectionStore:
         self,
         config: dict[str, Any],
         *,
-        clock: Clock | None = None,
+        clock: SystemClock | None = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.clock = clock or SystemClock()

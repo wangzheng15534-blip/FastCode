@@ -12,7 +12,6 @@ from fastcode.ports.artifacts import (
 from fastcode.ports.artifacts import (
     FileArtifactStore as FileArtifactStorePort,
 )
-from fastcode.ports.runtime import Clock
 from fastcode.ports.storage import StoreDatabaseRuntime
 from fastcode.utils.clock import SystemClock
 from fastcode.utils.filesystem import normalize_path
@@ -52,7 +51,7 @@ class FileArtifactStore(FileArtifactStorePort):
         self,
         db_runtime: StoreDatabaseRuntime,
         *,
-        clock: Clock | None = None,
+        clock: SystemClock | None = None,
     ) -> None:
         self.db_runtime = db_runtime
         self.clock = clock or SystemClock()

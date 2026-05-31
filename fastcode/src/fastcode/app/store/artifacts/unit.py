@@ -6,7 +6,6 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, cast
 
-from fastcode.ports.runtime import Clock
 from fastcode.ports.storage import StoreDatabaseRuntime
 from fastcode.utils.clock import SystemClock
 from fastcode.utils.filesystem import normalize_path
@@ -57,7 +56,7 @@ class UnitArtifactStore:
         self,
         db_runtime: StoreDatabaseRuntime,
         *,
-        clock: Clock | None = None,
+        clock: SystemClock | None = None,
     ) -> None:
         self.db_runtime = db_runtime
         self.clock = clock or SystemClock()

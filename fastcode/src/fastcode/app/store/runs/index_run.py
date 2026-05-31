@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
-from fastcode.ports.runtime import Clock, IdGenerator
 from fastcode.ports.storage import StoreDatabaseRuntime
 from fastcode.utils.clock import SystemClock
 from fastcode.utils.ids import PrefixedIdGenerator
@@ -46,8 +45,8 @@ class IndexRunStore:
         self,
         db_runtime: StoreDatabaseRuntime,
         *,
-        clock: Clock | None = None,
-        id_generator: IdGenerator | None = None,
+        clock: SystemClock | None = None,
+        id_generator: PrefixedIdGenerator | None = None,
     ) -> None:
         self.db_runtime = db_runtime
         self.clock = clock or SystemClock()

@@ -29,7 +29,6 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.kernel.identifiers import ArtifactKey, SnapshotId
-from fastcode.ports.runtime import Clock, IdGenerator
 from fastcode.ports.storage import StoreDatabaseRuntime
 from fastcode.runtime_support.retry import exponential_backoff_seconds
 from fastcode.utils.clock import SystemClock, utc_now
@@ -159,8 +158,8 @@ class SnapshotStore:
         persist_dir: str,
         *,
         db_runtime: StoreDatabaseRuntime,
-        clock: Clock | None = None,
-        id_generator: IdGenerator | None = None,
+        clock: SystemClock | None = None,
+        id_generator: PrefixedIdGenerator | None = None,
     ) -> None:
         self.persist_dir = os.path.abspath(persist_dir)
         self.snapshot_root = os.path.join(self.persist_dir, "snapshots")

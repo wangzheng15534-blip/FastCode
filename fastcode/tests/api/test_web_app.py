@@ -69,9 +69,6 @@ class _FakeFastCode:
         self.vector_store = _FakeVectorStore()
         self.cache_manager = SimpleNamespace(
             clear=lambda: True,
-            get_session_index_record=lambda session_id: SimpleNamespace(
-                multi_turn=True
-            ),
         )
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
 
@@ -85,7 +82,11 @@ class _FakeFastCode:
         self.calls.append(("load_multiple_repositories", (sources,), {}))
 
     def _load_multi_repo_cache(self, *, repo_names: list[str]) -> bool:
-        self.calls.append(("_load_multi_repo_cache", (), {"repo_names": repo_names}))
+        self.calls.append(("load_cached_repos", (), {"repo_names": repo_names}))
+        return True
+
+    def load_cached_repos(self, *, repo_names: list[str] | None = None) -> bool:
+        self.calls.append(("load_cached_repos", (), {"repo_names": repo_names}))
         return True
 
     def list_repositories(self) -> list[dict[str, Any]]:
@@ -135,6 +136,12 @@ class _FakeFastCode:
     def get_session_history(self, session_id: str) -> list[Any]:
         self.calls.append(("get_session_history", (session_id,), {}))
         return [_NoDictTurn()]
+
+    def invalidate_scan_cache(self) -> None:
+        self.calls.append(("invalidate_scan_cache", (), {}))
+
+    def get_session_multi_turn(self, session_id: str) -> bool:
+        return True
 
     def upload_repository_zip(self, file_bytes: bytes, filename: str) -> dict[str, Any]:
         self.calls.append(("upload_repository_zip", (file_bytes, filename), {}))
@@ -208,7 +215,10 @@ def test_load_endpoint_offloads_blocking_call(
     body = response.json()
     assert body["status"] == "success"
     assert body["repo_info"] == {"name": "repo"}
-    assert fake.calls == [("load_repository", ("/tmp/repo", False), {})]
+    assert fake.calls == [
+        ("load_repository", ("/tmp/repo", False), {}),
+        ("get_status_info", (), {"full_scan": False}),
+    ]
 
 
 def test_load_and_index_endpoint_delegates_to_facade(
@@ -261,6 +271,7 @@ def test_query_endpoint_offloads_blocking_query(
     assert body["context_elements"] == 1
     assert body["session_id"] == "abcd1234"
     assert fake.calls == [
+        ("get_status_info", (), {"full_scan": False}),
         (
             "query",
             ("where is x?", {"snapshot_id": "snap:1"}),
@@ -269,7 +280,7 @@ def test_query_endpoint_offloads_blocking_query(
                 "session_id": "abcd1234",
                 "enable_multi_turn": False,
             },
-        )
+        ),
     ]
 
 

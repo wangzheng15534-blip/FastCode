@@ -211,7 +211,9 @@ class SnapshotQueryRequestRecord:
         object.__setattr__(self, "repo_filter", _string_tuple(self.repo_filter))
 
 
-def map_load_repository_request(request: LoadRepositoryRequest) -> LoadRepositoryCommand:
+def map_load_repository_request(
+    request: LoadRepositoryRequest,
+) -> LoadRepositoryCommand:
     return LoadRepositoryCommand(
         source=request.source,
         is_url=request.is_url,

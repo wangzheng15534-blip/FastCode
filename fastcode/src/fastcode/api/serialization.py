@@ -310,7 +310,8 @@ def serialize_index_run_response_record(result: Any) -> IndexRunResponseRecord:
             else None
         ),
         warnings=tuple(
-            _string_or_empty(item) for item in _sequence_items(result_payload.get("warnings"))
+            _string_or_empty(item)
+            for item in _sequence_items(result_payload.get("warnings"))
         ),
         pipeline_layers=pipeline_layers,
         pipeline_metrics=_mapping_or_empty(result_payload.get("pipeline_metrics")),
@@ -384,7 +385,8 @@ def serialize_status_response(record: StatusResponseRecord) -> StatusResponse:
         storage_backend=record.storage_backend,
         retrieval_backend=record.retrieval_backend,
         available_repositories=[
-            serialize_open_mapping_payload(item) for item in record.available_repositories
+            serialize_open_mapping_payload(item)
+            for item in record.available_repositories
         ],
         loaded_repositories=[
             serialize_open_mapping_payload(item) for item in record.loaded_repositories
@@ -414,7 +416,11 @@ def serialize_query_response_record(
     prompt_tokens = _int_or_none(payload.get("prompt_tokens"))
     completion_tokens = _int_or_none(payload.get("completion_tokens"))
     total_tokens = _int_or_none(payload.get("total_tokens"))
-    if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+    if (
+        total_tokens is None
+        and prompt_tokens is not None
+        and completion_tokens is not None
+    ):
         total_tokens = prompt_tokens + completion_tokens
     return QueryResponseRecord(
         answer=_string_or_empty(payload.get("answer")),

@@ -502,7 +502,7 @@ class TestIndexMultiple:
                 {"source": "/tmp/local-repo", "is_url": False},
             ]
         )
-        fake_fastcode.vector_store.invalidate_scan_cache.assert_called_once_with()
+        fake_fastcode.invalidate_scan_cache.assert_called_once_with()
         assert result["status"] == "success"
 
 
@@ -521,6 +521,7 @@ class TestBlockingEndpointOffloads:
         fake_fastcode = MagicMock()
         fake_fastcode.repo_loaded = True
         fake_fastcode._load_multi_repo_cache.return_value = True
+        fake_fastcode.load_cached_repos.return_value = True
         fake_fastcode.list_repositories.return_value = [{"repo_name": "repo"}]
         fake_fastcode.get_repository_stats.return_value = {"repo_count": 1}
         fake_fastcode.get_repository_summary.return_value = "summary"
@@ -530,7 +531,17 @@ class TestBlockingEndpointOffloads:
         }
         fake_fastcode.clear_cache.return_value = True
         fake_fastcode.get_cache_stats.return_value = {"entries": 0}
-        fake_fastcode.vector_store.scan_available_indexes.return_value = []
+        fake_fastcode.get_status_info.return_value = {
+            "repo_loaded": True,
+            "repo_indexed": True,
+            "repo_info": {},
+            "graph_expansion_backend": "local",
+            "storage_backend": "sqlite",
+            "retrieval_backend": "local",
+            "available_repositories": [],
+            "loaded_repositories": [{"repo_name": "repo"}],
+        }
+        fake_fastcode.invalidate_scan_cache.return_value = None
         fake_fastcode.refresh_index_cache.return_value = []
         monkeypatch.setattr(api.asyncio, "to_thread", record_to_thread)
 
@@ -573,9 +584,9 @@ class TestBlockingEndpointOffloads:
         assert offloaded == [
             fake_fastcode.load_repository,
             fake_fastcode.index_repository,
-            fake_fastcode._load_multi_repo_cache,
+            fake_fastcode.load_cached_repos,
             fake_fastcode.load_multiple_repositories,
-            fake_fastcode.vector_store.invalidate_scan_cache,
+            fake_fastcode.invalidate_scan_cache,
             fake_fastcode.remove_repository,
             fake_fastcode.clear_cache,
             fake_fastcode.get_cache_stats,

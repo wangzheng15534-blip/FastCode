@@ -22,7 +22,7 @@ import uuid
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -159,10 +159,11 @@ async def health_check(request: Request):
     """Lightweight health check endpoint (no expensive operations)"""
     fc = _fc(request)
 
+    info = fc.get_status_info()
     health = readiness_health(
-        repo_loaded=fc.repo_loaded,
-        repo_indexed=fc.repo_indexed,
-        details={"multi_repo_mode": fc.multi_repo_mode},
+        repo_loaded=info["repo_loaded"],
+        repo_indexed=info["repo_indexed"],
+        details={"multi_repo_mode": info["multi_repo_mode"]},
     )
     return {
         "status": health.status,
@@ -205,10 +206,11 @@ async def load_repository(request: Request, req: LoadRepositoryRequest):
             fastcode.load_repository, command.source, command.is_url
         )
 
+        info = fastcode.get_status_info()
         return {
             "status": "success",
             "message": "Repository loaded successfully",
-            "repo_info": fastcode.repo_info,
+            "repo_info": info["repo_info"],
         }
 
     except Exception as e:
@@ -221,7 +223,7 @@ async def index_repository(request: Request, force: bool = False):
     """Index the loaded repository"""
     fastcode = _fc(request)
 
-    if not fastcode.repo_loaded:
+    if not fastcode.get_status_info()["repo_loaded"]:
         raise HTTPException(status_code=400, detail="No repository loaded")
 
     try:
@@ -264,7 +266,7 @@ async def index_multiple(request: Request, req: IndexMultipleRequest):
 
         # Invalidate scan cache since we just added/updated indexes
         await asyncio.to_thread(
-            fastcode.vector_store.invalidate_scan_cache,
+            fastcode.invalidate_scan_cache,
         )
 
         return {
@@ -310,7 +312,7 @@ async def load_repositories(request: Request, req: LoadRepositoriesRequest):
     try:
         logger.info(f"Loading repositories from cache: {req.repo_names}")
         success = await asyncio.to_thread(
-            fastcode._load_multi_repo_cache, repo_names=req.repo_names
+            fastcode.load_cached_repos, repo_names=req.repo_names
         )
 
         if not success:
@@ -397,7 +399,7 @@ async def query_repository(request: Request, req: QueryRequest):
     fastcode = _fc(request)
     query_request = map_repository_query_request(req)
 
-    if not fastcode.repo_indexed:
+    if not fastcode.get_status_info()["repo_indexed"]:
         raise HTTPException(status_code=400, detail="Repository not indexed")
 
     try:
@@ -443,7 +445,7 @@ async def query_repository_stream(request: Request, req: QueryRequest):
 
     logger.info(f"Processing streaming query: {req.question}")
 
-    if not fc.repo_indexed:
+    if not fc.get_status_info()["repo_indexed"]:
         raise HTTPException(status_code=400, detail="Repository not indexed")
 
     async def event_generator():
@@ -509,7 +511,8 @@ async def get_repository_summary(request: Request):
     """Get repository summary"""
     fastcode_instance = _fc(request)
 
-    if not fastcode_instance.repo_loaded:
+    info = fastcode_instance.get_status_info()
+    if not info["repo_loaded"]:
         raise HTTPException(status_code=400, detail="No repository loaded")
 
     summary_payload: dict[str, Any] = {
@@ -517,7 +520,7 @@ async def get_repository_summary(request: Request):
     }
 
     try:
-        if fastcode_instance.multi_repo_mode:
+        if info["multi_repo_mode"]:
             summary_payload["summary"] = fastcode_instance.get_repository_stats()
         else:
             summary_payload["summary"] = fastcode_instance.get_repository_summary()
@@ -816,12 +819,7 @@ async def get_session(request: Request, session_id: str):
     try:
         history = fastcode_instance.get_session_history(session_id) or []
 
-        session_record = cast(
-            Any, fastcode_instance.cache_manager.get_session_index_record(session_id)
-        )
-        multi_turn = (
-            bool(session_record.multi_turn) if session_record is not None else False
-        )
+        multi_turn = fastcode_instance.get_session_multi_turn(session_id)
 
         return {
             "status": "success",

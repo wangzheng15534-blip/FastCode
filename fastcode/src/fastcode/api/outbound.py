@@ -89,9 +89,7 @@ class IndexRunResponseRecord:
         object.__setattr__(self, "status", ApiStatus(self.status))
         object.__setattr__(self, "result", _mapping_proxy(self.result))
         object.__setattr__(self, "warnings", tuple(str(item) for item in self.warnings))
-        object.__setattr__(
-            self, "pipeline_layers", tuple(self.pipeline_layers)
-        )
+        object.__setattr__(self, "pipeline_layers", tuple(self.pipeline_layers))
         object.__setattr__(
             self, "pipeline_metrics", _mapping_proxy(self.pipeline_metrics)
         )
@@ -136,9 +134,7 @@ class StatusResponseRecord:
         object.__setattr__(
             self, "available_repositories", tuple(self.available_repositories)
         )
-        object.__setattr__(
-            self, "loaded_repositories", tuple(self.loaded_repositories)
-        )
+        object.__setattr__(self, "loaded_repositories", tuple(self.loaded_repositories))
 
 
 @dataclass(frozen=True)

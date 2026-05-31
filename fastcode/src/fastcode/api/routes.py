@@ -150,15 +150,14 @@ async def health_check(request: Request):
             "repo_indexed": False,
         }
 
+    info = fc.get_status_info()
     health = readiness_health(
-        repo_loaded=fc.repo_loaded,
-        repo_indexed=fc.repo_indexed,
+        repo_loaded=info["repo_loaded"],
+        repo_indexed=info["repo_indexed"],
         details={
-            "multi_repo_mode": fc.multi_repo_mode,
-            "storage_backend": fc.snapshot_store.db_runtime.backend,
-            "retrieval_backend": fc.config.get("retrieval", {}).get(
-                "retrieval_backend", "local"
-            ),
+            "multi_repo_mode": info["multi_repo_mode"],
+            "storage_backend": info["storage_backend"],
+            "retrieval_backend": info["retrieval_backend"],
         },
     )
     return {
@@ -212,15 +211,12 @@ async def list_repositories(request: Request, full_scan: bool = False):
     fastcode = _fc(request)
 
     try:
-        available_repos = fastcode.vector_store.scan_available_indexes(
-            use_cache=not full_scan
-        )
-        loaded_repos = fastcode.list_repositories()
+        info = fastcode.get_status_info(full_scan=full_scan)
 
         return {
             "status": "success",
-            "available": available_repos,
-            "loaded": loaded_repos,
+            "available": info["available_repositories"],
+            "loaded": info["loaded_repositories"],
         }
     except Exception as e:
         logger.error(f"Failed to list repositories: {e}")
@@ -239,10 +235,11 @@ async def load_repository(request: Request, req: LoadRepositoryRequest):
             fastcode.load_repository, command.source, command.is_url
         )
 
+        info = fastcode.get_status_info()
         return {
             "status": "success",
             "message": "Repository loaded successfully",
-            "repo_info": fastcode.repo_info,
+            "repo_info": info["repo_info"],
         }
 
     except Exception as e:
@@ -255,7 +252,7 @@ async def index_repository(request: Request, force: bool = False):
     """Index the loaded repository"""
     fastcode = _fc(request)
 
-    if not fastcode.repo_loaded:
+    if not fastcode.get_status_info()["repo_loaded"]:
         raise HTTPException(status_code=400, detail="No repository loaded")
 
     try:
@@ -292,7 +289,7 @@ async def run_index_pipeline(request: Request, req: IndexRunRequest):
             scip_artifact_path=command.scip_artifact_path,
             enable_scip=command.enable_scip,
         )
-        await asyncio.to_thread(fastcode.vector_store.invalidate_scan_cache)
+        await asyncio.to_thread(fastcode.invalidate_scan_cache)
         return serialize_index_run_response(serialize_index_run_response_record(result))
     except Exception as e:
         logger.error(f"Index run failed: {e}")
@@ -375,7 +372,7 @@ async def load_repositories(request: Request, req: LoadRepositoriesRequest):
     try:
         logger.info(f"Loading repositories from cache: {req.repo_names}")
         success = await asyncio.to_thread(
-            fastcode._load_multi_repo_cache, repo_names=req.repo_names
+            fastcode.load_cached_repos, repo_names=req.repo_names
         )
 
         if not success:
@@ -418,7 +415,7 @@ async def index_multiple(request: Request, req: IndexMultipleRequest):
             ],
         )
 
-        await asyncio.to_thread(fastcode.vector_store.invalidate_scan_cache)
+        await asyncio.to_thread(fastcode.invalidate_scan_cache)
 
         return {
             "status": "success",
@@ -570,7 +567,8 @@ async def get_repository_summary(request: Request):
     """Get repository summary"""
     fastcode = _fc(request)
 
-    if not fastcode.repo_loaded:
+    info = fastcode.get_status_info()
+    if not info["repo_loaded"]:
         raise HTTPException(status_code=400, detail="No repository loaded")
 
     summary_payload: dict[str, Any] = {
@@ -578,7 +576,7 @@ async def get_repository_summary(request: Request):
     }
 
     try:
-        if fastcode.multi_repo_mode:
+        if info["multi_repo_mode"]:
             summary_payload["summary"] = fastcode.get_repository_stats()
         else:
             summary_payload["summary"] = fastcode.get_repository_summary()

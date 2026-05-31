@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -19,8 +18,10 @@ def _mock_request() -> MagicMock:
 
 class _FakeFastCode:
     def __init__(self) -> None:
-        self.vector_store = SimpleNamespace(invalidate_scan_cache=lambda: None)
         self.run_kwargs: dict[str, Any] | None = None
+
+    def invalidate_scan_cache(self) -> None:
+        pass
 
     def run_index_pipeline(self, **kwargs: Any) -> dict[str, Any]:
         self.run_kwargs = kwargs

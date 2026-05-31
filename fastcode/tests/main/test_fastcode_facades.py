@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from fastcode.app.query.facade import QueryFacade
+from fastcode.app.store.context_facade import ContextFacade
 from fastcode.app.store.facade import StoreFacade
 from fastcode.main.runtime_state import RuntimeState
 
@@ -60,6 +61,8 @@ def _minimal_fastcode() -> Any:
         pipeline=fc.pipeline,
         state=fc.state,
     )
+    # Wire the ContextFacade
+    fc.context = ContextFacade(fc.cache_manager)
     return fc
 
 
@@ -259,19 +262,19 @@ class TestGetSessionMultiTurn:
         record = MagicMock()
         record.multi_turn = True
         fc.cache_manager.get_session_index_record.return_value = record
-        assert fc.get_session_multi_turn("sess-1") is True
+        assert fc.context.get_session_multi_turn("sess-1") is True
 
     def test_returns_false_when_record_multi_turn_falsy(self):
         fc = _minimal_fastcode()
         record = MagicMock()
         record.multi_turn = False
         fc.cache_manager.get_session_index_record.return_value = record
-        assert fc.get_session_multi_turn("sess-2") is False
+        assert fc.context.get_session_multi_turn("sess-2") is False
 
     def test_returns_false_when_record_is_none(self):
         fc = _minimal_fastcode()
         fc.cache_manager.get_session_index_record.return_value = None
-        assert fc.get_session_multi_turn("sess-3") is False
+        assert fc.context.get_session_multi_turn("sess-3") is False
 
 
 class TestListAvailableRepos:

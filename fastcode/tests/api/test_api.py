@@ -798,7 +798,7 @@ class TestApiSerializationBoundaries:
 
     def test_session_endpoint_serializes_history_explicitly(self) -> None:
         fake_fastcode = MagicMock()
-        fake_fastcode.get_session_history.return_value = [_NoDictTurn()]
+        fake_fastcode.context.get_session_history.return_value = [_NoDictTurn()]
 
         with patch(
             "fastcode.api.routes._fc",
@@ -844,7 +844,7 @@ class TestApiSerializationBoundaries:
 class TestAgentContextRoutes:
     def test_agent_context_endpoints_return_fastcode_payloads(self) -> None:
         fake_fastcode = MagicMock()
-        fake_fastcode.get_turn_context.side_effect = [
+        fake_fastcode.context.get_turn_context.side_effect = [
             {
                 "session_id": "sess-1",
                 "turn_number": 3,
@@ -858,20 +858,20 @@ class TestAgentContextRoutes:
                 "artifact": {"turn_number": 2},
             },
         ]
-        fake_fastcode.create_handoff.return_value = {
+        fake_fastcode.context.create_handoff.return_value = {
             "artifact_id": "hf_123",
             "session_id": "sess-1",
             "turn_number": 2,
         }
-        fake_fastcode.get_handoff_artifact.return_value = {
+        fake_fastcode.context.get_handoff_artifact.return_value = {
             "artifact_id": "hf_123",
             "session_id": "sess-1",
         }
-        fake_fastcode.expand_context_ref.return_value = {
+        fake_fastcode.context.expand_context_ref.return_value = {
             "ref_id": "e1",
             "path": "src/auth.py",
         }
-        fake_fastcode.get_context_bundle.side_effect = [
+        fake_fastcode.context.get_context_bundle.side_effect = [
             {
                 "bundle_id": "ctxb_latest",
                 "session_id": "sess-1",
@@ -887,16 +887,16 @@ class TestAgentContextRoutes:
                 "bundle": {"turn_number": 2},
             },
         ]
-        fake_fastcode.get_context_bundle_by_id.return_value = {
+        fake_fastcode.context.get_context_bundle_by_id.return_value = {
             "bundle_id": "ctxb_123",
             "session_id": "sess-1",
         }
-        fake_fastcode.expand_context_bundle_ref.return_value = {
+        fake_fastcode.context.expand_context_bundle_ref.return_value = {
             "bundle_id": "ctxb_123",
             "ref_id": "e1",
             "path": "src/auth.py",
         }
-        fake_fastcode.create_context_activation.return_value = {
+        fake_fastcode.context.create_context_activation.return_value = {
             "activation_id": "act_123",
             "bundle_id": "ctxb_123",
             "active_ref_ids": ["e1"],
@@ -998,35 +998,35 @@ class TestAgentContextRoutes:
         assert handoff["result"]["artifact_id"] == "hf_123"
         assert restored["result"]["session_id"] == "sess-1"
         assert expanded["result"]["path"] == "src/auth.py"
-        assert fake_fastcode.get_turn_context.call_args_list[0].args == (
+        assert fake_fastcode.context.get_turn_context.call_args_list[0].args == (
             "sess-1",
             None,
             "fcx",
         )
-        assert fake_fastcode.get_turn_context.call_args_list[1].args == (
+        assert fake_fastcode.context.get_turn_context.call_args_list[1].args == (
             "sess-1",
             2,
             "json",
         )
-        assert fake_fastcode.get_context_bundle.call_args_list[0].args == (
+        assert fake_fastcode.context.get_context_bundle.call_args_list[0].args == (
             "sess-1",
             None,
             "rendered",
             32,
         )
-        assert fake_fastcode.get_context_bundle.call_args_list[1].args == (
+        assert fake_fastcode.context.get_context_bundle.call_args_list[1].args == (
             "sess-1",
             2,
             "json",
             2048,
         )
-        assert fake_fastcode.expand_context_bundle_ref.call_args.kwargs == {
+        assert fake_fastcode.context.expand_context_bundle_ref.call_args.kwargs == {
             "session_id": None,
             "turn_number": None,
             "bundle_id": "ctxb_123",
             "depth": "L2",
         }
-        assert fake_fastcode.create_context_activation.call_args.kwargs == {
+        assert fake_fastcode.context.create_context_activation.call_args.kwargs == {
             "session_id": None,
             "turn_number": None,
             "bundle_id": "ctxb_123",
@@ -1038,7 +1038,7 @@ class TestAgentContextRoutes:
 
     def test_agent_context_routes_surface_not_found_as_http_404(self) -> None:
         fake_fastcode = MagicMock()
-        fake_fastcode.expand_context_ref.side_effect = RuntimeError(
+        fake_fastcode.context.expand_context_ref.side_effect = RuntimeError(
             "context ref not found: e9"
         )
 

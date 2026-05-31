@@ -98,6 +98,12 @@ class _FakeFastCode:
         )
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         self.store = _FakeStoreFacade()
+        self.context = SimpleNamespace(
+            get_session_history=self.get_session_history,
+            get_session_multi_turn=self.get_session_multi_turn,
+            delete_session=self.delete_session,
+            list_sessions=self.list_sessions,
+        )
 
     def load_repository(self, source: str, is_url: bool | None) -> None:
         self.calls.append(("load_repository", (source, is_url), {}))
@@ -169,6 +175,13 @@ class _FakeFastCode:
 
     def get_session_multi_turn(self, session_id: str) -> bool:
         return True
+
+    def delete_session(self, session_id: str) -> bool:
+        self.calls.append(("delete_session", (session_id,), {}))
+        return True
+
+    def list_sessions(self) -> list[dict[str, Any]]:
+        return []
 
     def upload_repository_zip(self, file_bytes: bytes, filename: str) -> dict[str, Any]:
         self.calls.append(("upload_repository_zip", (file_bytes, filename), {}))

@@ -574,7 +574,7 @@ async def new_session(request: Request, clear_session_id: str | None = None):
     fastcode_instance = _fc(request)
 
     if clear_session_id:
-        fastcode_instance.delete_session(clear_session_id)
+        fastcode_instance.context.delete_session(clear_session_id)
 
     session_id = str(uuid.uuid4())[:8]
     return serialize_new_session_response(NewSessionRecord(session_id=session_id))
@@ -588,7 +588,7 @@ async def get_latest_turn_context(
     fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
-            fastcode_instance.get_turn_context,
+            fastcode_instance.context.get_turn_context,
             session_id,
             None,
             format,
@@ -610,7 +610,7 @@ async def get_turn_context(
     fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
-            fastcode_instance.get_turn_context,
+            fastcode_instance.context.get_turn_context,
             session_id,
             turn_number,
             format,
@@ -632,7 +632,7 @@ async def get_latest_context_bundle(
     fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
-            fastcode_instance.get_context_bundle,
+            fastcode_instance.context.get_context_bundle,
             session_id,
             None,
             format,
@@ -656,7 +656,7 @@ async def get_context_bundle(
     fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
-            fastcode_instance.get_context_bundle,
+            fastcode_instance.context.get_context_bundle,
             session_id,
             turn_number,
             format,
@@ -679,7 +679,7 @@ async def get_context_bundle_by_id(
     fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
-            fastcode_instance.get_context_bundle_by_id,
+            fastcode_instance.context.get_context_bundle_by_id,
             bundle_id,
             format,
             token_budget,
@@ -698,7 +698,7 @@ async def expand_agent_context_bundle_ref(
     fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
-            fastcode_instance.expand_context_bundle_ref,
+            fastcode_instance.context.expand_context_bundle_ref,
             req.ref_id,
             session_id=req.session_id,
             turn_number=req.turn_number,
@@ -719,7 +719,7 @@ async def create_agent_context_activation(
     fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
-            fastcode_instance.create_context_activation,
+            fastcode_instance.context.create_context_activation,
             session_id=req.session_id,
             turn_number=req.turn_number,
             bundle_id=req.bundle_id,
@@ -742,7 +742,7 @@ async def create_agent_context_handoff(
     fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
-            fastcode_instance.create_handoff,
+            fastcode_instance.context.create_handoff,
             req.session_id,
             req.turn_number,
             req.mode,
@@ -759,7 +759,7 @@ async def get_agent_context_handoff(request: Request, artifact_id: str):
     fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
-            fastcode_instance.get_handoff_artifact,
+            fastcode_instance.context.get_handoff_artifact,
             artifact_id,
         )
         return {"status": "success", "result": result}
@@ -774,7 +774,7 @@ async def expand_agent_context_ref(request: Request, req: ExpandContextRefReques
     fastcode_instance = _fc(request)
     try:
         result = await asyncio.to_thread(
-            fastcode_instance.expand_context_ref,
+            fastcode_instance.context.expand_context_ref,
             req.session_id,
             req.turn_number,
             req.ref_id,
@@ -791,7 +791,7 @@ async def list_sessions(request: Request):
     """List all dialogue sessions with titles (sorted by last update time)"""
     fastcode_instance = _fc(request)
     try:
-        sessions = fastcode_instance.list_sessions()
+        sessions = fastcode_instance.context.list_sessions()
 
         # Format sessions for better display
         formatted_sessions = []
@@ -819,9 +819,9 @@ async def get_session(request: Request, session_id: str):
     """Get full dialogue history for a session"""
     fastcode_instance = _fc(request)
     try:
-        history = fastcode_instance.get_session_history(session_id) or []
+        history = fastcode_instance.context.get_session_history(session_id) or []
 
-        multi_turn = fastcode_instance.get_session_multi_turn(session_id)
+        multi_turn = fastcode_instance.context.get_session_multi_turn(session_id)
 
         return {
             "status": "success",
@@ -873,13 +873,13 @@ async def delete_session(request: Request, session_id: str):
     fastcode_instance = _fc(request)
 
     try:
-        history = fastcode_instance.get_session_history(session_id)
+        history = fastcode_instance.context.get_session_history(session_id)
         if not history:
             raise HTTPException(
                 status_code=404, detail=f"Session '{session_id}' not found"
             )
 
-        success = fastcode_instance.delete_session(session_id)
+        success = fastcode_instance.context.delete_session(session_id)
         if success:
             return {
                 "status": "success",

@@ -37,6 +37,7 @@ from fastcode.app.store.snapshots.snapshot_contracts import (
 )
 from fastcode.app.store.vectors.vector import VectorStore
 from fastcode.app.store.facade import StoreFacade
+from fastcode.app.store.context_facade import ContextFacade
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs, IRGraphView
@@ -2473,10 +2474,11 @@ def test_turn_context_facade_uses_typed_working_memory_payloads() -> None:
         get_latest_working_memory_record=lambda session_id: record,
         get_working_memory_record=lambda session_id, turn_number: record,
     )
+    fc.context = ContextFacade(fc.cache_manager)
 
-    latest = fc.get_turn_context("sess-1")
-    structured = fc.get_turn_context("sess-1", 2, "json")
-    expanded = fc.expand_context_ref("sess-1", 2, "e1")
+    latest = fc.context.get_turn_context("sess-1")
+    structured = fc.context.get_turn_context("sess-1", 2, "json")
+    expanded = fc.context.expand_context_ref("sess-1", 2, "e1")
 
     assert latest["format"] == "fcx"
     assert latest["full_fcx"] == record.full_fcx
@@ -2514,9 +2516,10 @@ def test_handoff_facade_persists_and_restores_typed_handoff_artifact() -> None:
         ),
         get_handoff_artifact_record=lambda artifact_id: saved_records[0],
     )
+    fc.context = ContextFacade(fc.cache_manager)
 
-    handoff = fc.create_handoff("sess-1", 2, "delegate")
-    restored = fc.get_handoff_artifact(handoff["artifact_id"])
+    handoff = fc.context.create_handoff("sess-1", 2, "delegate")
+    restored = fc.context.get_handoff_artifact(handoff["artifact_id"])
 
     assert handoff["artifact_id"].startswith("hf_")
     assert handoff["mode"] == "delegate"
@@ -2599,11 +2602,12 @@ def test_context_bundle_facade_reads_renders_expands_and_activates() -> None:
             saved_activations.append(record) or True
         ),
     )
+    fc.context = ContextFacade(fc.cache_manager)
 
-    structured = fc.get_context_bundle("sess-1", 2, "json")
-    rendered = fc.get_context_bundle_by_id(bundle.bundle_id, "rendered", 24)
-    expanded = fc.expand_context_bundle_ref("e1", bundle_id=bundle.bundle_id)
-    activation = fc.create_context_activation(
+    structured = fc.context.get_context_bundle("sess-1", 2, "json")
+    rendered = fc.context.get_context_bundle_by_id(bundle.bundle_id, "rendered", 24)
+    expanded = fc.context.expand_context_bundle_ref("e1", bundle_id=bundle.bundle_id)
+    activation = fc.context.create_context_activation(
         bundle_id=bundle.bundle_id,
         active_ref_ids=("e1",),
         active_fact_ids=("f1",),

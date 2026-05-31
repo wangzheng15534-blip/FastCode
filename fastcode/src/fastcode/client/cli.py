@@ -419,7 +419,7 @@ def interactive(
                         assert (
                             session_id is not None
                         )  # guaranteed by multi_turn init above
-                        history = fastcode.get_session_history(session_id)
+                        history = fastcode.context.get_session_history(session_id)
                         if not history:
                             click.echo("No conversation history yet.")
                         else:
@@ -974,7 +974,7 @@ def list_sessions(config: str | None) -> None:
     fastcode = FastCode(config_path=config)
 
     try:
-        sessions = fastcode.list_sessions()
+        sessions = fastcode.context.list_sessions()
 
         if not sessions:
             click.echo("No dialogue sessions found")
@@ -1021,7 +1021,7 @@ def show_session(session_id: str, config: str | None) -> None:
     fastcode = FastCode(config_path=config)
 
     try:
-        history = fastcode.get_session_history(session_id)
+        history = fastcode.context.get_session_history(session_id)
 
         if not history:
             click.echo(f"No history found for session: {session_id}")
@@ -1070,7 +1070,7 @@ def delete_session(session_id: str, config: str | None, confirm: bool) -> None:
 
     try:
         # Check if session exists
-        history = fastcode.get_session_history(session_id)
+        history = fastcode.context.get_session_history(session_id)
         if not history:
             click.echo(f"Session not found: {session_id}", err=True)
             sys.exit(1)
@@ -1085,7 +1085,7 @@ def delete_session(session_id: str, config: str | None, confirm: bool) -> None:
                 return
 
         # Delete session
-        if fastcode.delete_session(session_id):
+        if fastcode.context.delete_session(session_id):
             click.echo(f"✓ Successfully deleted session: {session_id}")
         else:
             click.echo(f"Failed to delete session: {session_id}", err=True)

@@ -170,7 +170,7 @@ def list_sessions() -> str:
     continue a previous conversation.
     """
     fc = _get_fastcode()
-    return format_session_list(fc.list_sessions())
+    return format_session_list(fc.context.list_sessions())
 
 
 @mcp.tool()
@@ -184,7 +184,7 @@ def get_session_history(session_id: str) -> str:
         The complete Q&A history of the session.
     """
     fc = _get_fastcode()
-    history = fc.get_session_history(session_id)
+    history = fc.context.get_session_history(session_id)
     return format_session_history(session_id, history)  # type: ignore[arg-type]
 
 
@@ -205,7 +205,7 @@ def get_turn_context(
         JSON describing the requested working-memory artifact.
     """
     fc = _get_fastcode()
-    result = fc.get_turn_context(session_id, turn_number, format)
+    result = fc.context.get_turn_context(session_id, turn_number, format)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -228,7 +228,9 @@ def get_context_bundle(
         JSON describing the requested context bundle.
     """
     fc = _get_fastcode()
-    result = fc.get_context_bundle(session_id, turn_number, format, token_budget)
+    result = fc.context.get_context_bundle(
+        session_id, turn_number, format, token_budget
+    )
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -249,7 +251,7 @@ def get_context_bundle_by_id(
         JSON describing the requested context bundle.
     """
     fc = _get_fastcode()
-    result = fc.get_context_bundle_by_id(bundle_id, format, token_budget)
+    result = fc.context.get_context_bundle_by_id(bundle_id, format, token_budget)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -274,7 +276,7 @@ def expand_context_bundle_ref(
         JSON with the resolved bundle source-ref payload.
     """
     fc = _get_fastcode()
-    result = fc.expand_context_bundle_ref(
+    result = fc.context.expand_context_bundle_ref(
         ref_id,
         session_id=session_id,
         turn_number=turn_number,
@@ -309,7 +311,7 @@ def create_context_activation(
         JSON describing the persisted activation.
     """
     fc = _get_fastcode()
-    result = fc.create_context_activation(
+    result = fc.context.create_context_activation(
         session_id=session_id,
         turn_number=turn_number,
         bundle_id=bundle_id,
@@ -338,7 +340,7 @@ def create_handoff(
         JSON describing the persisted handoff artifact.
     """
     fc = _get_fastcode()
-    result = fc.create_handoff(session_id, turn_number, mode)
+    result = fc.context.create_handoff(session_id, turn_number, mode)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -353,7 +355,7 @@ def get_handoff_artifact(artifact_id: str) -> str:
         JSON describing the handoff artifact.
     """
     fc = _get_fastcode()
-    result = fc.get_handoff_artifact(artifact_id)
+    result = fc.context.get_handoff_artifact(artifact_id)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -376,7 +378,7 @@ def expand_context_ref(
         JSON with the resolved evidence-ref payload.
     """
     fc = _get_fastcode()
-    result = fc.expand_context_ref(session_id, turn_number, ref_id, depth)
+    result = fc.context.expand_context_ref(session_id, turn_number, ref_id, depth)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -391,7 +393,7 @@ def delete_session(session_id: str) -> str:
         Confirmation message.
     """
     fc = _get_fastcode()
-    success = fc.delete_session(session_id)
+    success = fc.context.delete_session(session_id)
     if success:
         return f"Session '{session_id}' deleted."
     return f"Failed to delete session '{session_id}'. It may not exist."

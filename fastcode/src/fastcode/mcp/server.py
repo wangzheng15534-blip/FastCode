@@ -185,7 +185,7 @@ def get_session_history(session_id: str) -> str:
     """
     fc = _get_fastcode()
     history = fc.get_session_history(session_id)
-    return format_session_history(session_id, history)
+    return format_session_history(session_id, history)  # type: ignore[arg-type]
 
 
 @mcp.tool()
@@ -477,7 +477,9 @@ def get_repo_structure(repo_name: str) -> str:
         return f"Repository '{repo_name}' is not indexed. Use code_qa or reindex_repo first."
     overview = fc.get_repo_overview(repo_name)
     if not overview:
-        return f"No overview found for repository '{repo_name}'. It may need re-indexing."
+        return (
+            f"No overview found for repository '{repo_name}'. It may need re-indexing."
+        )
     metadata = overview.get("metadata", {})
     file_structure = metadata.get("file_structure", {})
     languages = file_structure.get("languages", {})
@@ -510,8 +512,7 @@ def get_file_summary(file_path: str, repos: list[str]) -> str:
     actual_path = file_meta.get("relative_path", file_path)
     repo_name = file_meta.get("repo_name", "")
     top_level = [
-        f for f in result["functions"]
-        if not f.get("metadata", {}).get("class_name")
+        f for f in result["functions"] if not f.get("metadata", {}).get("class_name")
     ]
     return format_file_summary(
         actual_path, file_meta, result["classes"], top_level, repo_name
@@ -551,8 +552,12 @@ def get_call_chain(
     if not result:
         return f"Symbol '{symbol_name}' not found in call graph."
     return format_call_chain(
-        result["name"], result["type"], result["path"],
-        result["start_line"], result["callers"], result["callees"],
+        result["name"],
+        result["type"],
+        result["path"],
+        result["start_line"],
+        result["callers"],
+        result["callees"],
     )
 
 

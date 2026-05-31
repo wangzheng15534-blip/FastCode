@@ -2015,9 +2015,7 @@ def test_remove_repository_removes_sharded_artifacts(tmp_path: Path) -> None:
 
 
 def _run_refresh_index_cache(fc: Any) -> None:
-    from fastcode.api.web import _refresh_index_cache_sync
-
-    _refresh_index_cache_sync(fc)
+    fc.refresh_index_cache()
 
 
 def test_index_repository_uses_snapshot_pipeline_by_default() -> None:

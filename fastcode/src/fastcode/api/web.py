@@ -278,7 +278,9 @@ async def index_multiple(request: Request, req: IndexMultipleRequest):
 
 
 @app.post("/api/load-and-index")
-async def load_and_index(request: Request, req: LoadRepositoryRequest, force: bool = False):
+async def load_and_index(
+    request: Request, req: LoadRepositoryRequest, force: bool = False
+):
     """Load and index repository in one call"""
     fastcode = _fc(request)
     command = map_load_repository_request(req)
@@ -357,7 +359,9 @@ async def upload_repository_zip(request: Request, file: UploadFile = File(...)):
 
 
 @app.post("/api/upload-and-index")
-async def upload_and_index(request: Request, file: UploadFile = File(...), force: bool = False):
+async def upload_and_index(
+    request: Request, file: UploadFile = File(...), force: bool = False
+):
     """Upload ZIP and index in one call"""
     fastcode_instance = _fc(request)
 
@@ -572,7 +576,9 @@ async def new_session(request: Request, clear_session_id: str | None = None):
 
 
 @app.get("/api/agent-context/session/{session_id}/latest")
-async def get_latest_turn_context(request: Request, session_id: str, format: str = "fcx"):
+async def get_latest_turn_context(
+    request: Request, session_id: str, format: str = "fcx"
+):
     """Fetch the latest typed working-memory artifact for a session."""
     fastcode_instance = _fc(request)
     try:
@@ -680,7 +686,9 @@ async def get_context_bundle_by_id(
 
 
 @app.post("/api/agent-context/bundle/expand")
-async def expand_agent_context_bundle_ref(request: Request, req: ExpandContextBundleRefRequest):
+async def expand_agent_context_bundle_ref(
+    request: Request, req: ExpandContextBundleRefRequest
+):
     """Expand a single source ref from a durable context bundle."""
     fastcode_instance = _fc(request)
     try:
@@ -699,7 +707,9 @@ async def expand_agent_context_bundle_ref(request: Request, req: ExpandContextBu
 
 
 @app.post("/api/agent-context/bundle/activation")
-async def create_agent_context_activation(request: Request, req: ContextActivationRequest):
+async def create_agent_context_activation(
+    request: Request, req: ContextActivationRequest
+):
     """Create and persist an activation record for a context bundle."""
     fastcode_instance = _fc(request)
     try:
@@ -720,7 +730,9 @@ async def create_agent_context_activation(request: Request, req: ContextActivati
 
 
 @app.post("/api/agent-context/handoff")
-async def create_agent_context_handoff(request: Request, req: AgentContextHandoffRequest):
+async def create_agent_context_handoff(
+    request: Request, req: AgentContextHandoffRequest
+):
     """Create and persist a handoff artifact from a session turn."""
     fastcode_instance = _fc(request)
     try:

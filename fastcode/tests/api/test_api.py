@@ -295,7 +295,9 @@ class TestScipArtifacts:
             checksum="abc123",
         )
 
-        body = asyncio.run(api.get_scip_artifact(_mock_request(), "snap:repo:with-scip"))
+        body = asyncio.run(
+            api.get_scip_artifact(_mock_request(), "snap:repo:with-scip")
+        )
         assert body["status"] == "success"
         artifact = cast(dict[str, Any], body["artifact"])
         artifacts = cast(list[dict[str, Any]], body["artifacts"])
@@ -327,7 +329,9 @@ class TestScipArtifacts:
             ],
         )
 
-        body = asyncio.run(api.get_scip_artifact(_mock_request(), "snap:repo:multi-scip"))
+        body = asyncio.run(
+            api.get_scip_artifact(_mock_request(), "snap:repo:multi-scip")
+        )
         artifact = cast(dict[str, Any], body["artifact"])
         artifacts = cast(list[dict[str, Any]], body["artifacts"])
         assert artifact["artifact_path"] == "/tmp/python.scip"
@@ -362,7 +366,9 @@ class TestManifests:
             index_run_id="run_001",
         )
 
-        body = asyncio.run(api.get_branch_manifest(_mock_request(), "manifest-repo", "main"))
+        body = asyncio.run(
+            api.get_branch_manifest(_mock_request(), "manifest-repo", "main")
+        )
         assert body["status"] == "success"
         assert body["manifest"]["snapshot_id"] == "snap:manifest-repo:m1"
         assert body["manifest"]["repo_name"] == "manifest-repo"
@@ -386,7 +392,9 @@ class TestManifests:
             index_run_id="run_002",
         )
 
-        body = asyncio.run(api.get_snapshot_manifest(_mock_request(), "snap:manifest-repo2:s1"))
+        body = asyncio.run(
+            api.get_snapshot_manifest(_mock_request(), "snap:manifest-repo2:s1")
+        )
         assert body["manifest"]["snapshot_id"] == "snap:manifest-repo2:s1"
 
 
@@ -872,8 +880,12 @@ class TestAgentContextRoutes:
             "fastcode.api.routes._fc",
             return_value=fake_fastcode,
         ):
-            latest = asyncio.run(api.get_latest_turn_context(_mock_request(), "sess-1", format="fcx"))
-            turn = asyncio.run(api.get_turn_context(_mock_request(), "sess-1", 2, format="json"))
+            latest = asyncio.run(
+                api.get_latest_turn_context(_mock_request(), "sess-1", format="fcx")
+            )
+            turn = asyncio.run(
+                api.get_turn_context(_mock_request(), "sess-1", 2, format="json")
+            )
             latest_bundle = asyncio.run(
                 api.get_latest_context_bundle(
                     _mock_request(),
@@ -935,7 +947,9 @@ class TestAgentContextRoutes:
                     ),
                 )
             )
-            restored = asyncio.run(api.get_agent_context_handoff(_mock_request(), "hf_123"))
+            restored = asyncio.run(
+                api.get_agent_context_handoff(_mock_request(), "hf_123")
+            )
             expanded = asyncio.run(
                 api.expand_agent_context_ref(
                     _mock_request(),

@@ -109,7 +109,7 @@ def test_index_run_promotes_pipeline_and_resolver_diagnostics(
                 publish=False,
                 enable_scip=False,
                 scip_artifact_path=None,
-            )
+            ),
         )
     )
 

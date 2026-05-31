@@ -428,6 +428,7 @@ def test_apply_forced_env_excludes_uses_runtime_override_api():
     )
 
     from fastcode.main.fastcode import FastCode
+
     FastCode.apply_env_ignore_patterns(fc)
 
     fc.apply_repository_runtime_overrides.assert_called_once()

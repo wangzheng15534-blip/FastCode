@@ -346,7 +346,9 @@ async def process_redo_tasks(request: Request, limit: int = 10):
 
 
 @app.post("/load-and-index")
-async def load_and_index(request: Request, req: LoadRepositoryRequest, force: bool = False):
+async def load_and_index(
+    request: Request, req: LoadRepositoryRequest, force: bool = False
+):
     """Load and index repository in one call"""
     fastcode = _fc(request)
     command = map_load_repository_request(req)
@@ -454,7 +456,9 @@ async def upload_repository_zip(request: Request, file: UploadFile = File(...)):
 
 
 @app.post("/upload-and-index")
-async def upload_and_index(request: Request, file: UploadFile = File(...), force: bool = False):
+async def upload_and_index(
+    request: Request, file: UploadFile = File(...), force: bool = False
+):
     """Upload ZIP and index in one call"""
     fastcode = _fc(request)
 
@@ -677,7 +681,9 @@ async def find_symbol(
 
 
 @app.get("/graph/callees")
-async def get_graph_callees(request: Request, snapshot_id: str, symbol_id: str, max_hops: int = 1):
+async def get_graph_callees(
+    request: Request, snapshot_id: str, symbol_id: str, max_hops: int = 1
+):
     fastcode = _fc(request)
     try:
         callees = await asyncio.to_thread(
@@ -695,7 +701,9 @@ async def get_graph_callees(request: Request, snapshot_id: str, symbol_id: str, 
 
 
 @app.get("/graph/callers")
-async def get_graph_callers(request: Request, snapshot_id: str, symbol_id: str, max_hops: int = 1):
+async def get_graph_callers(
+    request: Request, snapshot_id: str, symbol_id: str, max_hops: int = 1
+):
     fastcode = _fc(request)
     try:
         callers = await asyncio.to_thread(
@@ -713,7 +721,9 @@ async def get_graph_callers(request: Request, snapshot_id: str, symbol_id: str, 
 
 
 @app.get("/graph/dependencies")
-async def get_graph_dependencies(request: Request, snapshot_id: str, doc_id: str, max_hops: int = 1):
+async def get_graph_dependencies(
+    request: Request, snapshot_id: str, doc_id: str, max_hops: int = 1
+):
     fastcode = _fc(request)
     try:
         deps = await asyncio.to_thread(
@@ -802,7 +812,9 @@ async def get_projection_prefix(request: Request, snapshot_id: str):
 
 
 @app.get("/agent-context/session/{session_id}/latest")
-async def get_latest_turn_context(request: Request, session_id: str, format: str = "fcx"):
+async def get_latest_turn_context(
+    request: Request, session_id: str, format: str = "fcx"
+):
     """Fetch the latest typed working-memory artifact for a session."""
     fastcode = _fc(request)
     try:
@@ -910,7 +922,9 @@ async def get_context_bundle_by_id(
 
 
 @app.post("/agent-context/bundle/expand")
-async def expand_agent_context_bundle_ref(request: Request, req: ExpandContextBundleRefRequest):
+async def expand_agent_context_bundle_ref(
+    request: Request, req: ExpandContextBundleRefRequest
+):
     """Expand a single source ref from a durable context bundle."""
     fastcode = _fc(request)
     try:
@@ -929,7 +943,9 @@ async def expand_agent_context_bundle_ref(request: Request, req: ExpandContextBu
 
 
 @app.post("/agent-context/bundle/activation")
-async def create_agent_context_activation(request: Request, req: ContextActivationRequest):
+async def create_agent_context_activation(
+    request: Request, req: ContextActivationRequest
+):
     """Create and persist an activation record for a context bundle."""
     fastcode = _fc(request)
     try:
@@ -950,7 +966,9 @@ async def create_agent_context_activation(request: Request, req: ContextActivati
 
 
 @app.post("/agent-context/handoff")
-async def create_agent_context_handoff(request: Request, req: AgentContextHandoffRequest):
+async def create_agent_context_handoff(
+    request: Request, req: AgentContextHandoffRequest
+):
     """Create and persist a handoff artifact from a session turn."""
     fastcode = _fc(request)
     try:

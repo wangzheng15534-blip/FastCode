@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import numpy as np
 
-from fastcode.ports.storage import StoreDatabaseRuntime
+from fastcode.infrastructure.storage.contracts import StoreDatabaseRuntime
 
 from .pg_retrieval_contracts import PgRetrievalElementRecord, PgRetrievalResultRecord
 from .vector_math import as_float32_matrix, as_float32_vector

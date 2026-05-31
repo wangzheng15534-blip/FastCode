@@ -14,7 +14,7 @@ from collections.abc import Iterable
 from typing import Any, cast
 from urllib.parse import parse_qsl, unquote, urlparse
 
-from fastcode.ports.storage import DocumentGraphRuntime
+from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
 
 logger = logging.getLogger(__name__)
 

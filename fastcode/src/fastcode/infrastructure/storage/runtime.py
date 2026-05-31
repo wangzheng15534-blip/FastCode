@@ -11,7 +11,7 @@ import sqlite3
 from collections.abc import Iterator
 from typing import Any
 
-from fastcode.ports.storage import StoreDatabaseRuntime
+from fastcode.infrastructure.storage.contracts import StoreDatabaseRuntime
 
 logger = logging.getLogger(__name__)
 

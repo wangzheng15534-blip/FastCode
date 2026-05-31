@@ -66,7 +66,7 @@ from fastcode.infrastructure.execution.ports import (
     SemanticHelperRuntime,
 )
 from fastcode.ports.publishing import LineagePublisher
-from fastcode.ports.storage import DocumentGraphRuntime
+from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
 from fastcode.scip.ast_adapter import build_ir_from_ast
 from fastcode.scip.global_builder import GlobalIndexBuilder
 from fastcode.scip.models import SCIPIndex

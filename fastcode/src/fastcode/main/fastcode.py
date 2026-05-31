@@ -84,7 +84,7 @@ from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.types import IRSnapshot, IRSymbol
 from fastcode.kernel.config import FastCodeConfig
 from fastcode.main.config import config_from_mapping
-from fastcode.ports.storage import DocumentGraphRuntime
+from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
 from fastcode.retrieval.context.agent_context import (
     ContextBundle,
     HandoffArtifact,

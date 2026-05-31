@@ -29,7 +29,7 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.kernel.identifiers import ArtifactKey, SnapshotId
-from fastcode.ports.storage import StoreDatabaseRuntime
+from fastcode.infrastructure.storage.contracts import StoreDatabaseRuntime
 from fastcode.runtime_support.retry import exponential_backoff_seconds
 from fastcode.utils.clock import SystemClock, utc_now
 from fastcode.utils.filesystem import ensure_dir, normalize_path

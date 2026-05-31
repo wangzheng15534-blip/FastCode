@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from fastcode.ports.storage import StoreDatabaseRuntime
+from fastcode.infrastructure.storage.contracts import StoreDatabaseRuntime
 from fastcode.utils.clock import SystemClock
 from fastcode.utils.ids import PrefixedIdGenerator
 

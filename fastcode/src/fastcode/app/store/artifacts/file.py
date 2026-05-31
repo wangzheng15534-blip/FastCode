@@ -12,7 +12,7 @@ from fastcode.ports.artifacts import (
 from fastcode.ports.artifacts import (
     FileArtifactStore as FileArtifactStorePort,
 )
-from fastcode.ports.storage import StoreDatabaseRuntime
+from fastcode.infrastructure.storage.contracts import StoreDatabaseRuntime
 from fastcode.utils.clock import SystemClock
 from fastcode.utils.filesystem import normalize_path
 

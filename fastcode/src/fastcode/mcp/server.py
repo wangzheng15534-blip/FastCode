@@ -728,7 +728,7 @@ def get_session_prefix(snapshot_id: str) -> str:
 
     fc = _get_fastcode()
     try:
-        result = fc.get_session_prefix(snapshot_id)
+        result = fc.projection.get_session_prefix(snapshot_id)
         if result.get("error"):
             return json.dumps(
                 {"found": False, "snapshot_id": snapshot_id, "error": result["error"]}

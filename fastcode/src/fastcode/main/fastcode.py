@@ -38,6 +38,7 @@ from fastcode.app.indexing.pipeline.redo_worker import RedoWorker
 from fastcode.app.indexing.pipeline.service import IndexPipeline
 from fastcode.app.indexing.projection.service import ProjectionService
 from fastcode.app.indexing.projection.transform import ProjectionTransformer
+from fastcode.app.indexing.projection_facade import ProjectionFacade
 from fastcode.app.indexing.publishing import PublishingService
 from fastcode.app.indexing.publishing_facade import PublishingFacade
 from fastcode.app.indexing.terminus import TerminusPublisher
@@ -429,6 +430,10 @@ class FastCode:
             manifest_store=self.manifest_store,
             load_artifacts_by_key=self.pipeline._load_artifacts_by_key,
         )
+        self.projection = ProjectionFacade(
+            service=self.projection_service,
+            state=self.state,
+        )
         self.publishing_service = PublishingService(
             config=self.config,
             logger=self.logger,
@@ -462,7 +467,7 @@ class FastCode:
             is_repo_indexed=lambda: self.state.repo_indexed,
             load_artifacts_by_key=self.pipeline._load_artifacts_by_key,
             load_snapshot_artifacts=self.pipeline.load_snapshot_artifacts_handle,
-            get_session_prefix=self.get_session_prefix,
+            get_session_prefix=self.projection.get_session_prefix,
             semantic_escalation_cb=self._escalate_query_semantics,
         )
 
@@ -1475,39 +1480,6 @@ class FastCode:
     @staticmethod
     def _projection_params_hash(scope: Any, projection_algo_version: str = "v1") -> str:
         return ProjectionService.projection_params_hash(scope, projection_algo_version)
-
-    def build_projection(
-        self,
-        scope_kind: str,
-        snapshot_id: str | None = None,
-        repo_name: str | None = None,
-        ref_name: str | None = None,
-        query: str | None = None,
-        target_id: str | None = None,
-        filters: dict[str, Any] | None = None,
-        force: bool = False,
-    ) -> dict[str, Any]:
-        with self._state_lock():
-            return self.projection_service.build_projection(
-                scope_kind=scope_kind,
-                snapshot_id=snapshot_id,
-                repo_name=repo_name,
-                ref_name=ref_name,
-                query=query,
-                target_id=target_id,
-                filters=filters,
-                force=force,
-            )
-
-    def get_projection_layer(self, projection_id: str, layer: str) -> dict[str, Any]:
-        return self.projection_service.get_projection_layer(projection_id, layer)
-
-    def get_projection_chunk(self, projection_id: str, chunk_id: str) -> dict[str, Any]:
-        return self.projection_service.get_projection_chunk(projection_id, chunk_id)
-
-    def get_session_prefix(self, snapshot_id: str) -> dict[str, Any]:
-        """Return L0+L1 projection data for system prompt injection."""
-        return self.projection_service.get_session_prefix(snapshot_id)
 
     def query_snapshot(
         self,

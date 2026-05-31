@@ -748,7 +748,7 @@ async def build_projection(request: Request, req: ProjectionBuildRequest):
     fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.build_projection,
+            fastcode.projection.build_projection,
             scope_kind=req.scope_kind,
             snapshot_id=req.snapshot_id,
             repo_name=req.repo_name,
@@ -770,7 +770,7 @@ async def get_projection_layer(request: Request, projection_id: str, layer: str)
     fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.get_projection_layer, projection_id, layer
+            fastcode.projection.get_projection_layer, projection_id, layer
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -784,7 +784,7 @@ async def get_projection_chunk(request: Request, projection_id: str, chunk_id: s
     fastcode = _fc(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.get_projection_chunk, projection_id, chunk_id
+            fastcode.projection.get_projection_chunk, projection_id, chunk_id
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -802,7 +802,9 @@ async def get_projection_prefix(request: Request, snapshot_id: str):
     """
     fastcode = _fc(request)
     try:
-        result = await asyncio.to_thread(fastcode.get_session_prefix, snapshot_id)
+        result = await asyncio.to_thread(
+            fastcode.projection.get_session_prefix, snapshot_id
+        )
         if result.get("error"):
             raise HTTPException(status_code=404, detail=result["error"])
         return {"status": "success", "result": result}

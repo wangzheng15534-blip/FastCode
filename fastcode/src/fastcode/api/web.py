@@ -412,7 +412,7 @@ async def query_repository(request: Request, req: QueryRequest):
 
         logger.info(f"Processing query: {query_request.question}")
         result = await asyncio.to_thread(
-            fastcode.query,
+            fastcode.query.query,
             query_request.question,
             dict(query_request.filters) if query_request.filters else None,
             repo_filter=list(query_request.repo_filter) or None,
@@ -451,7 +451,7 @@ async def query_repository_stream(request: Request, req: QueryRequest):
     async def event_generator():
         """Generate SSE events from query_stream"""
         try:
-            for chunk, metadata in fc.query_stream(
+            for chunk, metadata in fc.query.query_stream(
                 req.question,
                 req.filters,
                 repo_filter=req.repo_filter,

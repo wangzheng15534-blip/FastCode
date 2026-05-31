@@ -19,6 +19,7 @@ from fastcode.app.query.context_payloads import (
     working_memory_from_payload,
     working_memory_payload,
 )
+from fastcode.app.query.facade import QueryFacade
 from fastcode.app.query.selection.retriever import HybridRetriever
 from fastcode.app.store.artifacts.graph import GraphArtifactStore
 from fastcode.app.store.cache.contracts import (
@@ -2169,6 +2170,20 @@ def test_load_multiple_repositories_uses_snapshot_pipeline_by_default() -> None:
     assert pipeline_calls[0]["enable_scip"] is True
 
 
+def _make_query_facade(fc: Any) -> QueryFacade:
+    """Wire a minimal QueryFacade onto a bare FastCode test fixture."""
+    return QueryFacade(
+        query_handler=fc.query_handler,
+        vector_store=getattr(fc, "vector_store", SimpleNamespace()),
+        graph_builder=getattr(fc, "graph_builder", SimpleNamespace()),
+        snapshot_store=getattr(fc, "snapshot_store", SimpleNamespace()),
+        ir_graph_builder=getattr(fc, "ir_graph_builder", SimpleNamespace()),
+        snapshot_symbol_index=getattr(fc, "snapshot_symbol_index", SimpleNamespace()),
+        pipeline=getattr(fc, "pipeline", SimpleNamespace()),
+        state=fc.state,
+    )
+
+
 @pytest.mark.parametrize(
     ("mutation_name", "run_mutation"),
     [
@@ -2214,6 +2229,7 @@ def test_service_state_lock_serializes_query_with_mutations(
             _enter_critical("query") or {"answer": "ok", "sources": []}
         )
     )
+    fc.query = _make_query_facade(fc)
     fc._load_repository_unlocked = lambda *_args, **_kwargs: _enter_critical("load")
     fc._index_repository_unlocked = lambda **_kwargs: _enter_critical("index")
     fc._remove_repository_unlocked = lambda *_args, **_kwargs: (
@@ -2229,7 +2245,7 @@ def test_service_state_lock_serializes_query_with_mutations(
     def _run_query() -> None:
         try:
             start_barrier.wait(timeout=5)
-            fc.query("Where is auth?")
+            fc.query.query("Where is auth?")
         except Exception as exc:
             errors.append(exc)
 
@@ -2280,11 +2296,12 @@ def test_service_state_lock_allows_concurrent_queries() -> None:
         return {"answer": "ok", "sources": []}
 
     fc.query_handler = SimpleNamespace(query=lambda **_kwargs: _enter_query())
+    fc.query = _make_query_facade(fc)
 
     def _run_query() -> None:
         try:
             start_barrier.wait(timeout=5)
-            fc.query("Where is auth?")
+            fc.query.query("Where is auth?")
         except Exception as exc:
             errors.append(exc)
 
@@ -2360,12 +2377,13 @@ def test_snapshot_query_stream_releases_service_lock_after_handle_capture() -> N
         _ensure_snapshot_symbol_index=lambda snapshot_id: None,
         query_stream=_query_stream,
     )
+    fc.query = _make_query_facade(fc)
     fc._index_repository_unlocked = lambda **_kwargs: _enter_critical("index")
     fc.vector_store = SimpleNamespace(invalidate_scan_cache=lambda: None)
 
     def _run_stream() -> None:
         try:
-            list(fc.query_stream("Where is auth?", filters={"snapshot_id": "snap:1"}))
+            list(fc.query.query_stream("Where is auth?", filters={"snapshot_id": "snap:1"}))
         except Exception as exc:
             errors.append(exc)
 

@@ -103,7 +103,7 @@ def query(
 
             # Query
             click.echo(f"\nProcessing query: {query}\n")
-            result = fastcode.query(query, repo_filter=repo_filter)
+            result = fastcode.query.query(query, repo_filter=repo_filter)
 
         # Single repository mode
         else:
@@ -148,7 +148,7 @@ def query(
             click.echo(f"Processing query: {query}\n")
             current_repo = fastcode.repo_info.get("name")
             repo_filter = [current_repo] if current_repo else None
-            result = fastcode.query(query, repo_filter=repo_filter)
+            result = fastcode.query.query(query, repo_filter=repo_filter)
 
         # Format output
         formatted = fastcode.answer_generator.format_answer_with_sources(result)
@@ -470,7 +470,7 @@ def interactive(
                     click.echo("\nProcessing...\n")
 
                 # Call query with multi-turn and agency parameters
-                result = fastcode.query(
+                result = fastcode.query.query(
                     query,
                     repo_filter=repo_filter,
                     session_id=session_id if multi_turn else None,
@@ -836,7 +836,7 @@ def query_multiple(
 
         # Query
         click.echo(f"\nProcessing query: {query}\n")
-        result = fastcode.query(query, repo_filter=repo_filter)
+        result = fastcode.query.query(query, repo_filter=repo_filter)
 
         # Format output
         formatted = fastcode.answer_generator.format_answer_with_sources(result)

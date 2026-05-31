@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from fastcode.app.query.facade import QueryFacade
 from fastcode.main.runtime_state import RuntimeState
 
 
@@ -32,6 +33,22 @@ def _minimal_fastcode() -> Any:
     fc.state.loaded_repositories = {"test-repo": {"file_count": 10}}
     fc.snapshot_store = SimpleNamespace(db_runtime=SimpleNamespace(backend="sqlite"))
     fc.cache_manager = MagicMock()
+    fc.graph_builder = MagicMock()
+    fc.ir_graph_builder = MagicMock()
+    fc.snapshot_symbol_index = MagicMock()
+    fc.pipeline = MagicMock()
+    fc.query_handler = MagicMock()
+    # Wire the QueryFacade
+    fc.query = QueryFacade(
+        query_handler=fc.query_handler,
+        vector_store=fc.vector_store,
+        graph_builder=fc.graph_builder,
+        snapshot_store=fc.snapshot_store,
+        ir_graph_builder=fc.ir_graph_builder,
+        snapshot_symbol_index=fc.snapshot_symbol_index,
+        pipeline=fc.pipeline,
+        state=fc.state,
+    )
     return fc
 
 
@@ -69,7 +86,7 @@ class TestSearchSymbols:
             {"name": "Repo", "type": "class"},
             {"type": "repository_overview"},
         ]
-        results = fc.search_symbols("load_config")
+        results = fc.query.search_symbols("load_config")
         names = [r["name"] for r in results]
         # exact match comes before prefix match
         assert names.index("load_config") < names.index("load_config_all")
@@ -85,7 +102,7 @@ class TestSearchSymbols:
             {"name": "FastCode", "type": "class"},
             {"name": "fastcode_query", "type": "function"},
         ]
-        results = fc.search_symbols("fastcode", symbol_type="class")
+        results = fc.query.search_symbols("fastcode", symbol_type="class")
         assert len(results) == 1
         assert results[0]["name"] == "FastCode"
 
@@ -94,7 +111,7 @@ class TestSearchSymbols:
         fc.vector_store.metadata = [
             {"name": f"item_{i}", "type": "function"} for i in range(30)
         ]
-        results = fc.search_symbols("item")
+        results = fc.query.search_symbols("item")
         assert len(results) == 20
 
 
@@ -102,7 +119,7 @@ class TestGetFileStructure:
     def test_returns_none_for_unknown_file(self):
         fc = _minimal_fastcode()
         fc.vector_store.metadata = []
-        assert fc.get_file_structure("nonexistent.py") is None
+        assert fc.query.get_file_structure("nonexistent.py") is None
 
     def test_returns_file_classes_and_functions(self):
         fc = _minimal_fastcode()
@@ -134,7 +151,7 @@ class TestGetFileStructure:
             },
             {"type": "repository_overview"},
         ]
-        result = fc.get_file_structure("main.py")
+        result = fc.query.get_file_structure("main.py")
         assert result is not None
         assert len(result["classes"]) == 1
         assert len(result["functions"]) == 1
@@ -144,10 +161,9 @@ class TestGetFileStructure:
 class TestWalkCallChain:
     def test_returns_none_for_unknown_symbol(self):
         fc = _minimal_fastcode()
-        fc.graph_builder = MagicMock()
         fc.graph_builder.element_by_name = {}
         fc.graph_builder.element_by_id = {}
-        assert fc.walk_call_chain("nonexistent_fn") is None
+        assert fc.query.walk_call_chain("nonexistent_fn") is None
 
     def test_returns_target_with_callers_and_callees(self):
         fc = _minimal_fastcode()
@@ -172,7 +188,6 @@ class TestWalkCallChain:
             relative_path="util.py",
             start_line=20,
         )
-        fc.graph_builder = MagicMock()
         fc.graph_builder.element_by_name = {"main": target}
         fc.graph_builder.element_by_id = {
             "fn0": caller,
@@ -182,7 +197,7 @@ class TestWalkCallChain:
         fc.graph_builder.get_callers.return_value = ["fn0"]
         fc.graph_builder.get_callees.return_value = ["fn2"]
 
-        result = fc.walk_call_chain("main", direction="both", max_hops=2)
+        result = fc.query.walk_call_chain("main", direction="both", max_hops=2)
         assert result is not None
         assert result["name"] == "main"
         assert len(result["callers"]) == 1

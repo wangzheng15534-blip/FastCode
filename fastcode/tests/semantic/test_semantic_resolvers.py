@@ -1155,7 +1155,7 @@ def test_fastcode_apply_semantic_resolvers_replaces_heuristic_import_relation():
     )
     warnings: list[str] = []
 
-    updated = fc._apply_semantic_resolvers(
+    updated = fc.pipeline._apply_semantic_resolvers(
         snapshot=snapshot,
         elements=elements,
         graph_context=graph_builder,
@@ -1239,7 +1239,7 @@ def test_target_paths_includes_all_languages_on_fresh_index():
     ]
     warnings: list[str] = []
 
-    updated = fc._apply_semantic_resolvers(
+    updated = fc.pipeline._apply_semantic_resolvers(
         snapshot=snapshot,
         elements=elements,
         graph_context=None,
@@ -1391,7 +1391,7 @@ def test_resolver_failure_gracefully_degrades():
     fc.pipeline.semantic_resolver_registry = fc.semantic_resolver_registry
     warnings: list[str] = []
 
-    updated = fc._apply_semantic_resolvers(
+    updated = fc.pipeline._apply_semantic_resolvers(
         snapshot=snapshot,
         elements=elements,
         graph_context=None,
@@ -1599,7 +1599,7 @@ def test_capability_gating_runs_all_when_no_pending_capabilities():
     )
     warnings: list[str] = []
 
-    updated = fc._apply_semantic_resolvers(
+    updated = fc.pipeline._apply_semantic_resolvers(
         snapshot=snapshot,
         elements=elements,
         graph_context=graph_builder,

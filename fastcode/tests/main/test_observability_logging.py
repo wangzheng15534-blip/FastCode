@@ -183,13 +183,27 @@ def test_query_semantic_escalation_emits_structured_log(
     fc.ir_graph_builder = SimpleNamespace(build_graphs=lambda _snapshot: "ir-graphs")
     fc.retriever = SimpleNamespace(set_ir_graphs=MagicMock())
     fc.snapshot_symbol_index = SimpleNamespace(register_snapshot=MagicMock())
-    fc._apply_semantic_resolvers = MagicMock(return_value=upgraded_snapshot)
+    fc.query_handler = SimpleNamespace(retriever=fc.retriever)
+    fc.pipeline = SimpleNamespace(
+        _apply_semantic_resolvers=MagicMock(return_value=upgraded_snapshot)
+    )
+    from fastcode.app.query.facade import QueryFacade
+    fc.query = QueryFacade(
+        query_handler=fc.query_handler,
+        vector_store=SimpleNamespace(),
+        graph_builder=fc.graph_builder,
+        snapshot_store=fc.snapshot_store,
+        ir_graph_builder=fc.ir_graph_builder,
+        snapshot_symbol_index=fc.snapshot_symbol_index,
+        pipeline=fc.pipeline,
+        state=fc.state,
+    )
 
     with caplog.at_level(
         logging.INFO,
-        logger="fastcode.test.semantic_escalation",
+        logger="fastcode",
     ):
-        result = fc._escalate_query_semantics(
+        result = fc.query._escalate_query_semantics(
             snapshot_id="snap:1",
             retrieved=[{"element": {"relative_path": "src/a.py"}}],
             processed_query=_processed_query(filters={"file_path": "src/a.py"}),

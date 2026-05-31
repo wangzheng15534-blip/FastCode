@@ -145,7 +145,7 @@ def code_qa(
     sid = session_id or str(uuid.uuid4())[:8]
 
     # 4. Query
-    result = fc.query(
+    result = fc.query.query(
         question=question,
         # Always enforce repository filtering for both single-repo and
         # multi-repo queries to avoid cross-repo source leakage.
@@ -455,7 +455,7 @@ def search_symbol(
     if not fc.ensure_loaded(ready_names):
         return "Error: Failed to load repository indexes."
 
-    results = fc.search_symbols(symbol_name, symbol_type=symbol_type)
+    results = fc.query.search_symbols(symbol_name, symbol_type=symbol_type)
     return format_symbol_search_results(symbol_name, results)
 
 
@@ -505,7 +505,7 @@ def get_file_summary(file_path: str, repos: list[str]) -> str:
     if not fc.ensure_loaded(ready_names):
         return "Error: Failed to load repository indexes."
 
-    result = fc.get_file_structure(file_path)
+    result = fc.query.get_file_structure(file_path)
     if not result:
         return f"No elements found for file path '{file_path}'."
     file_meta = result["file"]
@@ -548,7 +548,9 @@ def get_call_chain(
         return "Error: Failed to load repository indexes."
 
     max_hops = min(max_hops, 5)
-    result = fc.walk_call_chain(symbol_name, direction=direction, max_hops=max_hops)
+    result = fc.query.walk_call_chain(
+        symbol_name, direction=direction, max_hops=max_hops
+    )
     if not result:
         return f"Symbol '{symbol_name}' not found in call graph."
     return format_call_chain(

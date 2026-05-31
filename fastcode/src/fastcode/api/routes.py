@@ -507,7 +507,7 @@ async def query_repository(request: Request, req: QueryRequest):
 
         logger.info(f"Processing query: {query_request.question}")
         result = await asyncio.to_thread(
-            fastcode.query_snapshot,
+            fastcode.query.query_snapshot,
             question=query_request.question,
             snapshot_id=query_request.snapshot_id,
             repo_name=query_request.repo_name,
@@ -537,7 +537,7 @@ async def query_snapshot(request: Request, req: QuerySnapshotRequest):
     try:
         session_id = query_request.session_id or str(uuid.uuid4())[:8]
         result = await asyncio.to_thread(
-            fastcode.query_snapshot,
+            fastcode.query.query_snapshot,
             question=query_request.question,
             repo_name=query_request.repo_name,
             ref_name=query_request.ref_name,

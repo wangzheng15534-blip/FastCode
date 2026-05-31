@@ -27,6 +27,7 @@ from fastcode.app.store.snapshots.manifest import ManifestStore
 from fastcode.app.store.snapshots.snapshot import SnapshotStore
 from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.types import IRSnapshot
+from fastcode.utils.archive import UnsafeArchiveError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -123,6 +124,25 @@ class _FakeFastCode:
     def get_snapshot_manifest(self, snapshot_id: str) -> dict[str, Any] | None:
         record = self.manifest_store.get_snapshot_manifest_record(snapshot_id)
         return self._manifest_payload(record) if record is not None else None
+
+    def get_status_info(self, *, full_scan: bool = False) -> dict[str, Any]:
+        return {
+            "repo_loaded": False,
+            "repo_indexed": False,
+            "repo_info": {},
+            "multi_repo_mode": False,
+            "storage_backend": "sqlite",
+            "retrieval_backend": "local",
+            "graph_expansion_backend": "graph_builder",
+            "available_repositories": [],
+            "loaded_repositories": [],
+        }
+
+    def clear_cache(self) -> bool:
+        return True
+
+    def get_cache_stats(self) -> dict[str, Any]:
+        return {}
 
 
 class _NoDictSource:
@@ -485,9 +505,10 @@ class TestBlockingEndpointOffloads:
             "deleted_files": [],
             "freed_mb": 0.0,
         }
-        fake_fastcode.cache_manager.clear.return_value = True
-        fake_fastcode.cache_manager.get_stats.return_value = {"entries": 0}
+        fake_fastcode.clear_cache.return_value = True
+        fake_fastcode.get_cache_stats.return_value = {"entries": 0}
         fake_fastcode.vector_store.scan_available_indexes.return_value = []
+        fake_fastcode.refresh_index_cache.return_value = []
         monkeypatch.setattr(api.asyncio, "to_thread", record_to_thread)
 
         with patch(
@@ -524,14 +545,13 @@ class TestBlockingEndpointOffloads:
         assert offloaded == [
             fake_fastcode.load_repository,
             fake_fastcode.index_repository,
-            api._call_with_service_lock,
             fake_fastcode._load_multi_repo_cache,
             fake_fastcode.load_multiple_repositories,
-            api._call_with_service_lock,
+            fake_fastcode.vector_store.invalidate_scan_cache,
             fake_fastcode.remove_repository,
-            api._call_with_service_lock,
-            fake_fastcode.cache_manager.get_stats,
-            api._refresh_index_cache_sync,
+            fake_fastcode.clear_cache,
+            fake_fastcode.get_cache_stats,
+            fake_fastcode.refresh_index_cache,
         ]
 
 
@@ -542,11 +562,12 @@ class TestUploadSecurity:
         tmp_path: Any,
         endpoint: str,
     ) -> None:
+        def _raise_unsafe(*_args: Any, **_kwargs: Any) -> Any:
+            raise UnsafeArchiveError("unsafe path detected")
+
         fake_fastcode = SimpleNamespace(
-            loader=SimpleNamespace(
-                safe_repo_root=str(tmp_path / "repos"),
-                _backup_existing_repo=lambda _path: None,
-            )
+            upload_repository_zip=_raise_unsafe,
+            upload_and_index=_raise_unsafe,
         )
 
         with patch(

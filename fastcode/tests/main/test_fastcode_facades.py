@@ -28,6 +28,7 @@ def _minimal_fastcode() -> Any:
     ]
     fc.loaded_repositories = {"test-repo": {"file_count": 10}}
     fc.snapshot_store = SimpleNamespace(db_runtime=SimpleNamespace(backend="sqlite"))
+    fc.cache_manager = MagicMock()
     return fc
 
 
@@ -197,3 +198,101 @@ class TestReindexRepository:
         result = fc.reindex_repository("/no/such/path/repo")
         assert "Error" in result
         assert "does not exist" in result
+
+
+class TestInvalidateScanCache:
+    def test_delegates_to_vector_store(self):
+        fc = _minimal_fastcode()
+        fc.invalidate_scan_cache()
+        fc.vector_store.invalidate_scan_cache.assert_called_once_with()
+
+
+class TestLoadCachedRepos:
+    def test_calls_load_multi_repo_cache_with_kwargs(self):
+        fc = _minimal_fastcode()
+        fc._load_multi_repo_cache = MagicMock(return_value=True)
+        result = fc.load_cached_repos(repo_names=["repo-a", "repo-b"])
+        fc._load_multi_repo_cache.assert_called_once_with(
+            repo_names=["repo-a", "repo-b"]
+        )
+        assert result is True
+
+    def test_default_passes_none(self):
+        fc = _minimal_fastcode()
+        fc._load_multi_repo_cache = MagicMock(return_value=False)
+        fc.load_cached_repos()
+        fc._load_multi_repo_cache.assert_called_once_with(repo_names=None)
+
+
+class TestGetSessionMultiTurn:
+    def test_returns_true_when_record_multi_turn_set(self):
+        fc = _minimal_fastcode()
+        record = MagicMock()
+        record.multi_turn = True
+        fc.cache_manager.get_session_index_record.return_value = record
+        assert fc.get_session_multi_turn("sess-1") is True
+
+    def test_returns_false_when_record_multi_turn_falsy(self):
+        fc = _minimal_fastcode()
+        record = MagicMock()
+        record.multi_turn = False
+        fc.cache_manager.get_session_index_record.return_value = record
+        assert fc.get_session_multi_turn("sess-2") is False
+
+    def test_returns_false_when_record_is_none(self):
+        fc = _minimal_fastcode()
+        fc.cache_manager.get_session_index_record.return_value = None
+        assert fc.get_session_multi_turn("sess-3") is False
+
+
+class TestListAvailableRepos:
+    def test_calls_scan_with_cache_false(self):
+        fc = _minimal_fastcode()
+        repos = [{"name": "repo-a"}, {"name": "repo-b"}]
+        fc.vector_store.scan_available_indexes.return_value = repos
+        result = fc.list_available_repos()
+        fc.vector_store.scan_available_indexes.assert_called_once_with(
+            use_cache=False
+        )
+        assert result is repos
+
+
+class TestGetRepoOverview:
+    def test_returns_overview_when_found(self):
+        fc = _minimal_fastcode()
+        overview = {"name": "repo-a", "element_count": 42}
+        fc.vector_store.load_repo_overviews.return_value = {"repo-a": overview}
+        result = fc.get_repo_overview("repo-a")
+        assert result == overview
+        fc.vector_store.load_repo_overviews.assert_called_once_with(
+            include_embeddings=False
+        )
+
+    def test_returns_none_when_not_found(self):
+        fc = _minimal_fastcode()
+        fc.vector_store.load_repo_overviews.return_value = {"repo-a": {}}
+        result = fc.get_repo_overview("repo-missing")
+        assert result is None
+
+
+class TestClearCache:
+    def test_delegates_to_cache_manager(self):
+        fc = _minimal_fastcode()
+        lock_ctx = MagicMock()
+        lock_ctx.__enter__ = MagicMock(return_value=None)
+        lock_ctx.__exit__ = MagicMock(return_value=False)
+        fc._state_lock = MagicMock(return_value=lock_ctx)
+        fc.cache_manager.clear.return_value = True
+        assert fc.clear_cache() is True
+        fc._state_lock.assert_called_once_with()
+        fc.cache_manager.clear.assert_called_once_with()
+
+
+class TestGetCacheStats:
+    def test_returns_cache_manager_stats(self):
+        fc = _minimal_fastcode()
+        stats = {"hits": 10, "misses": 5}
+        fc.cache_manager.get_stats.return_value = stats
+        result = fc.get_cache_stats()
+        assert result is stats
+        fc.cache_manager.get_stats.assert_called_once_with()

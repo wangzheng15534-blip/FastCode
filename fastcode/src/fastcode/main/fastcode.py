@@ -880,9 +880,7 @@ class FastCode:
                 contains.append(meta)
         return (exact + prefix + contains)[:20]
 
-    def get_file_structure(
-        self, file_path: str
-    ) -> dict[str, Any] | None:
+    def get_file_structure(self, file_path: str) -> dict[str, Any] | None:
         """Get structure summary of a file from loaded metadata."""
         matching: list[Any] = []
         for meta in self.vector_store.metadata:
@@ -981,13 +979,22 @@ class FastCode:
                         if getattr(n_elem, "relative_path", "")
                         else ""
                     )
-                    entries.append({
-                        "name": n_elem.name,
-                        "loc": loc,
-                        "indent": indent,
-                    })
+                    entries.append(
+                        {
+                            "name": n_elem.name,
+                            "loc": loc,
+                            "indent": indent,
+                        }
+                    )
                     if hops_left > 1:
-                        _walk(nid, walk_direction, hops_left - 1, entries, visited, indent + 1)
+                        _walk(
+                            nid,
+                            walk_direction,
+                            hops_left - 1,
+                            entries,
+                            visited,
+                            indent + 1,
+                        )
 
         if direction in ("callers", "both"):
             _walk(target_id, "callers", max_hops, result["callers"])
@@ -1038,6 +1045,19 @@ class FastCode:
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
         return self.cache_manager.get_stats()
+
+    def invalidate_scan_cache(self) -> None:
+        """Invalidate the vector store scan cache."""
+        self.vector_store.invalidate_scan_cache()
+
+    def load_cached_repos(self, repo_names: list[str] | None = None) -> bool:
+        """Load pre-indexed repos from cache into memory."""
+        return self._load_multi_repo_cache(repo_names=repo_names)
+
+    def get_session_multi_turn(self, session_id: str) -> bool:
+        """Return whether a session is multi-turn."""
+        record = self.cache_manager.get_session_index_record(session_id)
+        return bool(record.multi_turn) if record is not None else False
 
     def is_repo_indexed(self, repo_name: str) -> bool:
         """Check whether a persisted index exists for a repo."""

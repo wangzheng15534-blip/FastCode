@@ -46,6 +46,7 @@ from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.main.config import config_from_mapping, config_to_runtime_mapping
 from fastcode.main.fastcode import FastCode
+from fastcode.main.runtime_state import RuntimeState
 from fastcode.semantic.resolvers.engine.registry import (
     build_default_semantic_resolver_registry,
 )
@@ -330,11 +331,12 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
     fc.graph_runtime = LadybugGraphRuntime(fc.config)
 
     # State.
-    fc.repo_loaded = False
-    fc.repo_indexed = False
-    fc.repo_info = {}
-    fc.multi_repo_mode = False
-    fc.loaded_repositories = {}
+    fc.state = RuntimeState()
+    fc.state.repo_loaded = False
+    fc.state.repo_indexed = False
+    fc.state.repo_info = {}
+    fc.state.multi_repo_mode = False
+    fc.state.loaded_repositories = {}
     fc._redo_worker = None
 
     # Pipeline.
@@ -361,9 +363,9 @@ def _build_fastcode(config: dict[str, Any]) -> Any:
         terminus_publisher=fc.terminus_publisher,
         doc_ingester=fc.doc_ingester,
         semantic_resolver_registry=fc.semantic_resolver_registry,
-        set_repo_indexed=lambda v: setattr(fc, "repo_indexed", v),
-        set_repo_loaded=lambda v: setattr(fc, "repo_loaded", v),
-        set_repo_info=lambda v: setattr(fc, "repo_info", v),
+        set_repo_indexed=lambda v: setattr(fc.state, "repo_indexed", v),
+        set_repo_loaded=lambda v: setattr(fc.state, "repo_loaded", v),
+        set_repo_info=lambda v: setattr(fc.state, "repo_info", v),
     )
 
     return fc

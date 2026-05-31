@@ -13,7 +13,8 @@ import fastcode.app.indexing.pipeline.service as pipeline_module
 from fastcode.app.query.orchestration.processor import ProcessedQuery
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import IRSnapshot
-from fastcode.main.fastcode import FastCode, _ReadWriteStateLock
+from fastcode.main.fastcode import FastCode
+from fastcode.main.runtime_state import RuntimeState, _ReadWriteStateLock
 
 
 def _processed_query(
@@ -57,7 +58,7 @@ def test_service_state_lock_emits_structured_acquire_release_logs(
 ) -> None:
     lock = _ReadWriteStateLock()
 
-    with caplog.at_level(logging.DEBUG, logger="fastcode.main.fastcode.state_lock"):
+    with caplog.at_level(logging.DEBUG, logger="fastcode.main.runtime_state.state_lock"):
         with lock.write_lock():
             pass
         with lock.read_lock():
@@ -175,6 +176,7 @@ def test_query_semantic_escalation_emits_structured_log(
     )
     element = _element("src/a.py")
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.logger = logging.getLogger("fastcode.test.semantic_escalation")
     fc.snapshot_store = SimpleNamespace(load_snapshot=lambda _snapshot_id: snapshot)
     fc.graph_builder = SimpleNamespace(element_by_id={element.id: element})

@@ -10,11 +10,9 @@ import os
 import re
 import shutil
 import tempfile
-import threading
 import time
 import zipfile
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
-from contextlib import contextmanager
 from importlib import util as importlib_util
 from pathlib import Path
 from typing import Any, cast
@@ -139,8 +137,7 @@ from .config import (
     prepare_runtime_config_mapping,
     setup_logging,
 )
-
-_STATE_LOCK_LOGGER = logging.getLogger(f"{__name__}.state_lock")
+from .runtime_state import RuntimeState
 
 
 class _VectorSearchStoreFactory:
@@ -219,144 +216,6 @@ _DIAGNOSTIC_SECRET_KEY_MARKERS = (
 )
 
 
-class _ReadWriteStateLock:
-    """Reentrant writer lock with shared read sections for immutable queries."""
-
-    def __init__(self) -> None:
-        self._condition = threading.Condition(threading.RLock())
-        self._readers = 0
-        self._reader_depths: dict[int, int] = {}
-        self._writer: int | None = None
-        self._write_depth = 0
-
-    def __enter__(self) -> "_ReadWriteStateLock":
-        self._acquire_write()
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        self._release_write()
-
-    @contextmanager
-    def read_lock(self) -> Generator[None, None, None]:
-        self._acquire_read()
-        try:
-            yield
-        finally:
-            self._release_read()
-
-    @contextmanager
-    def write_lock(self) -> Generator[None, None, None]:
-        self._acquire_write()
-        try:
-            yield
-        finally:
-            self._release_write()
-
-    def _acquire_read(self) -> None:
-        ident = threading.get_ident()
-        _STATE_LOCK_LOGGER.debug(
-            "Acquiring service state read lock",
-            extra={"fc_event": "service_lock_acquire", "lock_mode": "read"},
-        )
-        with self._condition:
-            if self._writer == ident:
-                self._readers += 1
-                self._reader_depths[ident] = self._reader_depths.get(ident, 0) + 1
-                _STATE_LOCK_LOGGER.debug(
-                    "Acquired service state read lock",
-                    extra={
-                        "fc_event": "service_lock_acquired",
-                        "lock_mode": "read",
-                        "reader_count": self._readers,
-                    },
-                )
-                return
-            while self._writer is not None:
-                self._condition.wait()
-            self._readers += 1
-            self._reader_depths[ident] = self._reader_depths.get(ident, 0) + 1
-            _STATE_LOCK_LOGGER.debug(
-                "Acquired service state read lock",
-                extra={
-                    "fc_event": "service_lock_acquired",
-                    "lock_mode": "read",
-                    "reader_count": self._readers,
-                },
-            )
-
-    def _release_read(self) -> None:
-        ident = threading.get_ident()
-        with self._condition:
-            depth = self._reader_depths.get(ident, 0)
-            if depth <= 1:
-                self._reader_depths.pop(ident, None)
-            else:
-                self._reader_depths[ident] = depth - 1
-            self._readers -= 1
-            _STATE_LOCK_LOGGER.debug(
-                "Released service state read lock",
-                extra={
-                    "fc_event": "service_lock_released",
-                    "lock_mode": "read",
-                    "reader_count": self._readers,
-                },
-            )
-            if self._readers == 0:
-                self._condition.notify_all()
-
-    def _acquire_write(self) -> None:
-        ident = threading.get_ident()
-        _STATE_LOCK_LOGGER.debug(
-            "Acquiring service state write lock",
-            extra={"fc_event": "service_lock_acquire", "lock_mode": "write"},
-        )
-        with self._condition:
-            if self._writer == ident:
-                self._write_depth += 1
-                _STATE_LOCK_LOGGER.debug(
-                    "Acquired service state write lock",
-                    extra={
-                        "fc_event": "service_lock_acquired",
-                        "lock_mode": "write",
-                        "write_depth": self._write_depth,
-                    },
-                )
-                return
-            own_read_depth = self._reader_depths.get(ident, 0)
-            while self._writer is not None or self._readers > own_read_depth:
-                self._condition.wait()
-            self._writer = ident
-            self._write_depth = 1
-            _STATE_LOCK_LOGGER.debug(
-                "Acquired service state write lock",
-                extra={
-                    "fc_event": "service_lock_acquired",
-                    "lock_mode": "write",
-                    "write_depth": self._write_depth,
-                },
-            )
-
-    def _release_write(self) -> None:
-        ident = threading.get_ident()
-        with self._condition:
-            if self._writer != ident:
-                raise RuntimeError(
-                    "cannot release state write lock not owned by thread"
-                )
-            self._write_depth -= 1
-            _STATE_LOCK_LOGGER.debug(
-                "Released service state write lock",
-                extra={
-                    "fc_event": "service_lock_released",
-                    "lock_mode": "write",
-                    "write_depth": self._write_depth,
-                },
-            )
-            if self._write_depth == 0:
-                self._writer = None
-                self._condition.notify_all()
-
-
 class FastCode:
     """Main FastCode system for repository-level code understanding"""
 
@@ -421,7 +280,9 @@ class FastCode:
         # Setup logging
         self.logger = setup_logging(self.config)
         self.logger.info("Initializing FastCode system")
-        self._service_state_lock = _ReadWriteStateLock()
+
+        # Runtime state (extracted for injection into facades)
+        self.state = RuntimeState()
 
         # Initialize resolver attributes (will be set in index_repository)
         self.global_index_builder: GlobalIndexBuilder | None = None
@@ -497,10 +358,7 @@ class FastCode:
             semantic_helper_runtime=self.semantic_helper_runtime
         )
 
-        # State (must exist before IndexPipeline wiring)
-        self.repo_loaded: bool = False
-        self.repo_indexed: bool = False
-        self.repo_info: dict[str, Any] = {}
+        # State lives on self.state (RuntimeState) — no direct fields
 
         # --- IndexPipeline ---
         self.pipeline = IndexPipeline(
@@ -524,9 +382,9 @@ class FastCode:
             terminus_publisher=self.terminus_publisher,
             doc_ingester=self.doc_ingester,
             semantic_resolver_registry=self.semantic_resolver_registry,
-            set_repo_indexed=lambda v: setattr(self, "repo_indexed", v),
-            set_repo_loaded=lambda v: setattr(self, "repo_loaded", v),
-            set_repo_info=lambda v: setattr(self, "repo_info", v),
+            set_repo_indexed=lambda v: setattr(self.state, "repo_indexed", v),
+            set_repo_loaded=lambda v: setattr(self.state, "repo_loaded", v),
+            set_repo_info=lambda v: setattr(self.state, "repo_info", v),
             semantic_helper_runtime=self.semantic_helper_runtime,
             scip_indexer_runtime=self.scip_indexer_runtime,
         )
@@ -593,18 +451,14 @@ class FastCode:
             manifest_store=self.manifest_store,
             snapshot_store=self.snapshot_store,
             snapshot_symbol_index=self.snapshot_symbol_index,
-            is_repo_indexed=lambda: self.repo_indexed,
+            is_repo_indexed=lambda: self.state.repo_indexed,
             load_artifacts_by_key=self.pipeline._load_artifacts_by_key,
             load_snapshot_artifacts=self.pipeline.load_snapshot_artifacts_handle,
             get_session_prefix=self.get_session_prefix,
             semantic_escalation_cb=self._escalate_query_semantics,
         )
 
-        # Multi-repository state
-        self.multi_repo_mode: bool = False
-        self.loaded_repositories: dict[
-            str, dict[str, Any]
-        ] = {}  # {repo_name: repo_info}
+        # Multi-repository state lives on self.state
 
     def _set_runtime_config(self, config: FastCodeConfig) -> None:
         """Replace canonical runtime config and refresh the shell mapping view."""
@@ -642,18 +496,10 @@ class FastCode:
         return IndexPipeline._infer_is_url(source)
 
     def _state_lock(self) -> Any:
-        lock = getattr(self, "_service_state_lock", None)
-        if lock is None:
-            lock = _ReadWriteStateLock()
-            self._service_state_lock = lock
-        return lock
+        return self.state._lock
 
     def _state_read_lock(self) -> Any:
-        lock = self._state_lock()
-        read_lock = getattr(lock, "read_lock", None)
-        if callable(read_lock):
-            return read_lock()
-        return lock
+        return self.state._lock.read_lock()
 
     def load_repository(
         self, source: str, is_url: bool | None = None, is_zip: bool = False
@@ -691,8 +537,8 @@ class FastCode:
             else:
                 self.loader.load_from_path(source)
 
-            self.repo_loaded = True
-            self.repo_info = self.loader.get_repository_info()
+            self.state.repo_loaded = True
+            self.state.repo_info = self.loader.get_repository_info()
 
             # CRITICAL: Update config with the actual repo path.
             # This ensures path_utils can correctly normalize paths relative to the root.
@@ -703,10 +549,10 @@ class FastCode:
                 # Initialize retriever agents if agency mode is enabled
                 self.retriever.set_repo_root(self.loader.repo_path)
 
-            self.logger.info(f"Loaded repository: {self.repo_info.get('name')}")
+            self.logger.info(f"Loaded repository: {self.state.repo_info.get('name')}")
             self.logger.info(
-                f"Files: {self.repo_info.get('file_count')}, "
-                f"Size: {self.repo_info.get('total_size_mb', 0):.2f} MB"
+                f"Files: {self.state.repo_info.get('file_count')}, "
+                f"Size: {self.state.repo_info.get('total_size_mb', 0):.2f} MB"
             )
 
         except Exception as e:
@@ -778,7 +624,7 @@ class FastCode:
             return {
                 "status": "success",
                 "message": f"ZIP file '{archive_filename}' uploaded and extracted to repos/{repo_name}",
-                "repo_info": self.repo_info,
+                "repo_info": self.state.repo_info,
                 "repo_path": str(repo_path),
             }
         finally:
@@ -843,10 +689,10 @@ class FastCode:
         loaded_repos = self.list_repositories()
         retrieval_cfg = self.config.get("retrieval", {}) or {}
         return {
-            "repo_loaded": self.repo_loaded,
-            "repo_indexed": self.repo_indexed,
-            "repo_info": self.repo_info,
-            "multi_repo_mode": self.multi_repo_mode,
+            "repo_loaded": self.state.repo_loaded,
+            "repo_indexed": self.state.repo_indexed,
+            "repo_info": self.state.repo_info,
+            "multi_repo_mode": self.state.multi_repo_mode,
             "storage_backend": self.snapshot_store.db_runtime.backend,
             "retrieval_backend": retrieval_cfg.get("retrieval_backend", "local"),
             "graph_expansion_backend": retrieval_cfg.get(
@@ -1023,8 +869,8 @@ class FastCode:
         count = self.vector_store.get_count()
 
         # Reset in-memory state for clean reload
-        self.repo_indexed = False
-        self.loaded_repositories.clear()
+        self.state.repo_indexed = False
+        self.state.loaded_repositories.clear()
 
         return f"Successfully re-indexed '{name}': {count} elements indexed."
 
@@ -1171,8 +1017,8 @@ class FastCode:
 
     def ensure_loaded(self, repo_names: list[str]) -> bool:
         """Ensure repos are loaded into memory (vectors + BM25 + graphs)."""
-        if not self.repo_indexed or set(repo_names) != set(
-            self.loaded_repositories.keys()
+        if not self.state.repo_indexed or set(repo_names) != set(
+            self.state.loaded_repositories.keys()
         ):
             self.logger.info("Loading repos into memory: %s", repo_names)
             return self._load_multi_repo_cache(repo_names=repo_names)
@@ -1188,7 +1034,7 @@ class FastCode:
         if self._direct_index_enabled():
             return self._index_repository_direct_unlocked(force=force)
         force = force or self.eval_config.get("force_reindex", False)
-        if not self.repo_loaded:
+        if not self.state.repo_loaded:
             raise RuntimeError("No repository loaded. Call load_repository() first.")
         if not self.loader.repo_path:
             raise RuntimeError("No repository path available for indexing.")
@@ -1199,15 +1045,15 @@ class FastCode:
             publish=True,
             enable_scip=True,
             load_repository_cb=None,
-            get_loaded_repositories=lambda: self.loaded_repositories,
+            get_loaded_repositories=lambda: self.state.loaded_repositories,
             graph_runtime=self.graph_runtime,
         )
 
     def _index_repository_direct_unlocked(self, force: bool = False):
         """Direct repository indexing path — delegates to DirectIndexer (use_flow)."""
         indexed, gib, mr, sr = self._direct_indexer.run(
-            repo_loaded=self.repo_loaded,
-            repo_info=self.repo_info,
+            repo_loaded=self.state.repo_loaded,
+            repo_info=self.state.repo_info,
             eval_config=self.eval_config,
             force=force,
         )
@@ -1217,7 +1063,7 @@ class FastCode:
             self.module_resolver = mr
         if sr is not None:
             self.symbol_resolver = sr
-        self.repo_indexed = indexed
+        self.state.repo_indexed = indexed
 
     def _checkout_target_ref(
         self, ref: str | None = None, commit: str | None = None
@@ -1275,7 +1121,7 @@ class FastCode:
                 scip_artifact_path=scip_artifact_path,
                 enable_scip=enable_scip,
                 load_repository_cb=self.load_repository,
-                get_loaded_repositories=lambda: self.loaded_repositories,
+                get_loaded_repositories=lambda: self.state.loaded_repositories,
                 graph_runtime=self.graph_runtime,
             )
 
@@ -2110,16 +1956,16 @@ class FastCode:
 
     def get_repository_summary(self) -> str:
         """Get summary of the loaded repository"""
-        if not self.repo_info:
+        if not self.state.repo_info:
             return "No repository loaded"
 
         summary_parts = [
-            f"Repository: {self.repo_info.get('name', 'Unknown')}",
-            f"Files: {self.repo_info.get('file_count', 0)}",
-            f"Size: {self.repo_info.get('total_size_mb', 0):.2f} MB",
+            f"Repository: {self.state.repo_info.get('name', 'Unknown')}",
+            f"Files: {self.state.repo_info.get('file_count', 0)}",
+            f"Size: {self.state.repo_info.get('total_size_mb', 0):.2f} MB",
         ]
 
-        if self.repo_indexed:
+        if self.state.repo_indexed:
             summary_parts.append(f"Indexed elements: {self.vector_store.get_count()}")
 
         return "\n".join(summary_parts)
@@ -2150,11 +1996,13 @@ class FastCode:
 
     def _get_cache_name(self) -> str:
         """Get cache name for current repository"""
-        return self.repo_info.get("name", "default")
+        return self.state.repo_info.get("name", "default")
 
     def _get_repo_hash(self) -> str:
         """Get hash of repository for cache key"""
-        return self.repo_info.get("commit", self.repo_info.get("name", "default"))
+        return self.state.repo_info.get(
+            "commit", self.state.repo_info.get("name", "default")
+        )
 
     def _reconstruct_elements_from_metadata(self) -> list[CodeElement]:
         """Reconstruct CodeElement objects from vector store metadata."""
@@ -2377,7 +2225,7 @@ class FastCode:
         self, sources: list[dict[str, Any]]
     ) -> dict[str, Any]:
         self.logger.info(f"Loading {len(sources)} repositories")
-        self.multi_repo_mode = True
+        self.state.multi_repo_mode = True
         successfully_indexed: list[str] = []
         results: list[dict[str, Any]] = []
         errors: list[dict[str, str]] = []
@@ -2423,7 +2271,7 @@ class FastCode:
                     publish=True,
                     enable_scip=True,
                     load_repository_cb=load_repository_cb,
-                    get_loaded_repositories=lambda: self.loaded_repositories,
+                    get_loaded_repositories=lambda: self.state.loaded_repositories,
                     graph_runtime=self.graph_runtime,
                 )
                 results.append(result)
@@ -2435,8 +2283,8 @@ class FastCode:
                 errors.append({"source": source, "error": str(e)})
                 continue
 
-        self.repo_indexed = len(successfully_indexed) > 0
-        self.repo_loaded = len(successfully_indexed) > 0
+        self.state.repo_indexed = len(successfully_indexed) > 0
+        self.state.repo_loaded = len(successfully_indexed) > 0
         return {
             "status": "succeeded" if successfully_indexed else "failed",
             "repositories": successfully_indexed,
@@ -2448,13 +2296,13 @@ class FastCode:
         self, sources: list[dict[str, Any]]
     ):
         """Direct multi-repo indexing — delegates to MultiRepoDirectIndexer (use_flow)."""
-        self.multi_repo_mode = True
+        self.state.multi_repo_mode = True
         result = self._multi_repo_direct_indexer.run(
             sources,
-            loaded_repositories=self.loaded_repositories,
+            loaded_repositories=self.state.loaded_repositories,
         )
-        self.repo_indexed = result["has_success"]
-        self.repo_loaded = result["has_success"]
+        self.state.repo_indexed = result["has_success"]
+        self.state.repo_loaded = result["has_success"]
 
     def list_repositories(self) -> list[dict[str, Any]]:
         """
@@ -2468,7 +2316,7 @@ class FastCode:
 
         repositories: list[dict[str, Any]] = []
         for repo_name in repo_names:
-            repo_info = self.loaded_repositories.get(repo_name, {})
+            repo_info = self.state.loaded_repositories.get(repo_name, {})
             repositories.append(
                 {
                     "name": repo_name,
@@ -2498,7 +2346,7 @@ class FastCode:
         }
 
         for repo_name in repo_names:
-            repo_info = self.loaded_repositories.get(repo_name, {})
+            repo_info = self.state.loaded_repositories.get(repo_name, {})
             stats["repositories"].append(
                 {
                     "name": repo_name,
@@ -2848,14 +2696,14 @@ class FastCode:
     def build_diagnostic_bundle(self) -> dict[str, Any]:
         """Build a support-safe runtime diagnostic bundle."""
         config_payload = self._diagnostic_mapping(getattr(self, "config", {}))
-        repo_info = self._diagnostic_mapping(getattr(self, "repo_info", {}))
+        repo_info = self._diagnostic_mapping(getattr(self.state, "repo_info", {}))
         return {
             "schema_version": "fastcode.diagnostic_bundle.v1",
             "generated_at": utc_now(),
             "runtime": {
-                "repo_loaded": bool(getattr(self, "repo_loaded", False)),
-                "repo_indexed": bool(getattr(self, "repo_indexed", False)),
-                "multi_repo_mode": bool(getattr(self, "multi_repo_mode", False)),
+                "repo_loaded": bool(getattr(self.state, "repo_loaded", False)),
+                "repo_indexed": bool(getattr(self.state, "repo_indexed", False)),
+                "multi_repo_mode": bool(getattr(self.state, "multi_repo_mode", False)),
                 "repo_info": {
                     "name": repo_info.get("name"),
                     "url": self._redact_diagnostic_value("url", repo_info.get("url")),
@@ -2865,7 +2713,7 @@ class FastCode:
                     "commit": repo_info.get("commit"),
                 },
                 "loaded_repository_count": len(
-                    getattr(self, "loaded_repositories", {}) or {}
+                    getattr(self.state, "loaded_repositories", {}) or {}
                 ),
                 "loader_repo_path": self._redact_diagnostic_value(
                     "loader_repo_path",
@@ -2897,7 +2745,7 @@ class FastCode:
             retriever=self.retriever,
             graph_builder=self.graph_builder,
             graph_artifact_store=self.graph_artifact_store,
-            loaded_repositories=self.loaded_repositories,
+            loaded_repositories=self.state.loaded_repositories,
         )
 
     # ------------------------------------------------------------------
@@ -2908,7 +2756,7 @@ class FastCode:
         self, elements: list[CodeElement], repo_root: str
     ) -> dict[str, Any]:
         return build_file_manifest(
-            elements, repo_root, repo_name=self.repo_info.get("name", "")
+            elements, repo_root, repo_name=self.state.repo_info.get("name", "")
         )
 
     def _save_file_manifest(self, repo_name: str, manifest: dict[str, Any]) -> None:

@@ -47,6 +47,7 @@ from fastcode.ir.types import (
 )
 from fastcode.main.config import config_from_mapping, config_to_runtime_mapping
 from fastcode.main.fastcode import FastCode
+from fastcode.main.runtime_state import RuntimeState
 from fastcode.retrieval.context.agent_context import (
     AcceptedFact,
     EvidenceRef,
@@ -76,6 +77,7 @@ def _make_fastcode(
     sync_result: bool = True,
 ) -> Any:
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.doc_ingester = SimpleNamespace(enabled=doc_ingester_enabled)
     fc.snapshot_store = SimpleNamespace(
         db_runtime=SimpleNamespace(backend=storage_backend)
@@ -90,6 +92,7 @@ def test_api_facade_refs_and_manifests_use_explicit_record_payloads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     ref_record = SnapshotRefRecord(
         ref_id=1,
         repo_name="repo",
@@ -154,6 +157,7 @@ def test_api_facade_scip_artifacts_use_explicit_record_payloads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     primary_record = SCIPArtifactRecord(
         artifact_id="snap:repo:abc123:scip:0",
         snapshot_id="snap:repo:abc123",
@@ -214,6 +218,7 @@ def test_code_status_pack_uses_snapshot_record_and_explicit_ir_payloads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     snapshot_id = "snap:repo:code-status"
     snapshot = IRSnapshot(
         repo_name="repo",
@@ -325,6 +330,7 @@ def test_diagnostic_bundle_reports_support_safe_runtime_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.config = {
         "storage": {
             "backend": "postgres",
@@ -358,16 +364,17 @@ def test_diagnostic_bundle_reports_support_safe_runtime_state(
         "repo_root": "/repo",
         "vector_store": {"persist_directory": "/tmp/vector?api_key=vector-secret"},
     }
-    fc.repo_loaded = True
-    fc.repo_indexed = True
-    fc.multi_repo_mode = False
-    fc.repo_info = {
+    fc.state = RuntimeState()
+    fc.state.repo_loaded = True
+    fc.state.repo_indexed = True
+    fc.state.multi_repo_mode = False
+    fc.state.repo_info = {
         "name": "repo",
         "url": "https://oauth2:repo-secret@example.test/org/repo.git",
         "file_count": 3,
         "total_size_mb": 0.01,
     }
-    fc.loaded_repositories = {"repo": fc.repo_info}
+    fc.state.loaded_repositories = {"repo": fc.state.repo_info}
     latest_run = IndexRunRecord(
         run_id="run_1",
         repo_name="repo",
@@ -635,6 +642,7 @@ def test_sync_doc_overlay_records_false_return_as_warning():
 
 def test_sync_doc_overlay_records_exceptions_as_warning():
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.graph_runtime = SimpleNamespace(
         enabled=True,
         sync_docs=lambda **_: (_ for _ in ()).throw(RuntimeError("db offline")),
@@ -648,6 +656,7 @@ def test_sync_doc_overlay_records_exceptions_as_warning():
 
 def test_apply_repository_runtime_overrides_refreshes_loader_and_runtime_config():
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.runtime_config = config_from_mapping(
         {
             "repository": {
@@ -680,6 +689,7 @@ def test_apply_repository_runtime_overrides_refreshes_loader_and_runtime_config(
 
 def test_process_semantic_repair_frontier_replays_pipeline_with_payload():
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.pipeline = SimpleNamespace(
         run_semantic_repair_frontier=lambda **kwargs: {
             "status": "repaired",
@@ -714,6 +724,7 @@ def test_process_semantic_repair_frontier_replays_pipeline_with_payload():
 
 def test_process_semantic_repair_frontier_marks_existing_projections_dirty():
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.pipeline = SimpleNamespace(
         run_semantic_repair_frontier=lambda **kwargs: {
             "status": "repaired",
@@ -758,6 +769,7 @@ def test_process_semantic_repair_frontier_marks_existing_projections_dirty():
 
 def test_process_semantic_repair_frontier_skips_unrelated_projection_scopes():
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.pipeline = SimpleNamespace(
         run_semantic_repair_frontier=lambda **kwargs: {
             "status": "repaired",
@@ -806,6 +818,7 @@ def test_process_semantic_repair_frontier_skips_unrelated_projection_scopes():
 
 def test_process_semantic_repair_frontier_uses_coverage_nodes_when_paths_absent():
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.pipeline = SimpleNamespace(
         run_semantic_repair_frontier=lambda **kwargs: {
             "status": "repaired",
@@ -877,6 +890,7 @@ def test_process_semantic_repair_frontier_uses_coverage_nodes_when_paths_absent(
 
 def test_resolve_snapshot_symbol_uses_compact_payload_without_full_snapshot_load():
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.snapshot_symbol_index = SnapshotSymbolIndex()
     fc.snapshot_store = SimpleNamespace(
         load_snapshot_symbol_index_payload=lambda snapshot_id: {
@@ -901,6 +915,7 @@ def test_resolve_snapshot_symbol_uses_compact_payload_without_full_snapshot_load
 
 def test_find_symbol_uses_compact_symbol_record_without_full_snapshot_load():
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.snapshot_symbol_index = SnapshotSymbolIndex()
     fc.snapshot_store = SimpleNamespace(
         load_snapshot_symbol_index_payload=lambda snapshot_id: {
@@ -938,6 +953,7 @@ def test_find_symbol_fallback_uses_explicit_symbol_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.snapshot_symbol_index = SnapshotSymbolIndex()
     symbol = IRSymbol(
         symbol_id="sym:auth",
@@ -1003,6 +1019,7 @@ def test_find_symbol_fallback_uses_explicit_symbol_payload(
 
 def test_graph_helpers_use_compact_bounded_traversal_without_networkx():
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     graphs = IRGraphs(
         dependency_graph=IRGraphView(
             edges=[
@@ -1041,6 +1058,7 @@ def test_graph_helpers_use_compact_bounded_traversal_without_networkx():
 
 def test_process_semantic_repair_frontier_widens_topology_dirty_scopes():
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.pipeline = SimpleNamespace(
         run_semantic_repair_frontier=lambda **kwargs: {
             "status": "repaired",
@@ -1087,13 +1105,14 @@ def test_load_multi_repo_cache_delegates_legacy_bm25_without_rebuild(
     tmp_path: Path,
 ) -> None:
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.logger = SimpleNamespace(
         info=lambda *a, **kw: None,
         warning=lambda *a, **kw: None,
         error=lambda *a, **kw: None,
     )
     fc.embedder = SimpleNamespace(embedding_dim=3)
-    fc.loaded_repositories = {}
+    fc.state.loaded_repositories = {}
     fc.vector_store = SimpleNamespace(
         persist_dir=str(tmp_path),
         initialize=lambda _dimension: None,
@@ -1157,13 +1176,14 @@ def test_load_multi_repo_cache_uses_shard_native_bm25_when_available(
     tmp_path: Path,
 ) -> None:
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.logger = SimpleNamespace(
         info=lambda *a, **kw: None,
         warning=lambda *a, **kw: None,
         error=lambda *a, **kw: None,
     )
     fc.embedder = SimpleNamespace(embedding_dim=3)
-    fc.loaded_repositories = {}
+    fc.state.loaded_repositories = {}
     fc.vector_store = SimpleNamespace(
         persist_dir=str(tmp_path),
         initialize=lambda _dimension: None,
@@ -1331,13 +1351,14 @@ def test_load_multi_repo_cache_real_shard_artifacts_use_retriever_runtime(
     assert source.save_bm25("repo_b") is True
 
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.logger = SimpleNamespace(
         info=lambda *a, **kw: None,
         warning=lambda *a, **kw: None,
         error=lambda *a, **kw: None,
     )
     fc.embedder = SimpleNamespace(embedding_dim=3)
-    fc.loaded_repositories = {}
+    fc.state.loaded_repositories = {}
     fc.vector_store = SimpleNamespace(
         persist_dir=str(tmp_path),
         initialize=lambda _dimension: None,
@@ -1437,13 +1458,14 @@ def test_load_multi_repo_cache_real_shard_artifacts_respects_requested_subset(
     graph_merges: list[str] = []
 
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.logger = SimpleNamespace(
         info=lambda *a, **kw: None,
         warning=lambda *a, **kw: None,
         error=lambda *a, **kw: None,
     )
     fc.embedder = SimpleNamespace(embedding_dim=3)
-    fc.loaded_repositories = {}
+    fc.state.loaded_repositories = {}
     fc.vector_store = SimpleNamespace(
         persist_dir=str(tmp_path),
         initialize=lambda _dimension: None,
@@ -1480,7 +1502,7 @@ def test_load_multi_repo_cache_real_shard_artifacts_respects_requested_subset(
     assert merged == ["repo_b"]
     assert graph_loads == ["repo_b"]
     assert graph_merges == []
-    assert list(fc.loaded_repositories) == ["repo_b"]
+    assert list(fc.state.loaded_repositories) == ["repo_b"]
     assert [row["id"] for row, _score in results] == ["file:b"]
 
 
@@ -1575,13 +1597,14 @@ def test_load_multi_repo_cache_real_vector_and_bm25_artifacts_merge_subset(
 
     target_store = VectorStore({"vector_store": {"persist_directory": str(tmp_path)}})
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.logger = SimpleNamespace(
         info=lambda *a, **kw: None,
         warning=lambda *a, **kw: None,
         error=lambda *a, **kw: None,
     )
     fc.embedder = SimpleNamespace(embedding_dim=3)
-    fc.loaded_repositories = {}
+    fc.state.loaded_repositories = {}
     fc.vector_store = target_store
     fc.retriever = _make_real_retriever(target_store)
     fc.retriever.logger = SimpleNamespace(
@@ -1608,7 +1631,7 @@ def test_load_multi_repo_cache_real_vector_and_bm25_artifacts_merge_subset(
 
     assert fc.vector_store.get_count() == 1
     assert [row["id"] for row in fc.vector_store.metadata] == ["vec:b"]
-    assert list(fc.loaded_repositories) == ["repo_b"]
+    assert list(fc.state.loaded_repositories) == ["repo_b"]
     assert [row["id"] for row, _score in results] == ["file:b"]
 
 
@@ -1726,13 +1749,14 @@ def test_load_multi_repo_cache_real_vector_bm25_and_graph_artifacts_merge_subset
     target_graph_store = GraphArtifactStore(config)
 
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.logger = SimpleNamespace(
         info=lambda *a, **kw: None,
         warning=lambda *a, **kw: None,
         error=lambda *a, **kw: None,
     )
     fc.embedder = SimpleNamespace(embedding_dim=3)
-    fc.loaded_repositories = {}
+    fc.state.loaded_repositories = {}
     fc.vector_store = target_store
     fc.graph_builder = target_graph_builder
     fc.graph_artifact_store = target_graph_store
@@ -1756,7 +1780,7 @@ def test_load_multi_repo_cache_real_vector_bm25_and_graph_artifacts_merge_subset
 
     assert fc.vector_store.get_count() == 1
     assert [row["id"] for row in fc.vector_store.metadata] == ["vec:b"]
-    assert list(fc.loaded_repositories) == ["repo_b"]
+    assert list(fc.state.loaded_repositories) == ["repo_b"]
     assert [row["id"] for row, _score in results] == ["file:b"]
     assert set(fc.graph_builder.element_by_id) == {"graph:b", "graph:b_dep"}
     assert fc.graph_builder.get_related_elements("graph:b", max_hops=1) == {
@@ -1879,13 +1903,14 @@ def test_load_multi_repo_cache_real_vector_bm25_and_graph_artifacts_merge_all_re
     target_graph_store = GraphArtifactStore(config)
 
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.logger = SimpleNamespace(
         info=lambda *a, **kw: None,
         warning=lambda *a, **kw: None,
         error=lambda *a, **kw: None,
     )
     fc.embedder = SimpleNamespace(embedding_dim=3)
-    fc.loaded_repositories = {}
+    fc.state.loaded_repositories = {}
     fc.vector_store = target_store
     fc.graph_builder = target_graph_builder
     fc.graph_artifact_store = target_graph_store
@@ -1914,7 +1939,7 @@ def test_load_multi_repo_cache_real_vector_bm25_and_graph_artifacts_merge_all_re
 
     assert fc.vector_store.get_count() == 2
     assert {row["id"] for row in fc.vector_store.metadata} == {"vec:a", "vec:b"}
-    assert list(fc.loaded_repositories) == ["repo_a", "repo_b"]
+    assert list(fc.state.loaded_repositories) == ["repo_a", "repo_b"]
     assert [row["id"] for row, _score in repo_a_results] == ["file:a"]
     assert [row["id"] for row, _score in repo_b_results] == ["file:b"]
     assert set(fc.graph_builder.element_by_id) == {
@@ -1935,6 +1960,7 @@ def test_load_multi_repo_cache_real_vector_bm25_and_graph_artifacts_merge_all_re
 
 def test_remove_repository_removes_sharded_artifacts(tmp_path: Path) -> None:
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.logger = SimpleNamespace(info=lambda *a, **kw: None)
     fc.config = {"repo_root": str(tmp_path / "repos")}
     fc.loader = SimpleNamespace(safe_repo_root=str(tmp_path / "repos"))
@@ -2020,6 +2046,7 @@ def _run_refresh_index_cache(fc: Any) -> None:
 
 def test_index_repository_uses_snapshot_pipeline_by_default() -> None:
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     calls: list[dict[str, Any]] = []
 
     def _run_index_pipeline(**kwargs: Any) -> dict[str, Any]:
@@ -2028,9 +2055,9 @@ def test_index_repository_uses_snapshot_pipeline_by_default() -> None:
 
     fc.config = {"indexing": {}}
     fc.eval_config = {}
-    fc.repo_loaded = True
+    fc.state.repo_loaded = True
     fc.loader = SimpleNamespace(repo_path="/repo")
-    fc.loaded_repositories = {}
+    fc.state.loaded_repositories = {}
     fc.graph_runtime = None
     fc.pipeline = SimpleNamespace(run_index_pipeline=_run_index_pipeline)
 
@@ -2049,11 +2076,12 @@ def test_index_repository_uses_snapshot_pipeline_by_default() -> None:
             "graph_runtime": None,
         }
     ]
-    assert calls[0]["get_loaded_repositories"]() is fc.loaded_repositories
+    assert calls[0]["get_loaded_repositories"]() is fc.state.loaded_repositories
 
 
 def test_index_repository_direct_path_requires_explicit_flag() -> None:
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.config = {"indexing": {"allow_direct_index": True}}
     fc._index_repository_direct_unlocked = lambda force=False: {
         "direct": True,
@@ -2068,6 +2096,7 @@ def test_index_repository_direct_path_requires_explicit_flag() -> None:
 
 def test_load_multiple_repositories_uses_snapshot_pipeline_by_default() -> None:
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     loads: list[tuple[str, bool | None, bool]] = []
     pipeline_calls: list[dict[str, Any]] = []
 
@@ -2083,8 +2112,8 @@ def test_load_multiple_repositories_uses_snapshot_pipeline_by_default() -> None:
         info=lambda *_args, **_kwargs: None,
         error=lambda *_args, **_kwargs: None,
     )
-    fc.multi_repo_mode = False
-    fc.loaded_repositories = {}
+    fc.state.multi_repo_mode = False
+    fc.state.loaded_repositories = {}
     fc.graph_runtime = None
     fc.pipeline = SimpleNamespace(run_index_pipeline=_run_index_pipeline)
     fc._load_repository_unlocked = lambda source, is_url=None, is_zip=False: (
@@ -2123,6 +2152,7 @@ def test_service_state_lock_serializes_query_with_mutations(
     import time
 
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc._redo_worker = None
     fc.graph_runtime = None
 
@@ -2195,6 +2225,7 @@ def test_service_state_lock_allows_concurrent_queries() -> None:
     import time
 
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
 
     concurrent_count = 0
     max_concurrent = 0
@@ -2240,6 +2271,7 @@ def test_snapshot_query_stream_releases_service_lock_after_handle_capture() -> N
     import time
 
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
 
     concurrent_count = 0
     max_concurrent = 0
@@ -2325,6 +2357,7 @@ def test_snapshot_query_stream_releases_service_lock_after_handle_capture() -> N
 def test_turn_context_facade_uses_typed_working_memory_payloads() -> None:
     record, artifact = _make_working_memory_record()
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.cache_manager = SimpleNamespace(
         get_latest_working_memory_record=lambda session_id: record,
         get_working_memory_record=lambda session_id, turn_number: record,
@@ -2361,6 +2394,7 @@ def test_handoff_facade_persists_and_restores_typed_handoff_artifact() -> None:
     record, _artifact = _make_working_memory_record()
     saved_records: list[Any] = []
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.cache_manager = SimpleNamespace(
         get_latest_working_memory_record=lambda session_id: record,
         get_working_memory_record=lambda session_id, turn_number: record,
@@ -2442,6 +2476,7 @@ def test_context_bundle_facade_reads_renders_expands_and_activates() -> None:
     saved_activations: list[ContextActivationRecord] = []
 
     fc = FastCode.__new__(FastCode)
+    fc.state = RuntimeState()
     fc.cache_manager = SimpleNamespace(
         get_latest_context_bundle_record=lambda session_id: bundle_record,
         get_context_bundle_record=lambda session_id, turn_number: bundle_record,

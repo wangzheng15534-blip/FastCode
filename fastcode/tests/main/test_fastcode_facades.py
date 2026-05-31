@@ -8,14 +8,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from fastcode.main.runtime_state import RuntimeState
+
 
 def _minimal_fastcode() -> Any:
     """Create a FastCode.__new__ shell with just enough state for facade tests."""
     fc = object.__new__(pytest.importorskip("fastcode.main.fastcode").FastCode)
-    fc.repo_loaded = True
-    fc.repo_indexed = True
-    fc.repo_info = {"name": "test-repo", "file_count": 10}
-    fc.multi_repo_mode = False
+    fc.state = RuntimeState()
+    fc.state.repo_loaded = True
+    fc.state.repo_indexed = True
+    fc.state.repo_info = {"name": "test-repo", "file_count": 10}
+    fc.state.multi_repo_mode = False
     fc.config = {
         "retrieval": {
             "retrieval_backend": "pg_hybrid",
@@ -26,7 +29,7 @@ def _minimal_fastcode() -> Any:
     fc.vector_store.scan_available_indexes.return_value = [
         {"name": "test-repo", "element_count": 100}
     ]
-    fc.loaded_repositories = {"test-repo": {"file_count": 10}}
+    fc.state.loaded_repositories = {"test-repo": {"file_count": 10}}
     fc.snapshot_store = SimpleNamespace(db_runtime=SimpleNamespace(backend="sqlite"))
     fc.cache_manager = MagicMock()
     return fc

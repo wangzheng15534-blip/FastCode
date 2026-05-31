@@ -3,12 +3,13 @@ from __future__ import annotations
 import io
 import zipfile
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 import fastcode.api.web as web_app
+from fastcode.utils.archive import UnsafeArchiveError
 
 
 def _zip_bytes(entries: dict[str, bytes]) -> bytes:
@@ -135,50 +136,58 @@ class _FakeFastCode:
         self.calls.append(("get_session_history", (session_id,), {}))
         return [_NoDictTurn()]
 
+    def upload_repository_zip(self, file_bytes: bytes, filename: str) -> dict[str, Any]:
+        self.calls.append(("upload_repository_zip", (file_bytes, filename), {}))
+        return {
+            "status": "success",
+            "message": "uploaded",
+            "repo_info": {"name": "repo"},
+            "repo_path": "/tmp/repo",
+        }
 
-class _RecordingLock:
-    def __init__(self, events: list[Any]) -> None:
-        self.events = events
-        self.active = False
+    def load_and_index(
+        self, source: str, is_url: bool | None = None, *, force: bool = False
+    ) -> dict[str, Any]:
+        self.calls.append(("load_and_index", (source, is_url), {"force": force}))
+        return {
+            "status": "success",
+            "message": "Repository loaded and indexed successfully",
+            "summary": "summary",
+        }
 
-    def __enter__(self) -> _RecordingLock:
-        self.events.append("enter")
-        self.active = True
-        return self
+    def upload_and_index(
+        self, file_bytes: bytes, filename: str, *, force: bool = False
+    ) -> dict[str, Any]:
+        self.calls.append(
+            ("upload_and_index", (file_bytes, filename), {"force": force})
+        )
+        return {
+            "status": "success",
+            "message": "uploaded and indexed",
+            "summary": "summary",
+        }
 
-    def __exit__(self, *_args: object) -> None:
-        self.events.append("exit")
-        self.active = False
+    def clear_cache(self) -> bool:
+        self.calls.append(("clear_cache", (), {}))
+        return True
 
+    def refresh_index_cache(self) -> list[dict[str, Any]]:
+        self.calls.append(("refresh_index_cache", (), {}))
+        return [{"repo_name": "repo"}]
 
-class _LockedVectorStore:
-    def __init__(self, lock: _RecordingLock, events: list[Any]) -> None:
-        self.lock = lock
-        self.events = events
-
-    def invalidate_scan_cache(self) -> None:
-        self.events.append(("invalidate_scan_cache", self.lock.active))
-
-
-class _LockedFastCode:
-    def __init__(self) -> None:
-        self.events: list[Any] = []
-        self.lock = _RecordingLock(self.events)
-        self.vector_store = _LockedVectorStore(self.lock, self.events)
-        self.repo_info = {"name": "repo"}
-
-    def _state_lock(self) -> _RecordingLock:
-        return self.lock
-
-    def _load_repository_unlocked(self, source: str, is_url: bool | None) -> None:
-        self.events.append(("load_unlocked", source, is_url, self.lock.active))
-
-    def _index_repository_unlocked(self, *, force: bool = False) -> None:
-        self.events.append(("index_unlocked", force, self.lock.active))
-
-    def get_repository_summary(self) -> str:
-        self.events.append(("summary", self.lock.active))
-        return "summary"
+    def get_status_info(self, *, full_scan: bool = False) -> dict[str, Any]:
+        self.calls.append(("get_status_info", (), {"full_scan": full_scan}))
+        return {
+            "repo_loaded": self.repo_loaded,
+            "repo_indexed": self.repo_indexed,
+            "repo_info": self.repo_info,
+            "multi_repo_mode": False,
+            "storage_backend": "sqlite",
+            "retrieval_backend": "local",
+            "graph_expansion_backend": "graph_builder",
+            "available_repositories": self.list_repositories(),
+            "loaded_repositories": self.list_repositories(),
+        }
 
 
 async def _run_inline(func: Any, /, *args: Any, **kwargs: Any) -> Any:
@@ -202,7 +211,7 @@ def test_load_endpoint_offloads_blocking_call(
     assert fake.calls == [("load_repository", ("/tmp/repo", False), {})]
 
 
-def test_load_and_index_endpoint_runs_load_and_index_atomically(
+def test_load_and_index_endpoint_delegates_to_facade(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeFastCode()
@@ -226,28 +235,9 @@ def test_load_and_index_endpoint_runs_load_and_index_atomically(
     assert body["status"] == "success"
     assert body["summary"] == "summary"
     assert fake.calls == [
-        ("load_repository", ("/tmp/repo", False), {}),
-        ("index_repository", (), {"force": True}),
+        ("load_and_index", ("/tmp/repo", False), {"force": True}),
     ]
-    assert offloaded == [web_app._load_and_index_sync]
-
-
-def test_load_and_index_sync_uses_one_service_lock() -> None:
-    fake = _LockedFastCode()
-
-    result = web_app._load_and_index_sync(
-        cast(Any, fake), "/tmp/repo", False, force=True
-    )
-
-    assert result["summary"] == "summary"
-    assert fake.events == [
-        "enter",
-        ("load_unlocked", "/tmp/repo", False, True),
-        ("index_unlocked", True, True),
-        ("invalidate_scan_cache", True),
-        ("summary", True),
-        "exit",
-    ]
+    assert offloaded == [fake.load_and_index]
 
 
 def test_query_endpoint_offloads_blocking_query(
@@ -387,7 +377,7 @@ def test_session_endpoint_serializes_history_explicitly(
     }
 
 
-def test_upload_zip_endpoint_offloads_blocking_zip_work(
+def test_upload_zip_endpoint_delegates_to_facade(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeFastCode()
@@ -397,17 +387,8 @@ def test_upload_zip_endpoint_offloads_blocking_zip_work(
         offloaded.append(func)
         return func(*args, **kwargs)
 
-    def fake_upload_sync(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {
-            "status": "success",
-            "message": "uploaded",
-            "repo_info": {"name": "repo"},
-            "repo_path": "/tmp/repo",
-        }
-
     monkeypatch.setattr(web_app, "fastcode_instance", fake)
     monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
-    monkeypatch.setattr(web_app, "_upload_repository_zip_sync", fake_upload_sync)
 
     client = TestClient(web_app.app)
     response = client.post(
@@ -417,7 +398,8 @@ def test_upload_zip_endpoint_offloads_blocking_zip_work(
 
     assert response.status_code == 200
     assert response.json()["repo_path"] == "/tmp/repo"
-    assert offloaded == [fake_upload_sync]
+    assert offloaded == [fake.upload_repository_zip]
+    assert fake.calls == [("upload_repository_zip", (b"zip-data", "repo.zip"), {})]
 
 
 @pytest.mark.parametrize("endpoint", ["/api/upload-zip", "/api/upload-and-index"])
@@ -427,10 +409,17 @@ def test_upload_endpoints_reject_path_traversal_zip(
     endpoint: str,
 ) -> None:
     fake = _FakeFastCode()
-    fake.loader = SimpleNamespace(
-        safe_repo_root=str(tmp_path / "repos"),
-        _backup_existing_repo=lambda _path: None,
-    )
+
+    # Simulate the UnsafeArchiveError that FastCode facade would raise
+    # when it detects path traversal in the ZIP archive
+    def raise_unsafe_archive(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise UnsafeArchiveError("unsafe path detected")
+
+    if endpoint == "/api/upload-zip":
+        fake.upload_repository_zip = raise_unsafe_archive  # type: ignore[assignment]
+    else:
+        fake.upload_and_index = raise_unsafe_archive  # type: ignore[assignment]
+
     monkeypatch.setattr(web_app, "fastcode_instance", fake)
     monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
 
@@ -448,11 +437,10 @@ def test_upload_endpoints_reject_path_traversal_zip(
 
     assert response.status_code == 400
     assert "unsafe path" in response.json()["detail"]
-    assert not (tmp_path / "escape.py").exists()
     assert fake.calls == []
 
 
-def test_upload_and_index_endpoint_offloads_atomic_upload_and_index(
+def test_upload_and_index_endpoint_delegates_to_facade(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeFastCode()
@@ -462,16 +450,8 @@ def test_upload_and_index_endpoint_offloads_atomic_upload_and_index(
         offloaded.append(func)
         return func(*args, **kwargs)
 
-    def fake_upload_and_index_sync(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {
-            "status": "success",
-            "message": "uploaded and indexed",
-            "summary": "summary",
-        }
-
     monkeypatch.setattr(web_app, "fastcode_instance", fake)
     monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
-    monkeypatch.setattr(web_app, "_upload_and_index_sync", fake_upload_and_index_sync)
 
     client = TestClient(web_app.app)
     response = client.post(
@@ -481,38 +461,9 @@ def test_upload_and_index_endpoint_offloads_atomic_upload_and_index(
 
     assert response.status_code == 200
     assert response.json()["summary"] == "summary"
-    assert offloaded == [fake_upload_and_index_sync]
-
-
-def test_upload_and_index_sync_uses_one_service_lock(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake = _LockedFastCode()
-
-    def fake_upload_unlocked(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        fake.events.append(("upload_unlocked", fake.lock.active))
-        return {
-            "status": "success",
-            "repo_info": {"name": "repo"},
-            "repo_path": "/tmp/repo",
-        }
-
-    monkeypatch.setattr(
-        web_app, "_upload_repository_zip_sync_unlocked", fake_upload_unlocked
-    )
-
-    result = web_app._upload_and_index_sync(
-        cast(Any, fake), cast(Any, object()), "repo.zip", force=True
-    )
-
-    assert result["summary"] == "summary"
-    assert fake.events == [
-        "enter",
-        ("upload_unlocked", True),
-        ("index_unlocked", True, True),
-        ("invalidate_scan_cache", True),
-        ("summary", True),
-        "exit",
+    assert offloaded == [fake.upload_and_index]
+    assert fake.calls == [
+        ("upload_and_index", (b"zip-data", "repo.zip"), {"force": True})
     ]
 
 
@@ -542,6 +493,6 @@ def test_mutating_maintenance_endpoints_offload_blocking_work(
     assert refresh_response.status_code == 200
     assert offloaded == [
         fake.remove_repository,
-        web_app._call_with_service_lock,
-        web_app._refresh_index_cache_sync,
+        fake.clear_cache,
+        fake.refresh_index_cache,
     ]

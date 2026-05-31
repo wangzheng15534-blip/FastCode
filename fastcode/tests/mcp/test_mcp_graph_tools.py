@@ -415,8 +415,7 @@ class TestImpactAnalysis:
 
 
 def test_apply_forced_env_excludes_uses_runtime_override_api():
-    import fastcode.mcp.server as mcp_mod
-
+    """Verify that apply_env_ignore_patterns on FastCode calls runtime overrides."""
     fc = SimpleNamespace(
         config={
             "repository": {
@@ -425,9 +424,11 @@ def test_apply_forced_env_excludes_uses_runtime_override_api():
             }
         },
         apply_repository_runtime_overrides=MagicMock(),
+        logger=MagicMock(),
     )
 
-    mcp_mod._apply_forced_env_excludes(fc)
+    from fastcode.main.fastcode import FastCode
+    FastCode.apply_env_ignore_patterns(fc)
 
     fc.apply_repository_runtime_overrides.assert_called_once()
     override_patterns = fc.apply_repository_runtime_overrides.call_args.kwargs[

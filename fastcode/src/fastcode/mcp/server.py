@@ -31,8 +31,18 @@ import uuid
 
 from mcp.server.fastmcp import FastMCP
 
-from fastcode.graph.build import CodeGraphBuilder
 from fastcode.main.fastcode import FastCode
+from fastcode.mcp.formatting import (
+    format_call_chain,
+    format_code_qa_response,
+    format_delete_repo_metadata,
+    format_file_summary,
+    format_indexed_repos,
+    format_repo_overview,
+    format_session_history,
+    format_session_list,
+    format_symbol_search_results,
+)
 from fastcode.mcp.graph_tools import (
     compute_directed_path_for_snapshot,
     compute_find_callers_for_snapshot,
@@ -68,141 +78,6 @@ def _get_fastcode():
         _fastcode_instance = FastCode()
         logger.info("FastCode engine ready.")
     return _fastcode_instance
-
-
-def _repo_name_from_source(source: str, is_url: bool) -> str:
-    """Derive a canonical repo name from a URL or local path."""
-    from fastcode.utils.filesystem import get_repo_name_from_url
-
-    if is_url:
-        return get_repo_name_from_url(source)
-    # Local path: use the directory basename
-    return os.path.basename(os.path.normpath(source))
-
-
-def _is_repo_indexed(repo_name: str) -> bool:
-    """Check whether a repo already has a persisted FAISS index."""
-    fc = _get_fastcode()
-    has_saved_index = getattr(fc.vector_store, "has_saved_index", None)
-    if callable(has_saved_index):
-        return bool(has_saved_index(repo_name))
-    persist_dir = fc.vector_store.persist_dir
-    faiss_path = os.path.join(persist_dir, f"{repo_name}.faiss")
-    meta_path = os.path.join(persist_dir, f"{repo_name}_metadata.pkl")
-    return os.path.exists(faiss_path) and os.path.exists(meta_path)
-
-
-def _apply_forced_env_excludes(fc: FastCode) -> None:
-    """
-    Force-ignore environment-related paths before indexing.
-
-    Always excludes virtual environment folders. Optionally excludes
-    site-packages when repository.exclude_site_packages is enabled.
-    """
-    repo_cfg = fc.config.get("repository", {})
-    ignore_patterns = list(repo_cfg.get("ignore_patterns", []))
-
-    forced_patterns = [
-        ".venv",
-        "venv",
-        ".env",
-        "env",
-        "**/.venv/**",
-        "**/venv/**",
-        "**/.env/**",
-        "**/env/**",
-    ]
-
-    # Optional (opt-in): site-packages can be huge/noisy in some repos.
-    if repo_cfg.get("exclude_site_packages", False):
-        forced_patterns.extend(
-            [
-                "site-packages",
-                "**/site-packages/**",
-            ]
-        )
-
-    added = []
-    for pattern in forced_patterns:
-        if pattern not in ignore_patterns:
-            ignore_patterns.append(pattern)
-            added.append(pattern)
-
-    if added:
-        fc.apply_repository_runtime_overrides(ignore_patterns=tuple(ignore_patterns))
-
-    if added:
-        logger.info(f"Added forced ignore patterns: {added}")
-
-
-def _ensure_repos_ready(
-    repos: list[str], allow_incremental: bool = True, ctx: object | None = None
-) -> list[str]:
-    """
-    For each repo source string:
-      - If already indexed → skip
-      - If URL and not on disk → clone + index
-      - If local path → load + index
-
-    Returns the list of canonical repo names that are ready.
-    """
-    fc = _get_fastcode()
-    _apply_forced_env_excludes(fc)
-    ready_names: list[str] = []
-
-    for source in repos:
-        resolved_is_url = fc._infer_is_url(source)
-        name = _repo_name_from_source(source, resolved_is_url)
-
-        # Already indexed
-        if _is_repo_indexed(name):
-            if not resolved_is_url and allow_incremental:
-                abs_path = os.path.abspath(source)
-                if os.path.isdir(abs_path):
-                    try:
-                        result = fc.run_index_pipeline(
-                            source=abs_path,
-                            is_url=False,
-                            publish=True,
-                            enable_scip=True,
-                        )
-                        if result and result.get("status") not in {"reused"}:
-                            logger.info(f"Graceful update for '{name}': {result}")
-                    except Exception as e:
-                        logger.warning(f"Graceful update failed for '{name}': {e}")
-            logger.info(f"Repo '{name}' ready.")
-            ready_names.append(name)
-            continue
-
-        # Need to index
-        logger.info(f"Repo '{name}' not indexed. Preparing …")
-
-        if resolved_is_url:
-            # Clone and index
-            logger.info(f"Cloning {source} …")
-            fc.load_repository(source, is_url=True)
-        else:
-            # Local path
-            abs_path = os.path.abspath(source)
-            if not os.path.isdir(abs_path):
-                logger.error(f"Local path does not exist: {abs_path}")
-                continue
-            fc.load_repository(abs_path, is_url=False)
-
-        logger.info(f"Indexing '{name}' …")
-        fc.index_repository(force=False)
-        logger.info(f"Indexing '{name}' complete.")
-        ready_names.append(name)
-
-    return ready_names
-
-
-def _ensure_loaded(fc: FastCode, ready_names: list[str]) -> bool:
-    """Ensure repos are loaded into memory (vectors + BM25 + graphs)."""
-    if not fc.repo_indexed or set(ready_names) != set(fc.loaded_repositories.keys()):
-        logger.info(f"Loading repos into memory: {ready_names}")
-        return fc._load_multi_repo_cache(repo_names=ready_names)
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -254,12 +129,12 @@ def code_qa(
     fc = _get_fastcode()
 
     # 1. Ensure all repos are indexed
-    ready_names = _ensure_repos_ready(repos)
+    ready_names = fc.ensure_repos_ready(repos)
     if not ready_names:
         return "Error: None of the specified repositories could be loaded or indexed."
 
     # 2. Load indexed repos into memory (multi-repo merge)
-    if not _ensure_loaded(fc, ready_names):
+    if not fc.ensure_loaded(ready_names):
         return "Error: Failed to load repository indexes."
 
     # 3. Session management
@@ -275,35 +150,11 @@ def code_qa(
         enable_multi_turn=multi_turn,
     )
 
-    answer = result.get("answer", "")
-    sources = result.get("sources", [])
-
-    # Format output
-    parts = [answer]
-
-    if sources:
-        parts.append("\n\n---\nSources:")
-        for s in sources[:]:
-            file_path = s.get("file", s.get("relative_path", ""))
-            repo = s.get("repo", s.get("repository", ""))
-            name = s.get("name", "")
-            start = s.get("start_line", "")
-            end = s.get("end_line", "")
-            if (not start or not end) and s.get("lines"):
-                lines = str(s.get("lines", ""))
-                if "-" in lines:
-                    parsed_start, parsed_end = lines.split("-", 1)
-                    start = start or parsed_start
-                    end = end or parsed_end
-            loc = f"L{start}-L{end}" if start and end else ""
-            parts.append(
-                f"  - {repo}/{file_path}:{loc} ({name})"
-                if repo
-                else f"  - {file_path}:{loc} ({name})"
-            )
-
-    parts.append(f"\n[session_id: {sid}]")
-    return "\n".join(parts)
+    return format_code_qa_response(
+        result.get("answer", ""),
+        result.get("sources", []),
+        sid,
+    )
 
 
 @mcp.tool()
@@ -315,20 +166,7 @@ def list_sessions() -> str:
     continue a previous conversation.
     """
     fc = _get_fastcode()
-    sessions = fc.list_sessions()
-
-    if not sessions:
-        return "No sessions found."
-
-    lines = ["Sessions:"]
-    for s in sessions:
-        sid = s.get("session_id", "?")
-        title = s.get("title", "Untitled")
-        turns = s.get("total_turns", 0)
-        mode = "multi-turn" if s.get("multi_turn", False) else "single-turn"
-        lines.append(f'  - {sid}: "{title}" ({turns} turns, {mode})')
-
-    return "\n".join(lines)
+    return format_session_list(fc.list_sessions())
 
 
 @mcp.tool()
@@ -343,23 +181,7 @@ def get_session_history(session_id: str) -> str:
     """
     fc = _get_fastcode()
     history = fc.get_session_history(session_id)
-
-    if not history:
-        return f"No history found for session '{session_id}'."
-
-    lines = [f"Session {session_id} history:"]
-    for turn in history:
-        turn_num = turn.get("turn_number", "?")
-        query = turn.get("query", "")
-        answer = turn.get("answer", "")
-        # Truncate long answers for readability
-        if len(answer) > 500:
-            answer = answer[:500] + " …"
-        lines.append(f"\n--- Turn {turn_num} ---")
-        lines.append(f"Q: {query}")
-        lines.append(f"A: {answer}")
-
-    return "\n".join(lines)
+    return format_session_history(session_id, history)
 
 
 @mcp.tool()
@@ -579,19 +401,7 @@ def list_indexed_repos() -> str:
         A list of indexed repository names with metadata.
     """
     fc = _get_fastcode()
-    available = fc.vector_store.scan_available_indexes(use_cache=False)
-
-    if not available:
-        return "No indexed repositories found."
-
-    lines = ["Indexed repositories:"]
-    for repo in available:
-        name = repo.get("name", repo.get("repo_name", "?"))
-        elements = repo.get("element_count", repo.get("elements", "?"))
-        size = repo.get("size_mb", "?")
-        lines.append(f"  - {name} ({elements} elements, {size} MB)")
-
-    return "\n".join(lines)
+    return format_indexed_repos(fc.list_available_repos())
 
 
 @mcp.tool()
@@ -610,22 +420,9 @@ def delete_repo_metadata(repo_name: str) -> str:
     """
     fc = _get_fastcode()
     result = fc.remove_repository(repo_name, delete_source=False)
-
-    deleted_files = result.get("deleted_files", [])
-    freed_mb = result.get("freed_mb", 0)
-
-    if not deleted_files:
-        return (
-            f"No metadata files found for repository '{repo_name}'. "
-            "Source code was not modified."
-        )
-
-    lines = [f"Deleted metadata for repository '{repo_name}' (source code kept)."]
-    lines.append(f"Freed: {freed_mb} MB")
-    lines.append("Removed artifacts:")
-    for fname in deleted_files:
-        lines.append(f"  - {fname}")
-    return "\n".join(lines)
+    return format_delete_repo_metadata(
+        repo_name, result.get("deleted_files", []), result.get("freed_mb", 0)
+    )
 
 
 @mcp.tool()
@@ -648,52 +445,14 @@ def search_symbol(
         Matching definitions with file path, line range, and signature.
     """
     fc = _get_fastcode()
-    ready_names = _ensure_repos_ready(repos, allow_incremental=False)
+    ready_names = fc.ensure_repos_ready(repos, allow_incremental=False)
     if not ready_names:
         return "Error: None of the specified repositories could be loaded."
-    if not _ensure_loaded(fc, ready_names):
+    if not fc.ensure_loaded(ready_names):
         return "Error: Failed to load repository indexes."
 
-    query_lower = symbol_name.lower()
-    exact, prefix, contains = [], [], []
-
-    for meta in fc.vector_store.metadata:
-        name = meta.get("name", "")
-        elem_type = meta.get("type", "")
-        if elem_type == "repository_overview":
-            continue
-        if symbol_type and elem_type != symbol_type:
-            continue
-
-        name_lower = name.lower()
-        if name_lower == query_lower:
-            exact.append(meta)
-        elif name_lower.startswith(query_lower):
-            prefix.append(meta)
-        elif query_lower in name_lower:
-            contains.append(meta)
-
-    ranked = (exact + prefix + contains)[:20]
-    if not ranked:
-        return f"No symbols matching '{symbol_name}' found."
-
-    lines = [f"Found {len(ranked)} result(s) for '{symbol_name}':"]
-    for meta in ranked:
-        name = meta.get("name", "")
-        etype = meta.get("type", "")
-        repo = meta.get("repo_name", "")
-        rel_path = meta.get("relative_path", "")
-        start = meta.get("start_line", "")
-        end = meta.get("end_line", "")
-        sig = meta.get("signature", "")
-        loc = f"L{start}-L{end}" if start and end else ""
-        line = f"  - [{etype}] {name}"
-        if sig:
-            line += f"  |  {sig}"
-        line += f"\n    {repo}/{rel_path}:{loc}" if repo else f"\n    {rel_path}:{loc}"
-        lines.append(line)
-
-    return "\n".join(lines)
+    results = fc.search_symbols(symbol_name, symbol_type=symbol_type)
+    return format_symbol_search_results(symbol_name, results)
 
 
 @mcp.tool()
@@ -710,34 +469,15 @@ def get_repo_structure(repo_name: str) -> str:
         Repository summary, directory structure, and language breakdown.
     """
     fc = _get_fastcode()
-    if not _is_repo_indexed(repo_name):
+    if not fc.is_repo_indexed(repo_name):
         return f"Repository '{repo_name}' is not indexed. Use code_qa or reindex_repo first."
-
-    overviews = fc.vector_store.load_repo_overviews(include_embeddings=False)
-    overview = overviews.get(repo_name)
+    overview = fc.get_repo_overview(repo_name)
     if not overview:
-        return (
-            f"No overview found for repository '{repo_name}'. It may need re-indexing."
-        )
-
+        return f"No overview found for repository '{repo_name}'. It may need re-indexing."
     metadata = overview.get("metadata", {})
-    summary = metadata.get("summary", "No summary available.")
-    structure_text = metadata.get("structure_text", "")
     file_structure = metadata.get("file_structure", {})
     languages = file_structure.get("languages", {})
-
-    parts = [f"Repository: {repo_name}", ""]
-    parts.append(f"Summary:\n{summary}")
-
-    if languages:
-        parts.append("\nLanguages:")
-        for lang, count in sorted(languages.items(), key=lambda x: -x[1]):
-            parts.append(f"  - {lang}: {count} files")
-
-    if structure_text:
-        parts.append(f"\nDirectory Structure:\n{structure_text}")
-
-    return "\n".join(parts)
+    return format_repo_overview(repo_name, metadata, languages)
 
 
 @mcp.tool()
@@ -753,107 +493,25 @@ def get_file_summary(file_path: str, repos: list[str]) -> str:
         File structure: classes (with methods), top-level functions, and import count.
     """
     fc = _get_fastcode()
-    ready_names = _ensure_repos_ready(repos, allow_incremental=False)
+    ready_names = fc.ensure_repos_ready(repos, allow_incremental=False)
     if not ready_names:
         return "Error: None of the specified repositories could be loaded."
-    if not _ensure_loaded(fc, ready_names):
+    if not fc.ensure_loaded(ready_names):
         return "Error: Failed to load repository indexes."
 
-    # Find matching elements by relative_path
-    matching = []
-    for meta in fc.vector_store.metadata:
-        rel = meta.get("relative_path", "")
-        if meta.get("type") == "repository_overview":
-            continue
-        if rel.endswith(file_path) or file_path in rel:
-            matching.append(meta)
-
-    if not matching:
+    result = fc.get_file_structure(file_path)
+    if not result:
         return f"No elements found for file path '{file_path}'."
-
-    files = [m for m in matching if m.get("type") == "file"]
-    classes = [m for m in matching if m.get("type") == "class"]
-    functions = [m for m in matching if m.get("type") == "function"]
-
-    file_meta = files[0] if files else matching[0]
+    file_meta = result["file"]
     actual_path = file_meta.get("relative_path", file_path)
-    repo = file_meta.get("repo_name", "")
-
-    parts = [f"File: {repo}/{actual_path}" if repo else f"File: {actual_path}"]
-
-    if files:
-        fm = files[0]
-        parts.append(f"Language: {fm.get('language', '?')}")
-        mi = fm.get("metadata", {})
-        parts.append(
-            f"Lines: {mi.get('total_lines', '?')} (code: {mi.get('code_lines', '?')})"
-        )
-        num_imports = mi.get("num_imports", 0)
-        if num_imports:
-            parts.append(f"Imports: {num_imports}")
-
-    if classes:
-        parts.append(f"\nClasses ({len(classes)}):")
-        for c in classes:
-            sig = c.get("signature", c.get("name", ""))
-            mi = c.get("metadata", {})
-            methods = mi.get("methods", [])
-            loc = f"L{c.get('start_line', '')}-L{c.get('end_line', '')}"
-            parts.append(f"  - {sig} ({loc})")
-            for m in methods:
-                parts.append(f"      .{m}")
-
-    if functions:
-        top_level = [
-            f for f in functions if not f.get("metadata", {}).get("class_name")
-        ]
-        if top_level:
-            parts.append(f"\nFunctions ({len(top_level)}):")
-            for fn in top_level:
-                sig = fn.get("signature", fn.get("name", ""))
-                loc = f"L{fn.get('start_line', '')}-L{fn.get('end_line', '')}"
-                parts.append(f"  - {sig} ({loc})")
-
-    return "\n".join(parts)
-
-
-def _walk_call_chain(
-    gb: CodeGraphBuilder,
-    element_id: str,
-    direction: str,
-    hops_left: int,
-    parts: list[str],
-    indent: int = 2,
-    visited: set[str] | None = None,
-) -> None:
-    """Recursively walk the call chain and format output."""
-    if visited is None:
-        visited = {element_id}
-
-    neighbors = (
-        gb.get_callers(element_id)
-        if direction == "callers"
-        else gb.get_callees(element_id)
+    repo_name = file_meta.get("repo_name", "")
+    top_level = [
+        f for f in result["functions"]
+        if not f.get("metadata", {}).get("class_name")
+    ]
+    return format_file_summary(
+        actual_path, file_meta, result["classes"], top_level, repo_name
     )
-
-    if not neighbors:
-        parts.append(f"{'  ' * indent}(none)")
-        return
-
-    for nid in neighbors:
-        if nid in visited:
-            continue
-        visited.add(nid)
-        elem = gb.element_by_id.get(nid)
-        if elem:
-            loc = (
-                f"{elem.relative_path}:L{elem.start_line}" if elem.relative_path else ""
-            )
-            parts.append(f"{'  ' * indent}- {elem.name} [{loc}]")
-            if hops_left > 1:
-                _walk_call_chain(
-                    gb, nid, direction, hops_left - 1, parts, indent + 1, visited
-                )
 
 
 @mcp.tool()
@@ -878,53 +536,20 @@ def get_call_chain(
         Formatted call chain showing callers and/or callees.
     """
     fc = _get_fastcode()
-    ready_names = _ensure_repos_ready(repos, allow_incremental=False)
+    ready_names = fc.ensure_repos_ready(repos, allow_incremental=False)
     if not ready_names:
         return "Error: None of the specified repositories could be loaded."
-    if not _ensure_loaded(fc, ready_names):
+    if not fc.ensure_loaded(ready_names):
         return "Error: Failed to load repository indexes."
 
     max_hops = min(max_hops, 5)
-    gb = fc.graph_builder
-    name_lower = symbol_name.lower()
-    target_id, target_elem = None, None
-
-    # Exact match via element_by_name
-    elem = gb.element_by_name.get(symbol_name)
-    if elem:
-        target_elem, target_id = elem, elem.id
-
-    # Fallback: case-insensitive search
-    if not target_id:
-        for eid, elem in gb.element_by_id.items():
-            if elem.name.lower() == name_lower:
-                target_elem, target_id = elem, eid
-                break
-
-    # Fallback: partial match
-    if not target_id:
-        for eid, elem in gb.element_by_id.items():
-            if name_lower in elem.name.lower():
-                target_elem, target_id = elem, eid
-                break
-
-    if not target_id or not target_elem:
+    result = fc.walk_call_chain(symbol_name, direction=direction, max_hops=max_hops)
+    if not result:
         return f"Symbol '{symbol_name}' not found in call graph."
-
-    parts = [
-        f"Call chain for '{target_elem.name}' ({target_elem.type})"
-        f" at {target_elem.relative_path}:L{target_elem.start_line}"
-    ]
-
-    if direction in ("callers", "both"):
-        parts.append("\n  Callers (who calls this):")
-        _walk_call_chain(gb, target_id, "callers", max_hops, parts, indent=2)
-
-    if direction in ("callees", "both"):
-        parts.append("\n  Callees (what this calls):")
-        _walk_call_chain(gb, target_id, "callees", max_hops, parts, indent=2)
-
-    return "\n".join(parts)
+    return format_call_chain(
+        result["name"], result["type"], result["path"],
+        result["start_line"], result["callers"], result["callees"],
+    )
 
 
 @mcp.tool()
@@ -1118,28 +743,7 @@ def reindex_repo(repo_source: str) -> str:
         Confirmation with element count.
     """
     fc = _get_fastcode()
-    _apply_forced_env_excludes(fc)
-
-    resolved_is_url = fc._infer_is_url(repo_source)
-    name = _repo_name_from_source(repo_source, resolved_is_url)
-    logger.info(f"Force re-indexing '{name}' from {repo_source}")
-
-    if resolved_is_url:
-        fc.load_repository(repo_source, is_url=True)
-    else:
-        abs_path = os.path.abspath(repo_source)
-        if not os.path.isdir(abs_path):
-            return f"Error: Local path does not exist: {abs_path}"
-        fc.load_repository(abs_path, is_url=False)
-
-    fc.index_repository(force=True)
-    count = fc.vector_store.get_count()
-
-    # Reset in-memory state so next _ensure_loaded does a clean load
-    fc.repo_indexed = False
-    fc.loaded_repositories.clear()
-
-    return f"Successfully re-indexed '{name}': {count} elements indexed."
+    return fc.reindex_repository(repo_source)
 
 
 # ---------------------------------------------------------------------------

@@ -52,6 +52,7 @@ class _FakeFastCodeWithStore:
         self._retry_raises = retry_raises
         self.retried_runs = []
         self.repair_payloads = []
+        self.publishing = _FakePublishing(self)
 
     def retry_index_run_recovery(self, run_id: str, payload: Any) -> None:
         self.retried_runs.append(run_id)
@@ -60,6 +61,19 @@ class _FakeFastCodeWithStore:
 
     def process_semantic_repair_frontier(self, payload: Any) -> None:
         self.repair_payloads.append(payload)
+
+
+class _FakePublishing:
+    """Fake publishing facade that delegates back to the fake FastCode."""
+
+    def __init__(self, fc: _FakeFastCodeWithStore) -> None:
+        self._fc = fc
+
+    def retry_index_run_recovery(self, run_id: str, payload: Any) -> None:
+        self._fc.retry_index_run_recovery(run_id, payload)
+
+    def process_semantic_repair_frontier(self, payload: Any) -> Any:
+        return self._fc.process_semantic_repair_frontier(payload)
 
 
 def _make_worker(fastcode: Any = None, poll: int = 30) -> Any:
@@ -92,7 +106,8 @@ def test_process_once_status_succeeds_on_valid_task_double():
         "task_type": "index_run_recovery",
         "payload_json": json.dumps({"run_id": "run1", "source": "/tmp/repo"}),
     }
-    fc.retry_index_run_recovery = MagicMock(return_value={"status": "published"})
+    fc.publishing = MagicMock()
+    fc.publishing.retry_index_run_recovery.return_value = {"status": "published"}
     worker = RedoWorker(fc)
     assert worker.process_once_status() == "succeeded"
     fc.snapshot_store.mark_redo_task_done.assert_called_once_with("redo_abc")
@@ -105,7 +120,8 @@ def test_process_once_status_fails_and_marks_failed_double():
         "task_type": "index_run_recovery",
         "payload_json": json.dumps({"run_id": "run2", "source": "/tmp/repo"}),
     }
-    fc.retry_index_run_recovery = MagicMock(side_effect=RuntimeError("boom"))
+    fc.publishing = MagicMock()
+    fc.publishing.retry_index_run_recovery.side_effect = RuntimeError("boom")
     worker = RedoWorker(fc)
     assert worker.process_once_status() == "failed"
     fc.snapshot_store.mark_redo_task_failed.assert_called_once()
@@ -136,9 +152,8 @@ def test_dispatch_task_raises_on_unsupported_type_double():
 
 def test_dispatch_semantic_repair_frontier_task_double():
     fc = _FakeFastCode()
-    fc.process_semantic_repair_frontier = MagicMock(
-        return_value={"status": "published"}
-    )
+    fc.publishing = MagicMock()
+    fc.publishing.process_semantic_repair_frontier.return_value = {"status": "published"}
     worker = RedoWorker(fc)
     task = {
         "task_id": "redo_repair",
@@ -152,19 +167,18 @@ def test_dispatch_semantic_repair_frontier_task_double():
         ),
     }
     worker._dispatch_task(task)
-    fc.process_semantic_repair_frontier.assert_called_once()
+    fc.publishing.process_semantic_repair_frontier.assert_called_once()
 
 
 def test_dispatch_semantic_repair_frontier_rebuilds_dirty_projections_double():
     fc = _FakeFastCode()
     fc.config = {"projection": {"rebuild_dirty_after_redo": True}}
-    fc.process_semantic_repair_frontier = MagicMock(
-        return_value={
-            "status": "repaired",
-            "repair_frontier": {"snapshot_id": "snap:1"},
-            "projection_dirty": {"marked": 1},
-        }
-    )
+    fc.publishing = MagicMock()
+    fc.publishing.process_semantic_repair_frontier.return_value = {
+        "status": "repaired",
+        "repair_frontier": {"snapshot_id": "snap:1"},
+        "projection_dirty": {"marked": 1},
+    }
     fc.projection_service = MagicMock()
     fc.projection_service.rebuild_dirty_projections.return_value = {
         "snapshot_id": "snap:1",
@@ -191,13 +205,12 @@ def test_dispatch_semantic_repair_frontier_rebuilds_dirty_projections_double():
 def test_dispatch_semantic_repair_frontier_can_skip_projection_rebuild_double():
     fc = _FakeFastCode()
     fc.config = {"projection": {"rebuild_dirty_after_redo": True}}
-    fc.process_semantic_repair_frontier = MagicMock(
-        return_value={
-            "status": "repaired",
-            "repair_frontier": {"snapshot_id": "snap:1"},
-            "projection_dirty": {"marked": 1},
-        }
-    )
+    fc.publishing = MagicMock()
+    fc.publishing.process_semantic_repair_frontier.return_value = {
+        "status": "repaired",
+        "repair_frontier": {"snapshot_id": "snap:1"},
+        "projection_dirty": {"marked": 1},
+    }
     fc.projection_service = MagicMock()
     worker = RedoWorker(fc)
 

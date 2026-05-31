@@ -300,7 +300,7 @@ async def run_index_pipeline(request: Request, req: IndexRunRequest):
 async def get_index_run(request: Request, run_id: str):
     """Get index run status/details."""
     fastcode = _fc(request)
-    run = fastcode.get_index_run(run_id)
+    run = fastcode.publishing.get_index_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
     return {"status": "success", "run": run}
@@ -311,7 +311,9 @@ async def publish_index_run(request: Request, run_id: str, ref_name: str | None 
     """Publish an existing index run into manifest and lineage."""
     fastcode = _fc(request)
     try:
-        result = await asyncio.to_thread(fastcode.publish_index_run, run_id, ref_name)
+        result = await asyncio.to_thread(
+            fastcode.publishing.publish_index_run, run_id, ref_name
+        )
         return {"status": "success", "result": result}
     except Exception as e:
         logger.error(f"Publish run failed: {e}")
@@ -323,7 +325,9 @@ async def retry_publish_tasks(request: Request, limit: int = 10):
     """Retry pending Terminus lineage publish tasks."""
     fastcode = _fc(request)
     try:
-        result = await asyncio.to_thread(fastcode.retry_pending_publishes, limit)
+        result = await asyncio.to_thread(
+            fastcode.publishing.retry_pending_publishes, limit
+        )
         return {"status": "success", "result": result}
     except Exception as e:
         logger.error(f"Retry publish failed: {e}")
@@ -335,7 +339,7 @@ async def process_redo_tasks(request: Request, limit: int = 10):
     """Admin endpoint to process pending redo tasks immediately."""
     fastcode = _fc(request)
     try:
-        result = await asyncio.to_thread(fastcode.process_redo_tasks, limit)
+        result = await asyncio.to_thread(fastcode.publishing.process_redo_tasks, limit)
         return {"status": "success", "result": result}
     except Exception as e:
         logger.error(f"Redo process failed: {e}")

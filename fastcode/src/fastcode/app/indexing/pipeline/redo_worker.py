@@ -98,10 +98,14 @@ class RedoWorker:
             run_id = payload.get("run_id")
             if not run_id:
                 raise RuntimeError("redo task missing run_id")
-            self.fastcode.retry_index_run_recovery(run_id=str(run_id), payload=payload)
+            self.fastcode.publishing.retry_index_run_recovery(
+                run_id=str(run_id), payload=payload
+            )
             return
         if task_type == "semantic_repair_frontier":
-            result = self.fastcode.process_semantic_repair_frontier(payload=payload)
+            result = self.fastcode.publishing.process_semantic_repair_frontier(
+                payload=payload
+            )
             if self._projection_rebuild_enabled(payload):
                 self._rebuild_dirty_projections_after_repair(payload, result)
             return

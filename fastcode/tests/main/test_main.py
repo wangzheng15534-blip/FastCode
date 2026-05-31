@@ -46,6 +46,7 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.main.config import config_from_mapping, config_to_runtime_mapping
+from fastcode.app.indexing.publishing_facade import PublishingFacade
 from fastcode.main.fastcode import FastCode
 from fastcode.main.runtime_state import RuntimeState
 from fastcode.retrieval.context.agent_context import (
@@ -690,7 +691,7 @@ def test_apply_repository_runtime_overrides_refreshes_loader_and_runtime_config(
 def test_process_semantic_repair_frontier_replays_pipeline_with_payload():
     fc = FastCode.__new__(FastCode)
     fc.state = RuntimeState()
-    fc.pipeline = SimpleNamespace(
+    pipeline = SimpleNamespace(
         run_semantic_repair_frontier=lambda **kwargs: {
             "status": "repaired",
             "kwargs": kwargs,
@@ -702,8 +703,15 @@ def test_process_semantic_repair_frontier_replays_pipeline_with_payload():
             },
         }
     )
+    fc.publishing = PublishingFacade(
+        publishing_service=SimpleNamespace(),
+        pipeline=pipeline,
+        projection_store=SimpleNamespace(enabled=False),
+        snapshot_store=SimpleNamespace(),
+        config={},
+    )
 
-    result = fc.process_semantic_repair_frontier(
+    result = fc.publishing.process_semantic_repair_frontier(
         {
             "snapshot_id": "snap:1",
             "repo_name": "repo",
@@ -725,7 +733,7 @@ def test_process_semantic_repair_frontier_replays_pipeline_with_payload():
 def test_process_semantic_repair_frontier_marks_existing_projections_dirty():
     fc = FastCode.__new__(FastCode)
     fc.state = RuntimeState()
-    fc.pipeline = SimpleNamespace(
+    pipeline = SimpleNamespace(
         run_semantic_repair_frontier=lambda **kwargs: {
             "status": "repaired",
             "warnings": [],
@@ -738,7 +746,7 @@ def test_process_semantic_repair_frontier_marks_existing_projections_dirty():
         }
     )
     marked: list[dict[str, Any]] = []
-    fc.projection_store = SimpleNamespace(
+    projection_store = SimpleNamespace(
         enabled=True,
         list_builds_for_snapshot=lambda _snapshot_id: [
             {"scope_kind": "snapshot", "scope_key": "scope:snapshot"},
@@ -746,8 +754,15 @@ def test_process_semantic_repair_frontier_marks_existing_projections_dirty():
         ],
         mark_dirty=lambda **kwargs: marked.append(kwargs),
     )
+    fc.publishing = PublishingFacade(
+        publishing_service=SimpleNamespace(),
+        pipeline=pipeline,
+        projection_store=projection_store,
+        snapshot_store=SimpleNamespace(),
+        config={},
+    )
 
-    result = fc.process_semantic_repair_frontier(
+    result = fc.publishing.process_semantic_repair_frontier(
         {
             "snapshot_id": "snap:1",
             "repo_name": "repo",
@@ -770,7 +785,7 @@ def test_process_semantic_repair_frontier_marks_existing_projections_dirty():
 def test_process_semantic_repair_frontier_skips_unrelated_projection_scopes():
     fc = FastCode.__new__(FastCode)
     fc.state = RuntimeState()
-    fc.pipeline = SimpleNamespace(
+    pipeline = SimpleNamespace(
         run_semantic_repair_frontier=lambda **kwargs: {
             "status": "repaired",
             "warnings": [],
@@ -783,7 +798,7 @@ def test_process_semantic_repair_frontier_skips_unrelated_projection_scopes():
         }
     )
     marked: list[dict[str, Any]] = []
-    fc.projection_store = SimpleNamespace(
+    projection_store = SimpleNamespace(
         enabled=True,
         list_builds_for_snapshot=lambda _snapshot_id: [
             {
@@ -800,8 +815,15 @@ def test_process_semantic_repair_frontier_skips_unrelated_projection_scopes():
         mark_dirty=lambda **kwargs: marked.append(kwargs),
         mark_all_dirty=lambda *args, **kwargs: None,
     )
+    fc.publishing = PublishingFacade(
+        publishing_service=SimpleNamespace(),
+        pipeline=pipeline,
+        projection_store=projection_store,
+        snapshot_store=SimpleNamespace(),
+        config={},
+    )
 
-    result = fc.process_semantic_repair_frontier(
+    result = fc.publishing.process_semantic_repair_frontier(
         {
             "snapshot_id": "snap:1",
             "repo_name": "repo",
@@ -819,7 +841,7 @@ def test_process_semantic_repair_frontier_skips_unrelated_projection_scopes():
 def test_process_semantic_repair_frontier_uses_coverage_nodes_when_paths_absent():
     fc = FastCode.__new__(FastCode)
     fc.state = RuntimeState()
-    fc.pipeline = SimpleNamespace(
+    pipeline = SimpleNamespace(
         run_semantic_repair_frontier=lambda **kwargs: {
             "status": "repaired",
             "warnings": [],
@@ -852,8 +874,8 @@ def test_process_semantic_repair_frontier_uses_coverage_nodes_when_paths_absent(
         ],
     )
     marked: list[dict[str, Any]] = []
-    fc.snapshot_store = SimpleNamespace(load_snapshot=lambda _snapshot_id: snapshot)
-    fc.projection_store = SimpleNamespace(
+    snapshot_store = SimpleNamespace(load_snapshot=lambda _snapshot_id: snapshot)
+    projection_store = SimpleNamespace(
         enabled=True,
         list_builds_for_snapshot=lambda _snapshot_id: [
             {
@@ -872,8 +894,15 @@ def test_process_semantic_repair_frontier_uses_coverage_nodes_when_paths_absent(
         mark_dirty=lambda **kwargs: marked.append(kwargs),
         mark_all_dirty=lambda *args, **kwargs: None,
     )
+    fc.publishing = PublishingFacade(
+        publishing_service=SimpleNamespace(),
+        pipeline=pipeline,
+        projection_store=projection_store,
+        snapshot_store=snapshot_store,
+        config={},
+    )
 
-    result = fc.process_semantic_repair_frontier(
+    result = fc.publishing.process_semantic_repair_frontier(
         {
             "snapshot_id": "snap:1",
             "repo_name": "repo",
@@ -1059,7 +1088,7 @@ def test_graph_helpers_use_compact_bounded_traversal_without_networkx():
 def test_process_semantic_repair_frontier_widens_topology_dirty_scopes():
     fc = FastCode.__new__(FastCode)
     fc.state = RuntimeState()
-    fc.pipeline = SimpleNamespace(
+    pipeline = SimpleNamespace(
         run_semantic_repair_frontier=lambda **kwargs: {
             "status": "repaired",
             "warnings": [],
@@ -1072,7 +1101,7 @@ def test_process_semantic_repair_frontier_widens_topology_dirty_scopes():
         }
     )
     all_dirty: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-    fc.projection_store = SimpleNamespace(
+    projection_store = SimpleNamespace(
         enabled=True,
         list_builds_for_snapshot=lambda _snapshot_id: [
             {
@@ -1084,8 +1113,15 @@ def test_process_semantic_repair_frontier_widens_topology_dirty_scopes():
         mark_dirty=lambda **kwargs: None,
         mark_all_dirty=lambda *args, **kwargs: all_dirty.append((args, kwargs)),
     )
+    fc.publishing = PublishingFacade(
+        publishing_service=SimpleNamespace(),
+        pipeline=pipeline,
+        projection_store=projection_store,
+        snapshot_store=SimpleNamespace(),
+        config={},
+    )
 
-    result = fc.process_semantic_repair_frontier(
+    result = fc.publishing.process_semantic_repair_frontier(
         {
             "snapshot_id": "snap:1",
             "repo_name": "repo",

@@ -141,7 +141,7 @@ def query(
 
             # Get summary
             if verbose:
-                summary = fastcode.get_repository_summary()
+                summary = fastcode.store.get_repository_summary()
                 click.echo(f"\n{summary}\n")
 
             # Query
@@ -218,7 +218,7 @@ def index(
         fastcode.index_repository()
 
         # Show summary
-        summary = fastcode.get_repository_summary()
+        summary = fastcode.store.get_repository_summary()
         click.echo(f"\n{summary}")
         click.echo("\nIndexing complete!")
 
@@ -332,7 +332,7 @@ def interactive(
             click.echo("Indexing repository...")
             fastcode.index_repository()
 
-            summary = fastcode.get_repository_summary()
+            summary = fastcode.store.get_repository_summary()
             click.echo(f"\n{summary}\n")
 
         # Interactive loop
@@ -759,7 +759,7 @@ def index_multiple(
         fastcode.load_multiple_repositories(sources)
 
         # Show summary
-        stats = fastcode.get_repository_stats()
+        stats = fastcode.store.get_repository_stats()
         click.echo("\n" + "=" * 60)
         click.echo("Multi-Repository Indexing Complete!")
         click.echo("=" * 60)
@@ -871,7 +871,7 @@ def list_repos(config: str | None, load_cache: bool) -> None:
                 click.echo("Error: Failed to load multi-repo cache", err=True)
                 sys.exit(1)
 
-            repositories = fastcode.list_repositories()
+            repositories = fastcode.store.list_repositories()
 
             if not repositories:
                 click.echo("No repositories found in index")

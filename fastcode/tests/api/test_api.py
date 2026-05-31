@@ -23,6 +23,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import fastcode.api.routes as api
+from fastcode.app.store.facade import StoreFacade
 from fastcode.app.store.snapshots.manifest import ManifestStore
 from fastcode.app.store.snapshots.snapshot import SnapshotStore
 from fastcode.infrastructure.storage.runtime import DBRuntime
@@ -90,6 +91,20 @@ class _FakeFastCode:
     def __init__(self, snapshot_store: SnapshotStore) -> None:
         self.snapshot_store = snapshot_store
         self.manifest_store = ManifestStore(snapshot_store.db_runtime)
+        self.store = StoreFacade(
+            vector_store=SimpleNamespace(),
+            snapshot_store=self.snapshot_store,
+            manifest_store=self.manifest_store,
+            snapshot_symbol_index=SimpleNamespace(),
+            state=SimpleNamespace(
+                repo_loaded=False,
+                repo_indexed=False,
+                repo_info={},
+                multi_repo_mode=False,
+                loaded_repositories={},
+            ),
+            config={},
+        )
 
     @staticmethod
     def _manifest_payload(record: Any) -> dict[str, Any]:
@@ -412,7 +427,7 @@ class TestCodeStatusPack:
             return func(*args, **kwargs)
 
         fake_fastcode = MagicMock()
-        fake_fastcode.get_code_status_pack.return_value = {
+        fake_fastcode.store.get_code_status_pack.return_value = {
             "schema_version": "code_status_pack.v0",
             "snapshot": {"snapshot_id": "snap:repo:1"},
         }
@@ -434,7 +449,7 @@ class TestCodeStatusPack:
         assert body["pack"]["schema_version"] == "code_status_pack.v0"
         assert offloaded == [
             (
-                fake_fastcode.get_code_status_pack,
+                fake_fastcode.store.get_code_status_pack,
                 ("snap:repo:1",),
                 {"include_graph_facts": False},
             )

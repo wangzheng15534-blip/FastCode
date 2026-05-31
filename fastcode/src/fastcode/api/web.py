@@ -140,7 +140,7 @@ async def get_status(request: Request, full_scan: bool = False):
     """
     fastcode_instance = _fc(request)
 
-    info = fastcode_instance.get_status_info(full_scan=full_scan)
+    info = fastcode_instance.store.get_status_info(full_scan=full_scan)
 
     return serialize_status_response(
         serialize_status_response_record(
@@ -159,7 +159,7 @@ async def health_check(request: Request):
     """Lightweight health check endpoint (no expensive operations)"""
     fc = _fc(request)
 
-    info = fc.get_status_info()
+    info = fc.store.get_status_info()
     health = readiness_health(
         repo_loaded=info["repo_loaded"],
         repo_indexed=info["repo_indexed"],
@@ -182,7 +182,7 @@ async def list_repositories(request: Request, full_scan: bool = False):
     fastcode_instance = _fc(request)
 
     try:
-        info = fastcode_instance.get_status_info(full_scan=full_scan)
+        info = fastcode_instance.store.get_status_info(full_scan=full_scan)
 
         return {
             "status": "success",
@@ -206,7 +206,7 @@ async def load_repository(request: Request, req: LoadRepositoryRequest):
             fastcode.load_repository, command.source, command.is_url
         )
 
-        info = fastcode.get_status_info()
+        info = fastcode.store.get_status_info()
         return {
             "status": "success",
             "message": "Repository loaded successfully",
@@ -223,7 +223,7 @@ async def index_repository(request: Request, force: bool = False):
     """Index the loaded repository"""
     fastcode = _fc(request)
 
-    if not fastcode.get_status_info()["repo_loaded"]:
+    if not fastcode.store.get_status_info()["repo_loaded"]:
         raise HTTPException(status_code=400, detail="No repository loaded")
 
     try:
@@ -233,7 +233,7 @@ async def index_repository(request: Request, force: bool = False):
         return {
             "status": "success",
             "message": "Repository indexed successfully",
-            "summary": fastcode.get_repository_summary(),
+            "summary": fastcode.store.get_repository_summary(),
         }
 
     except Exception as e:
@@ -272,7 +272,7 @@ async def index_multiple(request: Request, req: IndexMultipleRequest):
         return {
             "status": "success",
             "message": "Repositories indexed successfully",
-            "stats": fastcode.get_repository_stats(),
+            "stats": fastcode.store.get_repository_stats(),
         }
     except Exception as e:
         logger.error(f"Failed to index multiple repositories: {e}")
@@ -322,8 +322,8 @@ async def load_repositories(request: Request, req: LoadRepositoriesRequest):
 
         return {
             "status": "success",
-            "loaded": fastcode.list_repositories(),
-            "stats": fastcode.get_repository_stats(),
+            "loaded": fastcode.store.list_repositories(),
+            "stats": fastcode.store.get_repository_stats(),
         }
     except HTTPException:
         raise
@@ -399,7 +399,7 @@ async def query_repository(request: Request, req: QueryRequest):
     fastcode = _fc(request)
     query_request = map_repository_query_request(req)
 
-    if not fastcode.get_status_info()["repo_indexed"]:
+    if not fastcode.store.get_status_info()["repo_indexed"]:
         raise HTTPException(status_code=400, detail="Repository not indexed")
 
     try:
@@ -445,7 +445,7 @@ async def query_repository_stream(request: Request, req: QueryRequest):
 
     logger.info(f"Processing streaming query: {req.question}")
 
-    if not fc.get_status_info()["repo_indexed"]:
+    if not fc.store.get_status_info()["repo_indexed"]:
         raise HTTPException(status_code=400, detail="Repository not indexed")
 
     async def event_generator():
@@ -511,7 +511,7 @@ async def get_repository_summary(request: Request):
     """Get repository summary"""
     fastcode_instance = _fc(request)
 
-    info = fastcode_instance.get_status_info()
+    info = fastcode_instance.store.get_status_info()
     if not info["repo_loaded"]:
         raise HTTPException(status_code=400, detail="No repository loaded")
 
@@ -521,9 +521,11 @@ async def get_repository_summary(request: Request):
 
     try:
         if info["multi_repo_mode"]:
-            summary_payload["summary"] = fastcode_instance.get_repository_stats()
+            summary_payload["summary"] = fastcode_instance.store.get_repository_stats()
         else:
-            summary_payload["summary"] = fastcode_instance.get_repository_summary()
+            summary_payload["summary"] = (
+                fastcode_instance.store.get_repository_summary()
+            )
     except Exception as e:
         logger.error(f"Failed to build summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))

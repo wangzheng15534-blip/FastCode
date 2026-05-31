@@ -61,6 +61,32 @@ class _FakeVectorStore:
         return []
 
 
+class _FakeStoreFacade:
+    """Minimal stand-in for StoreFacade used by web.py entry frames."""
+
+    def get_status_info(self, *, full_scan: bool = False) -> dict[str, Any]:
+        return {
+            "repo_loaded": True,
+            "repo_indexed": True,
+            "repo_info": {"name": "repo"},
+            "multi_repo_mode": False,
+            "storage_backend": "sqlite",
+            "retrieval_backend": "local",
+            "graph_expansion_backend": "graph_builder",
+            "available_repositories": [],
+            "loaded_repositories": [],
+        }
+
+    def get_repository_summary(self) -> str:
+        return "summary"
+
+    def get_repository_stats(self) -> dict[str, Any]:
+        return {"repo_count": 1}
+
+    def list_repositories(self) -> list[dict[str, Any]]:
+        return [{"repo_name": "repo"}]
+
+
 class _FakeFastCode:
     def __init__(self) -> None:
         self.repo_loaded = True
@@ -71,6 +97,7 @@ class _FakeFastCode:
             clear=lambda: True,
         )
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+        self.store = _FakeStoreFacade()
 
     def load_repository(self, source: str, is_url: bool | None) -> None:
         self.calls.append(("load_repository", (source, is_url), {}))
@@ -217,7 +244,6 @@ def test_load_endpoint_offloads_blocking_call(
     assert body["repo_info"] == {"name": "repo"}
     assert fake.calls == [
         ("load_repository", ("/tmp/repo", False), {}),
-        ("get_status_info", (), {"full_scan": False}),
     ]
 
 

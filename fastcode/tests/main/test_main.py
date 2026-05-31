@@ -36,6 +36,7 @@ from fastcode.app.store.snapshots.snapshot_contracts import (
     SnapshotRefRecord,
 )
 from fastcode.app.store.vectors.vector import VectorStore
+from fastcode.app.store.facade import StoreFacade
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs, IRGraphView
@@ -133,10 +134,18 @@ def test_api_facade_refs_and_manifests_use_explicit_record_payloads(
         get_branch_manifest=_boom_store_dict,
         get_snapshot_manifest=_boom_store_dict,
     )
+    fc.store = StoreFacade(
+        vector_store=SimpleNamespace(),
+        snapshot_store=fc.snapshot_store,
+        manifest_store=fc.manifest_store,
+        snapshot_symbol_index=SimpleNamespace(),
+        state=fc.state,
+        config={},
+    )
 
-    refs = fc.list_repo_refs("repo")
-    branch_manifest = fc.get_branch_manifest("repo", "main")
-    snapshot_manifest = fc.get_snapshot_manifest("snap:repo:abc123")
+    refs = fc.store.list_repo_refs("repo")
+    branch_manifest = fc.store.get_branch_manifest("repo", "main")
+    snapshot_manifest = fc.store.get_snapshot_manifest("snap:repo:abc123")
 
     assert refs == [
         {
@@ -202,9 +211,17 @@ def test_api_facade_scip_artifacts_use_explicit_record_payloads(
         get_scip_artifact_ref=_boom_store_dict,
         list_scip_artifact_refs=_boom_store_dict,
     )
+    fc.store = StoreFacade(
+        vector_store=SimpleNamespace(),
+        snapshot_store=fc.snapshot_store,
+        manifest_store=SimpleNamespace(),
+        snapshot_symbol_index=SimpleNamespace(),
+        state=fc.state,
+        config={},
+    )
 
-    artifact = fc.get_scip_artifact_ref("snap:repo:abc123")
-    artifacts = fc.list_scip_artifact_refs("snap:repo:abc123")
+    artifact = fc.store.get_scip_artifact_ref("snap:repo:abc123")
+    artifacts = fc.store.list_scip_artifact_refs("snap:repo:abc123")
 
     assert artifact is not None
     assert artifact["artifact_id"] == "snap:repo:abc123:scip:0"
@@ -318,8 +335,16 @@ def test_code_status_pack_uses_snapshot_record_and_explicit_ir_payloads(
             manifest if requested == snapshot_id else None
         )
     )
+    fc.store = StoreFacade(
+        vector_store=SimpleNamespace(),
+        snapshot_store=fc.snapshot_store,
+        manifest_store=fc.manifest_store,
+        snapshot_symbol_index=SimpleNamespace(),
+        state=fc.state,
+        config={},
+    )
 
-    pack = fc.get_code_status_pack(snapshot_id, include_graph_facts=False)
+    pack = fc.store.get_code_status_pack(snapshot_id, include_graph_facts=False)
 
     assert pack["schema_version"] == "code_status_pack.v0"
     assert pack["snapshot"]["artifact_key"] == "artifact-code-status"
@@ -939,8 +964,16 @@ def test_resolve_snapshot_symbol_uses_compact_payload_without_full_snapshot_load
             AssertionError("resolve_snapshot_symbol should not full-load IRSnapshot")
         ),
     )
+    fc.store = StoreFacade(
+        vector_store=SimpleNamespace(),
+        snapshot_store=fc.snapshot_store,
+        manifest_store=SimpleNamespace(),
+        snapshot_symbol_index=fc.snapshot_symbol_index,
+        state=fc.state,
+        config={},
+    )
 
-    assert fc.resolve_snapshot_symbol("snap:1", name="AuthService") == "sym:auth"
+    assert fc.store.resolve_snapshot_symbol("snap:1", name="AuthService") == "sym:auth"
 
 
 def test_find_symbol_uses_compact_symbol_record_without_full_snapshot_load():
@@ -970,8 +1003,16 @@ def test_find_symbol_uses_compact_symbol_record_without_full_snapshot_load():
             AssertionError("find_symbol should not full-load IRSnapshot")
         ),
     )
+    fc.store = StoreFacade(
+        vector_store=SimpleNamespace(),
+        snapshot_store=fc.snapshot_store,
+        manifest_store=SimpleNamespace(),
+        snapshot_symbol_index=fc.snapshot_symbol_index,
+        state=fc.state,
+        config={},
+    )
 
-    assert fc.find_symbol("snap:1", name="AuthService") == {
+    assert fc.store.find_symbol("snap:1", name="AuthService") == {
         "symbol_id": "sym:auth",
         "display_name": "AuthService",
         "path": "src/auth.py",
@@ -1027,8 +1068,16 @@ def test_find_symbol_fallback_uses_explicit_symbol_payload(
         raise AssertionError("find_symbol fallback must not call IRSymbol.to_dict()")
 
     monkeypatch.setattr(IRSymbol, "to_dict", _boom)
+    fc.store = StoreFacade(
+        vector_store=SimpleNamespace(),
+        snapshot_store=fc.snapshot_store,
+        manifest_store=SimpleNamespace(),
+        snapshot_symbol_index=fc.snapshot_symbol_index,
+        state=fc.state,
+        config={},
+    )
 
-    assert fc.find_symbol("snap:1", name="AuthService") == {
+    assert fc.store.find_symbol("snap:1", name="AuthService") == {
         "symbol_id": "sym:auth",
         "external_symbol_id": "scip:auth",
         "path": "src/auth.py",
@@ -1069,19 +1118,27 @@ def test_graph_helpers_use_compact_bounded_traversal_without_networkx():
         containment_graph=IRGraphView(),
     )
     fc.snapshot_store = SimpleNamespace(load_ir_graphs=lambda _snapshot_id: graphs)
+    fc.store = StoreFacade(
+        vector_store=SimpleNamespace(),
+        snapshot_store=fc.snapshot_store,
+        manifest_store=SimpleNamespace(),
+        snapshot_symbol_index=SimpleNamespace(),
+        state=fc.state,
+        config={},
+    )
 
     with patch(
         "networkx.single_source_shortest_path_length",
         side_effect=AssertionError("main graph helpers should use compact traversal"),
     ):
-        assert fc.get_graph_callees("snap:1", "sym:a", max_hops=2) == [
+        assert fc.store.get_graph_callees("snap:1", "sym:a", max_hops=2) == [
             {"symbol_id": "sym:b", "distance": 1},
             {"symbol_id": "sym:c", "distance": 2},
         ]
-        assert fc.get_graph_callers("snap:1", "sym:a", max_hops=1) == [
+        assert fc.store.get_graph_callers("snap:1", "sym:a", max_hops=1) == [
             {"symbol_id": "sym:caller", "distance": 1},
         ]
-        assert fc.get_graph_dependencies("snap:1", "doc:a", max_hops=1) == [
+        assert fc.store.get_graph_dependencies("snap:1", "doc:a", max_hops=1) == [
             {"doc_id": "doc:b", "distance": 1},
         ]
 

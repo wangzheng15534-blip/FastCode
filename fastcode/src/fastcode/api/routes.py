@@ -150,7 +150,7 @@ async def health_check(request: Request):
             "repo_indexed": False,
         }
 
-    info = fc.get_status_info()
+    info = fc.store.get_status_info()
     health = readiness_health(
         repo_loaded=info["repo_loaded"],
         repo_indexed=info["repo_indexed"],
@@ -170,7 +170,7 @@ async def health_check(request: Request):
 async def get_status(request: Request, full_scan: bool = False):
     """Get system status."""
     fastcode = _fc(request)
-    info = fastcode.get_status_info(full_scan=full_scan)
+    info = fastcode.store.get_status_info(full_scan=full_scan)
     return serialize_status_response(
         serialize_status_response_record(
             status=ApiStatus.READY if info["repo_indexed"] else ApiStatus.NOT_READY,
@@ -211,7 +211,7 @@ async def list_repositories(request: Request, full_scan: bool = False):
     fastcode = _fc(request)
 
     try:
-        info = fastcode.get_status_info(full_scan=full_scan)
+        info = fastcode.store.get_status_info(full_scan=full_scan)
 
         return {
             "status": "success",
@@ -235,7 +235,7 @@ async def load_repository(request: Request, req: LoadRepositoryRequest):
             fastcode.load_repository, command.source, command.is_url
         )
 
-        info = fastcode.get_status_info()
+        info = fastcode.store.get_status_info()
         return {
             "status": "success",
             "message": "Repository loaded successfully",
@@ -252,7 +252,7 @@ async def index_repository(request: Request, force: bool = False):
     """Index the loaded repository"""
     fastcode = _fc(request)
 
-    if not fastcode.get_status_info()["repo_loaded"]:
+    if not fastcode.store.get_status_info()["repo_loaded"]:
         raise HTTPException(status_code=400, detail="No repository loaded")
 
     try:
@@ -262,7 +262,7 @@ async def index_repository(request: Request, force: bool = False):
         return {
             "status": "success",
             "message": "Repository indexed successfully",
-            "summary": fastcode.get_repository_summary(),
+            "summary": fastcode.store.get_repository_summary(),
             "deprecated": True,
             "deprecation_note": "Use /index/run for IR-first snapshot indexing.",
         }
@@ -386,8 +386,8 @@ async def load_repositories(request: Request, req: LoadRepositoriesRequest):
 
         return {
             "status": "success",
-            "loaded": fastcode.list_repositories(),
-            "stats": fastcode.get_repository_stats(),
+            "loaded": fastcode.store.list_repositories(),
+            "stats": fastcode.store.get_repository_stats(),
         }
     except HTTPException:
         raise
@@ -424,7 +424,7 @@ async def index_multiple(request: Request, req: IndexMultipleRequest):
         return {
             "status": "success",
             "message": "Repositories indexed successfully",
-            "stats": fastcode.get_repository_stats(),
+            "stats": fastcode.store.get_repository_stats(),
         }
     except Exception as e:
         logger.error(f"Failed to index multiple repositories: {e}")
@@ -571,7 +571,7 @@ async def get_repository_summary(request: Request):
     """Get repository summary"""
     fastcode = _fc(request)
 
-    info = fastcode.get_status_info()
+    info = fastcode.store.get_status_info()
     if not info["repo_loaded"]:
         raise HTTPException(status_code=400, detail="No repository loaded")
 
@@ -581,9 +581,9 @@ async def get_repository_summary(request: Request):
 
     try:
         if info["multi_repo_mode"]:
-            summary_payload["summary"] = fastcode.get_repository_stats()
+            summary_payload["summary"] = fastcode.store.get_repository_stats()
         else:
-            summary_payload["summary"] = fastcode.get_repository_summary()
+            summary_payload["summary"] = fastcode.store.get_repository_summary()
     except Exception as e:
         logger.error(f"Failed to build summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -595,7 +595,7 @@ async def get_repository_summary(request: Request):
 async def get_branch_manifest(request: Request, repo_name: str, ref_name: str):
     """Get latest published manifest for repo/ref."""
     fastcode = _fc(request)
-    manifest = fastcode.get_branch_manifest(repo_name, ref_name)
+    manifest = fastcode.store.get_branch_manifest(repo_name, ref_name)
     if not manifest:
         raise HTTPException(status_code=404, detail="Manifest not found")
     return {"status": "success", "manifest": manifest}
@@ -605,7 +605,7 @@ async def get_branch_manifest(request: Request, repo_name: str, ref_name: str):
 async def get_repo_refs(request: Request, repo_name: str):
     fastcode = _fc(request)
     try:
-        refs = await asyncio.to_thread(fastcode.list_repo_refs, repo_name)
+        refs = await asyncio.to_thread(fastcode.store.list_repo_refs, repo_name)
         return {"status": "success", "repo_name": repo_name, "refs": refs}
     except Exception as e:
         logger.error(f"Repo refs lookup failed: {e}")
@@ -616,7 +616,7 @@ async def get_repo_refs(request: Request, repo_name: str):
 async def get_snapshot_manifest(request: Request, snapshot_id: str):
     """Get latest published manifest for snapshot ID."""
     fastcode = _fc(request)
-    manifest = fastcode.get_snapshot_manifest(snapshot_id)
+    manifest = fastcode.store.get_snapshot_manifest(snapshot_id)
     if not manifest:
         raise HTTPException(status_code=404, detail="Manifest not found")
     return {"status": "success", "manifest": manifest}
@@ -632,7 +632,7 @@ async def get_code_status_pack(
     fastcode = _fc(request)
     try:
         pack = await asyncio.to_thread(
-            fastcode.get_code_status_pack,
+            fastcode.store.get_code_status_pack,
             snapshot_id,
             include_graph_facts=include_graph_facts,
         )
@@ -648,10 +648,10 @@ async def get_code_status_pack(
 async def get_scip_artifact(request: Request, snapshot_id: str):
     """Get preserved SCIP artifact metadata for a snapshot."""
     fastcode = _fc(request)
-    artifact = fastcode.get_scip_artifact_ref(snapshot_id)
+    artifact = fastcode.store.get_scip_artifact_ref(snapshot_id)
     if not artifact:
         raise HTTPException(status_code=404, detail="SCIP artifact not found")
-    artifacts = fastcode.list_scip_artifact_refs(snapshot_id)
+    artifacts = fastcode.store.list_scip_artifact_refs(snapshot_id)
     return {"status": "success", "artifact": artifact, "artifacts": artifacts}
 
 
@@ -666,7 +666,7 @@ async def find_symbol(
     fastcode = _fc(request)
     try:
         symbol = await asyncio.to_thread(
-            fastcode.find_symbol,
+            fastcode.store.find_symbol,
             snapshot_id,
             symbol_id=symbol_id,
             name=name,
@@ -689,7 +689,7 @@ async def get_graph_callees(
     fastcode = _fc(request)
     try:
         callees = await asyncio.to_thread(
-            fastcode.get_graph_callees, snapshot_id, symbol_id, max_hops
+            fastcode.store.get_graph_callees, snapshot_id, symbol_id, max_hops
         )
         return {
             "status": "success",
@@ -709,7 +709,7 @@ async def get_graph_callers(
     fastcode = _fc(request)
     try:
         callers = await asyncio.to_thread(
-            fastcode.get_graph_callers, snapshot_id, symbol_id, max_hops
+            fastcode.store.get_graph_callers, snapshot_id, symbol_id, max_hops
         )
         return {
             "status": "success",
@@ -729,7 +729,7 @@ async def get_graph_dependencies(
     fastcode = _fc(request)
     try:
         deps = await asyncio.to_thread(
-            fastcode.get_graph_dependencies, snapshot_id, doc_id, max_hops
+            fastcode.store.get_graph_dependencies, snapshot_id, doc_id, max_hops
         )
         return {
             "status": "success",

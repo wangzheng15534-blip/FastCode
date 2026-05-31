@@ -405,7 +405,7 @@ def list_indexed_repos() -> str:
         A list of indexed repository names with metadata.
     """
     fc = _get_fastcode()
-    return format_indexed_repos(fc.list_available_repos())
+    return format_indexed_repos(fc.store.list_available_repos())
 
 
 @mcp.tool()
@@ -473,9 +473,9 @@ def get_repo_structure(repo_name: str) -> str:
         Repository summary, directory structure, and language breakdown.
     """
     fc = _get_fastcode()
-    if not fc.is_repo_indexed(repo_name):
+    if not fc.store.is_repo_indexed(repo_name):
         return f"Repository '{repo_name}' is not indexed. Use code_qa or reindex_repo first."
-    overview = fc.get_repo_overview(repo_name)
+    overview = fc.store.get_repo_overview(repo_name)
     if not overview:
         return (
             f"No overview found for repository '{repo_name}'. It may need re-indexing."

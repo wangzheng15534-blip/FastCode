@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from fastcode.app.query.facade import QueryFacade
+from fastcode.app.store.facade import StoreFacade
 from fastcode.main.runtime_state import RuntimeState
 
 
@@ -38,6 +39,16 @@ def _minimal_fastcode() -> Any:
     fc.snapshot_symbol_index = MagicMock()
     fc.pipeline = MagicMock()
     fc.query_handler = MagicMock()
+    # Wire the StoreFacade
+    fc.manifest_store = MagicMock()
+    fc.store = StoreFacade(
+        vector_store=fc.vector_store,
+        snapshot_store=fc.snapshot_store,
+        manifest_store=fc.manifest_store,
+        snapshot_symbol_index=fc.snapshot_symbol_index,
+        state=fc.state,
+        config=fc.config,
+    )
     # Wire the QueryFacade
     fc.query = QueryFacade(
         query_handler=fc.query_handler,
@@ -55,7 +66,7 @@ def _minimal_fastcode() -> Any:
 class TestGetStatusInfo:
     def test_returns_all_status_fields(self):
         fc = _minimal_fastcode()
-        info = fc.get_status_info()
+        info = fc.store.get_status_info()
         assert info["repo_loaded"] is True
         assert info["repo_indexed"] is True
         assert info["storage_backend"] == "sqlite"
@@ -66,12 +77,12 @@ class TestGetStatusInfo:
 
     def test_full_scan_bypasses_cache(self):
         fc = _minimal_fastcode()
-        fc.get_status_info(full_scan=True)
+        fc.store.get_status_info(full_scan=True)
         fc.vector_store.scan_available_indexes.assert_called_with(use_cache=False)
 
     def test_default_uses_cache(self):
         fc = _minimal_fastcode()
-        fc.get_status_info()
+        fc.store.get_status_info()
         fc.vector_store.scan_available_indexes.assert_called_with(use_cache=True)
 
 
@@ -268,7 +279,7 @@ class TestListAvailableRepos:
         fc = _minimal_fastcode()
         repos = [{"name": "repo-a"}, {"name": "repo-b"}]
         fc.vector_store.scan_available_indexes.return_value = repos
-        result = fc.list_available_repos()
+        result = fc.store.list_available_repos()
         fc.vector_store.scan_available_indexes.assert_called_once_with(
             use_cache=False
         )
@@ -280,7 +291,7 @@ class TestGetRepoOverview:
         fc = _minimal_fastcode()
         overview = {"name": "repo-a", "element_count": 42}
         fc.vector_store.load_repo_overviews.return_value = {"repo-a": overview}
-        result = fc.get_repo_overview("repo-a")
+        result = fc.store.get_repo_overview("repo-a")
         assert result == overview
         fc.vector_store.load_repo_overviews.assert_called_once_with(
             include_embeddings=False
@@ -289,7 +300,7 @@ class TestGetRepoOverview:
     def test_returns_none_when_not_found(self):
         fc = _minimal_fastcode()
         fc.vector_store.load_repo_overviews.return_value = {"repo-a": {}}
-        result = fc.get_repo_overview("repo-missing")
+        result = fc.store.get_repo_overview("repo-missing")
         assert result is None
 
 

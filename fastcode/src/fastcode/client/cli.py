@@ -76,7 +76,7 @@ def query(
             else:
                 click.echo("Loading multi-repository index from cache...")
 
-            if not fastcode._load_multi_repo_cache(repo_names=repo_names_to_load):
+            if not fastcode.load_cached_repos(repo_names=repo_names_to_load):
                 click.echo("Error: Failed to load multi-repo cache", err=True)
                 sys.exit(1)
 
@@ -286,7 +286,7 @@ def interactive(
 
             # Load specific repositories or all if none specified
             repo_filter = list(repos) if repos else None
-            if not fastcode._load_multi_repo_cache(repo_names=repo_filter):
+            if not fastcode.load_cached_repos(repo_names=repo_filter):
                 click.echo("Error: Failed to load multi-repo cache", err=True)
                 sys.exit(1)
 
@@ -802,7 +802,7 @@ def query_multiple(
         # Try to load from cache
         if load_cache:
             click.echo("Loading multi-repository index from cache...")
-            if not fastcode._load_multi_repo_cache():
+            if not fastcode.load_cached_repos():
                 click.echo(
                     "Error: Failed to load multi-repo cache. Please index repositories first.",
                     err=True,
@@ -867,7 +867,7 @@ def list_repos(config: str | None, load_cache: bool) -> None:
     try:
         # If load-cache is specified, load into memory for full details
         if load_cache:
-            if not fastcode._load_multi_repo_cache():
+            if not fastcode.load_cached_repos():
                 click.echo("Error: Failed to load multi-repo cache", err=True)
                 sys.exit(1)
 

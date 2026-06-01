@@ -43,17 +43,24 @@ def cli(ctx: click.Context, server: str) -> None:
 @cli.command()
 @click.option("--host", default="127.0.0.1", help="Bind host")
 @click.option("--port", "-p", default=8000, help="Bind port")
-def serve(host: str, port: int) -> None:
+@click.option("--reload", is_flag=True, help="Enable auto-reload")
+def serve(host: str, port: int, reload: bool) -> None:
     """Start the FastCode API server."""
     import uvicorn
 
     click.echo(f"Starting FastCode API server on {host}:{port}")
-    uvicorn.run(
-        "fastcode.main.serve:create_api_app",
-        host=host,
-        port=port,
-        factory=True,
-    )
+    if reload:
+        uvicorn.run(
+            "fastcode.main.serve:create_api_app",
+            host=host,
+            port=port,
+            factory=True,
+            reload=True,
+        )
+    else:
+        from fastcode.main.serve import create_api_app
+
+        uvicorn.run(create_api_app(), host=host, port=port)
 
 
 @cli.command("mcp")

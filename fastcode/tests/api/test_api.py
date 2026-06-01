@@ -36,12 +36,25 @@ from fastcode.utils.archive import UnsafeArchiveError
 
 
 def _mock_request(*, app: Any = None) -> MagicMock:
-    """Create a mock Request with app.state wired to the real api.app."""
+    """Create a mock Request with app.state wired to the shared test app."""
     req = MagicMock()
     if app is None:
-        app = api.app
+        app = _shared_test_app
     req.app = app
     return req
+
+
+def _make_test_app() -> Any:
+    """Create a minimal FastAPI app that includes the routes router."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(api.router)
+    return app
+
+
+# Module-level shared test app — the `stores` fixture configures its state.
+_shared_test_app = _make_test_app()
 
 
 def _zip_bytes(entries: dict[str, bytes]) -> bytes:
@@ -223,17 +236,12 @@ def stores(tmp_path: Any) -> Any:
     """Yield real storage wired into the app state FastCode handle."""
     store = _make_snapshot_store(tmp_path)
     fake = _FakeFastCode(store)
-    # Store on app.state instead of module global
-    app = api.app
-    original = getattr(app.state, "fastcode", None)
-    app.state.fastcode = fake
+    _shared_test_app.state.facades = fake
     try:
         yield fake, store
     finally:
-        if original is not None:
-            app.state.fastcode = original
-        else:
-            delattr(app.state, "fastcode")
+        if hasattr(_shared_test_app.state, "facades"):
+            delattr(_shared_test_app.state, "facades")
 
 
 # ---------------------------------------------------------------------------
@@ -398,9 +406,7 @@ class TestManifests:
         )
         store.save_snapshot(snap)
 
-        fake_fc = api.app.state.fastcode
-        assert fake_fc is not None
-        fake_fc.manifest_store.publish_record(
+        _fake_fc.manifest_store.publish_record(
             repo_name="manifest-repo2",
             ref_name="develop",
             snapshot_id="snap:manifest-repo2:s1",
@@ -434,7 +440,7 @@ class TestCodeStatusPack:
         monkeypatch.setattr(api.asyncio, "to_thread", record_to_thread)
 
         with patch(
-            "fastcode.api.routes._fc",
+            "fastcode.api.routes._facades",
             return_value=fake_fastcode,
         ):
             body = asyncio.run(
@@ -506,7 +512,7 @@ class TestIndexMultiple:
         fake_fastcode.store.get_repository_stats.return_value = {"repos": 2}
 
         with patch(
-            "fastcode.api.routes._fc",
+            "fastcode.api.routes._facades",
             return_value=fake_fastcode,
         ):
             result = asyncio.run(api.index_multiple(_mock_request(), req))
@@ -561,7 +567,7 @@ class TestBlockingEndpointOffloads:
         monkeypatch.setattr(api.asyncio, "to_thread", record_to_thread)
 
         with patch(
-            "fastcode.api.routes._fc",
+            "fastcode.api.routes._facades",
             return_value=fake_fastcode,
         ):
             asyncio.run(
@@ -628,10 +634,10 @@ class TestUploadSecurity:
         )
 
         with patch(
-            "fastcode.api.routes._fc",
+            "fastcode.api.routes._facades",
             return_value=fake_fastcode,
         ):
-            client = TestClient(api.app)
+            client = TestClient(_shared_test_app)
             response = client.post(
                 endpoint,
                 files={
@@ -691,7 +697,7 @@ class TestApiSerializationBoundaries:
 
         monkeypatch.setattr(api.asyncio, "to_thread", _executor_to_thread)
         with patch(
-            "fastcode.api.routes._fc",
+            "fastcode.api.routes._facades",
             return_value=_ConcurrentFastCode(),
         ):
 
@@ -742,7 +748,7 @@ class TestApiSerializationBoundaries:
         }
 
         with patch(
-            "fastcode.api.routes._fc",
+            "fastcode.api.routes._facades",
             return_value=fake_fastcode,
         ):
             result = asyncio.run(
@@ -787,7 +793,7 @@ class TestApiSerializationBoundaries:
         }
 
         with patch(
-            "fastcode.api.routes._fc",
+            "fastcode.api.routes._facades",
             return_value=fake_fastcode,
         ):
             result = asyncio.run(
@@ -813,7 +819,7 @@ class TestApiSerializationBoundaries:
         fake_fastcode.context.get_session_history.return_value = [_NoDictTurn()]
 
         with patch(
-            "fastcode.api.routes._fc",
+            "fastcode.api.routes._facades",
             return_value=fake_fastcode,
         ):
             result = asyncio.run(api.get_session(_mock_request(), "sess-1"))
@@ -915,7 +921,7 @@ class TestAgentContextRoutes:
         }
 
         with patch(
-            "fastcode.api.routes._fc",
+            "fastcode.api.routes._facades",
             return_value=fake_fastcode,
         ):
             latest = asyncio.run(
@@ -1056,7 +1062,7 @@ class TestAgentContextRoutes:
 
         with (
             patch(
-                "fastcode.api.routes._fc",
+                "fastcode.api.routes._facades",
                 return_value=fake_fastcode,
             ),
             pytest.raises(HTTPException) as exc_info,

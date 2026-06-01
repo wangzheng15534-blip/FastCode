@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import zipfile
 from types import SimpleNamespace
@@ -248,6 +249,17 @@ class _FakeFastCode:
         }
 
 
+def _test_app(facades: Any = None) -> Any:
+    """Create a minimal FastAPI app that includes the web router."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(web_app.router)
+    if facades is not None:
+        app.state.facades = facades
+    return app
+
+
 async def _run_inline(func: Any, /, *args: Any, **kwargs: Any) -> Any:
     return func(*args, **kwargs)
 
@@ -256,10 +268,9 @@ def test_load_endpoint_offloads_blocking_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeFastCode()
-    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
-    monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
+    monkeypatch.setattr(asyncio, "to_thread", _run_inline)
 
-    client = TestClient(web_app.app)
+    client = TestClient(_test_app(fake))
     response = client.post("/api/load", json={"source": "/tmp/repo", "is_url": False})
 
     assert response.status_code == 200
@@ -281,10 +292,9 @@ def test_load_and_index_endpoint_delegates_to_facade(
         offloaded.append(func)
         return func(*args, **kwargs)
 
-    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
-    monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
+    monkeypatch.setattr(asyncio, "to_thread", record_to_thread)
 
-    client = TestClient(web_app.app)
+    client = TestClient(_test_app(fake))
     response = client.post(
         "/api/load-and-index?force=true",
         json={"source": "/tmp/repo", "is_url": False},
@@ -304,11 +314,10 @@ def test_query_endpoint_offloads_blocking_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeFastCode()
-    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
-    monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
+    monkeypatch.setattr(asyncio, "to_thread", _run_inline)
     monkeypatch.setattr(web_app.uuid, "uuid4", lambda: "abcd1234-uuid")
 
-    client = TestClient(web_app.app)
+    client = TestClient(_test_app(fake))
     response = client.post(
         "/api/query",
         json={"question": "where is x?", "filters": {"snapshot_id": "snap:1"}},
@@ -337,8 +346,7 @@ def test_query_endpoint_serializes_sources_explicitly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeFastCode()
-    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
-    monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
+    monkeypatch.setattr(asyncio, "to_thread", _run_inline)
     monkeypatch.setattr(web_app.uuid, "uuid4", lambda: "abcd1234-uuid")
 
     def query_with_object_source(
@@ -369,7 +377,7 @@ def test_query_endpoint_serializes_sources_explicitly(
 
     fake.query = query_with_object_source
 
-    client = TestClient(web_app.app)
+    client = TestClient(_test_app(fake))
     response = client.post(
         "/api/query",
         json={"question": "where is x?", "filters": {"snapshot_id": "snap:1"}},
@@ -395,9 +403,8 @@ def test_session_endpoint_serializes_history_explicitly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeFastCode()
-    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
 
-    client = TestClient(web_app.app)
+    client = TestClient(_test_app(fake))
     response = client.get("/api/session/abcd1234")
 
     assert response.status_code == 200
@@ -447,10 +454,9 @@ def test_upload_zip_endpoint_delegates_to_facade(
         offloaded.append(func)
         return func(*args, **kwargs)
 
-    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
-    monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
+    monkeypatch.setattr(asyncio, "to_thread", record_to_thread)
 
-    client = TestClient(web_app.app)
+    client = TestClient(_test_app(fake))
     response = client.post(
         "/api/upload-zip",
         files={"file": ("repo.zip", b"zip-data", "application/zip")},
@@ -480,10 +486,9 @@ def test_upload_endpoints_reject_path_traversal_zip(
     else:
         fake.upload_and_index = raise_unsafe_archive  # type: ignore[assignment]
 
-    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
-    monkeypatch.setattr(web_app.asyncio, "to_thread", _run_inline)
+    monkeypatch.setattr(asyncio, "to_thread", _run_inline)
 
-    client = TestClient(web_app.app)
+    client = TestClient(_test_app(fake))
     response = client.post(
         endpoint,
         files={
@@ -510,10 +515,9 @@ def test_upload_and_index_endpoint_delegates_to_facade(
         offloaded.append(func)
         return func(*args, **kwargs)
 
-    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
-    monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
+    monkeypatch.setattr(asyncio, "to_thread", record_to_thread)
 
-    client = TestClient(web_app.app)
+    client = TestClient(_test_app(fake))
     response = client.post(
         "/api/upload-and-index?force=true",
         files={"file": ("repo.zip", b"zip-data", "application/zip")},
@@ -537,10 +541,9 @@ def test_mutating_maintenance_endpoints_offload_blocking_work(
         offloaded.append(func)
         return func(*args, **kwargs)
 
-    monkeypatch.setattr(web_app.app.state, "fastcode", fake, raising=False)
-    monkeypatch.setattr(web_app.asyncio, "to_thread", record_to_thread)
+    monkeypatch.setattr(asyncio, "to_thread", record_to_thread)
 
-    client = TestClient(web_app.app)
+    client = TestClient(_test_app(fake))
     delete_response = client.post(
         "/api/delete-repos",
         json={"repo_names": ["repo"], "delete_source": False},

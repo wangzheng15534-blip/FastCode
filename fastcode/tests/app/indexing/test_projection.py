@@ -80,9 +80,7 @@ class _FakeProjectionStore:
         self, snapshot_id: str
     ) -> list[ProjectionBuildRecord]:
         return [
-            build
-            for build in self._builds.values()
-            if build.snapshot_id == snapshot_id
+            build for build in self._builds.values() if build.snapshot_id == snapshot_id
         ]
 
     def save(
@@ -237,6 +235,16 @@ def _make_fc_with_prefix(
         load_artifacts_by_key=lambda _k: True,
     )
 
+    # Wire the ProjectionFacade on the test double
+    from fastcode.app.indexing.projection_facade import ProjectionFacade
+    from fastcode.runtime_support.runtime_state import RuntimeState
+
+    fc.state = RuntimeState()
+    fc.projection = ProjectionFacade(
+        service=fc.projection_service,
+        state=fc.state,
+    )
+
     return fc, store, conn
 
 
@@ -328,9 +336,7 @@ def test_build_projection_saves_coverage_paths_double():
         result = service.build_projection("snapshot", snapshot_id="snap:projection")
 
         assert result["status"] == "built"
-        assert (
-            store._builds[result["projection_id"]].coverage_paths == ["pkg/a.py"]
-        )
+        assert store._builds[result["projection_id"]].coverage_paths == ["pkg/a.py"]
 
 
 def test_mirror_projection_artifacts_prunes_stale_chunk_files(
@@ -429,7 +435,7 @@ def test_get_session_prefix_returns_l0_and_l1_double():
         l1_data={"layer": "L1", "summary": "Navigation structure"},
     )
 
-    result = fc.get_session_prefix("snap:repo:abc")
+    result = fc.projection.get_session_prefix("snap:repo:abc")
 
     assert result["snapshot_id"] == "snap:repo:abc"
     assert result["projection_id"] == "proj_abc123"
@@ -444,7 +450,7 @@ def test_get_session_prefix_not_found_double():
         projection_id=None,
     )
 
-    result = fc.get_session_prefix("snap:repo:missing")
+    result = fc.projection.get_session_prefix("snap:repo:missing")
 
     assert result["snapshot_id"] == "snap:repo:missing"
     assert result["l0"] is None
@@ -462,7 +468,7 @@ def test_get_session_prefix_no_layers_double():
         l1_data=None,
     )
 
-    result = fc.get_session_prefix("snap:repo:empty")
+    result = fc.projection.get_session_prefix("snap:repo:empty")
 
     assert result["snapshot_id"] == "snap:repo:empty"
     assert result["projection_id"] == "proj_empty123"
@@ -475,7 +481,7 @@ def test_get_session_prefix_store_disabled_double():
     fc, _store, _conn = _make_fc_with_prefix(store_enabled=False)
 
     with pytest.raises(RuntimeError, match="projection store is not configured"):
-        fc.get_session_prefix("snap:repo:abc")
+        fc.projection.get_session_prefix("snap:repo:abc")
 
 
 def test_get_session_prefix_l0_only_double():
@@ -486,7 +492,7 @@ def test_get_session_prefix_l0_only_double():
         l1_data=None,
     )
 
-    result = fc.get_session_prefix("snap:repo:partial")
+    result = fc.projection.get_session_prefix("snap:repo:partial")
 
     # L0 present, L1 missing -- still succeeds (not both None)
     assert result["l0"] is not None
@@ -502,7 +508,7 @@ def test_get_session_prefix_l1_only_double():
         l1_data={"layer": "L1", "summary": "Nav only"},
     )
 
-    result = fc.get_session_prefix("snap:repo:partial2")
+    result = fc.projection.get_session_prefix("snap:repo:partial2")
 
     assert result["l0"] is None
     assert result["l1"] is not None
@@ -518,7 +524,7 @@ def test_get_session_prefix_uses_latest_projection_double():
         l1_data={"layer": "L1", "summary": "Latest nav"},
     )
 
-    result = fc.get_session_prefix("snap:repo:multi")
+    result = fc.projection.get_session_prefix("snap:repo:multi")
 
     assert result["projection_id"] == "proj_latest"
     assert result["l0"]["summary"] == "Latest"

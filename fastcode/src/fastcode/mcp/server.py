@@ -28,10 +28,10 @@ import inspect
 import json
 import os
 import uuid
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from fastcode.main.fastcode import FastCode
 from fastcode.mcp.formatting import (
     format_call_chain,
     format_code_qa_response,
@@ -43,7 +43,7 @@ from fastcode.mcp.formatting import (
     format_session_list,
     format_symbol_search_results,
 )
-from fastcode.mcp.graph_tools import (
+from fastcode.graph.analysis import (
     compute_directed_path_for_snapshot,
     compute_find_callers_for_snapshot,
     compute_impact_analysis_for_snapshot,
@@ -67,21 +67,21 @@ logger = configure_logging(
 # ---------------------------------------------------------------------------
 # FastCode instance injection
 # ---------------------------------------------------------------------------
-_fastcode_instance: FastCode | None = None
+_facades: Any | None = None
 
 
-def init_server(fc: FastCode) -> None:
+def init_server(facades: Any) -> None:
     """Inject a shared FastCode instance. Called by the process main."""
-    global _fastcode_instance
-    _fastcode_instance = fc
+    global _facades
+    _facades = facades
 
 
-def _get_fastcode() -> FastCode:
-    if _fastcode_instance is None:
+def _get_facades() -> Any:
+    if _facades is None:
         raise RuntimeError(
-            "FastCode MCP server not initialized. Call init_server(fc) first."
+            "FastCode MCP server not initialized. Call init_server(facades) first."
         )
-    return _fastcode_instance
+    return _facades
 
 
 # ---------------------------------------------------------------------------
@@ -130,22 +130,22 @@ def code_qa(
     Returns:
         The answer to your question, with source references.
     """
-    fc = _get_fastcode()
+    facades = _get_facades()
 
     # 1. Ensure all repos are indexed
-    ready_names = fc.ensure_repos_ready(repos)
+    ready_names = facades.ensure_repos_ready(repos)
     if not ready_names:
         return "Error: None of the specified repositories could be loaded or indexed."
 
     # 2. Load indexed repos into memory (multi-repo merge)
-    if not fc.ensure_loaded(ready_names):
+    if not facades.ensure_loaded(ready_names):
         return "Error: Failed to load repository indexes."
 
     # 3. Session management
     sid = session_id or str(uuid.uuid4())[:8]
 
     # 4. Query
-    result = fc.query.query(
+    result = facades.query.query(
         question=question,
         # Always enforce repository filtering for both single-repo and
         # multi-repo queries to avoid cross-repo source leakage.
@@ -169,8 +169,8 @@ def list_sessions() -> str:
     turn counts, and timestamps. Useful for finding a session_id to
     continue a previous conversation.
     """
-    fc = _get_fastcode()
-    return format_session_list(fc.context.list_sessions())
+    facades = _get_facades()
+    return format_session_list(facades.context.list_sessions())
 
 
 @mcp.tool()
@@ -183,8 +183,8 @@ def get_session_history(session_id: str) -> str:
     Returns:
         The complete Q&A history of the session.
     """
-    fc = _get_fastcode()
-    history = fc.context.get_session_history(session_id)
+    facades = _get_facades()
+    history = facades.context.get_session_history(session_id)
     return format_session_history(session_id, history)  # type: ignore[arg-type]
 
 
@@ -204,8 +204,8 @@ def get_turn_context(
     Returns:
         JSON describing the requested working-memory artifact.
     """
-    fc = _get_fastcode()
-    result = fc.context.get_turn_context(session_id, turn_number, format)
+    facades = _get_facades()
+    result = facades.context.get_turn_context(session_id, turn_number, format)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -227,8 +227,8 @@ def get_context_bundle(
     Returns:
         JSON describing the requested context bundle.
     """
-    fc = _get_fastcode()
-    result = fc.context.get_context_bundle(
+    facades = _get_facades()
+    result = facades.context.get_context_bundle(
         session_id, turn_number, format, token_budget
     )
     return json.dumps(result, ensure_ascii=False, indent=2)
@@ -250,8 +250,8 @@ def get_context_bundle_by_id(
     Returns:
         JSON describing the requested context bundle.
     """
-    fc = _get_fastcode()
-    result = fc.context.get_context_bundle_by_id(bundle_id, format, token_budget)
+    facades = _get_facades()
+    result = facades.context.get_context_bundle_by_id(bundle_id, format, token_budget)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -275,8 +275,8 @@ def expand_context_bundle_ref(
     Returns:
         JSON with the resolved bundle source-ref payload.
     """
-    fc = _get_fastcode()
-    result = fc.context.expand_context_bundle_ref(
+    facades = _get_facades()
+    result = facades.context.expand_context_bundle_ref(
         ref_id,
         session_id=session_id,
         turn_number=turn_number,
@@ -310,8 +310,8 @@ def create_context_activation(
     Returns:
         JSON describing the persisted activation.
     """
-    fc = _get_fastcode()
-    result = fc.context.create_context_activation(
+    facades = _get_facades()
+    result = facades.context.create_context_activation(
         session_id=session_id,
         turn_number=turn_number,
         bundle_id=bundle_id,
@@ -339,8 +339,8 @@ def create_handoff(
     Returns:
         JSON describing the persisted handoff artifact.
     """
-    fc = _get_fastcode()
-    result = fc.context.create_handoff(session_id, turn_number, mode)
+    facades = _get_facades()
+    result = facades.context.create_handoff(session_id, turn_number, mode)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -354,8 +354,8 @@ def get_handoff_artifact(artifact_id: str) -> str:
     Returns:
         JSON describing the handoff artifact.
     """
-    fc = _get_fastcode()
-    result = fc.context.get_handoff_artifact(artifact_id)
+    facades = _get_facades()
+    result = facades.context.get_handoff_artifact(artifact_id)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -377,8 +377,8 @@ def expand_context_ref(
     Returns:
         JSON with the resolved evidence-ref payload.
     """
-    fc = _get_fastcode()
-    result = fc.context.expand_context_ref(session_id, turn_number, ref_id, depth)
+    facades = _get_facades()
+    result = facades.context.expand_context_ref(session_id, turn_number, ref_id, depth)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -392,8 +392,8 @@ def delete_session(session_id: str) -> str:
     Returns:
         Confirmation message.
     """
-    fc = _get_fastcode()
-    success = fc.context.delete_session(session_id)
+    facades = _get_facades()
+    success = facades.context.delete_session(session_id)
     if success:
         return f"Session '{session_id}' deleted."
     return f"Failed to delete session '{session_id}'. It may not exist."
@@ -406,8 +406,8 @@ def list_indexed_repos() -> str:
     Returns:
         A list of indexed repository names with metadata.
     """
-    fc = _get_fastcode()
-    return format_indexed_repos(fc.store.list_available_repos())
+    facades = _get_facades()
+    return format_indexed_repos(facades.store.list_available_repos())
 
 
 @mcp.tool()
@@ -424,8 +424,8 @@ def delete_repo_metadata(repo_name: str) -> str:
     Returns:
         Confirmation message with deleted artifacts and freed disk space.
     """
-    fc = _get_fastcode()
-    result = fc.remove_repository(repo_name, delete_source=False)
+    facades = _get_facades()
+    result = facades.remove_repository(repo_name, delete_source=False)
     return format_delete_repo_metadata(
         repo_name, result.get("deleted_files", []), result.get("freed_mb", 0)
     )
@@ -450,14 +450,14 @@ def search_symbol(
     Returns:
         Matching definitions with file path, line range, and signature.
     """
-    fc = _get_fastcode()
-    ready_names = fc.ensure_repos_ready(repos, allow_incremental=False)
+    facades = _get_facades()
+    ready_names = facades.ensure_repos_ready(repos, allow_incremental=False)
     if not ready_names:
         return "Error: None of the specified repositories could be loaded."
-    if not fc.ensure_loaded(ready_names):
+    if not facades.ensure_loaded(ready_names):
         return "Error: Failed to load repository indexes."
 
-    results = fc.query.search_symbols(symbol_name, symbol_type=symbol_type)
+    results = facades.query.search_symbols(symbol_name, symbol_type=symbol_type)
     return format_symbol_search_results(symbol_name, results)
 
 
@@ -474,10 +474,10 @@ def get_repo_structure(repo_name: str) -> str:
     Returns:
         Repository summary, directory structure, and language breakdown.
     """
-    fc = _get_fastcode()
-    if not fc.store.is_repo_indexed(repo_name):
+    facades = _get_facades()
+    if not facades.store.is_repo_indexed(repo_name):
         return f"Repository '{repo_name}' is not indexed. Use code_qa or reindex_repo first."
-    overview = fc.store.get_repo_overview(repo_name)
+    overview = facades.store.get_repo_overview(repo_name)
     if not overview:
         return (
             f"No overview found for repository '{repo_name}'. It may need re-indexing."
@@ -500,14 +500,14 @@ def get_file_summary(file_path: str, repos: list[str]) -> str:
     Returns:
         File structure: classes (with methods), top-level functions, and import count.
     """
-    fc = _get_fastcode()
-    ready_names = fc.ensure_repos_ready(repos, allow_incremental=False)
+    facades = _get_facades()
+    ready_names = facades.ensure_repos_ready(repos, allow_incremental=False)
     if not ready_names:
         return "Error: None of the specified repositories could be loaded."
-    if not fc.ensure_loaded(ready_names):
+    if not facades.ensure_loaded(ready_names):
         return "Error: Failed to load repository indexes."
 
-    result = fc.query.get_file_structure(file_path)
+    result = facades.query.get_file_structure(file_path)
     if not result:
         return f"No elements found for file path '{file_path}'."
     file_meta = result["file"]
@@ -542,15 +542,15 @@ def get_call_chain(
     Returns:
         Formatted call chain showing callers and/or callees.
     """
-    fc = _get_fastcode()
-    ready_names = fc.ensure_repos_ready(repos, allow_incremental=False)
+    facades = _get_facades()
+    ready_names = facades.ensure_repos_ready(repos, allow_incremental=False)
     if not ready_names:
         return "Error: None of the specified repositories could be loaded."
-    if not fc.ensure_loaded(ready_names):
+    if not facades.ensure_loaded(ready_names):
         return "Error: Failed to load repository indexes."
 
     max_hops = min(max_hops, 5)
-    result = fc.query.walk_call_chain(
+    result = facades.query.walk_call_chain(
         symbol_name, direction=direction, max_hops=max_hops
     )
     if not result:
@@ -591,10 +591,10 @@ def directed_path(
     """
     import json
 
-    fc = _get_fastcode()
+    facades = _get_facades()
     return json.dumps(
         compute_directed_path_for_snapshot(
-            fc,
+            facades,
             from_symbol,
             to_symbol,
             snapshot_id,
@@ -629,10 +629,10 @@ def impact_analysis(
     """
     import json
 
-    fc = _get_fastcode()
+    facades = _get_facades()
     return json.dumps(
         compute_impact_analysis_for_snapshot(
-            fc,
+            facades,
             symbol,
             snapshot_id,
             max_hops,
@@ -659,8 +659,8 @@ def leiden_clusters(
     """
     import json
 
-    fc = _get_fastcode()
-    return json.dumps(compute_leiden_clusters_for_snapshot(fc, snapshot_id))
+    facades = _get_facades()
+    return json.dumps(compute_leiden_clusters_for_snapshot(facades, snapshot_id))
 
 
 @mcp.tool()
@@ -682,8 +682,8 @@ def steiner_path(
     """
     import json
 
-    fc = _get_fastcode()
-    return json.dumps(compute_steiner_path_for_snapshot(fc, terminals, snapshot_id))
+    facades = _get_facades()
+    return json.dumps(compute_steiner_path_for_snapshot(facades, terminals, snapshot_id))
 
 
 @mcp.tool()
@@ -707,9 +707,9 @@ def find_callers(
     """
     import json
 
-    fc = _get_fastcode()
+    facades = _get_facades()
     return json.dumps(
-        compute_find_callers_for_snapshot(fc, symbol, snapshot_id, max_hops)
+        compute_find_callers_for_snapshot(facades, symbol, snapshot_id, max_hops)
     )
 
 
@@ -730,9 +730,9 @@ def get_session_prefix(snapshot_id: str) -> str:
     """
     import json
 
-    fc = _get_fastcode()
+    facades = _get_facades()
     try:
-        result = fc.projection.get_session_prefix(snapshot_id)
+        result = facades.projection.get_session_prefix(snapshot_id)
         if result.get("error"):
             return json.dumps(
                 {"found": False, "snapshot_id": snapshot_id, "error": result["error"]}
@@ -755,8 +755,8 @@ def reindex_repo(repo_source: str) -> str:
     Returns:
         Confirmation with element count.
     """
-    fc = _get_fastcode()
-    return fc.indexing.reindex_repository(repo_source)
+    facades = _get_facades()
+    return facades.indexing.reindex_repository(repo_source)
 
 
 # ---------------------------------------------------------------------------
@@ -780,7 +780,9 @@ def main():
     )
     args = parser.parse_args()
 
-    init_server(FastCode())
+    from fastcode.main.serve import create_mcp_facade
+
+    init_server(create_mcp_facade())
 
     if args.transport == "sse":
         mcp.settings.port = args.port

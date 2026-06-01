@@ -221,6 +221,8 @@ class FastCode:
             snapshot_symbol_index=self.snapshot_symbol_index,
             state=self.state,
             config=self.config,
+            projection_store=self.projection_store,
+            projection_transformer=self.projection_transformer,
         )
         self.pg_retrieval_store = PgRetrievalStore(db_runtime, self.config)
         self.retriever.set_pg_retrieval_store(self.pg_retrieval_store)

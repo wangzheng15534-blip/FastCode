@@ -43,13 +43,6 @@ from fastcode.mcp.formatting import (
     format_session_list,
     format_symbol_search_results,
 )
-from fastcode.graph.analysis import (
-    compute_directed_path_for_snapshot,
-    compute_find_callers_for_snapshot,
-    compute_impact_analysis_for_snapshot,
-    compute_leiden_clusters_for_snapshot,
-    compute_steiner_path_for_snapshot,
-)
 from fastcode.runtime_support.observability import configure_logging
 
 # ---------------------------------------------------------------------------
@@ -593,8 +586,7 @@ def directed_path(
 
     facades = _get_facades()
     return json.dumps(
-        compute_directed_path_for_snapshot(
-            facades,
+        facades.store.compute_directed_path_for_snapshot(
             from_symbol,
             to_symbol,
             snapshot_id,
@@ -631,8 +623,7 @@ def impact_analysis(
 
     facades = _get_facades()
     return json.dumps(
-        compute_impact_analysis_for_snapshot(
-            facades,
+        facades.store.compute_impact_analysis_for_snapshot(
             symbol,
             snapshot_id,
             max_hops,
@@ -660,7 +651,7 @@ def leiden_clusters(
     import json
 
     facades = _get_facades()
-    return json.dumps(compute_leiden_clusters_for_snapshot(facades, snapshot_id))
+    return json.dumps(facades.store.compute_leiden_clusters_for_snapshot(snapshot_id))
 
 
 @mcp.tool()
@@ -683,7 +674,7 @@ def steiner_path(
     import json
 
     facades = _get_facades()
-    return json.dumps(compute_steiner_path_for_snapshot(facades, terminals, snapshot_id))
+    return json.dumps(facades.store.compute_steiner_path_for_snapshot(terminals, snapshot_id))
 
 
 @mcp.tool()
@@ -709,7 +700,7 @@ def find_callers(
 
     facades = _get_facades()
     return json.dumps(
-        compute_find_callers_for_snapshot(facades, symbol, snapshot_id, max_hops)
+        facades.store.compute_find_callers_for_snapshot(symbol, snapshot_id, max_hops)
     )
 
 

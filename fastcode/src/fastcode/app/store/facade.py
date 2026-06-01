@@ -38,6 +38,9 @@ class StoreFacade:
         snapshot_symbol_index: SnapshotSymbolIndex,
         state: RuntimeState,
         config: dict[str, Any],
+        *,
+        projection_store: Any | None = None,
+        projection_transformer: Any | None = None,
     ) -> None:
         self._vector_store = vector_store
         self._snapshot_store = snapshot_store
@@ -45,6 +48,8 @@ class StoreFacade:
         self._snapshot_symbol_index = snapshot_symbol_index
         self._state = state
         self._config = config
+        self._projection_store = projection_store
+        self._projection_transformer = projection_transformer
 
     # ------------------------------------------------------------------
     # Status / info
@@ -302,6 +307,75 @@ class StoreFacade:
         return [{"doc_id": node, "distance": d} for node, d in dist.items()]
 
     # ------------------------------------------------------------------
+    # Graph analysis (delegates to fastcode.graph.analysis)
+    # ------------------------------------------------------------------
+
+    def compute_directed_path_for_snapshot(
+        self,
+        from_symbol: str,
+        to_symbol: str,
+        snapshot_id: str,
+        max_hops: int = 5,
+        graph_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        from fastcode.graph.analysis import compute_directed_path_for_snapshot as _impl
+
+        return _impl(
+            self._graph_analysis_ctx(),
+            from_symbol,
+            to_symbol,
+            snapshot_id,
+            max_hops,
+            graph_types,
+        )
+
+    def compute_impact_analysis_for_snapshot(
+        self,
+        symbol: str,
+        snapshot_id: str,
+        max_hops: int = 3,
+        graph_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        from fastcode.graph.analysis import compute_impact_analysis_for_snapshot as _impl
+
+        return _impl(
+            self._graph_analysis_ctx(),
+            symbol,
+            snapshot_id,
+            max_hops,
+            graph_types,
+        )
+
+    def compute_leiden_clusters_for_snapshot(
+        self,
+        snapshot_id: str,
+    ) -> dict[str, Any]:
+        from fastcode.graph.analysis import compute_leiden_clusters_for_snapshot as _impl
+
+        return _impl(self._graph_analysis_ctx(), snapshot_id)
+
+    def compute_steiner_path_for_snapshot(
+        self,
+        terminals: list[str],
+        snapshot_id: str,
+    ) -> dict[str, Any]:
+        from fastcode.graph.analysis import compute_steiner_path_for_snapshot as _impl
+
+        return _impl(self._graph_analysis_ctx(), terminals, snapshot_id)
+
+    def compute_find_callers_for_snapshot(
+        self,
+        symbol: str,
+        snapshot_id: str,
+        max_hops: int = 2,
+    ) -> dict[str, Any]:
+        from fastcode.graph.analysis import compute_find_callers_for_snapshot as _impl
+
+        return _impl(
+            self._graph_analysis_ctx(), symbol, snapshot_id, max_hops
+        )
+
+    # ------------------------------------------------------------------
     # SCIP
     # ------------------------------------------------------------------
 
@@ -457,6 +531,20 @@ class StoreFacade:
 
     # ------------------------------------------------------------------
     # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _graph_analysis_ctx(self) -> Any:
+        """Build a duck-typed context for graph.analysis compute functions."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            snapshot_store=self._snapshot_store,
+            projection_store=self._projection_store,
+            projection_transformer=self._projection_transformer,
+        )
+
+    # ------------------------------------------------------------------
+    # Snapshot symbol index helpers
     # ------------------------------------------------------------------
 
     def _ensure_snapshot_symbol_index(self, snapshot_id: str) -> None:

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from fastcode.api.routes import main as _api_main
+import uvicorn
 
 
 def main() -> None:
     """Run the API server command."""
-    _api_main()
+    from fastcode.main.serve import create_api_app
+
+    uvicorn.run(create_api_app(), host="127.0.0.1", port=8000)

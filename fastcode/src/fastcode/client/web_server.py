@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from fastcode.api.web import main as _web_main
+import uvicorn
 
 
 def main() -> None:
     """Run the web server command."""
-    _web_main()
+    from fastcode.main.serve import create_web_app
+
+    uvicorn.run(create_web_app(), host="127.0.0.1", port=5777)

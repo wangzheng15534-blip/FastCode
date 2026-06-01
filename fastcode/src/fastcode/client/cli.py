@@ -1,42 +1,81 @@
 #!/usr/bin/env python3
 """
 FastCode 2.0 - Command Line Interface
+
+Thin entry frame that delegates to a running FastCode API server over HTTP.
+Use ``fastcode serve`` to start the server, then run commands against it.
 """
 
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportAttributeAccessIssue=false
+from __future__ import annotations
 
-import os
-import platform
-
-if platform.system() == "Darwin":
-    os.environ["TOKENIZERS_PARALLELISM"] = "false"
-    os.environ["OMP_NUM_THREADS"] = "1"
-    os.environ["OPENBLAS_NUM_THREADS"] = "1"
-    os.environ["MKL_NUM_THREADS"] = "1"
-
+import json
 import sys
 
 import click
 
-from fastcode.main.fastcode import FastCode
+from fastcode.client.http_client import FastCodeClient
+
+
+def _make_client(base_url: str) -> FastCodeClient:
+    return FastCodeClient(base_url=base_url)
 
 
 @click.group()
-def cli():
+@click.option(
+    "--server",
+    envvar="FASTCODE_SERVER",
+    default="http://localhost:8000",
+    help="FastCode API server URL",
+)
+@click.pass_context
+def cli(ctx: click.Context, server: str) -> None:
     """FastCode - Repository-Level Code Understanding System"""
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj["server"] = server
+    ctx.obj["client"] = _make_client(server)
+
+
+# ======================================================================
+# Server management
+# ======================================================================
 
 
 @cli.command()
+@click.option("--host", default="127.0.0.1", help="Bind host")
+@click.option("--port", "-p", default=8000, help="Bind port")
+def serve(host: str, port: int) -> None:
+    """Start the FastCode API server."""
+    import uvicorn
+
+    click.echo(f"Starting FastCode API server on {host}:{port}")
+    uvicorn.run(
+        "fastcode.main.serve:create_api_app",
+        host=host,
+        port=port,
+        factory=True,
+    )
+
+
+@cli.command("mcp")
+@click.option("--server-cmd", help="Custom MCP server command (default: built-in)")
+def mcp_client(server_cmd: str | None) -> None:
+    """Start interactive MCP client connected to FastCode MCP server."""
+    from fastcode.client.mcp_client import mcp_client_main
+
+    command = server_cmd.split() if server_cmd else None
+    mcp_client_main(server_command=command)
+
+
+# ======================================================================
+# Query commands
+# ======================================================================
+
+
+@cli.command()
+@click.option("--query", "-q", required=True, help="Question to ask")
 @click.option("--repo-url", "-u", help="Repository URL to clone")
 @click.option("--repo-path", "-p", help="Local repository path")
 @click.option("--repo-zip", "-z", help="ZIP file containing repository")
-@click.option(
-    "--query", "-q", required=True, help="Question to ask about the repository"
-)
-@click.option("--config", "-c", help="Path to configuration file")
-@click.option("--output", "-o", help="Output file (default: stdout)")
-@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 @click.option(
     "--load-cache",
     is_flag=True,
@@ -48,66 +87,40 @@ def cli():
     multiple=True,
     help="Specific repositories to search in multi-repo mode",
 )
+@click.option("--output", "-o", help="Output file (default: stdout)")
+@click.pass_context
 def query(
+    ctx: click.Context,
+    query: str,
     repo_url: str | None,
     repo_path: str | None,
     repo_zip: str | None,
-    query: str,
-    config: str | None,
-    output: str | None,
-    verbose: bool,
     load_cache: bool,
     repos: tuple[str, ...],
+    output: str | None,
 ) -> None:
-    """Query a repository with a question (supports both single and multi-repo modes)"""
-
-    # Initialize FastCode
-    fastcode = FastCode(config_path=config)
+    """Query a repository with a question."""
+    client = ctx.obj["client"]
 
     try:
         # Multi-repo mode with cache
         if load_cache:
-            # Determine which repositories to load
-            repo_names_to_load = list(repos) if repos else None
-            if repo_names_to_load:
+            repo_names = list(repos) if repos else None
+            if repo_names:
                 click.echo(
-                    f"Loading repositories from cache: {', '.join(repo_names_to_load)}..."
+                    f"Loading repositories from cache: {', '.join(repo_names)}..."
                 )
             else:
                 click.echo("Loading multi-repository index from cache...")
 
-            if not fastcode.cache.load_cached_repos(repo_names=repo_names_to_load):
-                click.echo("Error: Failed to load multi-repo cache", err=True)
-                sys.exit(1)
+            client.load_cached_repos(repo_names=repo_names)
 
-            # Get available repositories
-            available_repos = fastcode.vector_store.get_repository_names()
-
-            if not available_repos:
-                click.echo("Error: No repositories found in cache", err=True)
-                sys.exit(1)
-
-            # Determine which repositories to query
-            repo_filter = None
-            if repos:
-                invalid_repos = [r for r in repos if r not in available_repos]
-                if invalid_repos:
-                    click.echo(
-                        f"Warning: Unknown repositories: {', '.join(invalid_repos)}"
-                    )
-                repo_filter = [r for r in repos if r in available_repos]
-                if repo_filter:
-                    click.echo(f"Searching in repositories: {', '.join(repo_filter)}")
-            else:
-                click.echo(f"Searching in all {len(available_repos)} repositories")
-
-            # Query
+            repo_filter = list(repos) if repos else None
             click.echo(f"\nProcessing query: {query}\n")
-            result = fastcode.query.query(query, repo_filter=repo_filter)
+            result = client.query(query, repo_filter=repo_filter)
 
-        # Single repository mode
+        # Single repo mode
         else:
-            # Validate input
             if not repo_url and not repo_path and not repo_zip:
                 click.echo(
                     "Error: Either --repo-url, --repo-path, --repo-zip, or --load-cache must be provided",
@@ -115,55 +128,32 @@ def query(
                 )
                 sys.exit(1)
 
-            # Check for conflicting options
-            provided_options = sum([bool(repo_url), bool(repo_path), bool(repo_zip)])
-            if provided_options > 1:
-                click.echo(
-                    "Error: Only one of --repo-url, --repo-path, or --repo-zip can be specified",
-                    err=True,
-                )
-                sys.exit(1)
+            source = repo_url or repo_path or repo_zip
+            is_url = bool(repo_url)
 
-            # Load repository
-            if repo_zip:
-                click.echo(f"Loading repository from ZIP: {repo_zip}")
-                fastcode.indexing.load_repository(repo_zip, is_url=False, is_zip=True)
-            elif repo_url:
-                click.echo(f"Loading repository from URL: {repo_url}")
-                fastcode.indexing.load_repository(repo_url, is_url=True)
-            elif repo_path:
-                click.echo(f"Loading repository from path: {repo_path}")
-                fastcode.indexing.load_repository(repo_path, is_url=False)
+            click.echo(f"Loading and indexing repository: {source}")
+            client.load_and_index(source=source, is_url=is_url)
 
-            # Index repository
-            click.echo("Indexing repository...")
-            fastcode.indexing.index_repository()
-
-            # Get summary
-            if verbose:
-                summary = fastcode.store.get_repository_summary()
-                click.echo(f"\n{summary}\n")
-
-            # Query
-            click.echo(f"Processing query: {query}\n")
-            current_repo = fastcode.repo_info.get("name")
-            repo_filter = [current_repo] if current_repo else None
-            result = fastcode.query.query(query, repo_filter=repo_filter)
+            click.echo(f"\nProcessing query: {query}\n")
+            result = client.query_snapshot(question=query)
 
         # Format output
-        formatted = fastcode.answer_generator.format_answer_with_sources(result)
+        answer = result.get("answer", "")
+        sources = result.get("sources", [])
 
-        # Output result
+        if sources:
+            answer += "\n\nSources:"
+            for s in sources:
+                name = s.get("name", "")
+                path = s.get("path", "")
+                answer += f"\n  - {name} ({path})"
+
         if output:
             with open(output, "w") as f:
-                f.write(formatted)
+                f.write(answer)
             click.echo(f"Result saved to {output}")
         else:
-            click.echo(formatted)
-
-        # Cleanup
-        if not load_cache:
-            fastcode.cleanup()
+            click.echo(answer)
 
     except Exception as e:
         click.echo(f"Error: {e!s}", err=True)
@@ -174,15 +164,14 @@ def query(
 @click.option("--repo-url", "-u", help="Repository URL to clone")
 @click.option("--repo-path", "-p", help="Local repository path")
 @click.option("--repo-zip", "-z", help="ZIP file containing repository")
-@click.option("--config", "-c", help="Path to configuration file")
+@click.pass_context
 def index(
+    ctx: click.Context,
     repo_url: str | None,
     repo_path: str | None,
     repo_zip: str | None,
-    config: str | None,
 ) -> None:
-    """Index a repository (without querying)"""
-
+    """Index a repository (without querying)."""
     if not repo_url and not repo_path and not repo_zip:
         click.echo(
             "Error: Either --repo-url, --repo-path, or --repo-zip must be provided",
@@ -190,39 +179,17 @@ def index(
         )
         sys.exit(1)
 
-    # Check for conflicting options
-    provided_options = sum([bool(repo_url), bool(repo_path), bool(repo_zip)])
-    if provided_options > 1:
-        click.echo(
-            "Error: Only one of --repo-url, --repo-path, or --repo-zip can be specified",
-            err=True,
-        )
-        sys.exit(1)
-
-    fastcode = FastCode(config_path=config)
+    client = ctx.obj["client"]
 
     try:
-        # Load repository
-        if repo_zip:
-            click.echo(f"Loading repository from ZIP: {repo_zip}")
-            fastcode.indexing.load_repository(repo_zip, is_url=False, is_zip=True)
-        elif repo_url:
-            click.echo(f"Loading repository from URL: {repo_url}")
-            fastcode.indexing.load_repository(repo_url, is_url=True)
-        elif repo_path:
-            click.echo(f"Loading repository from path: {repo_path}")
-            fastcode.indexing.load_repository(repo_path, is_url=False)
+        source = repo_url or repo_path or repo_zip
+        is_url = bool(repo_url)
 
-        # Index
-        click.echo("Indexing repository...")
-        fastcode.indexing.index_repository()
+        click.echo(f"Loading and indexing repository: {source}")
+        client.load_and_index(source=source, is_url=is_url)
 
-        # Show summary
-        summary = fastcode.store.get_repository_summary()
-        click.echo(f"\n{summary}")
-        click.echo("\nIndexing complete!")
-
-        fastcode.cleanup()
+        summary = client.summary()
+        click.echo(f"\n{summary.get('summary', 'Indexing complete.')}")
 
     except Exception as e:
         click.echo(f"Error: {e!s}", err=True)
@@ -233,7 +200,6 @@ def index(
 @click.option("--repo-url", "-u", help="Repository URL to clone")
 @click.option("--repo-path", "-p", help="Local repository path")
 @click.option("--repo-zip", "-z", help="ZIP file containing repository")
-@click.option("--config", "-c", help="Path to configuration file")
 @click.option(
     "--load-cache", is_flag=True, help="Load from multi-repo cache for multi-repo mode"
 )
@@ -241,7 +207,7 @@ def index(
     "--repos",
     "-r",
     multiple=True,
-    help="Specific repositories to load from cache (omit to load all)",
+    help="Specific repositories to load from cache",
 )
 @click.option("--multi-turn", is_flag=True, help="Enable multi-turn dialogue mode")
 @click.option(
@@ -249,27 +215,20 @@ def index(
     "-s",
     help="Session ID for multi-turn dialogue (auto-generated if not provided)",
 )
-@click.option(
-    "--agency/--no-agency",
-    default=None,
-    help="Enable/disable agency mode (default: auto based on query intent)",
-)
+@click.pass_context
 def interactive(
+    ctx: click.Context,
     repo_url: str | None,
     repo_path: str | None,
     repo_zip: str | None,
-    config: str | None,
     load_cache: bool,
     repos: tuple[str, ...],
     multi_turn: bool,
     session_id: str | None,
-    agency: bool | None,
 ) -> None:
-    """Start interactive query session (supports single and multi-repo modes)"""
+    """Start interactive query session."""
+    client = ctx.obj["client"]
 
-    fastcode = FastCode(config_path=config)
-
-    # Generate session ID if multi-turn is enabled and no session_id provided
     if multi_turn and not session_id:
         import uuid
 
@@ -284,23 +243,15 @@ def interactive(
             else:
                 click.echo("Loading all available repositories from cache...")
 
-            # Load specific repositories or all if none specified
-            repo_filter = list(repos) if repos else None
-            if not fastcode.cache.load_cached_repos(repo_names=repo_filter):
-                click.echo("Error: Failed to load multi-repo cache", err=True)
-                sys.exit(1)
+            client.load_cached_repos(repo_names=list(repos) if repos else None)
 
-            # Show available repositories
-            repo_names = fastcode.vector_store.get_repository_names()
-            click.echo(f"\nLoaded {len(repo_names)} repositories:")
-            for repo in repo_names:
+            info = client.status()
+            loaded = info.get("loaded_repositories", [])
+            click.echo(f"\nLoaded {len(loaded)} repositories")
+            for repo in loaded:
                 click.echo(f"  - {repo}")
-            click.echo(
-                "\nYou can query across all repositories or specify repositories with the format:"
-            )
-            click.echo("  @repo1,repo2 your question here")
 
-        # Single repository mode
+        # Single repo mode
         else:
             if not repo_url and not repo_path and not repo_zip:
                 click.echo(
@@ -309,431 +260,117 @@ def interactive(
                 )
                 sys.exit(1)
 
-            # Check for conflicting options
-            provided_options = sum([bool(repo_url), bool(repo_path), bool(repo_zip)])
-            if provided_options > 1:
-                click.echo(
-                    "Error: Only one of --repo-url, --repo-path, or --repo-zip can be specified",
-                    err=True,
-                )
-                sys.exit(1)
+            source = repo_url or repo_path or repo_zip
+            is_url = bool(repo_url)
 
-            # Load and index repository
-            if repo_zip:
-                click.echo(f"Loading repository from ZIP: {repo_zip}")
-                fastcode.indexing.load_repository(repo_zip, is_url=False, is_zip=True)
-            elif repo_url:
-                click.echo(f"Loading repository from URL: {repo_url}")
-                fastcode.indexing.load_repository(repo_url, is_url=True)
-            elif repo_path:
-                click.echo(f"Loading repository from path: {repo_path}")
-                fastcode.indexing.load_repository(repo_path, is_url=False)
-
-            click.echo("Indexing repository...")
-            fastcode.indexing.index_repository()
-
-            summary = fastcode.store.get_repository_summary()
-            click.echo(f"\n{summary}\n")
+            click.echo(f"Loading and indexing repository: {source}")
+            client.load_and_index(source=source, is_url=is_url)
 
         # Interactive loop
         click.echo("=" * 60)
         if multi_turn:
             click.echo("FastCode Interactive Mode (Multi-turn)")
             click.echo(f"Session ID: {session_id}")
-            click.echo("Your conversations will be tracked across turns.")
         else:
             click.echo("FastCode Interactive Mode (Single-turn)")
-
-        # Show agency mode status
-        if agency is True:
-            click.echo("Agency Mode: ENABLED (forced on)")
-        elif agency is False:
-            click.echo("Agency Mode: DISABLED (forced off)")
-        else:
-            click.echo("Agency Mode: AUTO (activates based on query intent)")
-
-        click.echo("\nSpecial commands:")
-        if multi_turn:
-            click.echo("  'history' - Show dialogue history")
-            click.echo("  'new-session' - Start a new session")
-        click.echo("  'agency on' - Force enable agency mode")
-        click.echo("  'agency off' - Force disable agency mode")
-        click.echo("  'agency auto' - Use automatic intent-based activation")
-        click.echo("  'agency status' - Show current agency mode setting")
-        click.echo("  'quit' or 'exit' - Exit interactive mode")
+        click.echo("\nCommands: 'quit' to exit")
         click.echo("=" * 60 + "\n")
 
         while True:
             try:
-                query = click.prompt("\nYour question", type=str)
-
-                if query.lower() in ["quit", "exit", "q"]:
-                    break
-
-                # Handle special commands
-                # Agency mode commands (available in all modes)
-                if query.lower() == "agency on":
-                    agency = True
-                    click.echo("✓ Agency mode: ENABLED (forced on)")
-                    click.echo(
-                        "  All queries will use agency mode for accurate and comprehensive retrieval"
-                    )
-                    continue
-
-                if query.lower() == "agency off":
-                    agency = False
-                    click.echo("✓ Agency mode: DISABLED (forced off)")
-                    click.echo("  All queries will use standard fast retrieval")
-                    continue
-
-                if query.lower() == "agency auto":
-                    agency = None
-                    click.echo("✓ Agency mode: AUTO")
-                    click.echo(
-                        "  Agency mode will activate automatically based on query intent"
-                    )
-                    click.echo(
-                        "  Trigger intents: implement, debug, understand, trace, refactor, architecture"
-                    )
-                    continue
-
-                if query.lower() == "agency status":
-                    if agency is True:
-                        status = "ENABLED (forced on)"
-                        detail = "All queries use accurate + association agents"
-                    elif agency is False:
-                        status = "DISABLED (forced off)"
-                        detail = "All queries use standard fast retrieval"
-                    else:
-                        status = "AUTO"
-                        detail = "Activates for: implement, debug, understand, trace, refactor, architecture"
-
-                    click.echo("\n=== Agency Mode Status ===")
-                    click.echo(f"Mode: {status}")
-                    click.echo(f"Detail: {detail}")
-                    continue
-
-                # Multi-turn specific commands
-                if multi_turn:
-                    if query.lower() == "history":
-                        assert (
-                            session_id is not None
-                        )  # guaranteed by multi_turn init above
-                        history = fastcode.context.get_session_history(session_id)
-                        if not history:
-                            click.echo("No conversation history yet.")
-                        else:
-                            click.echo(
-                                f"\n=== Session History ({len(history)} turns) ==="
-                            )
-                            for turn in history:
-                                turn_num = turn.get("turn_number")
-                                turn_query = turn.get("query")
-                                turn_answer = turn.get("answer", "")[:100] + "..."
-                                click.echo(f"\nTurn {turn_num}:")
-                                click.echo(f"  Q: {turn_query}")
-                                click.echo(f"  A: {turn_answer}")
-                        continue
-
-                    if query.lower() == "new-session":
-                        import uuid
-
-                        session_id = str(uuid.uuid4())[:8]
-                        click.echo(f"Started new session: {session_id}")
-                        continue
-
-                if not query.strip():
-                    continue
-
-                # Parse repository filter from query (format: @repo1,repo2 question)
-                repo_filter = None
-                if load_cache and query.startswith("@"):
-                    parts = query.split(" ", 1)
-                    if len(parts) == 2:
-                        repo_names_str = parts[0][1:]  # Remove @
-                        query = parts[1]
-                        repo_filter = [r.strip() for r in repo_names_str.split(",")]
-                        click.echo(f"Searching in: {', '.join(repo_filter)}")
-                elif not load_cache:
-                    current_repo = fastcode.repo_info.get("name")
-                    if current_repo:
-                        repo_filter = [current_repo]
-
-                # Show processing indicator with agency mode info
-                if agency is True:
-                    click.echo(
-                        "\nProcessing with agency mode (accurate + association agents)...\n"
-                    )
-                elif agency is False:
-                    click.echo("\nProcessing with standard retrieval...\n")
-                else:
-                    click.echo("\nProcessing...\n")
-
-                # Call query with multi-turn and agency parameters
-                result = fastcode.query.query(
-                    query,
-                    repo_filter=repo_filter,
-                    session_id=session_id if multi_turn else None,
-                    enable_multi_turn=multi_turn,
-                    use_agency_mode=agency,
-                )
-
-                formatted = fastcode.answer_generator.format_answer_with_sources(result)
-                click.echo(formatted)
-
-                # Show turn number in multi-turn mode
-                if multi_turn:
-                    assert session_id is not None  # guaranteed by multi_turn init above
-                    turn_num = fastcode._get_next_turn_number(session_id) - 1
-                    click.echo(f"\n[Turn {turn_num} saved]")
-
+                user_input = click.prompt("\nYour question", type=str)
             except (KeyboardInterrupt, EOFError):
                 break
 
-        click.echo("\nGoodbye!")
-        if not load_cache:
-            fastcode.cleanup()
+            if user_input.lower() in ("quit", "exit", "q"):
+                break
+
+            if not user_input.strip():
+                continue
+
+            # Parse repository filter from query (format: @repo1,repo2 question)
+            repo_filter: list[str] | None = None
+            question = user_input
+            if load_cache and user_input.startswith("@"):
+                parts = user_input.split(" ", 1)
+                if len(parts) == 2:
+                    repo_filter = [r.strip() for r in parts[0][1:].split(",")]
+                    question = parts[1]
+                    click.echo(f"Searching in: {', '.join(repo_filter)}")
+
+            click.echo("\nProcessing...\n")
+
+            result = client.query(
+                question=question,
+                repo_filter=repo_filter,
+                session_id=session_id if multi_turn else None,
+                multi_turn=multi_turn,
+            )
+
+            answer = result.get("answer", "")
+            sources = result.get("sources", [])
+
+            click.echo(answer)
+
+            if sources:
+                click.echo("\nSources:")
+                for s in sources:
+                    click.echo(f"  - {s.get('name', '')} ({s.get('path', '')})")
+
+            if multi_turn:
+                turn_num = result.get("turn_number", "?")
+                click.echo(f"\n[Turn {turn_num} saved]")
 
     except Exception as e:
         click.echo(f"Error: {e!s}", err=True)
         sys.exit(1)
 
 
-@cli.command()
-def clear_cache():
-    """Clear all cached data"""
-    fastcode = FastCode()
-
-    if fastcode.cache.clear_cache():
-        click.echo("Cache cleared successfully")
-    else:
-        click.echo("Failed to clear cache or cache is disabled")
+# ======================================================================
+# Multi-repo commands
+# ======================================================================
 
 
-@cli.command()
-def cache_stats():
-    """Show cache statistics (query result cache, not repository indexes)"""
-    fastcode = FastCode()
-    stats = fastcode.cache.get_cache_stats()
-
-    click.echo("=" * 60)
-    click.echo("Query Result Cache Statistics")
-    click.echo("=" * 60)
-    click.echo(f"Enabled: {stats.get('enabled', False)}")
-
-    if stats.get("enabled"):
-        click.echo(f"Backend: {stats.get('backend', 'unknown')}")
-        click.echo(f"Cached Queries: {stats.get('items', 0)}")
-        size_mb = stats.get("size", 0) / (1024 * 1024)
-        click.echo(f"Cache Size: {size_mb:.2f} MB")
-        click.echo("\nNote: This shows query result cache, not repository indexes.")
-        click.echo("Use 'repo-stats' to see repository index statistics.")
-
-
-@cli.command()
-@click.argument("repo_name")
-@click.option("--config", "-c", help="Path to configuration file")
-@click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
-@click.option("--keep-source", is_flag=True, help="Keep cloned source code in repos/")
-def remove_repo(
-    repo_name: str, config: str | None, confirm: bool, keep_source: bool
-) -> None:
-    """Remove a repository and all its data (index, BM25, graphs, overview, source)"""
-
-    fastcode = FastCode(config_path=config)
-    repo_root = fastcode.config.get("repo_root", "./repos")
-
-    # Check if any data exists for this repository
-    artifact_paths = fastcode._repository_artifact_paths(repo_name)
-    existing_files: list[tuple[str, int]] = []
-    total_size = 0
-    for artifact_path in artifact_paths:
-        size = fastcode._artifact_size_bytes(artifact_path)
-        label = os.path.basename(artifact_path)
-        if os.path.isdir(artifact_path):
-            label = f"{label}/"
-        existing_files.append((label, size))
-        total_size += size
-
-    repo_dir = os.path.join(repo_root, repo_name)
-    has_source = os.path.isdir(repo_dir)
-
-    if not existing_files and not has_source:
-        click.echo(f"Error: Repository '{repo_name}' not found", err=True)
-        sys.exit(1)
-
-    # Confirmation
-    if not confirm:
-        click.echo(f"Repository: {repo_name}")
-        click.echo("\nData to be deleted:")
-        for fname, size in existing_files:
-            click.echo(f"  - {fname} ({size / (1024 * 1024):.2f} MB)")
-
-        # Check overview
-        overviews = fastcode.vector_store.load_repo_overviews(include_embeddings=False)
-        if repo_name in overviews:
-            click.echo(f"  - repository overview storage (entry for {repo_name})")
-
-        if has_source and not keep_source:
-            click.echo(f"  - repos/{repo_name}/ (source code)")
-
-        click.echo(f"\nTotal index size: {total_size / (1024 * 1024):.2f} MB")
-
-        if not click.confirm("\nAre you sure you want to remove this repository?"):
-            click.echo("Cancelled.")
-            return
-
-    # Remove using the comprehensive method
-    try:
-        result = fastcode.remove_repository(repo_name, delete_source=not keep_source)
-        click.echo(f"✓ Successfully removed repository '{repo_name}'")
-        for f in result["deleted_files"]:
-            click.echo(f"  - {f}")
-        click.echo(f"  Freed {result['freed_mb']:.2f} MB of disk space")
-    except Exception as e:
-        click.echo(f"Error removing repository: {e}", err=True)
-        sys.exit(1)
-
-
-@cli.command()
-@click.option("--config", "-c", help="Path to configuration file")
-def clean_indices(config: str | None) -> None:
-    """Clean up orphaned index files"""
-
-    import shutil
-
-    fastcode = FastCode(config_path=config)
-    persist_dir = fastcode.vector_store.persist_dir
-
-    if not os.path.exists(persist_dir):
-        click.echo("No vector store directory found")
-        return
-
-    suffixes = (
-        "_vector_manifest.json",
-        "_vector_shards",
-        "_graph_manifest.json",
-        "_graph_shards",
-        "_metadata_manifest.json",
-        "_metadata_shards",
-        "_bm25_manifest.json",
-        "_bm25_shards",
-        "_graphs.pkl",
-        "_metadata.pkl",
-        "_bm25.pkl",
-        "_manifest.json",
-        ".faiss",
-    )
-
-    candidate_repos: set[str] = set()
-    for entry in os.listdir(persist_dir):
-        for suffix in suffixes:
-            if entry.endswith(suffix):
-                candidate_repos.add(entry.removesuffix(suffix))
-                break
-
-    has_saved_index = getattr(fastcode.vector_store, "has_saved_index", None)
-    valid_repos = {
-        repo_name
-        for repo_name in candidate_repos
-        if (
-            (callable(has_saved_index) and bool(has_saved_index(repo_name)))
-            or (
-                not callable(has_saved_index)
-                and os.path.exists(os.path.join(persist_dir, f"{repo_name}.faiss"))
-                and os.path.exists(
-                    os.path.join(persist_dir, f"{repo_name}_metadata.pkl")
-                )
-            )
-        )
-    }
-
-    orphaned_paths: list[str] = []
-    for repo_name in sorted(candidate_repos - valid_repos):
-        orphaned_paths.extend(fastcode._repository_artifact_paths(repo_name))
-
-    if not orphaned_paths:
-        click.echo("✓ No orphaned files found")
-        click.echo(f"  {len(valid_repos)} valid repositories in index")
-        return
-
-    click.echo(f"Found {len(orphaned_paths)} orphaned file(s):")
-    total_size = 0
-    for artifact_path in orphaned_paths:
-        size_mb = fastcode._artifact_size_bytes(artifact_path) / (1024 * 1024)
-        total_size += size_mb
-        label = os.path.basename(artifact_path)
-        if os.path.isdir(artifact_path):
-            label = f"{label}/"
-        click.echo(f"  - {label} ({size_mb:.2f} MB)")
-
-    click.echo(f"\nTotal size: {total_size:.2f} MB")
-
-    if click.confirm("\nRemove these orphaned files?"):
-        for artifact_path in orphaned_paths:
-            try:
-                label = os.path.basename(artifact_path)
-                if os.path.isdir(artifact_path):
-                    shutil.rmtree(artifact_path)
-                    label = f"{label}/"
-                else:
-                    os.remove(artifact_path)
-                click.echo(f"  ✓ Removed {label}")
-            except Exception as e:
-                click.echo(f"  ✗ Failed to remove {artifact_path}: {e}")
-
-        click.echo(f"\n✓ Cleanup complete. Freed {total_size:.2f} MB")
-    else:
-        click.echo("Cancelled.")
-
-
-@cli.command()
+@cli.command("index-multiple")
 @click.option(
     "--repo-urls",
     "-u",
     multiple=True,
-    help="Multiple repository URLs (can be used multiple times)",
+    help="Repository URLs (can be used multiple times)",
 )
 @click.option(
     "--repo-paths",
     "-p",
     multiple=True,
-    help="Multiple local repository paths (can be used multiple times)",
+    help="Local repository paths (can be used multiple times)",
 )
 @click.option(
     "--repo-zips",
     "-z",
     multiple=True,
-    help="Multiple ZIP files containing repositories (can be used multiple times)",
+    help="ZIP files (can be used multiple times)",
 )
 @click.option(
     "--urls-file", "-f", help="File containing repository URLs (one per line)"
 )
-@click.option("--config", "-c", help="Path to configuration file")
+@click.pass_context
 def index_multiple(
+    ctx: click.Context,
     repo_urls: tuple[str, ...],
     repo_paths: tuple[str, ...],
     repo_zips: tuple[str, ...],
     urls_file: str | None,
-    config: str | None,
 ) -> None:
-    """Index multiple repositories at once"""
+    """Index multiple repositories at once."""
+    sources: list[dict[str, object]] = []
 
-    sources = []
-
-    # Add URLs from command line
     for url in repo_urls:
         sources.append({"source": url, "is_url": True, "is_zip": False})
-
-    # Add paths from command line
     for path in repo_paths:
         sources.append({"source": path, "is_url": False, "is_zip": False})
-
-    # Add ZIP files from command line
     for zip_path in repo_zips:
         sources.append({"source": zip_path, "is_url": False, "is_zip": True})
 
-    # Add URLs from file
     if urls_file:
         try:
             with open(urls_file) as f:
@@ -752,62 +389,48 @@ def index_multiple(
         )
         sys.exit(1)
 
-    fastcode = FastCode(config_path=config)
+    client = ctx.obj["client"]
 
     try:
         click.echo(f"Loading and indexing {len(sources)} repositories...")
-        fastcode.indexing.load_multiple_repositories(sources)
+        result = client.index_multiple(sources)
+        click.echo(f"\n{result.get('message', 'Done')}")
 
-        # Show summary
-        stats = fastcode.store.get_repository_stats()
-        click.echo("\n" + "=" * 60)
-        click.echo("Multi-Repository Indexing Complete!")
-        click.echo("=" * 60)
-        click.echo(f"Total Repositories: {stats['total_repositories']}")
-        click.echo(f"Total Elements: {stats['total_elements']}")
-        click.echo("\nRepository Details:")
-        for repo in stats["repositories"]:
-            click.echo(
-                f"  - {repo['name']}: {repo['elements']} elements, {repo['files']} files"
-            )
+        stats = result.get("stats", {})
+        if stats:
+            click.echo(f"Total Repositories: {stats.get('total_repositories', '?')}")
+            click.echo(f"Total Elements: {stats.get('total_elements', '?')}")
 
     except Exception as e:
         click.echo(f"Error: {e!s}", err=True)
         sys.exit(1)
 
 
-@cli.command()
+@cli.command("query-multiple")
 @click.option("--query", "-q", required=True, help="Question to ask")
 @click.option(
     "--repos",
     "-r",
     multiple=True,
-    help="Specific repositories to search (can be used multiple times, omit for all)",
+    help="Specific repositories to search",
 )
-@click.option("--config", "-c", help="Path to configuration file")
 @click.option("--output", "-o", help="Output file (default: stdout)")
 @click.option("--load-cache", is_flag=True, help="Load from multi-repo cache")
+@click.pass_context
 def query_multiple(
+    ctx: click.Context,
     query: str,
     repos: tuple[str, ...],
-    config: str | None,
     output: str | None,
     load_cache: bool,
 ) -> None:
-    """Query across multiple indexed repositories"""
-
-    fastcode = FastCode(config_path=config)
+    """Query across multiple indexed repositories."""
+    client = ctx.obj["client"]
 
     try:
-        # Try to load from cache
         if load_cache:
             click.echo("Loading multi-repository index from cache...")
-            if not fastcode.cache.load_cached_repos():
-                click.echo(
-                    "Error: Failed to load multi-repo cache. Please index repositories first.",
-                    err=True,
-                )
-                sys.exit(1)
+            client.load_cached_repos()
         else:
             click.echo(
                 "Error: No repositories loaded. Use 'index-multiple' first or use --load-cache",
@@ -815,166 +438,114 @@ def query_multiple(
             )
             sys.exit(1)
 
-        # Get list of available repositories
-        available_repos = fastcode.vector_store.get_repository_names()
-
-        if not available_repos:
-            click.echo("Error: No repositories found in index", err=True)
-            sys.exit(1)
-
-        # Determine which repositories to query
-        repo_filter = None
-        if repos:
-            # Validate repository names
-            invalid_repos = [r for r in repos if r not in available_repos]
-            if invalid_repos:
-                click.echo(f"Warning: Unknown repositories: {', '.join(invalid_repos)}")
-            repo_filter = [r for r in repos if r in available_repos]
-            click.echo(f"Searching in repositories: {', '.join(repo_filter)}")
-        else:
-            click.echo(f"Searching in all {len(available_repos)} repositories")
-
-        # Query
+        repo_filter = list(repos) if repos else None
         click.echo(f"\nProcessing query: {query}\n")
-        result = fastcode.query.query(query, repo_filter=repo_filter)
+        result = client.query(query, repo_filter=repo_filter)
 
-        # Format output
-        formatted = fastcode.answer_generator.format_answer_with_sources(result)
-
-        # Output result
+        answer = result.get("answer", "")
         if output:
             with open(output, "w") as f:
-                f.write(formatted)
+                f.write(answer)
             click.echo(f"Result saved to {output}")
         else:
-            click.echo(formatted)
+            click.echo(answer)
 
     except Exception as e:
         click.echo(f"Error: {e!s}", err=True)
         sys.exit(1)
 
 
-@cli.command()
-@click.option("--config", "-c", help="Path to configuration file")
-@click.option(
-    "--load-cache", is_flag=True, help="Load from multi-repo cache (for full metadata)"
-)
-def list_repos(config: str | None, load_cache: bool) -> None:
-    """List all indexed repositories"""
+# ======================================================================
+# Info commands
+# ======================================================================
 
-    fastcode = FastCode(config_path=config)
+
+@cli.command("list-repos")
+@click.pass_context
+def list_repos(ctx: click.Context) -> None:
+    """List all indexed repositories."""
+    client = ctx.obj["client"]
 
     try:
-        # If load-cache is specified, load into memory for full details
-        if load_cache:
-            if not fastcode.cache.load_cached_repos():
-                click.echo("Error: Failed to load multi-repo cache", err=True)
-                sys.exit(1)
+        result = client.list_repositories()
+        available = result.get("available", [])
 
-            repositories = fastcode.store.list_repositories()
+        if not available:
+            click.echo("No repository indexes found")
+            return
 
-            if not repositories:
-                click.echo("No repositories found in index")
-                return
+        click.echo("=" * 80)
+        click.echo("Available Repository Indexes")
+        click.echo("=" * 80)
 
-            click.echo("=" * 80)
-            click.echo("Indexed Repositories (Loaded)")
-            click.echo("=" * 80)
+        for i, repo in enumerate(available, 1):
+            click.echo(f"\n{i}. {repo.get('name', '?')}")
+            click.echo(f"   Elements: {repo.get('element_count', '?')}")
+            click.echo(f"   Files: {repo.get('file_count', '?')}")
+            click.echo(f"   Size: {repo.get('size_mb', 0):.2f} MB")
 
-            for i, repo in enumerate(repositories, 1):
-                click.echo(f"\n{i}. {repo['name']}")
-                click.echo(f"   Elements: {repo['element_count']}")
-                click.echo(f"   Files: {repo['file_count']}")
-                click.echo(f"   Size: {repo['size_mb']:.2f} MB")
-                if repo["url"] != "N/A":
-                    click.echo(f"   URL: {repo['url']}")
-
-            click.echo("\n" + "=" * 80)
-            click.echo(f"Total: {len(repositories)} repositories")
-
-        # Default: Scan available index files without loading
-        else:
-            available_repos = fastcode.vector_store.scan_available_indexes()
-
-            if not available_repos:
-                click.echo("No repository indexes found")
-                return
-
-            click.echo("=" * 80)
-            click.echo("Available Repository Indexes")
-            click.echo("=" * 80)
-
-            for i, repo in enumerate(available_repos, 1):
-                click.echo(f"\n{i}. {repo['name']}")
-                click.echo(f"   Elements: {repo['element_count']}")
-                click.echo(f"   Files: {repo['file_count']}")
-                click.echo(f"   Index Size: {repo['size_mb']:.2f} MB")
-                if repo["url"] != "N/A":
-                    click.echo(f"   URL: {repo['url']}")
-
-            click.echo("\n" + "=" * 80)
-            click.echo(f"Total: {len(available_repos)} repositories")
+        click.echo("\n" + "=" * 80)
+        click.echo(f"Total: {len(available)} repositories")
 
     except Exception as e:
         click.echo(f"Error: {e!s}", err=True)
         sys.exit(1)
 
 
-@cli.command()
-@click.option("--config", "-c", help="Path to configuration file")
-def repo_stats(config: str | None) -> None:
-    """Show statistics for all indexed repositories"""
-
-    fastcode = FastCode(config_path=config)
+@cli.command("repo-stats")
+@click.pass_context
+def repo_stats(ctx: click.Context) -> None:
+    """Show statistics for all indexed repositories."""
+    client = ctx.obj["client"]
 
     try:
-        # Scan available indexes from disk
-        available_repos = fastcode.vector_store.scan_available_indexes()
+        result = client.list_repositories()
+        available = result.get("available", [])
 
-        if not available_repos:
+        if not available:
             click.echo("=" * 60)
             click.echo("Repository Statistics")
             click.echo("=" * 60)
             click.echo("Total Repositories: 0")
             click.echo("Total Indexed Elements: 0")
-            click.echo("\nPer-Repository Breakdown:")
             return
 
-        # Calculate totals
-        total_repos = len(available_repos)
-        total_elements = sum(repo["element_count"] for repo in available_repos)
-        total_size = sum(repo["size_mb"] for repo in available_repos)
+        total_elements = sum(r.get("element_count", 0) for r in available)
+        total_size = sum(r.get("size_mb", 0) for r in available)
 
         click.echo("=" * 60)
         click.echo("Repository Statistics")
         click.echo("=" * 60)
-        click.echo(f"Total Repositories: {total_repos}")
+        click.echo(f"Total Repositories: {len(available)}")
         click.echo(f"Total Indexed Elements: {total_elements}")
         click.echo(f"Total Index Size: {total_size:.2f} MB")
         click.echo("\nPer-Repository Breakdown:")
 
-        for repo in available_repos:
-            click.echo(f"\n  {repo['name']}:")
-            click.echo(f"    Elements: {repo['element_count']}")
-            click.echo(f"    Files: {repo['file_count']}")
-            click.echo(f"    Size: {repo['size_mb']:.2f} MB")
-            if repo["url"] != "N/A":
-                click.echo(f"    URL: {repo['url']}")
+        for repo in available:
+            click.echo(f"\n  {repo.get('name', '?')}:")
+            click.echo(f"    Elements: {repo.get('element_count', '?')}")
+            click.echo(f"    Files: {repo.get('file_count', '?')}")
+            click.echo(f"    Size: {repo.get('size_mb', 0):.2f} MB")
 
     except Exception as e:
         click.echo(f"Error: {e!s}", err=True)
         sys.exit(1)
 
 
-@cli.command()
-@click.option("--config", "-c", help="Path to configuration file")
-def list_sessions(config: str | None) -> None:
-    """List all dialogue sessions"""
+# ======================================================================
+# Session commands
+# ======================================================================
 
-    fastcode = FastCode(config_path=config)
+
+@cli.command("list-sessions")
+@click.pass_context
+def list_sessions(ctx: click.Context) -> None:
+    """List all dialogue sessions."""
+    client = ctx.obj["client"]
 
     try:
-        sessions = fastcode.context.list_sessions()
+        result = client.list_sessions()
+        sessions = result.get("sessions", [])
 
         if not sessions:
             click.echo("No dialogue sessions found")
@@ -1012,16 +583,16 @@ def list_sessions(config: str | None) -> None:
         sys.exit(1)
 
 
-@cli.command()
+@cli.command("show-session")
 @click.argument("session_id")
-@click.option("--config", "-c", help="Path to configuration file")
-def show_session(session_id: str, config: str | None) -> None:
-    """Show dialogue history for a session"""
-
-    fastcode = FastCode(config_path=config)
+@click.pass_context
+def show_session(ctx: click.Context, session_id: str) -> None:
+    """Show dialogue history for a session."""
+    client = ctx.obj["client"]
 
     try:
-        history = fastcode.context.get_session_history(session_id)
+        result = client.get_session(session_id)
+        history = result.get("history", [])
 
         if not history:
             click.echo(f"No history found for session: {session_id}")
@@ -1031,14 +602,12 @@ def show_session(session_id: str, config: str | None) -> None:
         click.echo(f"Session: {session_id}")
         click.echo("=" * 80)
 
+        from datetime import datetime
+
         for turn in history:
             turn_num = turn.get("turn_number", 0)
             query = turn.get("query", "")
             answer = turn.get("answer", "")
-            summary = turn.get("summary", "")
-
-            from datetime import datetime
-
             timestamp = turn.get("timestamp", 0)
             time_str = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1048,9 +617,6 @@ def show_session(session_id: str, config: str | None) -> None:
             click.echo(f"\nQuestion: {query}")
             click.echo(f"\nAnswer:\n{answer}")
 
-            if summary:
-                click.echo(f"\n[Summary]:\n{summary}")
-
         click.echo("\n" + "=" * 80)
         click.echo(f"Total Turns: {len(history)}")
 
@@ -1059,38 +625,108 @@ def show_session(session_id: str, config: str | None) -> None:
         sys.exit(1)
 
 
-@cli.command()
+@cli.command("delete-session")
 @click.argument("session_id")
-@click.option("--config", "-c", help="Path to configuration file")
 @click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
-def delete_session(session_id: str, config: str | None, confirm: bool) -> None:
-    """Delete a dialogue session"""
-
-    fastcode = FastCode(config_path=config)
+@click.pass_context
+def delete_session(ctx: click.Context, session_id: str, confirm: bool) -> None:
+    """Delete a dialogue session."""
+    client = ctx.obj["client"]
 
     try:
-        # Check if session exists
-        history = fastcode.context.get_session_history(session_id)
+        result = client.get_session(session_id)
+        history = result.get("history", [])
+
         if not history:
             click.echo(f"Session not found: {session_id}", err=True)
             sys.exit(1)
 
-        # Confirmation
         if not confirm:
             click.echo(f"Session ID: {session_id}")
             click.echo(f"Total turns: {len(history)}")
-
             if not click.confirm("\nAre you sure you want to delete this session?"):
                 click.echo("Cancelled.")
                 return
 
-        # Delete session
-        if fastcode.context.delete_session(session_id):
-            click.echo(f"✓ Successfully deleted session: {session_id}")
-        else:
-            click.echo(f"Failed to delete session: {session_id}", err=True)
-            sys.exit(1)
+        client.delete_session(session_id)
+        click.echo(f"Successfully deleted session: {session_id}")
 
+    except Exception as e:
+        click.echo(f"Error: {e!s}", err=True)
+        sys.exit(1)
+
+
+# ======================================================================
+# Cache commands
+# ======================================================================
+
+
+@cli.command("clear-cache")
+@click.pass_context
+def clear_cache(ctx: click.Context) -> None:
+    """Clear all cached data."""
+    client = ctx.obj["client"]
+
+    try:
+        client.clear_cache()
+        click.echo("Cache cleared successfully")
+    except Exception as e:
+        click.echo(f"Failed to clear cache: {e}", err=True)
+
+
+@cli.command("cache-stats")
+@click.pass_context
+def cache_stats(ctx: click.Context) -> None:
+    """Show cache statistics."""
+    client = ctx.obj["client"]
+
+    try:
+        stats = client.cache_stats()
+
+        click.echo("=" * 60)
+        click.echo("Query Result Cache Statistics")
+        click.echo("=" * 60)
+        click.echo(f"Enabled: {stats.get('enabled', False)}")
+
+        if stats.get("enabled"):
+            click.echo(f"Backend: {stats.get('backend', 'unknown')}")
+            click.echo(f"Cached Queries: {stats.get('items', 0)}")
+            size_mb = stats.get("size", 0) / (1024 * 1024)
+            click.echo(f"Cache Size: {size_mb:.2f} MB")
+
+    except Exception as e:
+        click.echo(f"Error: {e!s}", err=True)
+        sys.exit(1)
+
+
+# ======================================================================
+# Diagnostics
+# ======================================================================
+
+
+@cli.command()
+@click.pass_context
+def health(ctx: click.Context) -> None:
+    """Check server health."""
+    client = ctx.obj["client"]
+
+    try:
+        result = client.health()
+        click.echo(json.dumps(result, indent=2))
+    except Exception as e:
+        click.echo(f"Server unreachable: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.pass_context
+def diagnostics(ctx: click.Context) -> None:
+    """Get diagnostic bundle from server."""
+    client = ctx.obj["client"]
+
+    try:
+        result = client.diagnostics()
+        click.echo(json.dumps(result, indent=2))
     except Exception as e:
         click.echo(f"Error: {e!s}", err=True)
         sys.exit(1)

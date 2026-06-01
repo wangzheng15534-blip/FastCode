@@ -1,4 +1,4 @@
-"""Runtime state holder extracted from FastCode for injection into facades."""
+"""Mutable runtime state holder with read-write locking for facades."""
 
 from __future__ import annotations
 

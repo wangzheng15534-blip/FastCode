@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from fastcode.app.store.vectors.vector import VectorStore
     from fastcode.scip.global_builder import GlobalIndexBuilder
     from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
-    from fastcode.main.runtime_state import RuntimeState
+    from fastcode.runtime_support.runtime_state import RuntimeState
     from fastcode.retrieval.hybrid_retriever import HybridRetriever
     from fastcode.scip.module_resolver import ModuleResolver
     from fastcode.scip.symbol_resolver import SymbolResolver

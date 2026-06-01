@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from fastcode.app.indexing.projection.service import ProjectionService
-    from fastcode.main.runtime_state import RuntimeState
+    from fastcode.runtime_support.runtime_state import RuntimeState
 
 
 class ProjectionFacade:

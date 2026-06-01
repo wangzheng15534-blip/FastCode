@@ -7,7 +7,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from fastcode.app.query.facade import QueryFacade
-from fastcode.main.runtime_state import RuntimeState
+from fastcode.runtime_support.runtime_state import RuntimeState
 
 
 # ---------------------------------------------------------------------------

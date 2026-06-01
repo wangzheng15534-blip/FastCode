@@ -54,7 +54,7 @@ from fastcode.ir.types import (
 from fastcode.main.config import config_from_mapping, config_to_runtime_mapping
 from fastcode.app.indexing.publishing_facade import PublishingFacade
 from fastcode.main.fastcode import FastCode
-from fastcode.main.runtime_state import RuntimeState
+from fastcode.runtime_support.runtime_state import RuntimeState
 from fastcode.retrieval.context.agent_context import (
     AcceptedFact,
     EvidenceRef,

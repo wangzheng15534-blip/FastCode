@@ -87,7 +87,7 @@ from .config import (
     setup_logging,
 )
 from .diagnostics import DiagnosticBuilder
-from .runtime_state import RuntimeState
+from fastcode.runtime_support.runtime_state import RuntimeState
 
 
 class _VectorSearchStoreFactory:

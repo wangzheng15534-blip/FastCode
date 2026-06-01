@@ -48,7 +48,7 @@ from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.main.config import config_from_mapping, config_to_runtime_mapping
 from fastcode.main.fastcode import FastCode
-from fastcode.main.runtime_state import RuntimeState
+from fastcode.runtime_support.runtime_state import RuntimeState
 from fastcode.semantic.resolvers.engine.registry import (
     build_default_semantic_resolver_registry,
 )

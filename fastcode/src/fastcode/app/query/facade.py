@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from fastcode.ir.element import CodeElement
     from fastcode.ir.graph import IRGraphBuilder
     from fastcode.ir.types import IRSnapshot
-    from fastcode.main.runtime_state import RuntimeState
+    from fastcode.runtime_support.runtime_state import RuntimeState
     from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 
 

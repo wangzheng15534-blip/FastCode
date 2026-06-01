@@ -12,7 +12,7 @@ from fastcode.app.query.facade import QueryFacade
 from fastcode.app.store.cache_facade import CacheFacade
 from fastcode.app.store.context_facade import ContextFacade
 from fastcode.app.store.facade import StoreFacade
-from fastcode.main.runtime_state import RuntimeState
+from fastcode.runtime_support.runtime_state import RuntimeState
 
 
 def _minimal_fastcode() -> Any:

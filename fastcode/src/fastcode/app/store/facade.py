@@ -22,7 +22,7 @@ from fastcode.app.store.snapshots.snapshot_contracts import (
 from fastcode.app.store.vectors.vector import VectorStore
 from fastcode.ir.code_status import build_code_status_pack
 from fastcode.ir.types import IRSymbol
-from fastcode.main.runtime_state import RuntimeState
+from fastcode.runtime_support.runtime_state import RuntimeState
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.utils.json import safe_jsonable
 

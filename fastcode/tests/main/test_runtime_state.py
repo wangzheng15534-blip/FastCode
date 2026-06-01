@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import time
 
-from fastcode.main.runtime_state import RuntimeState, _ReadWriteStateLock
+from fastcode.runtime_support.runtime_state import RuntimeState, _ReadWriteStateLock
 
 
 class TestRuntimeStateDefaults:

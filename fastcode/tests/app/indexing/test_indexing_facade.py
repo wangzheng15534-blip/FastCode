@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from fastcode.app.indexing.facade import IndexingFacade
-from fastcode.main.runtime_state import RuntimeState
+from fastcode.runtime_support.runtime_state import RuntimeState
 
 
 # ---------------------------------------------------------------------------

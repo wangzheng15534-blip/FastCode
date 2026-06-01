@@ -14,7 +14,7 @@ from fastcode.app.query.orchestration.processor import ProcessedQuery
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import IRSnapshot
 from fastcode.main.fastcode import FastCode
-from fastcode.main.runtime_state import RuntimeState, _ReadWriteStateLock
+from fastcode.runtime_support.runtime_state import RuntimeState, _ReadWriteStateLock
 
 
 def _processed_query(

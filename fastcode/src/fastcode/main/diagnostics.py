@@ -17,7 +17,7 @@ from fastcode.app.store.snapshots.snapshot import SnapshotStore
 from fastcode.app.store.vectors.vector import VectorStore
 from fastcode.utils.clock import utc_now
 
-from .runtime_state import RuntimeState
+from fastcode.runtime_support.runtime_state import RuntimeState
 
 # ---------------------------------------------------------------------------
 # Module-level constants (moved from fastcode.py)

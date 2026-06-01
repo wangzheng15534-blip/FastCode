@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from fastcode.app.indexing.projection_facade import ProjectionFacade
-from fastcode.main.runtime_state import RuntimeState
+from fastcode.runtime_support.runtime_state import RuntimeState
 
 
 # ---------------------------------------------------------------------------

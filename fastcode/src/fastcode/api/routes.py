@@ -1,32 +1,20 @@
 """
-FastCode 2.0 - REST API
-Complete API with all features from web_app.py
+FastCode 2.0 - REST API routes.
+
+Route handlers only — the FastAPI app, lifespan, CORS, and logging are
+wired by main/serve.py.  This module exports an APIRouter.
 """
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false
-
-import os
-import platform
-
-if platform.system() == "Darwin":
-    os.environ["TOKENIZERS_PARALLELISM"] = "false"
-    os.environ["OMP_NUM_THREADS"] = "1"
-    os.environ["OPENBLAS_NUM_THREADS"] = "1"
-    os.environ["MKL_NUM_THREADS"] = "1"
 
 import asyncio
 import logging
 import uuid
 import zipfile
-from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
-import uvicorn
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
-from fastcode.api.cors import cors_middleware_options
 from fastcode.api.inbound import (
     AgentContextHandoffRequest,
     ContextActivationRequest,
@@ -65,69 +53,24 @@ from fastcode.api.serialization import (
     serialize_status_response,
     serialize_status_response_record,
 )
-from fastcode.main.fastcode import FastCode
 from fastcode.runtime_support.health import readiness_health
-from fastcode.runtime_support.observability import configure_logging
-from fastcode.utils.archive import (
-    UnsafeArchiveError,
-)
+from fastcode.utils.archive import UnsafeArchiveError
 
-# HTTP schema boundaries live in fastcode.api.inbound and fastcode.api.outbound.
+logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
+router = APIRouter()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Lifespan context manager for startup and shutdown"""
-    # Startup
-    logger.info("FastCode API started — initializing system")
-    if not hasattr(app.state, "fastcode"):
-        app.state.fastcode = FastCode()
-    yield
-    # Shutdown
-    fc = getattr(app, "state", None) and getattr(app.state, "fastcode", None)
-    if fc is not None:
-        try:
-            fc.shutdown()
-        except Exception as e:
-            logger.warning(f"FastCode shutdown hook failed: {e}")
-    logger.info("FastCode API shutting down")
-
-
-app = FastAPI(
-    title="FastCode API",
-    description="Repository-Level Code Understanding System API",
-    version="2.0.0",
-    lifespan=lifespan,
-)
-
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    **cors_middleware_options(),
-)
-
-# Setup logging
-log_dir = Path("./logs")
-logger = configure_logging(
-    level=logging.INFO,
-    format_str="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    log_file=str(log_dir / "api.log"),
-    console=True,
-    logger_name=__name__,
-)
-
-
-def _fc(request: Request) -> FastCode:
-    """Get FastCode instance from app state."""
-    fc = getattr(request.app.state, "fastcode", None)
-    if fc is None:
+def _facades(request: Request) -> Any:
+    """Get injected FacadeContainer from app state (duck-typed)."""
+    facades = getattr(request.app.state, "facades", None)
+    if facades is None:
         raise HTTPException(status_code=500, detail="FastCode not initialized")
-    return fc
+    return facades
 
 
-@app.get("/")
+
+@router.get("/")
 async def root():
     """Root endpoint"""
     return {
@@ -138,11 +81,11 @@ async def root():
     }
 
 
-@app.get("/health")
+@router.get("/health")
 async def health_check(request: Request):
     """Lightweight health check endpoint"""
-    fc = getattr(request.app.state, "fastcode", None)
-    if fc is None:
+    facades_obj = getattr(request.app.state, "facades", None)
+    if facades_obj is None:
         return {
             "status": "initializing",
             "message": "FastCode system will initialize on first use",
@@ -150,7 +93,7 @@ async def health_check(request: Request):
             "repo_indexed": False,
         }
 
-    info = fc.store.get_status_info()
+    info = facades_obj.store.get_status_info()
     health = readiness_health(
         repo_loaded=info["repo_loaded"],
         repo_indexed=info["repo_indexed"],
@@ -166,11 +109,11 @@ async def health_check(request: Request):
     }
 
 
-@app.get("/status", response_model=StatusResponse)
+@router.get("/status", response_model=StatusResponse)
 async def get_status(request: Request, full_scan: bool = False):
     """Get system status."""
-    fastcode = _fc(request)
-    info = fastcode.store.get_status_info(full_scan=full_scan)
+    facades = _facades(request)
+    info = facades.store.get_status_info(full_scan=full_scan)
     return serialize_status_response(
         serialize_status_response_record(
             status=ApiStatus.READY if info["repo_indexed"] else ApiStatus.NOT_READY,
@@ -186,12 +129,12 @@ async def get_status(request: Request, full_scan: bool = False):
     )
 
 
-@app.get("/diagnostics", response_model=DiagnosticBundleResponse)
+@router.get("/diagnostics", response_model=DiagnosticBundleResponse)
 async def get_diagnostics(request: Request):
     """Return a support-safe diagnostic bundle for operators."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
-        bundle = await asyncio.to_thread(fastcode.build_diagnostic_bundle)
+        bundle = await asyncio.to_thread(facades.build_diagnostic_bundle)
         return serialize_diagnostic_bundle_response(
             serialize_diagnostic_bundle_record(bundle)
         )
@@ -200,7 +143,7 @@ async def get_diagnostics(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/repositories")
+@router.get("/repositories")
 async def list_repositories(request: Request, full_scan: bool = False):
     """
     List available (indexed on disk) and loaded repositories
@@ -208,10 +151,10 @@ async def list_repositories(request: Request, full_scan: bool = False):
     Args:
         full_scan: If True, force a full scan of available indexes (slower but fresh data)
     """
-    fastcode = _fc(request)
+    facades = _facades(request)
 
     try:
-        info = fastcode.store.get_status_info(full_scan=full_scan)
+        info = facades.store.get_status_info(full_scan=full_scan)
 
         return {
             "status": "success",
@@ -223,19 +166,19 @@ async def list_repositories(request: Request, full_scan: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/load")
+@router.post("/load")
 async def load_repository(request: Request, req: LoadRepositoryRequest):
     """Load a repository"""
-    fastcode = _fc(request)
+    facades = _facades(request)
     command = map_load_repository_request(req)
 
     try:
         logger.info(f"Loading repository: {command.source}")
         await asyncio.to_thread(
-            fastcode.indexing.load_repository, command.source, command.is_url
+            facades.indexing.load_repository, command.source, command.is_url
         )
 
-        info = fastcode.store.get_status_info()
+        info = facades.store.get_status_info()
         return {
             "status": "success",
             "message": "Repository loaded successfully",
@@ -247,22 +190,22 @@ async def load_repository(request: Request, req: LoadRepositoryRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/index")
+@router.post("/index")
 async def index_repository(request: Request, force: bool = False):
     """Index the loaded repository"""
-    fastcode = _fc(request)
+    facades = _facades(request)
 
-    if not fastcode.store.get_status_info()["repo_loaded"]:
+    if not facades.store.get_status_info()["repo_loaded"]:
         raise HTTPException(status_code=400, detail="No repository loaded")
 
     try:
         logger.info("Indexing repository")
-        await asyncio.to_thread(fastcode.indexing.index_repository, force=force)
+        await asyncio.to_thread(facades.indexing.index_repository, force=force)
 
         return {
             "status": "success",
             "message": "Repository indexed successfully",
-            "summary": fastcode.store.get_repository_summary(),
+            "summary": facades.store.get_repository_summary(),
             "deprecated": True,
             "deprecation_note": "Use /index/run for IR-first snapshot indexing.",
         }
@@ -272,14 +215,14 @@ async def index_repository(request: Request, force: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/index/run", response_model=IndexRunResponse)
+@router.post("/index/run", response_model=IndexRunResponse)
 async def run_index_pipeline(request: Request, req: IndexRunRequest):
     """Run snapshot-based indexing pipeline."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     command = map_index_run_request(req)
     try:
         result = await asyncio.to_thread(
-            fastcode.indexing.run_index_pipeline,
+            facades.indexing.run_index_pipeline,
             source=command.source,
             is_url=command.is_url,
             ref=command.ref,
@@ -289,30 +232,30 @@ async def run_index_pipeline(request: Request, req: IndexRunRequest):
             scip_artifact_path=command.scip_artifact_path,
             enable_scip=command.enable_scip,
         )
-        await asyncio.to_thread(fastcode.cache.invalidate_scan_cache)
+        await asyncio.to_thread(facades.cache.invalidate_scan_cache)
         return serialize_index_run_response(serialize_index_run_response_record(result))
     except Exception as e:
         logger.error(f"Index run failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/index/runs/{run_id}")
+@router.get("/index/runs/{run_id}")
 async def get_index_run(request: Request, run_id: str):
     """Get index run status/details."""
-    fastcode = _fc(request)
-    run = fastcode.publishing.get_index_run(run_id)
+    facades = _facades(request)
+    run = facades.publishing.get_index_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
     return {"status": "success", "run": run}
 
 
-@app.post("/index/publish/{run_id}")
+@router.post("/index/publish/{run_id}")
 async def publish_index_run(request: Request, run_id: str, ref_name: str | None = None):
     """Publish an existing index run into manifest and lineage."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.publishing.publish_index_run, run_id, ref_name
+            facades.publishing.publish_index_run, run_id, ref_name
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -320,13 +263,13 @@ async def publish_index_run(request: Request, run_id: str, ref_name: str | None 
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/index/publish/retry")
+@router.post("/index/publish/retry")
 async def retry_publish_tasks(request: Request, limit: int = 10):
     """Retry pending Terminus lineage publish tasks."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.publishing.retry_pending_publishes, limit
+            facades.publishing.retry_pending_publishes, limit
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -334,30 +277,30 @@ async def retry_publish_tasks(request: Request, limit: int = 10):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/redo/process")
+@router.post("/redo/process")
 async def process_redo_tasks(request: Request, limit: int = 10):
     """Admin endpoint to process pending redo tasks immediately."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
-        result = await asyncio.to_thread(fastcode.publishing.process_redo_tasks, limit)
+        result = await asyncio.to_thread(facades.publishing.process_redo_tasks, limit)
         return {"status": "success", "result": result}
     except Exception as e:
         logger.error(f"Redo process failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/load-and-index")
+@router.post("/load-and-index")
 async def load_and_index(
     request: Request, req: LoadRepositoryRequest, force: bool = False
 ):
     """Load and index repository in one call"""
-    fastcode = _fc(request)
+    facades = _facades(request)
     command = map_load_repository_request(req)
 
     try:
         logger.info(f"Loading and indexing repository: {command.source}")
         return await asyncio.to_thread(
-            fastcode.indexing.load_and_index, command.source, command.is_url, force=force
+            facades.indexing.load_and_index, command.source, command.is_url, force=force
         )
 
     except Exception as e:
@@ -365,10 +308,10 @@ async def load_and_index(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/load-repositories")
+@router.post("/load-repositories")
 async def load_repositories(request: Request, req: LoadRepositoriesRequest):
     """Load existing indexed repositories from cache"""
-    fastcode = _fc(request)
+    facades = _facades(request)
 
     if not req.repo_names:
         raise HTTPException(status_code=400, detail="No repository names provided")
@@ -376,7 +319,7 @@ async def load_repositories(request: Request, req: LoadRepositoriesRequest):
     try:
         logger.info(f"Loading repositories from cache: {req.repo_names}")
         success = await asyncio.to_thread(
-            fastcode.cache.load_cached_repos, repo_names=req.repo_names
+            facades.cache.load_cached_repos, repo_names=req.repo_names
         )
 
         if not success:
@@ -386,8 +329,8 @@ async def load_repositories(request: Request, req: LoadRepositoriesRequest):
 
         return {
             "status": "success",
-            "loaded": fastcode.store.list_repositories(),
-            "stats": fastcode.store.get_repository_stats(),
+            "loaded": facades.store.list_repositories(),
+            "stats": facades.store.get_repository_stats(),
         }
     except HTTPException:
         raise
@@ -396,10 +339,10 @@ async def load_repositories(request: Request, req: LoadRepositoriesRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/index-multiple")
+@router.post("/index-multiple")
 async def index_multiple(request: Request, req: IndexMultipleRequest):
     """Load and index multiple repositories"""
-    fastcode = _fc(request)
+    facades = _facades(request)
 
     if not req.sources:
         raise HTTPException(status_code=400, detail="No repositories provided")
@@ -407,7 +350,7 @@ async def index_multiple(request: Request, req: IndexMultipleRequest):
     try:
         logger.info(f"Indexing {len(req.sources)} repositories")
         await asyncio.to_thread(
-            fastcode.indexing.load_multiple_repositories,
+            facades.indexing.load_multiple_repositories,
             [
                 {
                     "source": command.source,
@@ -419,22 +362,22 @@ async def index_multiple(request: Request, req: IndexMultipleRequest):
             ],
         )
 
-        await asyncio.to_thread(fastcode.cache.invalidate_scan_cache)
+        await asyncio.to_thread(facades.cache.invalidate_scan_cache)
 
         return {
             "status": "success",
             "message": "Repositories indexed successfully",
-            "stats": fastcode.store.get_repository_stats(),
+            "stats": facades.store.get_repository_stats(),
         }
     except Exception as e:
         logger.error(f"Failed to index multiple repositories: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/upload-zip")
+@router.post("/upload-zip")
 async def upload_repository_zip(request: Request, file: UploadFile = File(...)):
     """Upload and extract repository ZIP file"""
-    fastcode = _fc(request)
+    facades = _facades(request)
 
     filename = file.filename
     if not filename or not filename.lower().endswith(".zip"):
@@ -443,7 +386,7 @@ async def upload_repository_zip(request: Request, file: UploadFile = File(...)):
     try:
         file_bytes = await file.read()
         return await asyncio.to_thread(
-            fastcode.indexing.upload_repository_zip, file_bytes, filename
+            facades.indexing.upload_repository_zip, file_bytes, filename
         )
     except zipfile.BadZipFile:
         logger.error("Invalid ZIP file")
@@ -456,12 +399,12 @@ async def upload_repository_zip(request: Request, file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/upload-and-index")
+@router.post("/upload-and-index")
 async def upload_and_index(
     request: Request, file: UploadFile = File(...), force: bool = False
 ):
     """Upload ZIP and index in one call"""
-    fastcode = _fc(request)
+    facades = _facades(request)
 
     filename = file.filename
     if not filename or not filename.lower().endswith(".zip"):
@@ -471,7 +414,7 @@ async def upload_and_index(
         logger.info("Indexing uploaded repository")
         file_bytes = await file.read()
         return await asyncio.to_thread(
-            fastcode.indexing.upload_and_index, file_bytes, filename, force=force
+            facades.indexing.upload_and_index, file_bytes, filename, force=force
         )
     except zipfile.BadZipFile:
         logger.error("Invalid ZIP file")
@@ -484,10 +427,10 @@ async def upload_and_index(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/query", response_model=QueryResponse)
+@router.post("/query", response_model=QueryResponse)
 async def query_repository(request: Request, req: QueryRequest):
     """Query by snapshot scope (snapshot_id or repo_name+ref_name)."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     query_request = map_snapshot_query_request(req)
 
     if not query_request.snapshot_id and not (
@@ -507,7 +450,7 @@ async def query_repository(request: Request, req: QueryRequest):
 
         logger.info(f"Processing query: {query_request.question}")
         result = await asyncio.to_thread(
-            fastcode.query.query_snapshot,
+            facades.query.query_snapshot,
             question=query_request.question,
             snapshot_id=query_request.snapshot_id,
             repo_name=query_request.repo_name,
@@ -529,15 +472,15 @@ async def query_repository(request: Request, req: QueryRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/query-snapshot", response_model=QueryResponse)
+@router.post("/query-snapshot", response_model=QueryResponse)
 async def query_snapshot(request: Request, req: QuerySnapshotRequest):
     """Query a specific snapshot or repo/ref manifest head."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     query_request = map_snapshot_query_request(req)
     try:
         session_id = query_request.session_id or str(uuid.uuid4())[:8]
         result = await asyncio.to_thread(
-            fastcode.query.query_snapshot,
+            facades.query.query_snapshot,
             question=query_request.question,
             repo_name=query_request.repo_name,
             ref_name=query_request.ref_name,
@@ -557,7 +500,7 @@ async def query_snapshot(request: Request, req: QuerySnapshotRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/query-stream")
+@router.post("/query-stream")
 async def query_repository_stream(request: Request, _req: QueryRequest):
     """Deprecated in snapshot-cutover mode."""
     raise HTTPException(
@@ -566,12 +509,12 @@ async def query_repository_stream(request: Request, _req: QueryRequest):
     )
 
 
-@app.get("/summary")
+@router.get("/summary")
 async def get_repository_summary(request: Request):
     """Get repository summary"""
-    fastcode = _fc(request)
+    facades = _facades(request)
 
-    info = fastcode.store.get_status_info()
+    info = facades.store.get_status_info()
     if not info["repo_loaded"]:
         raise HTTPException(status_code=400, detail="No repository loaded")
 
@@ -581,9 +524,9 @@ async def get_repository_summary(request: Request):
 
     try:
         if info["multi_repo_mode"]:
-            summary_payload["summary"] = fastcode.store.get_repository_stats()
+            summary_payload["summary"] = facades.store.get_repository_stats()
         else:
-            summary_payload["summary"] = fastcode.store.get_repository_summary()
+            summary_payload["summary"] = facades.store.get_repository_summary()
     except Exception as e:
         logger.error(f"Failed to build summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -591,48 +534,48 @@ async def get_repository_summary(request: Request):
     return summary_payload
 
 
-@app.get("/manifests/{repo_name}/{ref_name}")
+@router.get("/manifests/{repo_name}/{ref_name}")
 async def get_branch_manifest(request: Request, repo_name: str, ref_name: str):
     """Get latest published manifest for repo/ref."""
-    fastcode = _fc(request)
-    manifest = fastcode.store.get_branch_manifest(repo_name, ref_name)
+    facades = _facades(request)
+    manifest = facades.store.get_branch_manifest(repo_name, ref_name)
     if not manifest:
         raise HTTPException(status_code=404, detail="Manifest not found")
     return {"status": "success", "manifest": manifest}
 
 
-@app.get("/repos/{repo_name}/refs")
+@router.get("/repos/{repo_name}/refs")
 async def get_repo_refs(request: Request, repo_name: str):
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
-        refs = await asyncio.to_thread(fastcode.store.list_repo_refs, repo_name)
+        refs = await asyncio.to_thread(facades.store.list_repo_refs, repo_name)
         return {"status": "success", "repo_name": repo_name, "refs": refs}
     except Exception as e:
         logger.error(f"Repo refs lookup failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/manifests/snapshot/{snapshot_id}")
+@router.get("/manifests/snapshot/{snapshot_id}")
 async def get_snapshot_manifest(request: Request, snapshot_id: str):
     """Get latest published manifest for snapshot ID."""
-    fastcode = _fc(request)
-    manifest = fastcode.store.get_snapshot_manifest(snapshot_id)
+    facades = _facades(request)
+    manifest = facades.store.get_snapshot_manifest(snapshot_id)
     if not manifest:
         raise HTTPException(status_code=404, detail="Manifest not found")
     return {"status": "success", "manifest": manifest}
 
 
-@app.get("/code-status/{snapshot_id}")
+@router.get("/code-status/{snapshot_id}")
 async def get_code_status_pack(
     request: Request,
     snapshot_id: str,
     include_graph_facts: bool = True,
 ):
     """Get a DocKG-facing code_status_pack.v0 artifact for a snapshot."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         pack = await asyncio.to_thread(
-            fastcode.store.get_code_status_pack,
+            facades.store.get_code_status_pack,
             snapshot_id,
             include_graph_facts=include_graph_facts,
         )
@@ -644,18 +587,18 @@ async def get_code_status_pack(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/scip/artifacts/{snapshot_id}")
+@router.get("/scip/artifacts/{snapshot_id}")
 async def get_scip_artifact(request: Request, snapshot_id: str):
     """Get preserved SCIP artifact metadata for a snapshot."""
-    fastcode = _fc(request)
-    artifact = fastcode.store.get_scip_artifact_ref(snapshot_id)
+    facades = _facades(request)
+    artifact = facades.store.get_scip_artifact_ref(snapshot_id)
     if not artifact:
         raise HTTPException(status_code=404, detail="SCIP artifact not found")
-    artifacts = fastcode.store.list_scip_artifact_refs(snapshot_id)
+    artifacts = facades.store.list_scip_artifact_refs(snapshot_id)
     return {"status": "success", "artifact": artifact, "artifacts": artifacts}
 
 
-@app.get("/symbols/find")
+@router.get("/symbols/find")
 async def find_symbol(
     request: Request,
     snapshot_id: str,
@@ -663,10 +606,10 @@ async def find_symbol(
     name: str | None = None,
     path: str | None = None,
 ):
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         symbol = await asyncio.to_thread(
-            fastcode.store.find_symbol,
+            facades.store.find_symbol,
             snapshot_id,
             symbol_id=symbol_id,
             name=name,
@@ -682,14 +625,14 @@ async def find_symbol(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/graph/callees")
+@router.get("/graph/callees")
 async def get_graph_callees(
     request: Request, snapshot_id: str, symbol_id: str, max_hops: int = 1
 ):
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         callees = await asyncio.to_thread(
-            fastcode.store.get_graph_callees, snapshot_id, symbol_id, max_hops
+            facades.store.get_graph_callees, snapshot_id, symbol_id, max_hops
         )
         return {
             "status": "success",
@@ -702,14 +645,14 @@ async def get_graph_callees(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/graph/callers")
+@router.get("/graph/callers")
 async def get_graph_callers(
     request: Request, snapshot_id: str, symbol_id: str, max_hops: int = 1
 ):
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         callers = await asyncio.to_thread(
-            fastcode.store.get_graph_callers, snapshot_id, symbol_id, max_hops
+            facades.store.get_graph_callers, snapshot_id, symbol_id, max_hops
         )
         return {
             "status": "success",
@@ -722,14 +665,14 @@ async def get_graph_callers(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/graph/dependencies")
+@router.get("/graph/dependencies")
 async def get_graph_dependencies(
     request: Request, snapshot_id: str, doc_id: str, max_hops: int = 1
 ):
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         deps = await asyncio.to_thread(
-            fastcode.store.get_graph_dependencies, snapshot_id, doc_id, max_hops
+            facades.store.get_graph_dependencies, snapshot_id, doc_id, max_hops
         )
         return {
             "status": "success",
@@ -742,13 +685,13 @@ async def get_graph_dependencies(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/projection/build")
+@router.post("/projection/build")
 async def build_projection(request: Request, req: ProjectionBuildRequest):
     """Build or reuse a cached projection artifact."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.projection.build_projection,
+            facades.projection.build_projection,
             scope_kind=req.scope_kind,
             snapshot_id=req.snapshot_id,
             repo_name=req.repo_name,
@@ -764,13 +707,13 @@ async def build_projection(request: Request, req: ProjectionBuildRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/projection/{projection_id}/{layer}")
+@router.get("/projection/{projection_id}/{layer}")
 async def get_projection_layer(request: Request, projection_id: str, layer: str):
     """Fetch a specific projection layer (L0/L1/L2)."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.projection.get_projection_layer, projection_id, layer
+            facades.projection.get_projection_layer, projection_id, layer
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -778,13 +721,13 @@ async def get_projection_layer(request: Request, projection_id: str, layer: str)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/projection/{projection_id}/chunks/{chunk_id}")
+@router.get("/projection/{projection_id}/chunks/{chunk_id}")
 async def get_projection_chunk(request: Request, projection_id: str, chunk_id: str):
     """Fetch a single projection L2 chunk payload."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.projection.get_projection_chunk, projection_id, chunk_id
+            facades.projection.get_projection_chunk, projection_id, chunk_id
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -792,7 +735,7 @@ async def get_projection_chunk(request: Request, projection_id: str, chunk_id: s
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/projection/snapshot/{snapshot_id}/prefix")
+@router.get("/projection/snapshot/{snapshot_id}/prefix")
 async def get_projection_prefix(request: Request, snapshot_id: str):
     """Get L0+L1 projection as compact JSON for system prompt injection.
 
@@ -800,10 +743,10 @@ async def get_projection_prefix(request: Request, snapshot_id: str):
     combined into a single response suitable for injecting into an AI
     agent's system prompt at session start.
     """
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.projection.get_session_prefix, snapshot_id
+            facades.projection.get_session_prefix, snapshot_id
         )
         if result.get("error"):
             raise HTTPException(status_code=404, detail=result["error"])
@@ -815,15 +758,15 @@ async def get_projection_prefix(request: Request, snapshot_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/agent-context/session/{session_id}/latest")
+@router.get("/agent-context/session/{session_id}/latest")
 async def get_latest_turn_context(
     request: Request, session_id: str, format: str = "fcx"
 ):
     """Fetch the latest typed working-memory artifact for a session."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.context.get_turn_context,
+            facades.context.get_turn_context,
             session_id,
             None,
             format,
@@ -834,7 +777,7 @@ async def get_latest_turn_context(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.get("/agent-context/session/{session_id}/turn/{turn_number}")
+@router.get("/agent-context/session/{session_id}/turn/{turn_number}")
 async def get_turn_context(
     request: Request,
     session_id: str,
@@ -842,10 +785,10 @@ async def get_turn_context(
     format: str = "fcx",
 ):
     """Fetch a specific typed working-memory artifact for a session turn."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.context.get_turn_context,
+            facades.context.get_turn_context,
             session_id,
             turn_number,
             format,
@@ -856,7 +799,7 @@ async def get_turn_context(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.get("/agent-context/session/{session_id}/bundle/latest")
+@router.get("/agent-context/session/{session_id}/bundle/latest")
 async def get_latest_context_bundle(
     request: Request,
     session_id: str,
@@ -864,10 +807,10 @@ async def get_latest_context_bundle(
     token_budget: int = 2048,
 ):
     """Fetch the latest durable context bundle for a session."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.context.get_context_bundle,
+            facades.context.get_context_bundle,
             session_id,
             None,
             format,
@@ -879,7 +822,7 @@ async def get_latest_context_bundle(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.get("/agent-context/session/{session_id}/bundle/{turn_number}")
+@router.get("/agent-context/session/{session_id}/bundle/{turn_number}")
 async def get_context_bundle(
     request: Request,
     session_id: str,
@@ -888,10 +831,10 @@ async def get_context_bundle(
     token_budget: int = 2048,
 ):
     """Fetch a durable context bundle for a session turn."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.context.get_context_bundle,
+            facades.context.get_context_bundle,
             session_id,
             turn_number,
             format,
@@ -903,7 +846,7 @@ async def get_context_bundle(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.get("/agent-context/bundle/{bundle_id}")
+@router.get("/agent-context/bundle/{bundle_id}")
 async def get_context_bundle_by_id(
     request: Request,
     bundle_id: str,
@@ -911,10 +854,10 @@ async def get_context_bundle_by_id(
     token_budget: int = 2048,
 ):
     """Fetch a durable context bundle by bundle ID."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.context.get_context_bundle_by_id,
+            facades.context.get_context_bundle_by_id,
             bundle_id,
             format,
             token_budget,
@@ -925,15 +868,15 @@ async def get_context_bundle_by_id(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.post("/agent-context/bundle/expand")
+@router.post("/agent-context/bundle/expand")
 async def expand_agent_context_bundle_ref(
     request: Request, req: ExpandContextBundleRefRequest
 ):
     """Expand a single source ref from a durable context bundle."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.context.expand_context_bundle_ref,
+            facades.context.expand_context_bundle_ref,
             req.ref_id,
             session_id=req.session_id,
             turn_number=req.turn_number,
@@ -946,15 +889,15 @@ async def expand_agent_context_bundle_ref(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.post("/agent-context/bundle/activation")
+@router.post("/agent-context/bundle/activation")
 async def create_agent_context_activation(
     request: Request, req: ContextActivationRequest
 ):
     """Create and persist an activation record for a context bundle."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.context.create_context_activation,
+            facades.context.create_context_activation,
             session_id=req.session_id,
             turn_number=req.turn_number,
             bundle_id=req.bundle_id,
@@ -969,15 +912,15 @@ async def create_agent_context_activation(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.post("/agent-context/handoff")
+@router.post("/agent-context/handoff")
 async def create_agent_context_handoff(
     request: Request, req: AgentContextHandoffRequest
 ):
     """Create and persist a handoff artifact from a session turn."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.context.create_handoff,
+            facades.context.create_handoff,
             req.session_id,
             req.turn_number,
             req.mode,
@@ -988,13 +931,13 @@ async def create_agent_context_handoff(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.get("/agent-context/handoff/{artifact_id}")
+@router.get("/agent-context/handoff/{artifact_id}")
 async def get_agent_context_handoff(request: Request, artifact_id: str):
     """Fetch a persisted handoff artifact."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.context.get_handoff_artifact, artifact_id
+            facades.context.get_handoff_artifact, artifact_id
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -1002,13 +945,13 @@ async def get_agent_context_handoff(request: Request, artifact_id: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.post("/agent-context/expand")
+@router.post("/agent-context/expand")
 async def expand_agent_context_ref(request: Request, req: ExpandContextRefRequest):
     """Expand a single evidence ref from working memory."""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
         result = await asyncio.to_thread(
-            fastcode.context.expand_context_ref,
+            facades.context.expand_context_ref,
             req.session_id,
             req.turn_number,
             req.ref_id,
@@ -1020,24 +963,24 @@ async def expand_agent_context_ref(request: Request, req: ExpandContextRefReques
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.post("/new-session", response_model=NewSessionResponse)
+@router.post("/new-session", response_model=NewSessionResponse)
 async def new_session(request: Request, clear_session_id: str | None = None):
     """Start a new conversation session"""
-    fastcode = _fc(request)
+    facades = _facades(request)
 
     if clear_session_id:
-        fastcode.context.delete_session(clear_session_id)
+        facades.context.delete_session(clear_session_id)
 
     session_id = str(uuid.uuid4())[:8]
     return serialize_new_session_response(NewSessionRecord(session_id=session_id))
 
 
-@app.get("/sessions")
+@router.get("/sessions")
 async def list_sessions(request: Request):
     """List all dialogue sessions with titles (sorted by last update time)"""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
-        sessions = fastcode.context.list_sessions()
+        sessions = facades.context.list_sessions()
 
         formatted_sessions = []
         for session in sessions:
@@ -1058,12 +1001,12 @@ async def list_sessions(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/session/{session_id}")
+@router.get("/session/{session_id}")
 async def get_session(request: Request, session_id: str):
     """Get full dialogue history for a session"""
-    fastcode = _fc(request)
+    facades = _facades(request)
     try:
-        history = fastcode.context.get_session_history(session_id) or []
+        history = facades.context.get_session_history(session_id) or []
         return {
             "status": "success",
             "session_id": session_id,
@@ -1074,19 +1017,19 @@ async def get_session(request: Request, session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/session/{session_id}")
+@router.delete("/session/{session_id}")
 async def delete_session(request: Request, session_id: str):
     """Delete a single dialogue session"""
-    fastcode = _fc(request)
+    facades = _facades(request)
 
     try:
-        history = fastcode.context.get_session_history(session_id)
+        history = facades.context.get_session_history(session_id)
         if not history:
             raise HTTPException(
                 status_code=404, detail=f"Session '{session_id}' not found"
             )
 
-        success = fastcode.context.delete_session(session_id)
+        success = facades.context.delete_session(session_id)
         if success:
             return {
                 "status": "success",
@@ -1100,10 +1043,10 @@ async def delete_session(request: Request, session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/delete-repos")
+@router.post("/delete-repos")
 async def delete_repositories(request: Request, req: DeleteReposRequest):
     """Delete one or more repositories and all associated data"""
-    fastcode = _fc(request)
+    facades = _facades(request)
 
     if not req.repo_names:
         raise HTTPException(status_code=400, detail="No repository names provided")
@@ -1112,7 +1055,7 @@ async def delete_repositories(request: Request, req: DeleteReposRequest):
         results = []
         for repo_name in req.repo_names:
             result = await asyncio.to_thread(
-                fastcode.remove_repository,
+                facades.remove_repository,
                 repo_name,
                 delete_source=req.delete_source,
             )
@@ -1133,12 +1076,12 @@ async def delete_repositories(request: Request, req: DeleteReposRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/clear-cache")
+@router.post("/clear-cache")
 async def clear_cache(request: Request):
     """Clear cache"""
-    fastcode = _fc(request)
+    facades = _facades(request)
 
-    success = await asyncio.to_thread(fastcode.cache.clear_cache)
+    success = await asyncio.to_thread(facades.cache.clear_cache)
 
     if success:
         return {"status": "success", "message": "Cache cleared"}
@@ -1148,21 +1091,21 @@ async def clear_cache(request: Request):
     }
 
 
-@app.get("/cache-stats")
+@router.get("/cache-stats")
 async def get_cache_stats(request: Request):
     """Get cache statistics"""
-    fastcode = _fc(request)
+    facades = _facades(request)
 
-    return await asyncio.to_thread(fastcode.cache.get_cache_stats)
+    return await asyncio.to_thread(facades.cache.get_cache_stats)
 
 
-@app.post("/refresh-index-cache")
+@router.post("/refresh-index-cache")
 async def refresh_index_cache(request: Request):
     """Force refresh the index scan cache"""
-    fastcode = _fc(request)
+    facades = _facades(request)
 
     try:
-        available_repos = await asyncio.to_thread(fastcode.cache.refresh_index_cache)
+        available_repos = await asyncio.to_thread(facades.cache.refresh_index_cache)
 
         return {
             "status": "success",
@@ -1174,39 +1117,12 @@ async def refresh_index_cache(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/repository")
+@router.delete("/repository")
 async def unload_repository(request: Request):
-    """Unload current repository"""
-    fc = getattr(request.app.state, "fastcode", None)
-    if fc is not None:
-        await asyncio.to_thread(fc.cleanup)
-        request.app.state.fastcode = FastCode()
+    """Unload current repository and shut down active components."""
+    facades_obj = getattr(request.app.state, "facades", None)
+    if facades_obj is not None:
+        await asyncio.to_thread(facades_obj.shutdown)
+        request.app.state.facades = None
 
     return {"status": "success", "message": "Repository unloaded"}
-
-
-def start_api(host: str = "127.0.0.1", port: int = 8000, reload: bool = False):
-    """Start the API server"""
-    logger.info(f"Starting FastCode API at http://{host}:{port}")
-    logger.info(f"API documentation available at http://{host}:{port}/docs")
-    uvicorn.run("fastcode.api.routes:app", host=host, port=port, reload=reload)
-
-
-def main():
-    import argparse
-
-    parser = argparse.ArgumentParser(description="FastCode API Server")
-    parser.add_argument(
-        "--host", default="127.0.0.1", help="Host to bind to (default: 127.0.0.1)"
-    )
-    parser.add_argument(
-        "--port", type=int, default=8000, help="Port to bind to (default: 8000)"
-    )
-    parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
-
-    args = parser.parse_args()
-    start_api(host=args.host, port=args.port, reload=args.reload)
-
-
-if __name__ == "__main__":
-    main()

@@ -143,7 +143,8 @@
         {"path": "fastcode/src/fastcode/main/_config_schema_root.py", "roles": ["assembly_root"]},
         {"path": "fastcode/src/fastcode/main/_config_runtime.py", "roles": ["assembly_root"]},
         {"path": "fastcode/src/fastcode/main/config.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/fastcode.py", "roles": ["assembly_root"]}
+        {"path": "fastcode/src/fastcode/main/fastcode.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/runtime_state.py", "roles": ["assembly_root"]}
       ]
     },
     {

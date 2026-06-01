@@ -56,16 +56,19 @@ def _cors_options_from_env() -> dict[str, Any]:
 # API app factory
 # ---------------------------------------------------------------------------
 
-def create_api_app(config_path: str | None = None) -> FastAPI:
-    """Build a fully-wired FastAPI REST API app.
-
-    Creates the FastCode composition root, extracts a FacadeContainer,
-    and injects it into the API router.
-    """
+def _create_app(
+    *,
+    config_path: str | None,
+    router: Any,
+    title: str,
+    description: str,
+    log_file: str,
+    logger_name: str,
+    startup_message: str,
+    static_assets_dir: Path | None = None,
+) -> FastAPI:
+    """Shared factory for FastAPI apps with injected facades."""
     _apply_darwin_threading_env()
-
-    # Import router after env is set (tokenizers may be loaded during import)
-    from fastcode.api.routes import router as api_router
 
     fc = FastCode(config_path=config_path)
     facades = facade_container_from_fastcode(fc)
@@ -74,82 +77,71 @@ def create_api_app(config_path: str | None = None) -> FastAPI:
     logger = configure_logging(
         level=logging.INFO,
         format_str="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        log_file=str(log_dir / "api.log"),
+        log_file=str(log_dir / log_file),
         console=True,
-        logger_name="fastcode.api",
+        logger_name=logger_name,
     )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        logger.info("FastCode API started — initializing system")
+        logger.info(startup_message)
         app.state.facades = facades
         yield
         try:
             facades.shutdown()
         except Exception as e:
-            logger.warning(f"FastCode shutdown hook failed: {e}")
-        logger.info("FastCode API shutting down")
+            logger.warning("FastCode shutdown hook failed: %s", e)
+        logger.info("FastCode shutting down")
 
     app = FastAPI(
-        title="FastCode API",
-        description="Repository-Level Code Understanding System API",
+        title=title,
+        description=description,
         version="2.0.0",
         lifespan=lifespan,
     )
 
     app.add_middleware(CORSMiddleware, **_cors_options_from_env())
-    app.include_router(api_router)
+    app.include_router(router)
+
+    if static_assets_dir is not None and static_assets_dir.exists():
+        from fastapi.staticfiles import StaticFiles
+
+        app.mount(
+            "/assets", StaticFiles(directory=str(static_assets_dir)), name="assets"
+        )
 
     return app
+
+
+def create_api_app(config_path: str | None = None) -> FastAPI:
+    """Build a fully-wired FastAPI REST API app."""
+    from fastcode.api.routes import router as api_router
+
+    return _create_app(
+        config_path=config_path,
+        router=api_router,
+        title="FastCode API",
+        description="Repository-Level Code Understanding System API",
+        log_file="api.log",
+        logger_name="fastcode.api",
+        startup_message="FastCode API started — initializing system",
+    )
 
 
 def create_web_app(config_path: str | None = None) -> FastAPI:
-    """Build a fully-wired web UI app (same pattern as create_api_app)."""
-    _apply_darwin_threading_env()
-
+    """Build a fully-wired web UI app."""
     from fastcode.api.web import router as web_router
 
-    fc = FastCode(config_path=config_path)
-    facades = facade_container_from_fastcode(fc)
-
-    log_dir = Path("./logs")
-    logger = configure_logging(
-        level=logging.INFO,
-        format_str="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        log_file=str(log_dir / "web.log"),
-        console=True,
-        logger_name="fastcode.web",
-    )
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        logger.info("FastCode Web UI started — initializing system")
-        app.state.facades = facades
-        yield
-        try:
-            facades.shutdown()
-        except Exception as e:
-            logger.warning(f"FastCode shutdown hook failed: {e}")
-        logger.info("FastCode Web UI shutting down")
-
-    app = FastAPI(
+    return _create_app(
+        config_path=config_path,
+        router=web_router,
         title="FastCode Web UI",
         description="FastCode Repository-Level Code Understanding - Web Interface",
-        version="2.0.0",
-        lifespan=lifespan,
+        log_file="web.log",
+        logger_name="fastcode.web",
+        startup_message="FastCode Web UI started — initializing system",
+        static_assets_dir=Path(__file__).parent.parent / "assets",
     )
-
-    app.add_middleware(CORSMiddleware, **_cors_options_from_env())
-    app.include_router(web_router)
-
-    # Mount static assets (was in api/web.py before APIRouter conversion)
-    from fastapi.staticfiles import StaticFiles
-
-    assets_path = Path(__file__).parent.parent / "assets"
-    if assets_path.exists():
-        app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
-
-    return app
 
 
 # ---------------------------------------------------------------------------

@@ -232,7 +232,7 @@ async def load_repository(request: Request, req: LoadRepositoryRequest):
     try:
         logger.info(f"Loading repository: {command.source}")
         await asyncio.to_thread(
-            fastcode.load_repository, command.source, command.is_url
+            fastcode.indexing.load_repository, command.source, command.is_url
         )
 
         info = fastcode.store.get_status_info()
@@ -257,7 +257,7 @@ async def index_repository(request: Request, force: bool = False):
 
     try:
         logger.info("Indexing repository")
-        await asyncio.to_thread(fastcode.index_repository, force=force)
+        await asyncio.to_thread(fastcode.indexing.index_repository, force=force)
 
         return {
             "status": "success",
@@ -279,7 +279,7 @@ async def run_index_pipeline(request: Request, req: IndexRunRequest):
     command = map_index_run_request(req)
     try:
         result = await asyncio.to_thread(
-            fastcode.run_index_pipeline,
+            fastcode.indexing.run_index_pipeline,
             source=command.source,
             is_url=command.is_url,
             ref=command.ref,
@@ -289,7 +289,7 @@ async def run_index_pipeline(request: Request, req: IndexRunRequest):
             scip_artifact_path=command.scip_artifact_path,
             enable_scip=command.enable_scip,
         )
-        await asyncio.to_thread(fastcode.invalidate_scan_cache)
+        await asyncio.to_thread(fastcode.cache.invalidate_scan_cache)
         return serialize_index_run_response(serialize_index_run_response_record(result))
     except Exception as e:
         logger.error(f"Index run failed: {e}")
@@ -357,7 +357,7 @@ async def load_and_index(
     try:
         logger.info(f"Loading and indexing repository: {command.source}")
         return await asyncio.to_thread(
-            fastcode.load_and_index, command.source, command.is_url, force=force
+            fastcode.indexing.load_and_index, command.source, command.is_url, force=force
         )
 
     except Exception as e:
@@ -376,7 +376,7 @@ async def load_repositories(request: Request, req: LoadRepositoriesRequest):
     try:
         logger.info(f"Loading repositories from cache: {req.repo_names}")
         success = await asyncio.to_thread(
-            fastcode.load_cached_repos, repo_names=req.repo_names
+            fastcode.cache.load_cached_repos, repo_names=req.repo_names
         )
 
         if not success:
@@ -407,7 +407,7 @@ async def index_multiple(request: Request, req: IndexMultipleRequest):
     try:
         logger.info(f"Indexing {len(req.sources)} repositories")
         await asyncio.to_thread(
-            fastcode.load_multiple_repositories,
+            fastcode.indexing.load_multiple_repositories,
             [
                 {
                     "source": command.source,
@@ -419,7 +419,7 @@ async def index_multiple(request: Request, req: IndexMultipleRequest):
             ],
         )
 
-        await asyncio.to_thread(fastcode.invalidate_scan_cache)
+        await asyncio.to_thread(fastcode.cache.invalidate_scan_cache)
 
         return {
             "status": "success",
@@ -443,7 +443,7 @@ async def upload_repository_zip(request: Request, file: UploadFile = File(...)):
     try:
         file_bytes = await file.read()
         return await asyncio.to_thread(
-            fastcode.upload_repository_zip, file_bytes, filename
+            fastcode.indexing.upload_repository_zip, file_bytes, filename
         )
     except zipfile.BadZipFile:
         logger.error("Invalid ZIP file")
@@ -471,7 +471,7 @@ async def upload_and_index(
         logger.info("Indexing uploaded repository")
         file_bytes = await file.read()
         return await asyncio.to_thread(
-            fastcode.upload_and_index, file_bytes, filename, force=force
+            fastcode.indexing.upload_and_index, file_bytes, filename, force=force
         )
     except zipfile.BadZipFile:
         logger.error("Invalid ZIP file")
@@ -1138,7 +1138,7 @@ async def clear_cache(request: Request):
     """Clear cache"""
     fastcode = _fc(request)
 
-    success = await asyncio.to_thread(fastcode.clear_cache)
+    success = await asyncio.to_thread(fastcode.cache.clear_cache)
 
     if success:
         return {"status": "success", "message": "Cache cleared"}
@@ -1153,7 +1153,7 @@ async def get_cache_stats(request: Request):
     """Get cache statistics"""
     fastcode = _fc(request)
 
-    return await asyncio.to_thread(fastcode.get_cache_stats)
+    return await asyncio.to_thread(fastcode.cache.get_cache_stats)
 
 
 @app.post("/refresh-index-cache")
@@ -1162,7 +1162,7 @@ async def refresh_index_cache(request: Request):
     fastcode = _fc(request)
 
     try:
-        available_repos = await asyncio.to_thread(fastcode.refresh_index_cache)
+        available_repos = await asyncio.to_thread(fastcode.cache.refresh_index_cache)
 
         return {
             "status": "success",

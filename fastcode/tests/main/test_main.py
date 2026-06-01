@@ -22,6 +22,8 @@ from fastcode.app.query.context_payloads import (
 from fastcode.app.query.facade import QueryFacade
 from fastcode.app.query.selection.retriever import HybridRetriever
 from fastcode.app.store.artifacts.graph import GraphArtifactStore
+from fastcode.app.store.cache_facade import CacheFacade
+from fastcode.app.indexing.facade import IndexingFacade
 from fastcode.app.store.cache.contracts import (
     ContextActivationRecord,
     ContextBundleRecord,
@@ -1258,8 +1260,9 @@ def test_load_multi_repo_cache_delegates_legacy_bm25_without_rebuild(
         merge=lambda _builder, _repo_name: True,
     )
     fc._reconstruct_elements_from_metadata = lambda: []
+    fc.cache = _make_cache_facade(fc)
 
-    assert fc._load_multi_repo_cache(["repo"]) is True
+    assert fc.cache.load_cached_repos(repo_names=["repo"]) is True
 
     assert legacy_calls == [(["repo"], False)]
     assert fc.retriever.full_bm25_elements[0].id == "file:service"
@@ -1305,12 +1308,13 @@ def test_load_multi_repo_cache_uses_shard_native_bm25_when_available(
     fc._reconstruct_elements_from_metadata = lambda: (_ for _ in ()).throw(
         AssertionError("shard-native multi-repo load should not reconstruct metadata")
     )
+    fc.cache = _make_cache_facade(fc)
 
     with patch(
         "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("shard-native multi-repo load should not rebuild"),
     ):
-        assert fc._load_multi_repo_cache(["repo"]) is True
+        assert fc.cache.load_cached_repos(repo_names=["repo"]) is True
 
     assert load_calls == [(["repo"], False)]
 
@@ -1479,12 +1483,13 @@ def test_load_multi_repo_cache_real_shard_artifacts_use_retriever_runtime(
     fc._reconstruct_elements_from_metadata = lambda: (_ for _ in ()).throw(
         AssertionError("real shard-native multi-repo load should not reconstruct")
     )
+    fc.cache = _make_cache_facade(fc)
 
     with patch(
         "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("main multi-repo load should not rebuild BM25"),
     ):
-        assert fc._load_multi_repo_cache(["repo_a", "repo_b"]) is True
+        assert fc.cache.load_cached_repos(repo_names=["repo_a", "repo_b"]) is True
         results = fc.retriever._keyword_search(
             "shared beta", top_k=3, repo_filter=["repo_b"]
         )
@@ -1586,12 +1591,13 @@ def test_load_multi_repo_cache_real_shard_artifacts_respects_requested_subset(
     fc._reconstruct_elements_from_metadata = lambda: (_ for _ in ()).throw(
         AssertionError("subset shard-native load should not reconstruct")
     )
+    fc.cache = _make_cache_facade(fc)
 
     with patch(
         "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("subset shard-native load should not rebuild"),
     ):
-        assert fc._load_multi_repo_cache(["repo_b"]) is True
+        assert fc.cache.load_cached_repos(repo_names=["repo_b"]) is True
         results = fc.retriever._keyword_search("shared beta", top_k=3)
 
     assert merged == ["repo_b"]
@@ -1716,12 +1722,13 @@ def test_load_multi_repo_cache_real_vector_and_bm25_artifacts_merge_subset(
     fc._reconstruct_elements_from_metadata = lambda: (_ for _ in ()).throw(
         AssertionError("real vector+bm25 subset load should not reconstruct")
     )
+    fc.cache = _make_cache_facade(fc)
 
     with patch(
         "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("subset load should not rebuild BM25"),
     ):
-        assert fc._load_multi_repo_cache(["repo_b"]) is True
+        assert fc.cache.load_cached_repos(repo_names=["repo_b"]) is True
         results = fc.retriever._keyword_search("shared beta", top_k=3)
 
     assert fc.vector_store.get_count() == 1
@@ -1865,12 +1872,13 @@ def test_load_multi_repo_cache_real_vector_bm25_and_graph_artifacts_merge_subset
     fc._reconstruct_elements_from_metadata = lambda: (_ for _ in ()).throw(
         AssertionError("real vector+bm25+graph subset load should not reconstruct")
     )
+    fc.cache = _make_cache_facade(fc)
 
     with patch(
         "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("subset load should not rebuild BM25"),
     ):
-        assert fc._load_multi_repo_cache(["repo_b"]) is True
+        assert fc.cache.load_cached_repos(repo_names=["repo_b"]) is True
         results = fc.retriever._keyword_search("shared beta", top_k=3)
 
     assert fc.vector_store.get_count() == 1
@@ -2019,12 +2027,13 @@ def test_load_multi_repo_cache_real_vector_bm25_and_graph_artifacts_merge_all_re
     fc._reconstruct_elements_from_metadata = lambda: (_ for _ in ()).throw(
         AssertionError("real vector+bm25+graph multi-repo load should not reconstruct")
     )
+    fc.cache = _make_cache_facade(fc)
 
     with patch(
         "fastcode.app.query.selection.retriever.BM25Okapi",
         side_effect=AssertionError("multi-repo load should not rebuild BM25"),
     ):
-        assert fc._load_multi_repo_cache(["repo_a", "repo_b"]) is True
+        assert fc.cache.load_cached_repos(repo_names=["repo_a", "repo_b"]) is True
         repo_a_results = fc.retriever._keyword_search(
             "shared alpha", top_k=3, repo_filter=["repo_a"]
         )
@@ -2155,8 +2164,9 @@ def test_index_repository_uses_snapshot_pipeline_by_default() -> None:
     fc.state.loaded_repositories = {}
     fc.graph_runtime = None
     fc.pipeline = SimpleNamespace(run_index_pipeline=_run_index_pipeline)
+    fc.indexing = _make_indexing_facade(fc)
 
-    result = fc._index_repository_unlocked(force=True)
+    result = fc.indexing._index_repository_unlocked(force=True)
 
     assert result == {"status": "succeeded", "snapshot_id": "snap:repo:1"}
     assert calls == [
@@ -2178,12 +2188,22 @@ def test_index_repository_direct_path_requires_explicit_flag() -> None:
     fc = FastCode.__new__(FastCode)
     fc.state = RuntimeState()
     fc.config = {"indexing": {"allow_direct_index": True}}
-    fc._index_repository_direct_unlocked = lambda force=False: {
+    fc.eval_config = {}
+    fc.loader = SimpleNamespace()
+    fc.state.loaded_repositories = {}
+    fc.graph_runtime = None
+    fc.pipeline = SimpleNamespace()
+    fc.vector_store = SimpleNamespace()
+    fc.store = SimpleNamespace()
+    fc.retriever = SimpleNamespace()
+    fc.logger = SimpleNamespace(info=lambda *_a, **_k: None)
+    fc.indexing = _make_indexing_facade(fc)
+    fc.indexing._index_repository_direct_unlocked = lambda force=False: {
         "direct": True,
         "force": force,
     }
 
-    assert fc._index_repository_unlocked(force=True) == {
+    assert fc.indexing._index_repository_unlocked(force=True) == {
         "direct": True,
         "force": True,
     }
@@ -2214,8 +2234,10 @@ def test_load_multiple_repositories_uses_snapshot_pipeline_by_default() -> None:
     fc._load_repository_unlocked = lambda source, is_url=None, is_zip=False: (
         loads.append((source, is_url, is_zip))
     )
+    fc.indexing = _make_indexing_facade(fc)
+    fc.indexing._load_repository_unlocked = fc._load_repository_unlocked
 
-    result = fc._load_multiple_repositories_unlocked(
+    result = fc.indexing._load_multiple_repositories_unlocked(
         [{"source": "/repo", "is_url": False}]
     )
 
@@ -2242,11 +2264,44 @@ def _make_query_facade(fc: Any) -> QueryFacade:
     )
 
 
+def _make_cache_facade(fc: Any) -> CacheFacade:
+    """Wire a minimal CacheFacade onto a bare FastCode test fixture."""
+    return CacheFacade(
+        cache_manager=getattr(fc, "cache_manager", SimpleNamespace()),
+        vector_store=getattr(fc, "vector_store", SimpleNamespace()),
+        embedder=getattr(fc, "embedder", SimpleNamespace()),
+        retriever=getattr(fc, "retriever", SimpleNamespace()),
+        graph_builder=getattr(fc, "graph_builder", SimpleNamespace()),
+        graph_artifact_store=getattr(fc, "graph_artifact_store", SimpleNamespace()),
+        state=fc.state,
+    )
+
+
+def _make_indexing_facade(fc: Any) -> IndexingFacade:
+    """Wire a minimal IndexingFacade onto a bare FastCode test fixture."""
+    return IndexingFacade(
+        loader=getattr(fc, "loader", SimpleNamespace()),
+        pipeline=getattr(fc, "pipeline", SimpleNamespace()),
+        state=fc.state,
+        vector_store=getattr(fc, "vector_store", SimpleNamespace()),
+        store=getattr(fc, "store", SimpleNamespace()),
+        direct_indexer=getattr(fc, "_direct_indexer", SimpleNamespace()),
+        multi_repo_direct_indexer=getattr(fc, "_multi_repo_direct_indexer", SimpleNamespace()),
+        graph_runtime=getattr(fc, "graph_runtime", None),
+        retriever=getattr(fc, "retriever", SimpleNamespace()),
+        config=getattr(fc, "config", {}),
+        eval_config=getattr(fc, "eval_config", {}),
+        logger=getattr(fc, "logger", SimpleNamespace(info=lambda *_a, **_k: None, error=lambda *_a, **_k: None)),
+        set_repo_root_fn=lambda _path: None,
+        apply_env_ignore_patterns_fn=lambda: None,
+    )
+
+
 @pytest.mark.parametrize(
     ("mutation_name", "run_mutation"),
     [
-        ("load", lambda fc: fc.load_repository("/tmp/repo", False)),
-        ("index", lambda fc: fc.index_repository(force=True)),
+        ("load", lambda fc: fc.indexing.load_repository("/tmp/repo", False)),
+        ("index", lambda fc: fc.indexing.index_repository(force=True)),
         ("delete", lambda fc: fc.remove_repository("repo", delete_source=False)),
         ("refresh", _run_refresh_index_cache),
         ("cleanup", lambda fc: fc.cleanup()),
@@ -2297,8 +2352,12 @@ def test_service_state_lock_serializes_query_with_mutations(
         invalidate_scan_cache=lambda: _enter_critical("refresh"),
         scan_available_indexes=lambda use_cache=True: [],
     )
+    fc.cache = _make_cache_facade(fc)
     fc.loader = SimpleNamespace(cleanup=lambda: _enter_critical("cleanup"))
     fc.logger = SimpleNamespace(info=lambda *_args, **_kwargs: None)
+    fc.indexing = _make_indexing_facade(fc)
+    fc.indexing._load_repository_unlocked = fc._load_repository_unlocked
+    fc.indexing._index_repository_unlocked = fc._index_repository_unlocked
 
     def _run_query() -> None:
         try:
@@ -2438,6 +2497,8 @@ def test_snapshot_query_stream_releases_service_lock_after_handle_capture() -> N
     fc.query = _make_query_facade(fc)
     fc._index_repository_unlocked = lambda **_kwargs: _enter_critical("index")
     fc.vector_store = SimpleNamespace(invalidate_scan_cache=lambda: None)
+    fc.indexing = _make_indexing_facade(fc)
+    fc.indexing._index_repository_unlocked = fc._index_repository_unlocked
 
     def _run_stream() -> None:
         try:
@@ -2448,7 +2509,7 @@ def test_snapshot_query_stream_releases_service_lock_after_handle_capture() -> N
     def _run_mutation() -> None:
         try:
             assert stream_started.wait(timeout=5)
-            fc.index_repository(force=True)
+            fc.indexing.index_repository(force=True)
         except Exception as exc:
             errors.append(exc)
 

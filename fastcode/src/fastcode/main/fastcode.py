@@ -8,16 +8,14 @@ import json
 import os
 import re
 import shutil
-import tempfile
-import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from importlib import util as importlib_util
-from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit, urlunsplit
 
 import fastcode.retrieval.context.snapshot as _snapshot
 from fastcode.app.indexing.doc_ingester import KeyDocIngester
+from fastcode.app.indexing.facade import IndexingFacade
 from fastcode.app.indexing.embedder import CodeEmbedder
 from fastcode.app.indexing.extractors.parser import CodeParser
 from fastcode.app.indexing.loader import RepositoryLoader
@@ -49,9 +47,6 @@ from fastcode.app.store.artifacts.file import FileArtifactStore
 from fastcode.app.store.artifacts.graph import GraphArtifactStore
 from fastcode.app.store.artifacts.unit import UnitArtifactStore
 from fastcode.app.store.cache.rehydration import (
-    load_multi_repo_cache as _load_multi_repo_cache_impl,
-)
-from fastcode.app.store.cache.rehydration import (
     reconstruct_elements_from_metadata,
 )
 from fastcode.app.store.cache.rehydration import (
@@ -61,6 +56,7 @@ from fastcode.app.store.cache.rehydration import (
     try_load_from_cache as _try_load_from_cache_impl,
 )
 from fastcode.app.store.cache.service import CacheManager
+from fastcode.app.store.cache_facade import CacheFacade
 from fastcode.app.store.context_facade import ContextFacade
 from fastcode.app.store.facade import StoreFacade
 from fastcode.app.store.runs.index_run import IndexRunStore
@@ -83,14 +79,10 @@ from fastcode.ir.graph import IRGraphBuilder
 from fastcode.kernel.config import FastCodeConfig
 from fastcode.main.config import config_from_mapping
 from fastcode.retrieval.contracts import Hit, SourceCitation
-from fastcode.scip.global_builder import GlobalIndexBuilder
-from fastcode.scip.module_resolver import ModuleResolver
-from fastcode.scip.symbol_resolver import SymbolResolver
 from fastcode.semantic.resolvers.engine.registry import (
     build_default_semantic_resolver_registry,
 )
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
-from fastcode.utils.archive import safe_extract_zip, safe_repo_name_from_archive
 from fastcode.utils.clock import utc_now
 from fastcode.utils.filesystem import ensure_dir
 
@@ -247,11 +239,6 @@ class FastCode:
         # Runtime state (extracted for injection into facades)
         self.state = RuntimeState()
 
-        # Initialize resolver attributes (will be set in index_repository)
-        self.global_index_builder: GlobalIndexBuilder | None = None
-        self.module_resolver: ModuleResolver | None = None
-        self.symbol_resolver: SymbolResolver | None = None
-
         # Initialize components
         self.loader = RepositoryLoader(self.config)
         self.parser = CodeParser(self.config)
@@ -389,6 +376,24 @@ class FastCode:
             infer_is_url_fn=self._infer_is_url,
         )
 
+        # --- IndexingFacade ---
+        self.indexing = IndexingFacade(
+            loader=self.loader,
+            pipeline=self.pipeline,
+            state=self.state,
+            vector_store=self.vector_store,
+            store=self.store,
+            direct_indexer=self._direct_indexer,
+            multi_repo_direct_indexer=self._multi_repo_direct_indexer,
+            graph_runtime=self.graph_runtime,
+            retriever=self.retriever,
+            config=self.config,
+            eval_config=self.eval_config,
+            logger=self.logger,
+            set_repo_root_fn=self._set_repo_root,
+            apply_env_ignore_patterns_fn=self.apply_env_ignore_patterns,
+        )
+
         # --- Services ---
         self.projection_service = ProjectionService(
             config=self.config,
@@ -413,7 +418,7 @@ class FastCode:
             redo_worker=self._redo_worker,
             build_git_meta=self.pipeline._build_git_meta,
             previous_snapshot_symbol_versions=self.pipeline._previous_snapshot_symbol_versions,
-            run_index_pipeline_cb=self.run_index_pipeline,
+            run_index_pipeline_cb=self.indexing.run_index_pipeline,
         )
         self.publishing = PublishingFacade(
             publishing_service=self.publishing_service,
@@ -454,6 +459,17 @@ class FastCode:
 
         # --- ContextFacade ---
         self.context = ContextFacade(self.cache_manager)
+
+        # --- CacheFacade ---
+        self.cache = CacheFacade(
+            cache_manager=self.cache_manager,
+            vector_store=self.vector_store,
+            embedder=self.embedder,
+            retriever=self.retriever,
+            graph_builder=self.graph_builder,
+            graph_artifact_store=self.graph_artifact_store,
+            state=self.state,
+        )
 
         # Multi-repository state lives on self.state
 
@@ -498,226 +514,25 @@ class FastCode:
     def _state_read_lock(self) -> Any:
         return self.state._lock.read_lock()
 
-    def load_repository(
-        self, source: str, is_url: bool | None = None, is_zip: bool = False
-    ):
-        with self._state_lock():
-            return self._load_repository_unlocked(source, is_url, is_zip)
-
-    def _load_repository_unlocked(
-        self, source: str, is_url: bool | None = None, is_zip: bool = False
-    ):
-        """
-        Load repository from URL, local path, or ZIP file
-
-        Args:
-            source: Repository URL, local path, or ZIP file path
-            is_url: True if source is a URL, False if local path.
-                    If None, FastCode auto-detects source type.
-            is_zip: True if source is a ZIP file, False otherwise
-        """
-        self.logger.info(f"Loading repository: {source}")
-
-        try:
-            resolved_is_url = is_url
-            if not is_zip and resolved_is_url is None:
-                resolved_is_url = self._infer_is_url(source)
-                source_type = "URL" if resolved_is_url else "local path"
-                self.logger.info(
-                    f"Auto-detected source type as {source_type}: {source}"
-                )
-
-            if is_zip:
-                self.loader.load_from_zip(source)
-            elif resolved_is_url:
-                self.loader.load_from_url(source)
-            else:
-                self.loader.load_from_path(source)
-
-            self.state.repo_loaded = True
-            self.state.repo_info = self.loader.get_repository_info()
-
-            # CRITICAL: Update config with the actual repo path.
-            # This ensures path_utils can correctly normalize paths relative to the root.
-            if self.loader.repo_path:
-                self._set_repo_root(self.loader.repo_path)
-                self.logger.info(f"Set repo_root to: {self.loader.repo_path}")
-
-                # Initialize retriever agents if agency mode is enabled
-                self.retriever.set_repo_root(self.loader.repo_path)
-
-            self.logger.info(f"Loaded repository: {self.state.repo_info.get('name')}")
-            self.logger.info(
-                f"Files: {self.state.repo_info.get('file_count')}, "
-                f"Size: {self.state.repo_info.get('total_size_mb', 0):.2f} MB"
-            )
-
-        except Exception as e:
-            self.logger.error(f"Failed to load repository: {e}")
-            raise
-
-    def upload_repository_zip(self, file_bytes: bytes, filename: str) -> dict[str, Any]:
-        """Upload a ZIP archive, extract, and load the repository.
-
-        Receives raw bytes so the caller (entry frame) owns the protocol-
-        specific file reading. Returns a result dict with status, repo_info,
-        and repo_path.
-        """
-        with self._state_lock():
-            return self._upload_repository_zip_unlocked(file_bytes, filename)
-
-    def _upload_repository_zip_unlocked(
-        self, file_bytes: bytes, filename: str
-    ) -> dict[str, Any]:
-        max_size = 100 * 1024 * 1024  # 100MB
-        if len(file_bytes) > max_size:
-            raise ValueError(
-                f"File too large. Maximum size is {max_size / (1024 * 1024)}MB"
-            )
-
-        archive_filename = Path(filename).name
-        repo_name = safe_repo_name_from_archive(archive_filename)
-
-        repo_workspace = getattr(self.loader, "safe_repo_root", "./repos")
-        repos_dir = Path(repo_workspace)
-        repos_dir.mkdir(parents=True, exist_ok=True)
-        repo_path = repos_dir / repo_name
-
-        if repo_path.exists():
-            self.loader._backup_existing_repo(str(repo_path))
-
-        temp_dir = tempfile.mkdtemp(prefix="fastcode_upload_")
-        try:
-            zip_path = Path(temp_dir) / archive_filename
-
-            self.logger.info(
-                "Saving uploaded ZIP file: %s (%d bytes)",
-                archive_filename,
-                len(file_bytes),
-            )
-            zip_path.write_bytes(file_bytes)
-
-            extract_dir = Path(temp_dir) / "extracted"
-            extract_dir.mkdir(exist_ok=True)
-
-            self.logger.info(
-                "Extracting ZIP file to temporary directory: %s", extract_dir
-            )
-            with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                safe_extract_zip(zip_ref, extract_dir)
-
-            extracted_items = list(extract_dir.iterdir())
-            if len(extracted_items) == 1 and extracted_items[0].is_dir():
-                source_repo_path = extracted_items[0]
-            else:
-                source_repo_path = extract_dir
-
-            self.logger.info("Moving repository to: %s", repo_path)
-            shutil.move(str(source_repo_path), str(repo_path))
-
-            self.logger.info("Loading repository from: %s", repo_path)
-            self._load_repository_unlocked(str(repo_path), False)
-
-            return {
-                "status": "success",
-                "message": f"ZIP file '{archive_filename}' uploaded and extracted to repos/{repo_name}",
-                "repo_info": self.state.repo_info,
-                "repo_path": str(repo_path),
-            }
-        finally:
-            try:
-                shutil.rmtree(temp_dir)
-                self.logger.info("Cleaned up temporary directory: %s", temp_dir)
-            except Exception as cleanup_error:
-                self.logger.warning(
-                    "Failed to clean up temp directory: %s", cleanup_error
-                )
-
-    def index_repository(self, force: bool = False):
-        with self._state_lock():
-            result = self._index_repository_unlocked(force=force)
-            self.vector_store.invalidate_scan_cache()
-        return result
-
-    def load_and_index(
-        self, source: str, is_url: bool | None = None, *, force: bool = False
-    ) -> dict[str, Any]:
-        """Load and index a repository in one call. Handles locking and
-        cache invalidation."""
-        with self._state_lock():
-            self._load_repository_unlocked(source, is_url)
-            self._index_repository_unlocked(force=force)
-            self.vector_store.invalidate_scan_cache()
-            return {
-                "status": "success",
-                "message": "Repository loaded and indexed successfully",
-                "summary": self.store.get_repository_summary(),
-            }
-
-    def upload_and_index(
-        self, file_bytes: bytes, filename: str, *, force: bool = False
-    ) -> dict[str, Any]:
-        """Upload a ZIP archive, load, and index in one call."""
-        with self._state_lock():
-            upload_result = self._upload_repository_zip_unlocked(file_bytes, filename)
-            if upload_result.get("status") != "success":
-                return upload_result
-            self._index_repository_unlocked(force=force)
-            self.vector_store.invalidate_scan_cache()
-            return {
-                "status": "success",
-                "message": "Repository uploaded and indexed successfully",
-                "summary": self.store.get_repository_summary(),
-            }
-
     def refresh_index_cache(self) -> list[dict[str, Any]]:
         """Invalidate and rescan available indexes."""
-        with self._state_lock():
-            self.vector_store.invalidate_scan_cache()
-            return self.vector_store.scan_available_indexes(use_cache=False)
-
-    # -- Facade methods: narrow API for entry frames --
-
-    def reindex_repository(self, source: str) -> str:
-        """Force re-index a repository. Returns a result message."""
-        self.apply_env_ignore_patterns()
-        resolved_is_url = self._infer_is_url(source)
-        name = self.store.repo_name_from_source(source, resolved_is_url)
-        self.logger.info("Force re-indexing '%s' from %s", name, source)
-
-        if resolved_is_url:
-            self.load_repository(source, is_url=True)
-        else:
-            abs_path = os.path.abspath(source)
-            if not os.path.isdir(abs_path):
-                return f"Error: Local path does not exist: {abs_path}"
-            self.load_repository(abs_path, is_url=False)
-
-        self.index_repository(force=True)
-        count = self.vector_store.get_count()
-
-        # Reset in-memory state for clean reload
-        self.state.repo_indexed = False
-        self.state.loaded_repositories.clear()
-
-        return f"Successfully re-indexed '{name}': {count} elements indexed."
+        return self.cache.refresh_index_cache()
 
     def clear_cache(self) -> bool:
         """Clear the query cache. Returns True if successful."""
-        with self._state_lock():
-            return bool(self.cache_manager.clear())
+        return self.cache.clear_cache()
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
-        return self.cache_manager.get_stats()
+        return self.cache.get_cache_stats()
 
     def invalidate_scan_cache(self) -> None:
         """Invalidate the vector store scan cache."""
-        self.vector_store.invalidate_scan_cache()
+        self.cache.invalidate_scan_cache()
 
     def load_cached_repos(self, repo_names: list[str] | None = None) -> bool:
         """Load pre-indexed repos from cache into memory."""
-        return self._load_multi_repo_cache(repo_names=repo_names)
+        return self.cache.load_cached_repos(repo_names=repo_names)
 
     def apply_env_ignore_patterns(self) -> None:
         """Force-ignore environment-related paths before indexing."""
@@ -774,7 +589,7 @@ class FastCode:
                     abs_path = os.path.abspath(source)
                     if os.path.isdir(abs_path):
                         try:
-                            result = self.run_index_pipeline(
+                            result = self.indexing.run_index_pipeline(
                                 source=abs_path,
                                 is_url=False,
                                 publish=True,
@@ -796,16 +611,16 @@ class FastCode:
 
             if resolved_is_url:
                 self.logger.info("Cloning %s …", source)
-                self.load_repository(source, is_url=True)
+                self.indexing.load_repository(source, is_url=True)
             else:
                 abs_path = os.path.abspath(source)
                 if not os.path.isdir(abs_path):
                     self.logger.error("Local path does not exist: %s", abs_path)
                     continue
-                self.load_repository(abs_path, is_url=False)
+                self.indexing.load_repository(abs_path, is_url=False)
 
             self.logger.info("Indexing '%s' …", name)
-            self.index_repository(force=False)
+            self.indexing.index_repository(force=False)
             self.logger.info("Indexing '%s' complete.", name)
             ready_names.append(name)
 
@@ -817,49 +632,8 @@ class FastCode:
             self.state.loaded_repositories.keys()
         ):
             self.logger.info("Loading repos into memory: %s", repo_names)
-            return self._load_multi_repo_cache(repo_names=repo_names)
+            return self.cache.load_cached_repos(repo_names=repo_names)
         return True
-
-    def _direct_index_enabled(self) -> bool:
-        indexing_config = self.config.get("indexing", {})
-        if not isinstance(indexing_config, dict):
-            return False
-        return bool(indexing_config.get("allow_direct_index", False))
-
-    def _index_repository_unlocked(self, force: bool = False):
-        if self._direct_index_enabled():
-            return self._index_repository_direct_unlocked(force=force)
-        force = force or self.eval_config.get("force_reindex", False)
-        if not self.state.repo_loaded:
-            raise RuntimeError("No repository loaded. Call load_repository() first.")
-        if not self.loader.repo_path:
-            raise RuntimeError("No repository path available for indexing.")
-        return self.pipeline.run_index_pipeline(
-            source=self.loader.repo_path,
-            is_url=False,
-            force=force,
-            publish=True,
-            enable_scip=True,
-            load_repository_cb=None,
-            get_loaded_repositories=lambda: self.state.loaded_repositories,
-            graph_runtime=self.graph_runtime,
-        )
-
-    def _index_repository_direct_unlocked(self, force: bool = False):
-        """Direct repository indexing path — delegates to DirectIndexer (use_flow)."""
-        indexed, gib, mr, sr = self._direct_indexer.run(
-            repo_loaded=self.state.repo_loaded,
-            repo_info=self.state.repo_info,
-            eval_config=self.eval_config,
-            force=force,
-        )
-        if gib is not None:
-            self.global_index_builder = gib
-        if mr is not None:
-            self.module_resolver = mr
-        if sr is not None:
-            self.symbol_resolver = sr
-        self.state.repo_indexed = indexed
 
     def _checkout_target_ref(
         self, ref: str | None = None, commit: str | None = None
@@ -893,33 +667,6 @@ class FastCode:
 
     def _load_artifacts_by_key(self, artifact_key: str) -> bool:
         return self.pipeline._load_artifacts_by_key(artifact_key)
-
-    def run_index_pipeline(
-        self,
-        source: str,
-        is_url: bool | None = None,
-        ref: str | None = None,
-        commit: str | None = None,
-        force: bool = False,
-        publish: bool = True,
-        scip_artifact_path: str | None = None,
-        enable_scip: bool = True,
-    ) -> dict[str, Any]:
-        """Run snapshot-oriented indexing pipeline (delegates to IndexPipeline)."""
-        with self._state_lock():
-            return self.pipeline.run_index_pipeline(
-                source=source,
-                is_url=is_url,
-                ref=ref,
-                commit=commit,
-                force=force,
-                publish=publish,
-                scip_artifact_path=scip_artifact_path,
-                enable_scip=enable_scip,
-                load_repository_cb=self.load_repository,
-                get_loaded_repositories=lambda: self.state.loaded_repositories,
-                graph_runtime=self.graph_runtime,
-            )
 
     @staticmethod
     def _projection_scope_key(
@@ -1196,98 +943,6 @@ class FastCode:
                 "max_chunk_count": 64,  # [INTERNAL],
             },
         }
-
-    def load_multiple_repositories(self, sources: list[dict[str, Any]]):
-        with self._state_lock():
-            return self._load_multiple_repositories_unlocked(sources)
-
-    def _load_multiple_repositories_unlocked(self, sources: list[dict[str, Any]]):
-        if not self._direct_index_enabled():
-            return self._load_multiple_repositories_pipeline_unlocked(sources)
-        return self._load_multiple_repositories_direct_unlocked(sources)
-
-    def _load_multiple_repositories_pipeline_unlocked(
-        self, sources: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        self.logger.info(f"Loading {len(sources)} repositories")
-        self.state.multi_repo_mode = True
-        successfully_indexed: list[str] = []
-        results: list[dict[str, Any]] = []
-        errors: list[dict[str, str]] = []
-
-        for i, source_info in enumerate(sources):
-            source = str(source_info.get("source") or "")
-            is_url: bool | None = source_info.get("is_url")
-            is_zip = bool(source_info.get("is_zip", False))
-            try:
-                self.logger.info(
-                    f"[{i + 1}/{len(sources)}] Loading repository: {source}"
-                )
-                resolved_is_url = (
-                    self._infer_is_url(source)
-                    if not is_zip and is_url is None
-                    else is_url
-                )
-                pipeline_source = source
-                pipeline_is_url = resolved_is_url
-                load_repository_cb: Callable[..., None] | None
-                if is_zip:
-                    self._load_repository_unlocked(source, is_url=False, is_zip=True)
-                    if not self.loader.repo_path:
-                        raise RuntimeError("zip load did not produce a repository path")
-                    pipeline_source = self.loader.repo_path
-                    pipeline_is_url = False
-                    load_repository_cb = None
-                else:
-
-                    def _load_repository_cb(
-                        loaded_source: str, is_url: bool | None = None
-                    ) -> None:
-                        self._load_repository_unlocked(
-                            loaded_source, is_url=is_url, is_zip=False
-                        )
-
-                    load_repository_cb = _load_repository_cb
-
-                result = self.pipeline.run_index_pipeline(
-                    source=pipeline_source,
-                    is_url=pipeline_is_url,
-                    force=bool(source_info.get("force", False)),
-                    publish=True,
-                    enable_scip=True,
-                    load_repository_cb=load_repository_cb,
-                    get_loaded_repositories=lambda: self.state.loaded_repositories,
-                    graph_runtime=self.graph_runtime,
-                )
-                results.append(result)
-                repo_name = str(result.get("repo_name") or "")
-                if repo_name:
-                    successfully_indexed.append(repo_name)
-            except Exception as e:
-                self.logger.error(f"Failed to index repository {source}: {e}")
-                errors.append({"source": source, "error": str(e)})
-                continue
-
-        self.state.repo_indexed = len(successfully_indexed) > 0
-        self.state.repo_loaded = len(successfully_indexed) > 0
-        return {
-            "status": "succeeded" if successfully_indexed else "failed",
-            "repositories": successfully_indexed,
-            "results": results,
-            "errors": errors,
-        }
-
-    def _load_multiple_repositories_direct_unlocked(
-        self, sources: list[dict[str, Any]]
-    ):
-        """Direct multi-repo indexing — delegates to MultiRepoDirectIndexer (use_flow)."""
-        self.state.multi_repo_mode = True
-        result = self._multi_repo_direct_indexer.run(
-            sources,
-            loaded_repositories=self.state.loaded_repositories,
-        )
-        self.state.repo_indexed = result["has_success"]
-        self.state.repo_loaded = result["has_success"]
 
     @staticmethod
     def _diagnostic_mapping(value: Any) -> dict[str, Any]:
@@ -1661,24 +1316,6 @@ class FastCode:
             "latest_index_run": self._latest_index_run_diagnostic_payload(),
         }
 
-    def _load_multi_repo_cache(self, repo_names: list[str] | None = None) -> bool:
-        with self._state_lock():
-            return self._load_multi_repo_cache_unlocked(repo_names=repo_names)
-
-    def _load_multi_repo_cache_unlocked(
-        self, repo_names: list[str] | None = None
-    ) -> bool:
-        """Load multi-repo cache — delegates to rehydration (use_flow)."""
-        return _load_multi_repo_cache_impl(
-            repo_names=repo_names,
-            vector_store=self.vector_store,
-            embedder=self.embedder,
-            retriever=self.retriever,
-            graph_builder=self.graph_builder,
-            graph_artifact_store=self.graph_artifact_store,
-            loaded_repositories=self.state.loaded_repositories,
-        )
-
     # ------------------------------------------------------------------
     # Incremental indexing
     # ------------------------------------------------------------------
@@ -1816,19 +1453,6 @@ class FastCode:
         existing_metadata: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], list[str]]:
         return collect_unchanged_elements(manifest, unchanged_files, existing_metadata)
-
-    def incremental_reindex(
-        self, repo_name: str, repo_path: str | None = None
-    ) -> dict[str, Any]:
-        if not repo_path or not os.path.isdir(repo_path):
-            self.logger.warning(f"Invalid repo path for '{repo_name}': {repo_path}")
-            return {"status": "path_not_found", "changes": 0}
-        return self.run_index_pipeline(
-            source=repo_path,
-            is_url=False,
-            publish=True,
-            enable_scip=True,
-        )
 
     def cleanup(self):
         """Cleanup resources"""

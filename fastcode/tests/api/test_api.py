@@ -503,7 +503,7 @@ class TestIndexMultiple:
             ]
         )
         fake_fastcode = MagicMock()
-        fake_fastcode.get_repository_stats.return_value = {"repos": 2}
+        fake_fastcode.store.get_repository_stats.return_value = {"repos": 2}
 
         with patch(
             "fastcode.api.routes._fc",
@@ -511,13 +511,13 @@ class TestIndexMultiple:
         ):
             result = asyncio.run(api.index_multiple(_mock_request(), req))
 
-        fake_fastcode.load_multiple_repositories.assert_called_once_with(
+        fake_fastcode.indexing.load_multiple_repositories.assert_called_once_with(
             [
                 {"source": "https://example.com/repo.git", "is_url": True},
                 {"source": "/tmp/local-repo", "is_url": False},
             ]
         )
-        fake_fastcode.invalidate_scan_cache.assert_called_once_with()
+        fake_fastcode.cache.invalidate_scan_cache.assert_called_once_with()
         assert result["status"] == "success"
 
 
@@ -597,15 +597,15 @@ class TestBlockingEndpointOffloads:
             asyncio.run(api.refresh_index_cache(_mock_request()))
 
         assert offloaded == [
-            fake_fastcode.load_repository,
-            fake_fastcode.index_repository,
-            fake_fastcode.load_cached_repos,
-            fake_fastcode.load_multiple_repositories,
-            fake_fastcode.invalidate_scan_cache,
+            fake_fastcode.indexing.load_repository,
+            fake_fastcode.indexing.index_repository,
+            fake_fastcode.cache.load_cached_repos,
+            fake_fastcode.indexing.load_multiple_repositories,
+            fake_fastcode.cache.invalidate_scan_cache,
             fake_fastcode.remove_repository,
-            fake_fastcode.clear_cache,
-            fake_fastcode.get_cache_stats,
-            fake_fastcode.refresh_index_cache,
+            fake_fastcode.cache.clear_cache,
+            fake_fastcode.cache.get_cache_stats,
+            fake_fastcode.cache.refresh_index_cache,
         ]
 
 
@@ -619,9 +619,12 @@ class TestUploadSecurity:
         def _raise_unsafe(*_args: Any, **_kwargs: Any) -> Any:
             raise UnsafeArchiveError("unsafe path detected")
 
-        fake_fastcode = SimpleNamespace(
+        fake_indexing = SimpleNamespace(
             upload_repository_zip=_raise_unsafe,
             upload_and_index=_raise_unsafe,
+        )
+        fake_fastcode = SimpleNamespace(
+            indexing=fake_indexing,
         )
 
         with patch(
@@ -655,6 +658,15 @@ class TestApiSerializationBoundaries:
         barrier = threading.Barrier(2, timeout=5)
 
         class _ConcurrentFastCode:
+            def __init__(self) -> None:
+                self.query = self
+                self.store = SimpleNamespace(
+                    get_status_info=lambda: {
+                        "repo_indexed": True,
+                        "repo_loaded": True,
+                    }
+                )
+
             def query_snapshot(self, **kwargs: Any) -> dict[str, Any]:
                 nonlocal concurrent_count, max_concurrent
                 barrier.wait(timeout=5)
@@ -722,7 +734,7 @@ class TestApiSerializationBoundaries:
 
     def test_query_endpoint_serializes_sources_explicitly(self) -> None:
         fake_fastcode = MagicMock()
-        fake_fastcode.query_snapshot.return_value = {
+        fake_fastcode.query.query_snapshot.return_value = {
             "answer": "ok",
             "query": "Where is config loaded?",
             "context_elements": 1,
@@ -766,7 +778,7 @@ class TestApiSerializationBoundaries:
 
     def test_query_endpoint_propagates_turn_number(self) -> None:
         fake_fastcode = MagicMock()
-        fake_fastcode.query_snapshot.return_value = {
+        fake_fastcode.query.query_snapshot.return_value = {
             "answer": "ok",
             "query": "Where is config loaded?",
             "context_elements": 1,

@@ -19,6 +19,8 @@ def _mock_request() -> MagicMock:
 class _FakeFastCode:
     def __init__(self) -> None:
         self.run_kwargs: dict[str, Any] | None = None
+        self.indexing = self
+        self.cache = self
 
     def invalidate_scan_cache(self) -> None:
         pass

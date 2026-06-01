@@ -203,7 +203,7 @@ async def load_repository(request: Request, req: LoadRepositoryRequest):
     try:
         logger.info(f"Loading repository: {command.source}")
         await asyncio.to_thread(
-            fastcode.load_repository, command.source, command.is_url
+            fastcode.indexing.load_repository, command.source, command.is_url
         )
 
         info = fastcode.store.get_status_info()
@@ -228,7 +228,7 @@ async def index_repository(request: Request, force: bool = False):
 
     try:
         logger.info("Indexing repository")
-        await asyncio.to_thread(fastcode.index_repository, force=force)
+        await asyncio.to_thread(fastcode.indexing.index_repository, force=force)
 
         return {
             "status": "success",
@@ -252,7 +252,7 @@ async def index_multiple(request: Request, req: IndexMultipleRequest):
     try:
         logger.info(f"Indexing {len(req.sources)} repositories")
         await asyncio.to_thread(
-            fastcode.load_multiple_repositories,
+            fastcode.indexing.load_multiple_repositories,
             [
                 {
                     "source": command.source,
@@ -266,7 +266,7 @@ async def index_multiple(request: Request, req: IndexMultipleRequest):
 
         # Invalidate scan cache since we just added/updated indexes
         await asyncio.to_thread(
-            fastcode.invalidate_scan_cache,
+            fastcode.cache.invalidate_scan_cache,
         )
 
         return {
@@ -290,7 +290,7 @@ async def load_and_index(
     try:
         logger.info(f"Loading and indexing repository: {command.source}")
         return await asyncio.to_thread(
-            fastcode.load_and_index,
+            fastcode.indexing.load_and_index,
             command.source,
             command.is_url,
             force=force,
@@ -312,7 +312,7 @@ async def load_repositories(request: Request, req: LoadRepositoriesRequest):
     try:
         logger.info(f"Loading repositories from cache: {req.repo_names}")
         success = await asyncio.to_thread(
-            fastcode.load_cached_repos, repo_names=req.repo_names
+            fastcode.cache.load_cached_repos, repo_names=req.repo_names
         )
 
         if not success:
@@ -345,7 +345,7 @@ async def upload_repository_zip(request: Request, file: UploadFile = File(...)):
     try:
         file_bytes = await file.read()
         return await asyncio.to_thread(
-            fastcode_instance.upload_repository_zip, file_bytes, filename
+            fastcode_instance.indexing.upload_repository_zip, file_bytes, filename
         )
     except HTTPException:
         raise
@@ -375,7 +375,7 @@ async def upload_and_index(
         logger.info("Indexing uploaded repository")
         file_bytes = await file.read()
         return await asyncio.to_thread(
-            fastcode_instance.upload_and_index,
+            fastcode_instance.indexing.upload_and_index,
             file_bytes,
             filename,
             force=force,
@@ -538,7 +538,7 @@ async def clear_cache(request: Request):
     """Clear cache"""
     fastcode_instance = _fc(request)
 
-    success = await asyncio.to_thread(fastcode_instance.clear_cache)
+    success = await asyncio.to_thread(fastcode_instance.cache.clear_cache)
 
     if success:
         return {"status": "success", "message": "Cache cleared"}
@@ -555,7 +555,7 @@ async def refresh_index_cache(request: Request):
 
     try:
         available_repos = await asyncio.to_thread(
-            fastcode_instance.refresh_index_cache,
+            fastcode_instance.cache.refresh_index_cache,
         )
 
         return {

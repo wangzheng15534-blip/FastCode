@@ -76,7 +76,7 @@ def query(
             else:
                 click.echo("Loading multi-repository index from cache...")
 
-            if not fastcode.load_cached_repos(repo_names=repo_names_to_load):
+            if not fastcode.cache.load_cached_repos(repo_names=repo_names_to_load):
                 click.echo("Error: Failed to load multi-repo cache", err=True)
                 sys.exit(1)
 
@@ -127,17 +127,17 @@ def query(
             # Load repository
             if repo_zip:
                 click.echo(f"Loading repository from ZIP: {repo_zip}")
-                fastcode.load_repository(repo_zip, is_url=False, is_zip=True)
+                fastcode.indexing.load_repository(repo_zip, is_url=False, is_zip=True)
             elif repo_url:
                 click.echo(f"Loading repository from URL: {repo_url}")
-                fastcode.load_repository(repo_url, is_url=True)
+                fastcode.indexing.load_repository(repo_url, is_url=True)
             elif repo_path:
                 click.echo(f"Loading repository from path: {repo_path}")
-                fastcode.load_repository(repo_path, is_url=False)
+                fastcode.indexing.load_repository(repo_path, is_url=False)
 
             # Index repository
             click.echo("Indexing repository...")
-            fastcode.index_repository()
+            fastcode.indexing.index_repository()
 
             # Get summary
             if verbose:
@@ -205,17 +205,17 @@ def index(
         # Load repository
         if repo_zip:
             click.echo(f"Loading repository from ZIP: {repo_zip}")
-            fastcode.load_repository(repo_zip, is_url=False, is_zip=True)
+            fastcode.indexing.load_repository(repo_zip, is_url=False, is_zip=True)
         elif repo_url:
             click.echo(f"Loading repository from URL: {repo_url}")
-            fastcode.load_repository(repo_url, is_url=True)
+            fastcode.indexing.load_repository(repo_url, is_url=True)
         elif repo_path:
             click.echo(f"Loading repository from path: {repo_path}")
-            fastcode.load_repository(repo_path, is_url=False)
+            fastcode.indexing.load_repository(repo_path, is_url=False)
 
         # Index
         click.echo("Indexing repository...")
-        fastcode.index_repository()
+        fastcode.indexing.index_repository()
 
         # Show summary
         summary = fastcode.store.get_repository_summary()
@@ -286,7 +286,7 @@ def interactive(
 
             # Load specific repositories or all if none specified
             repo_filter = list(repos) if repos else None
-            if not fastcode.load_cached_repos(repo_names=repo_filter):
+            if not fastcode.cache.load_cached_repos(repo_names=repo_filter):
                 click.echo("Error: Failed to load multi-repo cache", err=True)
                 sys.exit(1)
 
@@ -321,16 +321,16 @@ def interactive(
             # Load and index repository
             if repo_zip:
                 click.echo(f"Loading repository from ZIP: {repo_zip}")
-                fastcode.load_repository(repo_zip, is_url=False, is_zip=True)
+                fastcode.indexing.load_repository(repo_zip, is_url=False, is_zip=True)
             elif repo_url:
                 click.echo(f"Loading repository from URL: {repo_url}")
-                fastcode.load_repository(repo_url, is_url=True)
+                fastcode.indexing.load_repository(repo_url, is_url=True)
             elif repo_path:
                 click.echo(f"Loading repository from path: {repo_path}")
-                fastcode.load_repository(repo_path, is_url=False)
+                fastcode.indexing.load_repository(repo_path, is_url=False)
 
             click.echo("Indexing repository...")
-            fastcode.index_repository()
+            fastcode.indexing.index_repository()
 
             summary = fastcode.store.get_repository_summary()
             click.echo(f"\n{summary}\n")
@@ -504,7 +504,7 @@ def clear_cache():
     """Clear all cached data"""
     fastcode = FastCode()
 
-    if fastcode.cache_manager.clear():
+    if fastcode.cache.clear_cache():
         click.echo("Cache cleared successfully")
     else:
         click.echo("Failed to clear cache or cache is disabled")
@@ -514,7 +514,7 @@ def clear_cache():
 def cache_stats():
     """Show cache statistics (query result cache, not repository indexes)"""
     fastcode = FastCode()
-    stats = fastcode.cache_manager.get_stats()
+    stats = fastcode.cache.get_cache_stats()
 
     click.echo("=" * 60)
     click.echo("Query Result Cache Statistics")
@@ -756,7 +756,7 @@ def index_multiple(
 
     try:
         click.echo(f"Loading and indexing {len(sources)} repositories...")
-        fastcode.load_multiple_repositories(sources)
+        fastcode.indexing.load_multiple_repositories(sources)
 
         # Show summary
         stats = fastcode.store.get_repository_stats()
@@ -802,7 +802,7 @@ def query_multiple(
         # Try to load from cache
         if load_cache:
             click.echo("Loading multi-repository index from cache...")
-            if not fastcode.load_cached_repos():
+            if not fastcode.cache.load_cached_repos():
                 click.echo(
                     "Error: Failed to load multi-repo cache. Please index repositories first.",
                     err=True,
@@ -867,7 +867,7 @@ def list_repos(config: str | None, load_cache: bool) -> None:
     try:
         # If load-cache is specified, load into memory for full details
         if load_cache:
-            if not fastcode.load_cached_repos():
+            if not fastcode.cache.load_cached_repos():
                 click.echo("Error: Failed to load multi-repo cache", err=True)
                 sys.exit(1)
 

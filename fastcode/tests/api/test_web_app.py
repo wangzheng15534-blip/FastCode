@@ -89,6 +89,8 @@ class _FakeStoreFacade:
 
 class _FakeFastCode:
     def __init__(self) -> None:
+        self.indexing = self
+        self.cache = self
         self.repo_loaded = True
         self.repo_indexed = True
         self.repo_info = {"name": "repo"}
@@ -98,12 +100,21 @@ class _FakeFastCode:
         )
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         self.store = _FakeStoreFacade()
+        self._query_facade = SimpleNamespace(query=self._query_method)
         self.context = SimpleNamespace(
             get_session_history=self.get_session_history,
             get_session_multi_turn=self.get_session_multi_turn,
             delete_session=self.delete_session,
             list_sessions=self.list_sessions,
         )
+
+    @property
+    def query(self) -> SimpleNamespace:
+        return self._query_facade
+
+    @query.setter
+    def query(self, value: Any) -> None:
+        self._query_facade = value if isinstance(value, SimpleNamespace) else SimpleNamespace(query=value)
 
     def load_repository(self, source: str, is_url: bool | None) -> None:
         self.calls.append(("load_repository", (source, is_url), {}))
@@ -139,7 +150,7 @@ class _FakeFastCode:
         )
         return {"deleted_files": [], "freed_mb": 0.0}
 
-    def query(
+    def _query_method(
         self,
         question: str,
         filters: dict[str, Any] | None = None,
@@ -310,7 +321,6 @@ def test_query_endpoint_offloads_blocking_query(
     assert body["context_elements"] == 1
     assert body["session_id"] == "abcd1234"
     assert fake.calls == [
-        ("get_status_info", (), {"full_scan": False}),
         (
             "query",
             ("where is x?", {"snapshot_id": "snap:1"}),

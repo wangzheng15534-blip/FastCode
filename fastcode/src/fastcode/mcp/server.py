@@ -756,7 +756,7 @@ def reindex_repo(repo_source: str) -> str:
         Confirmation with element count.
     """
     fc = _get_fastcode()
-    return fc.reindex_repository(repo_source)
+    return fc.indexing.reindex_repository(repo_source)
 
 
 # ---------------------------------------------------------------------------

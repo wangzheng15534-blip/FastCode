@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from fastcode.app.query.facade import QueryFacade
+from fastcode.app.store.cache_facade import CacheFacade
 from fastcode.app.store.context_facade import ContextFacade
 from fastcode.app.store.facade import StoreFacade
 from fastcode.main.runtime_state import RuntimeState
@@ -63,6 +64,19 @@ def _minimal_fastcode() -> Any:
     )
     # Wire the ContextFacade
     fc.context = ContextFacade(fc.cache_manager)
+    # Wire the CacheFacade
+    fc.embedder = MagicMock()
+    fc.retriever = MagicMock()
+    fc.graph_artifact_store = MagicMock()
+    fc.cache = CacheFacade(
+        cache_manager=fc.cache_manager,
+        vector_store=fc.vector_store,
+        embedder=fc.embedder,
+        retriever=fc.retriever,
+        graph_builder=fc.graph_builder,
+        graph_artifact_store=fc.graph_artifact_store,
+        state=fc.state,
+    )
     return fc
 
 
@@ -221,13 +235,34 @@ class TestWalkCallChain:
 
 
 class TestReindexRepository:
-    def test_rejects_nonexistent_local_path(self):
+    def test_rejects_nonexistent_local_path(self) -> None:
+        from fastcode.app.indexing.facade import IndexingFacade
+
         fc = _minimal_fastcode()
-        fc.apply_env_ignore_patterns = MagicMock()
-        fc.load_repository = MagicMock()
-        fc.index_repository = MagicMock()
-        fc.logger = MagicMock()
-        result = fc.reindex_repository("/no/such/path/repo")
+        apply_mock = MagicMock()
+        load_mock = MagicMock()
+        index_mock = MagicMock()
+        logger_mock = MagicMock()
+        facade = IndexingFacade(
+            loader=MagicMock(),
+            pipeline=fc.pipeline,
+            state=fc.state,
+            vector_store=fc.vector_store,
+            store=fc.store,
+            direct_indexer=MagicMock(),
+            multi_repo_direct_indexer=MagicMock(),
+            graph_runtime=None,
+            retriever=MagicMock(),
+            config=fc.config,
+            eval_config={},
+            logger=logger_mock,
+            set_repo_root_fn=MagicMock(),
+            apply_env_ignore_patterns_fn=apply_mock,
+        )
+        # Override load_repository and index_repository with mocks
+        facade.load_repository = load_mock  # type: ignore[assignment]
+        facade.index_repository = index_mock  # type: ignore[assignment]
+        result = facade.reindex_repository("/no/such/path/repo")
         assert "Error" in result
         assert "does not exist" in result
 
@@ -238,22 +273,27 @@ class TestInvalidateScanCache:
         fc.invalidate_scan_cache()
         fc.vector_store.invalidate_scan_cache.assert_called_once_with()
 
+    def test_delegates_through_cache_facade(self):
+        fc = _minimal_fastcode()
+        fc.invalidate_scan_cache()
+        fc.vector_store.invalidate_scan_cache.assert_called_once()
+
 
 class TestLoadCachedRepos:
-    def test_calls_load_multi_repo_cache_with_kwargs(self):
+    def test_delegates_to_cache_facade(self):
         fc = _minimal_fastcode()
-        fc._load_multi_repo_cache = MagicMock(return_value=True)
+        fc.cache.load_cached_repos = MagicMock(return_value=True)
         result = fc.load_cached_repos(repo_names=["repo-a", "repo-b"])
-        fc._load_multi_repo_cache.assert_called_once_with(
+        fc.cache.load_cached_repos.assert_called_once_with(
             repo_names=["repo-a", "repo-b"]
         )
         assert result is True
 
     def test_default_passes_none(self):
         fc = _minimal_fastcode()
-        fc._load_multi_repo_cache = MagicMock(return_value=False)
+        fc.cache.load_cached_repos = MagicMock(return_value=False)
         fc.load_cached_repos()
-        fc._load_multi_repo_cache.assert_called_once_with(repo_names=None)
+        fc.cache.load_cached_repos.assert_called_once_with(repo_names=None)
 
 
 class TestGetSessionMultiTurn:
@@ -308,23 +348,18 @@ class TestGetRepoOverview:
 
 
 class TestClearCache:
-    def test_delegates_to_cache_manager(self):
+    def test_delegates_to_cache_facade(self):
         fc = _minimal_fastcode()
-        lock_ctx = MagicMock()
-        lock_ctx.__enter__ = MagicMock(return_value=None)
-        lock_ctx.__exit__ = MagicMock(return_value=False)
-        fc._state_lock = MagicMock(return_value=lock_ctx)
-        fc.cache_manager.clear.return_value = True
+        fc.cache.clear_cache = MagicMock(return_value=True)
         assert fc.clear_cache() is True
-        fc._state_lock.assert_called_once_with()
-        fc.cache_manager.clear.assert_called_once_with()
+        fc.cache.clear_cache.assert_called_once_with()
 
 
 class TestGetCacheStats:
-    def test_returns_cache_manager_stats(self):
+    def test_returns_cache_facade_stats(self):
         fc = _minimal_fastcode()
         stats = {"hits": 10, "misses": 5}
-        fc.cache_manager.get_stats.return_value = stats
+        fc.cache.get_cache_stats = MagicMock(return_value=stats)
         result = fc.get_cache_stats()
         assert result is stats
-        fc.cache_manager.get_stats.assert_called_once_with()
+        fc.cache.get_cache_stats.assert_called_once_with()

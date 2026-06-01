@@ -12,7 +12,6 @@ from fastcode.api.outbound import DiagnosticBundleResponse, IndexRunResponse
 
 def _mock_request() -> MagicMock:
     req = MagicMock()
-    req.app = api.app
     return req
 
 
@@ -98,7 +97,7 @@ def test_index_run_promotes_pipeline_and_resolver_diagnostics(
         return func(*args, **kwargs)
 
     monkeypatch.setattr(api.asyncio, "to_thread", _run_inline)
-    monkeypatch.setattr(api, "_fc", lambda _request: fake)
+    monkeypatch.setattr(api, "_facades", lambda _request: fake)
 
     body = asyncio.run(
         api.run_index_pipeline(
@@ -160,7 +159,7 @@ def test_diagnostics_endpoint_returns_support_bundle(
         return func(*args, **kwargs)
 
     monkeypatch.setattr(api.asyncio, "to_thread", _run_inline)
-    monkeypatch.setattr(api, "_fc", lambda _request: fake)
+    monkeypatch.setattr(api, "_facades", lambda _request: fake)
 
     body = asyncio.run(api.get_diagnostics(_mock_request()))
 

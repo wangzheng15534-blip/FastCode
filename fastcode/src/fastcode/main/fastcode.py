@@ -8,7 +8,7 @@ import json
 import os
 import re
 import shutil
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from importlib import util as importlib_util
 from typing import Any, cast
 from urllib.parse import urlsplit, urlunsplit

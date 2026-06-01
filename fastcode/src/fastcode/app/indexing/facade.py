@@ -24,8 +24,8 @@ if TYPE_CHECKING:
     from fastcode.app.indexing.pipeline.multi_repo_direct import MultiRepoDirectIndexer
     from fastcode.app.store.facade import StoreFacade
     from fastcode.app.store.vectors.vector import VectorStore
-    from fastcode.graph.build import GlobalIndexBuilder
-    from fastcode.infrastructure.graph_runtime import DocumentGraphRuntime
+    from fastcode.scip.global_builder import GlobalIndexBuilder
+    from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
     from fastcode.main.runtime_state import RuntimeState
     from fastcode.retrieval.hybrid_retriever import HybridRetriever
     from fastcode.scip.module_resolver import ModuleResolver

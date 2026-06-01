@@ -45,7 +45,10 @@
       "roles": [
         "meaning_core"
       ],
-      "names": ["graph"]
+      "names": ["graph"],
+      "sources": [
+        {"path": "fastcode/src/fastcode/graph/analysis.py", "roles": ["meaning_core"]}
+      ]
     },
     {
       "axis": "default",
@@ -143,18 +146,21 @@
         {"path": "fastcode/src/fastcode/main/_config_schema_root.py", "roles": ["assembly_root"]},
         {"path": "fastcode/src/fastcode/main/_config_runtime.py", "roles": ["assembly_root"]},
         {"path": "fastcode/src/fastcode/main/config.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/defaults.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/diagnostics.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/src/fastcode/main/facades.py", "roles": ["assembly_root"]},
         {"path": "fastcode/src/fastcode/main/fastcode.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/runtime_state.py", "roles": ["assembly_root"]}
+        {"path": "fastcode/src/fastcode/main/serve.py", "roles": ["assembly_root"]}
       ]
     },
     {
       "axis": "default",
       "path": "fastcode/src/fastcode/client",
       "roles": [
+        "assembly_root",
         "entry_frame"
       ],
-      "names": ["client"],
-      "notes": "CLI thin shell — parses args, delegates to assembly_root facades"
+      "names": ["client"]
     },
     {
       "axis": "default",
@@ -162,8 +168,7 @@
       "roles": [
         "entry_frame"
       ],
-      "names": ["api"],
-      "notes": "Pure entry frame — parse HTTP request → delegate to facade → format response. Zero FastCode internals access. Mapper modules: inbound (request DTOs), outbound (response DTOs), serialization (domain→API conversion)"
+      "names": ["api"]
     },
     {
       "axis": "default",
@@ -171,8 +176,7 @@
       "roles": [
         "entry_frame"
       ],
-      "names": ["mcp"],
-      "notes": "Pure entry frame — init_server(fc) injection, all handlers delegate to facades. Owner-local mapper: formatting.py"
+      "names": ["mcp"]
     }
   ]
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Generator, Sequence
 from dataclasses import is_dataclass
 from pathlib import Path
@@ -467,13 +468,28 @@ def test_diagnostic_bundle_reports_support_safe_runtime_state(
     fc.projection_store = SimpleNamespace(enabled=True)
     fc.loader = SimpleNamespace(repo_path="/repo")
 
+    from fastcode.main.diagnostics import DiagnosticBuilder
+
+    fc._diagnostic_builder = DiagnosticBuilder(
+        config=fc.config,
+        vector_store=fc.vector_store,
+        snapshot_store=fc.snapshot_store,
+        manifest_store=None,
+        state=fc.state,
+        logger=logging.getLogger("test"),
+        eval_config={},
+        index_run_store=fc.index_run_store,
+        projection_store=fc.projection_store,
+        cache_manager=fc.cache_manager,
+        loader=fc.loader,
+    )
+
     monkeypatch.setattr(
-        FastCode,
-        "_dependency_available",
-        staticmethod(lambda import_name: import_name in {"numpy", "git"}),
+        "fastcode.main.diagnostics._dependency_available",
+        lambda import_name: import_name in {"numpy", "git"},
     )
     monkeypatch.setattr(
-        "fastcode.main.fastcode.shutil.which",
+        "fastcode.main.diagnostics.shutil.which",
         lambda executable: f"/usr/bin/{executable}" if executable == "git" else None,
     )
 

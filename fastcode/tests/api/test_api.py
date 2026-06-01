@@ -36,25 +36,21 @@ from fastcode.utils.archive import UnsafeArchiveError
 
 
 def _mock_request(*, app: Any = None) -> MagicMock:
-    """Create a mock Request with app.state wired to the shared test app."""
+    """Create a mock Request. Pass app when the route reads request.app.state.facades."""
     req = MagicMock()
-    if app is None:
-        app = _shared_test_app
-    req.app = app
+    if app is not None:
+        req.app = app
     return req
 
 
-def _make_test_app() -> Any:
-    """Create a minimal FastAPI app that includes the routes router."""
+@pytest.fixture
+def test_app() -> Any:
+    """Fresh FastAPI app per test — avoids shared mutable state."""
     from fastapi import FastAPI
 
     app = FastAPI()
     app.include_router(api.router)
     return app
-
-
-# Module-level shared test app — the `stores` fixture configures its state.
-_shared_test_app = _make_test_app()
 
 
 def _zip_bytes(entries: dict[str, bytes]) -> bytes:
@@ -232,16 +228,12 @@ def inline_to_thread(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def stores(tmp_path: Any) -> Any:
-    """Yield real storage wired into the app state FastCode handle."""
+def stores(tmp_path: Any, test_app: Any) -> Any:
+    """Yield real storage wired into the test app."""
     store = _make_snapshot_store(tmp_path)
     fake = _FakeFastCode(store)
-    _shared_test_app.state.facades = fake
-    try:
-        yield fake, store
-    finally:
-        if hasattr(_shared_test_app.state, "facades"):
-            delattr(_shared_test_app.state, "facades")
+    test_app.state.facades = fake
+    yield fake, store, test_app
 
 
 # ---------------------------------------------------------------------------
@@ -253,12 +245,13 @@ class TestRepoRefs:
     """GET /repos/{repo_name}/refs"""
 
     def test_returns_empty_list_for_unknown_repo(self, stores: Any) -> None:
-        body = asyncio.run(api.get_repo_refs(_mock_request(), "unknown-repo"))
+        _fake_fc, _store, _app = stores
+        body = asyncio.run(api.get_repo_refs(_mock_request(app=_app), "unknown-repo"))
         assert body["refs"] == []
         assert body["repo_name"] == "unknown-repo"
 
     def test_returns_refs_after_saving_snapshot(self, stores: Any) -> None:
-        _fake_fc, store = stores
+        _fake_fc, store, _app = stores
         snap = _make_minimal_snapshot(
             repo_name="my-repo",
             snapshot_id="snap:my-repo:deadbeef",
@@ -267,13 +260,13 @@ class TestRepoRefs:
         )
         store.save_snapshot(snap)
 
-        refs = asyncio.run(api.get_repo_refs(_mock_request(), "my-repo"))["refs"]
+        refs = asyncio.run(api.get_repo_refs(_mock_request(app=_app), "my-repo"))["refs"]
         assert len(refs) == 1
         assert refs[0]["branch"] == "develop"
         assert refs[0]["snapshot_id"] == "snap:my-repo:deadbeef"
 
     def test_multiple_refs_ordered_newest_first(self, stores: Any) -> None:
-        _fake_fc, store = stores
+        _fake_fc, store, _app = stores
         store.save_snapshot(
             _make_minimal_snapshot(
                 repo_name="r",
@@ -290,7 +283,7 @@ class TestRepoRefs:
                 commit_id="c2",
             )
         )
-        refs = asyncio.run(api.get_repo_refs(_mock_request(), "r"))["refs"]
+        refs = asyncio.run(api.get_repo_refs(_mock_request(app=_app), "r"))["refs"]
         assert len(refs) == 2
         assert refs[0]["snapshot_id"] == "snap:r:second"
         assert refs[1]["snapshot_id"] == "snap:r:first"
@@ -300,12 +293,13 @@ class TestScipArtifacts:
     """GET /scip/artifacts/{snapshot_id}"""
 
     def test_returns_404_when_not_found(self, stores: Any) -> None:
+        _fake_fc, _store, _app = stores
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(api.get_scip_artifact(_mock_request(), "snap:x:nonexistent"))
+            asyncio.run(api.get_scip_artifact(_mock_request(app=_app), "snap:x:nonexistent"))
         assert exc_info.value.status_code == 404
 
     def test_returns_artifact_after_save(self, stores: Any) -> None:
-        _fake_fc, store = stores
+        _fake_fc, store, _app = stores
         snap = _make_minimal_snapshot(
             snapshot_id="snap:repo:with-scip",
         )
@@ -319,7 +313,7 @@ class TestScipArtifacts:
         )
 
         body = asyncio.run(
-            api.get_scip_artifact(_mock_request(), "snap:repo:with-scip")
+            api.get_scip_artifact(_mock_request(app=_app), "snap:repo:with-scip")
         )
         assert body["status"] == "success"
         artifact = cast(dict[str, Any], body["artifact"])
@@ -331,7 +325,7 @@ class TestScipArtifacts:
     def test_returns_full_artifact_lineage_when_multiple_saved(
         self, stores: Any
     ) -> None:
-        _fake_fc, store = stores
+        _fake_fc, store, _app = stores
         snap = _make_minimal_snapshot(snapshot_id="snap:repo:multi-scip")
         store.save_snapshot(snap)
         store.save_scip_artifact_refs(
@@ -353,7 +347,7 @@ class TestScipArtifacts:
         )
 
         body = asyncio.run(
-            api.get_scip_artifact(_mock_request(), "snap:repo:multi-scip")
+            api.get_scip_artifact(_mock_request(app=_app), "snap:repo:multi-scip")
         )
         artifact = cast(dict[str, Any], body["artifact"])
         artifacts = cast(list[dict[str, Any]], body["artifacts"])
@@ -368,12 +362,13 @@ class TestManifests:
     """GET /manifests/{repo_name}/{ref_name}"""
 
     def test_branch_manifest_returns_404_when_not_found(self, stores: Any) -> None:
+        _fake_fc, _store, _app = stores
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(api.get_branch_manifest(_mock_request(), "no-repo", "main"))
+            asyncio.run(api.get_branch_manifest(_mock_request(app=_app), "no-repo", "main"))
         assert exc_info.value.status_code == 404
 
     def test_branch_manifest_returns_data_after_publish(self, stores: Any) -> None:
-        fake_fc, store = stores
+        fake_fc, store, _app = stores
         snap = _make_minimal_snapshot(
             repo_name="manifest-repo",
             snapshot_id="snap:manifest-repo:m1",
@@ -390,14 +385,14 @@ class TestManifests:
         )
 
         body = asyncio.run(
-            api.get_branch_manifest(_mock_request(), "manifest-repo", "main")
+            api.get_branch_manifest(_mock_request(app=_app), "manifest-repo", "main")
         )
         assert body["status"] == "success"
         assert body["manifest"]["snapshot_id"] == "snap:manifest-repo:m1"
         assert body["manifest"]["repo_name"] == "manifest-repo"
 
     def test_snapshot_manifest_returns_data_after_publish(self, stores: Any) -> None:
-        _fake_fc, store = stores
+        _fake_fc, store, _app = stores
         snap = _make_minimal_snapshot(
             repo_name="manifest-repo2",
             snapshot_id="snap:manifest-repo2:s1",
@@ -414,7 +409,7 @@ class TestManifests:
         )
 
         body = asyncio.run(
-            api.get_snapshot_manifest(_mock_request(), "snap:manifest-repo2:s1")
+            api.get_snapshot_manifest(_mock_request(app=_app), "snap:manifest-repo2:s1")
         )
         assert body["manifest"]["snapshot_id"] == "snap:manifest-repo2:s1"
 
@@ -621,6 +616,7 @@ class TestUploadSecurity:
         self,
         tmp_path: Any,
         endpoint: str,
+        test_app: Any,
     ) -> None:
         def _raise_unsafe(*_args: Any, **_kwargs: Any) -> Any:
             raise UnsafeArchiveError("unsafe path detected")
@@ -637,7 +633,7 @@ class TestUploadSecurity:
             "fastcode.api.routes._facades",
             return_value=fake_fastcode,
         ):
-            client = TestClient(_shared_test_app)
+            client = TestClient(test_app)
             response = client.post(
                 endpoint,
                 files={

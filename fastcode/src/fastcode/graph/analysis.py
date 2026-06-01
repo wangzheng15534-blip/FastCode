@@ -1,10 +1,6 @@
-"""Pure functions for MCP graph tools.
-
-Extracted from mcp_server.py to enable unit testing without importing the
-MCP server module (which has heavy side effects).  Each compute_* function
-accepts an IRSnapshot (and optionally a FastCode instance) and returns a
-plain Python dict.  The @mcp.tool() wrappers in mcp_server.py handle
-json.dumps().
+"""Pure graph analysis functions — directed paths, impact analysis, Leiden
+clustering, Steiner trees, and caller finding.  Each compute_* function
+accepts an IRSnapshot and returns a plain Python dict.
 """
 
 from __future__ import annotations

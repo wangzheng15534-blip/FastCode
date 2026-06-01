@@ -10,7 +10,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
 HOT_PATHS = [
     PACKAGE_ROOT / "app" / "indexing" / "pipeline" / "service.py",
     PACKAGE_ROOT / "app" / "indexing" / "projection" / "transform.py",
-    PACKAGE_ROOT / "mcp" / "graph_tools.py",
+    PACKAGE_ROOT / "graph" / "analysis.py",
     PACKAGE_ROOT / "semantic" / "symbol_index.py",
     PACKAGE_ROOT / "semantic" / "resolvers" / "engine" / "patching.py",
     PACKAGE_ROOT / "app" / "store" / "vectors" / "pg_retrieval.py",
@@ -59,7 +59,7 @@ ALLOWED_NETWORKX_IMPORTS = {
     "graph/build.py",
     "app/indexing/projection/transform.py",
     "ir/graph.py",
-    "mcp/graph_tools.py",
+    "graph/analysis.py",
     "app/query/selection/retriever.py",
     "app/store/snapshots/snapshot.py",
 }

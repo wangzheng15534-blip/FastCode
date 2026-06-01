@@ -1,7 +1,7 @@
-"""Tests for mcp.graph_tools module.
+"""Tests for graph.analysis module.
 
-Tests the pure compute functions from fastcode.mcp.graph_tools, which are
-the production code extracted from mcp.server.
+Tests the pure compute functions from fastcode.graph.analysis, which are
+the production code for graph analysis.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 from fastcode.ir.graph import IRGraphBuilder, IRGraphView
 from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot
-from fastcode.mcp.graph_tools import (
+from fastcode.graph.analysis import (
     GraphToolContext,
     compute_directed_path,
     compute_directed_path_for_snapshot,

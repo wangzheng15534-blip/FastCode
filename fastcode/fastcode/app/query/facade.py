@@ -87,6 +87,12 @@ class QueryFacade:
         ]
         | None = None,
     ) -> dict[str, Any]:
+        if use_agency_mode:
+            from fastcode.common.feature_lifecycle import CapabilityRegistry
+            CapabilityRegistry.check("agency_mode")
+        if enable_multi_turn:
+            from fastcode.common.feature_lifecycle import CapabilityRegistry
+            CapabilityRegistry.check("multi_turn_generation")
         with self._state.read_lock():
             return self._query_handler.query(
                 question=question,

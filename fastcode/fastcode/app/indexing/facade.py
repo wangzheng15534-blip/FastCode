@@ -22,12 +22,12 @@ if TYPE_CHECKING:
 
     from fastcode.app.indexing.pipeline.direct_indexer import DirectIndexer
     from fastcode.app.indexing.pipeline.multi_repo_direct import MultiRepoDirectIndexer
+    from fastcode.app.query.selection.retriever import HybridRetriever
     from fastcode.app.store.facade import StoreFacade
     from fastcode.app.store.vectors.vector import VectorStore
-    from fastcode.scip.global_builder import GlobalIndexBuilder
     from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
     from fastcode.runtime_support.runtime_state import RuntimeState
-    from fastcode.retrieval.hybrid_retriever import HybridRetriever
+    from fastcode.scip.global_builder import GlobalIndexBuilder
     from fastcode.scip.module_resolver import ModuleResolver
     from fastcode.scip.symbol_resolver import SymbolResolver
 
@@ -91,7 +91,11 @@ class IndexingFacade:
         indexing_config = self._config.get("indexing", {})
         if not isinstance(indexing_config, dict):
             return False
-        return bool(indexing_config.get("allow_direct_index", False))
+        enabled = bool(indexing_config.get("allow_direct_index", False))
+        if enabled:
+            from fastcode.common.feature_lifecycle import CapabilityRegistry
+            CapabilityRegistry.check("direct_indexing")
+        return enabled
 
     # ------------------------------------------------------------------
     # Public methods
@@ -99,7 +103,7 @@ class IndexingFacade:
 
     def load_repository(
         self, source: str, is_url: bool | None = None, is_zip: bool = False
-    ):
+    ) -> None:
         with self._state_lock():
             return self._load_repository_unlocked(source, is_url, is_zip)
 
@@ -109,17 +113,22 @@ class IndexingFacade:
         with self._state_lock():
             return self._upload_repository_zip_unlocked(file_bytes, filename)
 
-    def index_repository(self, force: bool = False):
+    def index_repository(self, force: bool = False) -> dict[str, Any] | None:
         with self._state_lock():
             result = self._index_repository_unlocked(force=force)
             self._vector_store.invalidate_scan_cache()
         return result
 
     def load_and_index(
-        self, source: str, is_url: bool | None = None, *, force: bool = False
+        self,
+        source: str,
+        is_url: bool | None = None,
+        *,
+        is_zip: bool = False,
+        force: bool = False,
     ) -> dict[str, Any]:
         with self._state_lock():
-            self._load_repository_unlocked(source, is_url)
+            self._load_repository_unlocked(source, is_url, is_zip)
             self._index_repository_unlocked(force=force)
             self._vector_store.invalidate_scan_cache()
             return {
@@ -194,7 +203,9 @@ class IndexingFacade:
                 graph_runtime=self._graph_runtime,
             )
 
-    def load_multiple_repositories(self, sources: list[dict[str, Any]]):
+    def load_multiple_repositories(
+        self, sources: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
         with self._state_lock():
             return self._load_multiple_repositories_unlocked(sources)
 
@@ -222,7 +233,7 @@ class IndexingFacade:
         source: str,
         is_url: bool | None = None,
         is_zip: bool = False,
-    ):
+    ) -> None:
         self._logger.info(f"Loading repository: {source}")
 
         try:
@@ -330,7 +341,7 @@ class IndexingFacade:
                     "Failed to clean up temp directory: %s", cleanup_error
                 )
 
-    def _index_repository_unlocked(self, force: bool = False):
+    def _index_repository_unlocked(self, force: bool = False) -> dict[str, Any] | None:
         if self._direct_index_enabled():
             return self._index_repository_direct_unlocked(force=force)
         force = force or self._eval_config.get("force_reindex", False)
@@ -353,7 +364,7 @@ class IndexingFacade:
             graph_runtime=self._graph_runtime,
         )
 
-    def _index_repository_direct_unlocked(self, force: bool = False):
+    def _index_repository_direct_unlocked(self, force: bool = False) -> None:
         indexed, gib, mr, sr = self._direct_indexer.run(
             repo_loaded=self._state.repo_loaded,
             repo_info=self._state.repo_info,
@@ -370,9 +381,11 @@ class IndexingFacade:
 
     def _load_multiple_repositories_unlocked(
         self, sources: list[dict[str, Any]]
-    ):
+    ) -> dict[str, Any] | None:
         if not self._direct_index_enabled():
             return self._load_multiple_repositories_pipeline_unlocked(sources)
+        from fastcode.common.feature_lifecycle import CapabilityRegistry
+        CapabilityRegistry.check("multi_repo_direct_indexing")
         return self._load_multiple_repositories_direct_unlocked(sources)
 
     def _load_multiple_repositories_pipeline_unlocked(
@@ -454,7 +467,7 @@ class IndexingFacade:
 
     def _load_multiple_repositories_direct_unlocked(
         self, sources: list[dict[str, Any]]
-    ):
+    ) -> None:
         self._state.multi_repo_mode = True
         result = self._multi_repo_direct_indexer.run(
             sources,

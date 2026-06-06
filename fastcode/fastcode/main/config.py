@@ -81,38 +81,31 @@ def prepare_runtime_config_mapping(
 
 
 def _apply_runtime_env_overrides(config: dict[str, Any]) -> None:
-    storage_cfg = cast(dict[str, Any], config.setdefault("storage", {}))
-    generation_cfg = cast(dict[str, Any], config.setdefault("generation", {}))
-    cache_cfg = cast(dict[str, Any], config.setdefault("cache", {}))
-    repository_cfg = cast(dict[str, Any], config.setdefault("repository", {}))
-    projection_cfg = cast(dict[str, Any], config.setdefault("projection", {}))
+    """Apply env var overrides to the config dict.
 
-    generation_env_overrides = {
-        "model": os.getenv("MODEL"),
-        "base_url": os.getenv("BASE_URL"),
-        "openai_api_key": os.getenv("OPENAI_API_KEY"),
-        "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY"),
-    }
-    for key, env_value in generation_env_overrides.items():
-        if env_value:
-            generation_cfg[key] = env_value
+    Uses the env registry for all reads. Env vars with a config_path
+    are applied to the corresponding nested key in the config dict.
+    Precedence: CLI flag > env var > config YAML > default.
+    """
+    from fastcode.main._env_registry import ENV_REGISTRY, read_env
 
-    if backend := os.getenv("FASTCODE_STORAGE_BACKEND"):
-        storage_cfg["backend"] = backend
-    if dsn := os.getenv("FASTCODE_POSTGRES_DSN"):
-        storage_cfg["postgres_dsn"] = dsn
-    if projection_dsn := os.getenv("FASTCODE_PROJECTION_POSTGRES_DSN"):
-        projection_cfg["postgres_dsn"] = projection_dsn
-    if redis_host := os.getenv("REDIS_HOST"):
-        cache_cfg["redis_host"] = redis_host
-    if redis_port := os.getenv("REDIS_PORT"):
-        cache_cfg["redis_port"] = redis_port
-    if exclude_site_packages := os.getenv("FASTCODE_EXCLUDE_SITE_PACKAGES"):
-        repository_cfg["exclude_site_packages"] = exclude_site_packages.lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+    for spec in ENV_REGISTRY.values():
+        if not spec.config_path:
+            continue
+        value = read_env(spec.name)
+        if value is None:
+            continue
+
+        parts = spec.config_path.split(".")
+        target: dict[str, Any] = config
+        for part in parts[:-1]:
+            target = cast(dict[str, Any], target.setdefault(part, {}))
+
+        key = parts[-1]
+        if spec.name == "FASTCODE_FORCE_EXCLUDE_SITE_PACKAGES":
+            target[key] = value.lower() in {"1", "true", "yes"}
+        else:
+            target[key] = value
 
 
 def resolve_config_paths(config: dict[str, Any], project_root: str) -> dict[str, Any]:

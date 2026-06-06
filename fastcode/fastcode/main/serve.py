@@ -40,9 +40,11 @@ def _apply_darwin_threading_env() -> None:
 # ---------------------------------------------------------------------------
 
 def _cors_options_from_env() -> dict[str, Any]:
-    origins_raw = os.getenv("FASTCODE_CORS_ALLOW_ORIGINS", "")
+    from fastcode.main._env_registry import read_env
+
+    origins_raw = read_env("FASTCODE_CORS_ALLOW_ORIGINS") or ""
     origins = [o.strip() for o in origins_raw.split(",") if o.strip()]
-    allow_credentials_raw = os.getenv("FASTCODE_CORS_ALLOW_CREDENTIALS", "")
+    allow_credentials_raw = read_env("FASTCODE_CORS_ALLOW_CREDENTIALS") or ""
     allow_credentials = allow_credentials_raw.lower() in ("true", "1", "yes")
     return {
         "allow_origins": origins or ["*"],

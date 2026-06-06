@@ -45,10 +45,10 @@ ignore = [
 # ---------------------------------------------------------------------------
 
 [tool.pyright]
-include = ["fastcode/src", "fastcode/tests", "tests"]
+include = ["fastcode/fastcode", "fastcode/tests", "tests"]
 exclude = ["**/repos", "**/repo_backup", "**/_bmad-output", "**/_fastcode", "**/scip_pb2.py"]
-extraPaths = [".", "./fastcode/src"]
-stubPath = "fastcode/src/fastcode/_stubs"
+extraPaths = [".", "./fastcode/fastcode"]
+stubPath = "fastcode/fastcode/fastcode/_stubs"
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "strict"                                                  # strict baseline; relaxations below are intentional
@@ -230,7 +230,7 @@ norecursedirs = [
     "_bmad",
     "_bmad-output",
 ]
-pythonpath = [".", "fastcode/src", "nanobot"]
+pythonpath = [".", "fastcode/fastcode", "nanobot"]
 asyncio_mode = "auto"
 markers = [
     "edge: boundary values, empty inputs, off-by-one",

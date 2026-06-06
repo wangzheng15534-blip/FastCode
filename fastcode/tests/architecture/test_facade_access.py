@@ -13,7 +13,7 @@ import ast
 import re
 from pathlib import Path
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
+PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "fastcode"
 
 ENTRY_FRAME_FILES = [
     PACKAGE_ROOT / "api" / "routes.py",

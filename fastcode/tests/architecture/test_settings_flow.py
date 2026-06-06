@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
+PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "fastcode"
 
 NO_ENV_PACKAGES = [
     "ir",

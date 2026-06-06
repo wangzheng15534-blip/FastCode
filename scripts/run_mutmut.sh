@@ -1,10 +1,10 @@
 #!/bin/bash
 # Run mutation testing on specific modules.
 # Usage: ./scripts/run_mutmut.sh [module_path]
-# Example: ./scripts/run_mutmut.sh fastcode/src/fastcode/scip_models.py
+# Example: ./scripts/run_mutmut.sh fastcode/fastcode/scip_models.py
 set -e
 
-MODULE="${1:-fastcode/src/fastcode/scip_models.py}"
+MODULE="${1:-fastcode/fastcode/scip_models.py}"
 echo "Running mutmut on $MODULE"
 
 mutmut run \

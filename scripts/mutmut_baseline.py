@@ -14,11 +14,11 @@ import sys
 
 
 HIGH_VALUE_MODULES = [
-    "fastcode/src/fastcode/core/scoring.py",
-    "fastcode/src/fastcode/core/fusion.py",
-    "fastcode/src/fastcode/core/filtering.py",
-    "fastcode/src/fastcode/adapters/scip_to_ir.py",
-    "fastcode/src/fastcode/ir_validators.py",
+    "fastcode/fastcode/core/scoring.py",
+    "fastcode/fastcode/core/fusion.py",
+    "fastcode/fastcode/core/filtering.py",
+    "fastcode/fastcode/adapters/scip_to_ir.py",
+    "fastcode/fastcode/ir_validators.py",
 ]
 
 

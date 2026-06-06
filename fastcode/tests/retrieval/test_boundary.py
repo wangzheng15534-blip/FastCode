@@ -24,7 +24,7 @@ from fastcode.retrieval.context.boundary import (
 )
 from fastcode.retrieval.contracts import Hit
 
-PACKAGE_DIR = pathlib.Path(__file__).resolve().parents[2] / "src" / "fastcode"
+PACKAGE_DIR = pathlib.Path(__file__).resolve().parents[2] / "fastcode"
 RETRIEVAL_DIR = PACKAGE_DIR / "retrieval"
 
 IO_MODULES = frozenset(

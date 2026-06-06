@@ -3,7 +3,7 @@
 import ast
 from pathlib import Path
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
+PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "fastcode"
 SHELL_PACKAGES = ["api", "mcp", "main"]
 DB_RUNTIME_FILE = PACKAGE_ROOT / "db_runtime.py"
 STORE_PACKAGE = PACKAGE_ROOT / "store"

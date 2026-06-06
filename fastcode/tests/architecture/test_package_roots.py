@@ -4,7 +4,7 @@ import ast
 import tomllib
 from pathlib import Path
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
+PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "fastcode"
 TEST_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PACKAGE_ROOT.parents[2]
 WORKSPACE_TEST_ROOT = REPO_ROOT / "tests"

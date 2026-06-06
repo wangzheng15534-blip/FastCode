@@ -3,7 +3,7 @@
 import ast
 from pathlib import Path
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "fastcode"
+PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "fastcode"
 PYDANTIC_FREE_PACKAGES = ["ir", "graph", "retrieval"]
 
 

@@ -4,14 +4,14 @@
 [mutmut]
 # Target modules for mutation testing (high-value algorithmic code)
 paths_to_mutate = [
-    "src/fastcode/core/scoring.py",
-    "src/fastcode/core/fusion.py",
-    "src/fastcode/core/filtering.py",
-    "src/fastcode/core/combination.py",
-    "src/fastcode/core/iteration.py",
-    "src/fastcode/adapters/scip_to_ir.py",
-    "src/fastcode/ir_validators.py",
-    "src/fastcode/path_utils.py",
+    "fastcode/core/scoring.py",
+    "fastcode/core/fusion.py",
+    "fastcode/core/filtering.py",
+    "fastcode/core/combination.py",
+    "fastcode/core/iteration.py",
+    "fastcode/adapters/scip_to_ir.py",
+    "fastcode/ir_validators.py",
+    "fastcode/path_utils.py",
 ]
 # Test runner
 runner = "uv run pytest fastcode/tests/ -x -q --timeout=30"

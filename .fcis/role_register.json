@@ -2,7 +2,7 @@
   "schema_version": 3,
   "units": [
     {
-      "path": "fastcode/src/fastcode/utils",
+      "path": "fastcode/fastcode/utils",
       "roles": [
         "base_atoms",
         "base_kit"
@@ -10,14 +10,14 @@
       "names": ["utils"]
     },
     {
-      "path": "fastcode/src/fastcode/kernel",
+      "path": "fastcode/fastcode/kernel",
       "roles": [
         "meaning_seed"
       ],
       "names": ["kernel"]
     },
     {
-      "path": "fastcode/src/fastcode/runtime_support",
+      "path": "fastcode/fastcode/runtime_support",
       "roles": [
         "run_kit"
       ],
@@ -25,7 +25,7 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/ports",
+      "path": "fastcode/fastcode/ports",
       "roles": [
         "axis_surface"
       ],
@@ -33,7 +33,7 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/ir",
+      "path": "fastcode/fastcode/ir",
       "roles": [
         "meaning_core"
       ],
@@ -41,18 +41,18 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/graph",
+      "path": "fastcode/fastcode/graph",
       "roles": [
         "meaning_core"
       ],
       "names": ["graph"],
       "sources": [
-        {"path": "fastcode/src/fastcode/graph/analysis.py", "roles": ["meaning_core"]}
+        {"path": "fastcode/fastcode/graph/analysis.py", "roles": ["meaning_core"]}
       ]
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/retrieval",
+      "path": "fastcode/fastcode/retrieval",
       "roles": [
         "meaning_core"
       ],
@@ -60,7 +60,7 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/semantic",
+      "path": "fastcode/fastcode/semantic",
       "roles": [
         "meaning_core"
       ],
@@ -68,7 +68,7 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/scip",
+      "path": "fastcode/fastcode/scip",
       "roles": [
         "effect_tool"
       ],
@@ -76,7 +76,7 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/app/indexing",
+      "path": "fastcode/fastcode/app/indexing",
       "roles": [
         "use_flow"
       ],
@@ -84,7 +84,7 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/app/query",
+      "path": "fastcode/fastcode/app/query",
       "roles": [
         "use_flow"
       ],
@@ -92,7 +92,7 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/app/store",
+      "path": "fastcode/fastcode/app/store",
       "roles": [
         "use_flow"
       ],
@@ -100,7 +100,7 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/infrastructure/storage",
+      "path": "fastcode/fastcode/infrastructure/storage",
       "roles": [
         "effect_facility"
       ],
@@ -108,7 +108,7 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/infrastructure/execution",
+      "path": "fastcode/fastcode/infrastructure/execution",
       "roles": [
         "effect_tool"
       ],
@@ -116,7 +116,7 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/infrastructure/llm",
+      "path": "fastcode/fastcode/infrastructure/llm",
       "roles": [
         "effect_tool"
       ],
@@ -124,38 +124,38 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/infrastructure/graph_runtime",
+      "path": "fastcode/fastcode/infrastructure/graph_runtime",
       "roles": [
         "effect_facility"
       ],
       "names": ["graph_runtime"]
     },
     {
-      "path": "fastcode/src/fastcode/main",
+      "path": "fastcode/fastcode/main",
       "roles": [
         "assembly_root"
       ],
       "names": ["main"],
       "sources": [
-        {"path": "fastcode/src/fastcode/main/__init__.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/_config_schema_base.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/_config_schema_indexing.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/_config_schema_operations.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/_config_schema_persistence.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/_config_schema_querying.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/_config_schema_root.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/_config_runtime.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/config.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/defaults.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/diagnostics.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/facades.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/fastcode.py", "roles": ["assembly_root"]},
-        {"path": "fastcode/src/fastcode/main/serve.py", "roles": ["assembly_root"]}
+        {"path": "fastcode/fastcode/main/__init__.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/fastcode/main/_config_schema_base.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/fastcode/main/_config_schema_indexing.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/fastcode/main/_config_schema_operations.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/fastcode/main/_config_schema_persistence.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/fastcode/main/_config_schema_querying.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/fastcode/main/_config_schema_root.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/fastcode/main/_config_runtime.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/fastcode/main/config.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/fastcode/main/defaults.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/fastcode/main/diagnostics.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/fastcode/main/facades.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/fastcode/main/fastcode.py", "roles": ["assembly_root"]},
+        {"path": "fastcode/fastcode/main/serve.py", "roles": ["assembly_root"]}
       ]
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/client",
+      "path": "fastcode/fastcode/client",
       "roles": [
         "assembly_root",
         "entry_frame"
@@ -164,7 +164,7 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/api",
+      "path": "fastcode/fastcode/api",
       "roles": [
         "entry_frame"
       ],
@@ -172,7 +172,7 @@
     },
     {
       "axis": "default",
-      "path": "fastcode/src/fastcode/mcp",
+      "path": "fastcode/fastcode/mcp",
       "roles": [
         "entry_frame"
       ],

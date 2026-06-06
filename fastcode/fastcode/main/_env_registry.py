@@ -129,6 +129,16 @@ _register(EnvVarSpec(
     description="FastCode API server URL",
 ))
 _register(EnvVarSpec(
+    name="FASTCODE_FORCE_HOST",
+    category="FORCE",
+    description="Override server bind host",
+))
+_register(EnvVarSpec(
+    name="FASTCODE_FORCE_PORT",
+    category="FORCE",
+    description="Override server bind port",
+))
+_register(EnvVarSpec(
     name="OPENAI_API_KEY",
     category="THIRD_PARTY",
     config_path="generation.openai_api_key",

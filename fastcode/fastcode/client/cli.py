@@ -20,6 +20,18 @@ def _make_client(base_url: str) -> FastCodeClient:
     return FastCodeClient(base_url=base_url)
 
 
+def _resolve_source_options(
+    *,
+    repo_url: str | None,
+    repo_path: str | None,
+    repo_zip: str | None,
+) -> tuple[str, bool, bool]:
+    source = repo_url or repo_path or repo_zip
+    if source is None:
+        raise click.ClickException("Repository source is required")
+    return source, bool(repo_url), bool(repo_zip)
+
+
 @click.group()
 @click.option(
     "--server",
@@ -41,8 +53,8 @@ def cli(ctx: click.Context, server: str) -> None:
 
 
 @cli.command()
-@click.option("--host", default="127.0.0.1", help="Bind host")
-@click.option("--port", "-p", default=8000, help="Bind port")
+@click.option("--host", envvar="FASTCODE_FORCE_HOST", default="127.0.0.1", help="Bind host")
+@click.option("--port", "-p", envvar="FASTCODE_FORCE_PORT", default=8000, help="Bind port")
 @click.option("--reload", is_flag=True, help="Enable auto-reload")
 def serve(host: str, port: int, reload: bool) -> None:
     """Start the FastCode API server."""
@@ -135,14 +147,17 @@ def query(
                 )
                 sys.exit(1)
 
-            source = repo_url or repo_path or repo_zip
-            is_url = bool(repo_url)
+            source, is_url, is_zip = _resolve_source_options(
+                repo_url=repo_url,
+                repo_path=repo_path,
+                repo_zip=repo_zip,
+            )
 
             click.echo(f"Loading and indexing repository: {source}")
-            client.load_and_index(source=source, is_url=is_url)
+            client.load_and_index(source=source, is_url=is_url, is_zip=is_zip)
 
             click.echo(f"\nProcessing query: {query}\n")
-            result = client.query_snapshot(question=query)
+            result = client.query(query)
 
         # Format output
         answer = result.get("answer", "")
@@ -189,11 +204,14 @@ def index(
     client = ctx.obj["client"]
 
     try:
-        source = repo_url or repo_path or repo_zip
-        is_url = bool(repo_url)
+        source, is_url, is_zip = _resolve_source_options(
+            repo_url=repo_url,
+            repo_path=repo_path,
+            repo_zip=repo_zip,
+        )
 
         click.echo(f"Loading and indexing repository: {source}")
-        client.load_and_index(source=source, is_url=is_url)
+        client.load_and_index(source=source, is_url=is_url, is_zip=is_zip)
 
         summary = client.summary()
         click.echo(f"\n{summary.get('summary', 'Indexing complete.')}")
@@ -267,11 +285,14 @@ def interactive(
                 )
                 sys.exit(1)
 
-            source = repo_url or repo_path or repo_zip
-            is_url = bool(repo_url)
+            source, is_url, is_zip = _resolve_source_options(
+                repo_url=repo_url,
+                repo_path=repo_path,
+                repo_zip=repo_zip,
+            )
 
             click.echo(f"Loading and indexing repository: {source}")
-            client.load_and_index(source=source, is_url=is_url)
+            client.load_and_index(source=source, is_url=is_url, is_zip=is_zip)
 
         # Interactive loop
         click.echo("=" * 60)
@@ -737,6 +758,20 @@ def diagnostics(ctx: click.Context) -> None:
     except Exception as e:
         click.echo(f"Error: {e!s}", err=True)
         sys.exit(1)
+
+
+@cli.command("config-check")
+def config_check() -> None:
+    """Validate environment variable naming and report deprecation warnings."""
+    from fastcode.main._env_registry import validate_env_vars
+
+    warnings_list = validate_env_vars()
+    if not warnings_list:
+        click.echo("No issues found.")
+        return
+    for w in warnings_list:
+        click.echo(w)
+    sys.exit(1)
 
 
 if __name__ == "__main__":

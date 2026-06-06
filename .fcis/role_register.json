@@ -124,6 +124,14 @@
     },
     {
       "axis": "default",
+      "path": "fastcode/fastcode/infrastructure/network",
+      "roles": [
+        "effect_tool"
+      ],
+      "names": ["network"]
+    },
+    {
+      "axis": "default",
       "path": "fastcode/fastcode/infrastructure/graph_runtime",
       "roles": [
         "effect_facility"

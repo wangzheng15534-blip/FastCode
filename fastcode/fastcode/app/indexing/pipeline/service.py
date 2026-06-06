@@ -60,7 +60,7 @@ from fastcode.ir.graph import IRGraphBuilder, IRGraphs
 from fastcode.ir.merge import merge_ir
 from fastcode.ir.types import IRRelation, IRSnapshot, IRUnitSupport
 from fastcode.ir.validate import validate_snapshot
-from fastcode.kernel.identifiers import RepoName, SnapshotId
+from fastcode.common.identifiers import RepoName, SnapshotId
 from fastcode.ports.artifacts import (
     FileArtifactStore as FileArtifactStorePort,
 )

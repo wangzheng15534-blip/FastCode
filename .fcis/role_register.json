@@ -10,11 +10,11 @@
       "names": ["utils"]
     },
     {
-      "path": "fastcode/fastcode/kernel",
+      "path": "fastcode/fastcode/common",
       "roles": [
         "meaning_seed"
       ],
-      "names": ["kernel"]
+      "names": ["common"]
     },
     {
       "path": "fastcode/fastcode/runtime_support",

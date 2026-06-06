@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from fastcode.kernel.error import KernelError
-from fastcode.kernel.identifiers import ArtifactKey, RepoName, SnapshotId
+from fastcode.common.error import KernelError
+from fastcode.common.identifiers import ArtifactKey, RepoName, SnapshotId
 
 
 def test_repo_name_rejects_path_separator() -> None:

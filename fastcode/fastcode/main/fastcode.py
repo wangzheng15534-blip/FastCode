@@ -71,7 +71,7 @@ from fastcode.infrastructure.graph_runtime.ladybug import LadybugGraphRuntime
 from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphBuilder
-from fastcode.kernel.config import FastCodeConfig
+from fastcode.common.config import FastCodeConfig
 from fastcode.main.config import config_from_mapping
 from fastcode.main.defaults import get_default_config
 from fastcode.retrieval.contracts import Hit, SourceCitation

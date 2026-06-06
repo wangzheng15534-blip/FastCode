@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import fastcode.kernel.config as runtime_config
+import fastcode.common.config as runtime_config
 from fastcode.main._config_schema_indexing import (
     DocsIntegrationConfigDTO,
     EmbeddingConfigDTO,

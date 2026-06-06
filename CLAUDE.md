@@ -23,7 +23,7 @@ The runtime package is a layered monolith rooted at `fastcode/fastcode/`.
 The current branch is a hardened pre-release, not a stable release.
 
 - `utils/`: generic primitives and stdlib-only helper APIs.
-- `kernel/`: shared identity vocabulary and frozen config contracts.
+- `common/`: shared identity vocabulary and frozen config contracts.
 - `runtime_support/`: generic retry, health, observability, and lifecycle event helpers.
 - `ports/`: narrow shared capability contract surfaces.
 - `ir/`: canonical frozen IR dataclasses, graph views, merge, validation.
@@ -69,11 +69,11 @@ pure domain types or domain polymorphism.
 Inner packages do not read env directly. Config flows through
 `prepare_runtime_config_mapping(...)`,
 `fastcode.main.config_schema.FastCodeConfigDTO`, explicit mappers in
-`fastcode.main.config_mapper`, `fastcode.kernel.config.FastCodeConfig`,
+`fastcode.main.config_mapper`, `fastcode.common.config.FastCodeConfig`,
 then `FastCode`.
 
 Events and config are not miscellaneous hub layers. Runtime events live
-under `runtime_support/`; frozen config contracts live under `kernel/`;
+under `runtime_support/`; frozen config contracts live under `common/`;
 config DTO shaping and loading live in `main/`; future domain events/config
 should live near their owning domain.
 

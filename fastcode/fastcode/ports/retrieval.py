@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from fastcode.kernel.types import CodeElementMeta
+    from fastcode.common.types import CodeElementMeta
 
 
 class VectorSearchStore(Protocol):

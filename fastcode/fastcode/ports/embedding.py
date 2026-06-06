@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from fastcode.kernel.types import CodeElementMeta
+    from fastcode.common.types import CodeElementMeta
 
 
 @runtime_checkable

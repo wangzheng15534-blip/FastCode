@@ -10,7 +10,7 @@ from typing import Any, cast
 import yaml
 from dotenv import load_dotenv
 
-from fastcode.kernel.config import FastCodeConfig
+from fastcode.common.config import FastCodeConfig
 from fastcode.main._config_runtime import (
     config_from_dto,
     config_from_mapping,

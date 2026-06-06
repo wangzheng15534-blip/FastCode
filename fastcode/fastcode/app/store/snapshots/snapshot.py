@@ -28,7 +28,7 @@ from fastcode.ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from fastcode.kernel.identifiers import ArtifactKey, SnapshotId
+from fastcode.common.identifiers import ArtifactKey, SnapshotId
 from fastcode.infrastructure.storage.contracts import StoreDatabaseRuntime
 from fastcode.runtime_support.retry import exponential_backoff_seconds
 from fastcode.utils.clock import SystemClock, utc_now

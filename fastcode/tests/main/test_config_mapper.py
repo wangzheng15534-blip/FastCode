@@ -6,7 +6,7 @@ import dataclasses
 
 import pytest
 
-from fastcode.kernel.config import (
+from fastcode.common.config import (
     DocsIntegrationConfig,
     FastCodeConfig,
     IndexingConfig,

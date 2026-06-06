@@ -30,6 +30,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from fastcode.app.indexing.graph_mapper import document_overlay_node_records
 from fastcode.app.indexing.doc_ingester import KeyDocIngester
 from fastcode.app.indexing.embedder import CodeEmbedder
 from fastcode.app.indexing.extractors.parser import CodeParser
@@ -667,7 +668,9 @@ def test_e2e_semantic_indexing_with_ladybug(
         }
         for c in chunks
     ]
-    synced = fc.graph_runtime.sync_docs(chunks=chunk_dicts, mentions=mentions)
+    synced = fc.graph_runtime.sync_nodes(
+        nodes=document_overlay_node_records(chunks=chunk_dicts, mentions=mentions)
+    )
     assert synced is True, "Ladybug sync should succeed"
 
     # Verify data in Ladybug via query_docs

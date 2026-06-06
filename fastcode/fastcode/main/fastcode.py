@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 import fastcode.retrieval.context.snapshot as _snapshot
+from fastcode.app.indexing.graph_mapper import document_overlay_node_records
 from fastcode.app.indexing.doc_ingester import KeyDocIngester
 from fastcode.app.indexing.embedder import CodeEmbedder
 from fastcode.app.indexing.extractors.parser import CodeParser
@@ -74,6 +75,7 @@ from fastcode.kernel.config import FastCodeConfig
 from fastcode.main.config import config_from_mapping
 from fastcode.main.defaults import get_default_config
 from fastcode.retrieval.contracts import Hit, SourceCitation
+from fastcode.runtime_support.runtime_state import RuntimeState
 from fastcode.semantic.resolvers.engine.registry import (
     build_default_semantic_resolver_registry,
 )
@@ -87,7 +89,6 @@ from .config import (
     setup_logging,
 )
 from .diagnostics import DiagnosticBuilder
-from fastcode.runtime_support.runtime_state import RuntimeState
 
 
 class _VectorSearchStoreFactory:
@@ -737,7 +738,9 @@ class FastCode:
         try:
             if self.graph_runtime is None:
                 raise RuntimeError("Graph runtime not available")
-            synced = self.graph_runtime.sync_docs(chunks=chunks, mentions=mentions)
+            synced = self.graph_runtime.sync_nodes(
+                nodes=document_overlay_node_records(chunks=chunks, mentions=mentions)
+            )
         except Exception as e:
             warnings.append(f"ladybug_doc_sync_failed: {e}")
             return

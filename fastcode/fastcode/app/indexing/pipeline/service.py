@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 import numpy as np
 from git import GitCommandError, Repo
 
+from fastcode.app.indexing.graph_mapper import document_overlay_node_records
 from fastcode.app.indexing.doc_ingester import KeyDocIngester
 from fastcode.app.indexing.embedder import CodeEmbedder
 from fastcode.app.indexing.file_inventory import FileInventory
@@ -43,6 +44,12 @@ from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
 from fastcode.app.store.vectors.vector import VectorStore
 from fastcode.app.store.vectors.vector_math import as_float32_matrix, as_float32_vector
 from fastcode.graph.build import CodeGraphBuilder
+from fastcode.infrastructure.execution.ports import (
+    ScipFileInfoView,
+    ScipIndexerRuntime,
+    SemanticHelperRuntime,
+)
+from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
 from fastcode.ir.element import (
     CodeElement,
     CodeElementMeta,
@@ -60,13 +67,7 @@ from fastcode.ports.artifacts import (
 from fastcode.ports.artifacts import (
     UnitArtifactStore as UnitArtifactStorePort,
 )
-from fastcode.infrastructure.execution.ports import (
-    ScipFileInfoView,
-    ScipIndexerRuntime,
-    SemanticHelperRuntime,
-)
 from fastcode.ports.publishing import LineagePublisher
-from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
 from fastcode.scip.ast_adapter import build_ir_from_ast
 from fastcode.scip.global_builder import GlobalIndexBuilder
 from fastcode.scip.models import SCIPIndex
@@ -1100,7 +1101,9 @@ class IndexPipeline:
         if not chunks or graph_runtime is None or not graph_runtime.enabled:
             return
         try:
-            synced = graph_runtime.sync_docs(chunks=chunks, mentions=mentions)
+            synced = graph_runtime.sync_nodes(
+                nodes=document_overlay_node_records(chunks=chunks, mentions=mentions)
+            )
         except Exception as e:
             warnings.append(f"ladybug_doc_sync_failed: {e}")
             return

@@ -47,12 +47,12 @@ HEAVY_EXTRAS = ("docs", "local-embeddings", "nanobot", "scip")
 
 def _run(cmd: list[str], *, cwd: Path | None = None) -> None:
     print("+", " ".join(cmd))
-    subprocess.run(cmd, cwd=cwd, check=True)  # noqa: S603
+    subprocess.run(cmd, cwd=cwd, check=True)
 
 
 def _run_output(cmd: list[str], *, cwd: Path | None = None) -> str:
     print("+", " ".join(cmd))
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         cmd,
         cwd=cwd,
         check=True,
@@ -92,7 +92,8 @@ def _build_artifacts(out_dir: Path) -> list[Path]:
     )
     artifacts = sorted(out_dir.iterdir())
     if not artifacts:
-        raise RuntimeError("uv build produced no artifacts")
+        msg = "uv build produced no artifacts"
+        raise RuntimeError(msg)
     return artifacts
 
 
@@ -103,7 +104,8 @@ def _archive_members(path: Path) -> list[str]:
     if path.suffixes[-2:] == [".tar", ".gz"]:
         with tarfile.open(path, "r:gz") as tf:
             return tf.getnames()
-    raise ValueError(f"Unsupported artifact type: {path}")
+    msg = f"Unsupported artifact type: {path}"
+    raise ValueError(msg)
 
 
 def _assert_helper_assets_present(artifacts: list[Path]) -> None:
@@ -111,14 +113,14 @@ def _assert_helper_assets_present(artifacts: list[Path]) -> None:
         path for path in artifacts if path.name.startswith("fastcode-")
     ]
     if not fastcode_artifacts:
-        raise RuntimeError("fastcode build artifacts missing")
+        msg = "fastcode build artifacts missing"
+        raise RuntimeError(msg)
     for artifact in fastcode_artifacts:
         names = _archive_members(artifact)
         for suffix in HELPER_ASSET_SUFFIXES:
             if not any(name.endswith(suffix) for name in names):
-                raise RuntimeError(
-                    f"{artifact.name} is missing required helper asset {suffix}"
-                )
+                msg = f"{artifact.name} is missing required helper asset {suffix}"
+                raise RuntimeError(msg)
 
 
 def _write_release_config(
@@ -356,9 +358,11 @@ def _smoke_index_and_query(
         ]
     )
     if "pkg/a.py defines answer()." not in output:
-        raise RuntimeError("installed wheel query smoke did not return fake AI answer")
+        msg = "installed wheel query smoke did not return fake AI answer"
+        raise RuntimeError(msg)
     if "Error: LLM provider not configured" in output:
-        raise RuntimeError("installed wheel query smoke used an unconfigured LLM")
+        msg = "installed wheel query smoke used an unconfigured LLM"
+        raise RuntimeError(msg)
 
 
 def _smoke_distribution(
@@ -387,7 +391,8 @@ def _smoke_distribution(
             or (install_nanobot_artifact and path.name.startswith("nanobot_ai-"))
         )
         if not artifacts:
-            raise RuntimeError(f"No matching artifacts found in {dist_dir}")
+            msg = f"No matching artifacts found in {dist_dir}"
+            raise RuntimeError(msg)
         _install_artifacts(
             venv_python,
             artifacts,

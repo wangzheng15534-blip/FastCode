@@ -16,7 +16,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from fcis_rules import (  # noqa: E402
+from fcis_rules import (
     CANONICAL_ROLES,
     SCHEMA_VERSION,
     check_imports,
@@ -27,73 +27,83 @@ from fcis_rules import (  # noqa: E402
 
 ROLE_HINTS: list[tuple[re.Pattern[str], str, str]] = [
     (
-        re.compile(r"foundation|primitive|atom", re.I),
+        re.compile(r"foundation|primitive|atom", re.IGNORECASE),
         "base_atoms",
         "generic primitive base",
     ),
-    (re.compile(r"utils?|helper|common", re.I), "base_kit", "generic helper APIs"),
     (
-        re.compile(r"runtime-support|run-?kit|retry|health|cache", re.I),
+        re.compile(r"utils?|helper|common", re.IGNORECASE),
+        "base_kit",
+        "generic helper APIs",
+    ),
+    (
+        re.compile(r"runtime-support|run-?kit|retry|health|cache", re.IGNORECASE),
         "run_kit",
         "generic runtime helpers",
     ),
     (
-        re.compile(r"kernel|identity|seed", re.I),
+        re.compile(r"kernel|identity|seed", re.IGNORECASE),
         "meaning_seed",
         "shared minimal vocabulary",
     ),
     (
-        re.compile(r"domain|catalog|sync|cite|fulltext|meaning", re.I),
+        re.compile(r"domain|catalog|sync|cite|fulltext|meaning", re.IGNORECASE),
         "meaning_core",
         "pure business meaning",
     ),
     (
-        re.compile(r"app|app-?flow|use-?case|workflow|flow", re.I),
+        re.compile(r"app|app-?flow|use-?case|workflow|flow", re.IGNORECASE),
         "use_flow",
         "business workflow brain",
     ),
     (
-        re.compile(r"facade|server|entry|route|resolver|controller", re.I),
+        re.compile(r"facade|server|entry|route|resolver|controller", re.IGNORECASE),
         "entry_frame",
         "serving entry and exit framing",
     ),
     (
-        re.compile(r"composition|assembly|bootstrap|main", re.I),
+        re.compile(r"composition|assembly|bootstrap|main", re.IGNORECASE),
         "assembly_root",
         "composition root and lifecycle wiring",
     ),
     (
-        re.compile(r"idl|frame|message|protocol", re.I),
+        re.compile(r"idl|frame|message|protocol", re.IGNORECASE),
         "link_proto",
         "public cross-axis protocol/schema when public; otherwise owner-local schema",
     ),
     (
-        re.compile(r"port|contract|surface", re.I),
+        re.compile(r"port|contract|surface", re.IGNORECASE),
         "axis_surface",
         "same-axis semantic/capability surface",
     ),
     (
-        re.compile(r"adapter|sqlite|storage|http|client|deno|js|cdp|tool", re.I),
+        re.compile(
+            r"adapter|sqlite|storage|http|client|deno|js|cdp|tool", re.IGNORECASE
+        ),
         "effect_tool",
         "generic reusable adapter/tool library",
     ),
     (
-        re.compile(r"facility|daemon|sidecar|worker|process", re.I),
+        re.compile(r"facility|daemon|sidecar|worker|process", re.IGNORECASE),
         "effect_facility",
         "long-lived generic effect owner",
     ),
     (
-        re.compile(r"interop|cross|plugin|translator|host", re.I),
+        re.compile(r"interop|cross|plugin|translator|host", re.IGNORECASE),
         "axis_link",
         "horizontal semantic API",
     ),
     (
-        re.compile(r"observability|analy[sz]er|metrics?|events?|logs?|signals?", re.I),
+        re.compile(
+            r"observability|analy[sz]er|metrics?|events?|logs?|signals?", re.IGNORECASE
+        ),
         "signal_analyzer",
         "passive signal record analyzer",
     ),
     (
-        re.compile(r"acceptance|e2e|end[-_ ]?to[-_ ]?end|probe|system[-_ ]?test", re.I),
+        re.compile(
+            r"acceptance|e2e|end[-_ ]?to[-_ ]?end|probe|system[-_ ]?test", re.IGNORECASE
+        ),
         "acceptance_test",
         "side-path acceptance test harness",
     ),
@@ -274,7 +284,8 @@ Do not add any top-level fields except `schema_version` and `units`; do not add 
 def command_init(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     if not root.exists():
-        raise SystemExit(f"root does not exist: {root}")
+        msg = f"root does not exist: {root}"
+        raise SystemExit(msg)
     dot = fcis_dir(root)
     dot.mkdir(parents=True, exist_ok=True)
     force = bool(args.force)
@@ -311,7 +322,8 @@ def command_register(args: argparse.Namespace) -> int:
     roles = list(split_roles(args.roles))
     unknown = [role for role in roles if role not in CANONICAL_ROLES]
     if unknown:
-        raise SystemExit(f"unknown role(s): {', '.join(unknown)}")
+        msg = f"unknown role(s): {', '.join(unknown)}"
+        raise SystemExit(msg)
     old_data = load_register(root)
     data = {"schema_version": SCHEMA_VERSION, "units": list(old_data.get("units", []))}
     units = data.setdefault("units", [])

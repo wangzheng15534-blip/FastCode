@@ -23,6 +23,13 @@ select = [
     "PL",       # Pylint: code quality and complexity limits
     "RUF",      # Ruff-specific: ambiguous unicode, unused noqa, etc.
     "TID251",   # flake8-tidy-imports: repo-wide banned compatibility imports
+    "A",        # flake8-builtins: prevent shadowing builtins (id, list, dict)
+    "EM",       # flake8-errmsg: no raw string literals in raise; named constants
+    "PIE",      # flake8-pie: unnecessary spread, single-char startswith
+    "PERF",     # perflint: performance anti-patterns (list-comp-in-for-loop)
+    "FURB",     # refurb: modernize Python (simpler isinstance, unnecessary casts)
+    "T20",      # flake8-print: ban print() in source; use logging or Rich
+    "FLY",      # flynt: enforce f-strings over str.format(); style mandates f-strings
 ]
 
 ignore = [
@@ -38,6 +45,7 @@ ignore = [
     # --- Other deliberate patterns ---
     "B904",    # design: raise-without-from -- re-raising with context already in message
     "PLR2004", # design: magic-value-comparison -- domain thresholds are tuning knobs, not constants
+    "PERF401", # design: for-append loops are readable; extend/comprehension refactor tracked separately
 ]
 
 # ---------------------------------------------------------------------------
@@ -84,6 +92,8 @@ protected_modules = [
     "fastcode.main._config_schema_querying",
     "fastcode.main._config_schema_root",
     "fastcode.main._config_runtime",
+    "fastcode.main._capability_register",
+    "fastcode.main._env_registry",
 ]
 allowed_importers = [
     "fastcode.main.*",
@@ -205,16 +215,56 @@ parametrize-names-type = "tuple"
     "S101",    # design: assert is the test mechanism, not a runtime invariant
     "ANN201",  # design: test functions are named by convention, return type adds noise
     "ANN003",  # design: test factory **kwargs are intentionally untyped for flexibility
+    "T20",     # design: print() allowed for debug output during test runs
+    "A001",    # design: test imports may shadow builtins
+    "A002",    # design: test params shadow builtins (id=1, list=[...], input=...)
 ]
 "fastcode/tests/**/*.py" = [
     "S101",    # design: assert is the test mechanism, not a runtime invariant
     "ANN201",  # design: test functions are named by convention, return type adds noise
     "ANN003",  # design: test factory **kwargs are intentionally untyped for flexibility
+    "T20",     # design: print() allowed for debug output during test runs
+    "A001",    # design: test imports may shadow builtins
+    "A002",    # design: test params shadow builtins (id=1, list=[...], input=...)
+]
+"demos/**/*.py" = [
+    "T20",     # design: demos use print() for stdout output
+    "S101",    # design: demos use assert for inline validation
+    "S108",    # design: demos use /tmp for temporary storage
+    "ANN201",  # design: demo scripts omit return types
+]
+"scripts/**/*.py" = [
+    "T20",     # design: scripts use print() for stdout output
+    "S602",    # design: scripts use subprocess with shell=True for convenience
+    "S603",    # design: scripts use subprocess calls without validate
+    "S607",    # design: scripts use partial executable paths
+    "E402",    # design: scripts modify sys.path before local imports
+]
+"skills/**/*.py" = [
+    "T20",     # design: skill scripts use print() for stdout output
+    "RUF001",  # design: skill scripts use unicode multiplication sign in report tables
+    "RUF003",  # design: skill scripts use unicode in comments
+    "SIM102",  # design: skill scripts have nested if patterns for readability
+]
+"nanobot/**/*.py" = [
+    "ANN202",  # design: nanobot private functions omit return types
+    "A002",    # design: typer CLI options use builtin names (--all, --input)
+    "N803",    # design: API parameter names match upstream service (extractMode, maxChars)
+    "E741",    # design: short variable names in iterator context
+    "S112",    # design: try-except-continue in event processing — individual failures are non-fatal
+    "F821",    # design: forward references resolved at runtime
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "fastcode/tests"]
-addopts = "-p no:schemathesis"
+addopts = [
+    "-p no:schemathesis",
+    "--strict-markers",        # Fail on unknown markers — prevents typos silently passing
+    "--strict-config",         # Fail on unknown config keys — catches misspelled options
+    "--tb=short",              # Concise tracebacks — full tb available with --tb=long
+    "-v",                      # Verbose: show individual test names, not just dots
+    "--timeout=60",            # Kill stuck tests after 60s — prevents CI hangs
+]
 norecursedirs = [
     ".git",
     ".hg",
@@ -247,5 +297,33 @@ markers = [
     "snapshot: snapshot-style regression checks",
 ]
 filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning",
+    "ignore::ResourceWarning",
+    "ignore::UserWarning",
     "ignore:Benchmarks are automatically disabled because xdist plugin is active:pytest_benchmark.logger.PytestBenchmarkWarning",
+]
+
+[tool.coverage.run]
+source = ["fastcode"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__pycache__/*",
+    "*/.*",
+]
+
+[tool.coverage.report]
+fail_under = 80
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
 ]

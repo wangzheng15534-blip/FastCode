@@ -13,19 +13,19 @@ Shows:
     5. Building all 5 graph types from merged IR
 """
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import networkx as nx
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.merge import merge_ir
 from fastcode.ir.validate import validate_snapshot
 from fastcode.scip.ast_adapter import build_ir_from_ast
-from fastcode.scip.scip_adapter import build_ir_from_scip
-import networkx as nx
 from fastcode.scip.models import SCIPDocument, SCIPIndex, SCIPOccurrence, SCIPSymbol
+from fastcode.scip.scip_adapter import build_ir_from_scip
 
 
 def main():
@@ -169,7 +169,7 @@ def main():
     # --- 6. Build graphs and traverse ---
     builder = IRGraphBuilder()
     graphs = builder.build_graphs(merged)
-    print(f"\nGraphs built:")
+    print("\nGraphs built:")
     for name in [
         "dependency_graph",
         "call_graph",
@@ -182,7 +182,7 @@ def main():
 
     # Demonstrate call graph traversal (NetworkX shortest path)
     if graphs.call_graph.number_of_nodes() > 0:
-        start_node = list(graphs.call_graph.nodes)[0]
+        start_node = next(iter(graphs.call_graph.nodes))
         dist = nx.single_source_shortest_path_length(
             graphs.call_graph, start_node, cutoff=2
         )

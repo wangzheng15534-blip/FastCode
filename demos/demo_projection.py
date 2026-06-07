@@ -12,9 +12,9 @@ Shows:
     4. Printing each layer's structure
 """
 
-import sys
-import os
 import json
+import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -235,10 +235,10 @@ def main():
 
     result = transformer.build(scope=scope, snapshot=snapshot, ir_graphs=graphs)
 
-    print(f"\n=== L0 (Summary) ===")
+    print("\n=== L0 (Summary) ===")
     print(json.dumps(result.l0, indent=2, ensure_ascii=False)[:500])
 
-    print(f"\n=== L1 (Navigation) ===")
+    print("\n=== L1 (Navigation) ===")
     l1_content = result.l1.get("content", {})
     print(f"  relations keys: {list(l1_content.get('relations', {}).keys())}")
     print(f"  relations_v2 keys: {list(l1_content.get('relations_v2', {}).keys())}")
@@ -248,7 +248,7 @@ def main():
         print(f"  first xref: {v2_xrefs[0]}")
     print(f"  related_code: {len(l1_content.get('related_code', []))} refs")
 
-    print(f"\n=== L2 Index ===")
+    print("\n=== L2 Index ===")
     print(json.dumps(result.l2_index, indent=2, ensure_ascii=False)[:500])
 
     print(f"\n=== Chunks: {len(result.chunks)} ===")

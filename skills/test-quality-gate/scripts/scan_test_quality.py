@@ -182,10 +182,7 @@ def _is_boolop_with_constant(node: ast.expr, op_type: type, value: object) -> bo
         return False
     if not isinstance(node.op, op_type):
         return False
-    for v in node.values:
-        if isinstance(v, ast.Constant) and v.value is value:
-            return True
-    return False
+    return any(isinstance(v, ast.Constant) and v.value is value for v in node.values)
 
 
 def _name_str(node: ast.expr) -> str | None:
@@ -229,7 +226,7 @@ def _is_trivially_true(node: ast.Assert) -> bool:
 
     # assert len(x) >= 0 or assert len(x) > -1
     if isinstance(test, ast.Compare):
-        for op, comp in zip(test.ops, test.comparators):
+        for op, comp in zip(test.ops, test.comparators, strict=False):
             if isinstance(test.left, ast.Call):
                 func = test.left.func
                 if isinstance(func, ast.Name) and func.id == "len":

@@ -814,7 +814,7 @@ def _rust_import_candidates(
             use_index = -1
             if text.startswith("use "):
                 use_index = 4
-            elif text.startswith("pub ") or text.startswith("pub("):
+            elif text.startswith(("pub ", "pub(")):
                 marker = " use "
                 found = text.find(marker)
                 if found >= 0:
@@ -848,7 +848,7 @@ def _js_import_candidates(
         values = _find_quoted_values(text)
         if not values:
             return
-        if text.startswith("import ") or text.startswith("export "):
+        if text.startswith(("import ", "export ")):
             if text.startswith("import ") and " from " not in text and len(values) == 1:
                 candidates.append((values[0], line_no, _line_at(lines, line_no)))
             elif " from " in text:
@@ -864,7 +864,7 @@ def _js_import_candidates(
             start_line = current_line
         stmt.append(ch)
         text = "".join(stmt).strip()
-        is_static_import = text.startswith("import ") or text.startswith("export ")
+        is_static_import = text.startswith(("import ", "export "))
         values = _find_quoted_values(text)
         complete_static_import = is_static_import and (
             (" from " in text and bool(values))
@@ -933,8 +933,7 @@ def _simple_keyword_import_candidates(
             if keyword == "using" and "=" in payload:
                 payload = payload.split("=", 1)[1].strip()
             module = payload.split()[0].strip().strip(";")
-            if module.endswith(".*"):
-                module = module[:-2]
+            module = module.removesuffix(".*")
             if module:
                 candidates.append((module, line_no, _line_at(lines, line_no)))
     return candidates

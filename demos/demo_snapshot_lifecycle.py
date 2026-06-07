@@ -13,18 +13,17 @@ Shows:
     5. Manifest previous-chain (supersession)
 """
 
-import sys
 import os
-import json
+import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastcode.ir.graph import IRGraphBuilder
-from fastcode.ir.types import IRDocument, IREdge, IRSnapshot, IRSymbol
 from fastcode.app.store.runs.index_run import IndexRunStore
 from fastcode.app.store.snapshots.manifest import ManifestStore
 from fastcode.app.store.snapshots.snapshot import SnapshotStore
+from fastcode.ir.graph import IRGraphBuilder
+from fastcode.ir.types import IRDocument, IREdge, IRSnapshot, IRSymbol
 
 
 def _make_snapshot(repo: str, snap_id: str, commit: str, branch: str) -> IRSnapshot:

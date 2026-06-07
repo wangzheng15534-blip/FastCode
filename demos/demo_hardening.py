@@ -12,19 +12,20 @@ Shows:
     4. Graph API (callees, callers, dependencies via NetworkX)
 """
 
-import sys
 import os
+import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from unittest.mock import MagicMock
+
 import networkx as nx
 from fastcode.app.indexing.pipeline.redo_worker import RedoWorker
 from fastcode.app.indexing.terminus import TerminusPublisher
+from fastcode.app.store.snapshots.snapshot import SnapshotStore
 from fastcode.ir.graph import IRGraphBuilder
 from fastcode.ir.types import IREdge, IRSnapshot, IRSymbol
-from fastcode.app.store.snapshots.snapshot import SnapshotStore
-from unittest.mock import MagicMock
 
 
 def main():
@@ -174,7 +175,7 @@ def main():
     callees = [
         {"symbol_id": n, "distance": d} for n, d in dist.items() if n != "sym:auth"
     ]
-    print(f"  Callees from authenticate (2 hops):")
+    print("  Callees from authenticate (2 hops):")
     for c in callees:
         print(f"    -> {c['symbol_id']} (distance {c['distance']})")
 
@@ -184,7 +185,7 @@ def main():
     callers = [
         {"symbol_id": n, "distance": d} for n, d in dist_rev.items() if n != "sym:db"
     ]
-    print(f"  Callers of get_connection (2 hops):")
+    print("  Callers of get_connection (2 hops):")
     for c in callers:
         print(f"    <- {c['symbol_id']} (distance {c['distance']})")
 

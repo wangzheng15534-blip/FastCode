@@ -7,11 +7,11 @@ Usage:
     --full: mutate all source files (slow, ~30 min)
     default: mutate only high-value algorithmic files (~5 min)
 """
+
 from __future__ import annotations
 
 import subprocess
 import sys
-
 
 HIGH_VALUE_MODULES = [
     "fastcode/fastcode/core/scoring.py",

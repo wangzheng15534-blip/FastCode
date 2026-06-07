@@ -9,10 +9,10 @@ import pytest
 
 from fastcode.main._env_registry import ENV_REGISTRY, read_env, validate_env_vars
 
-
 # ---------------------------------------------------------------------------
 # Registry content
 # ---------------------------------------------------------------------------
+
 
 class TestRegistryContent:
     def test_all_canonical_names_are_registered(self) -> None:
@@ -50,6 +50,7 @@ class TestRegistryContent:
 # ---------------------------------------------------------------------------
 # read_env
 # ---------------------------------------------------------------------------
+
 
 class TestReadEnv:
     def test_returns_canonical_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -101,10 +102,9 @@ class TestReadEnv:
 # validate_env_vars
 # ---------------------------------------------------------------------------
 
+
 class TestValidateEnvVars:
-    def test_deprecated_old_name_flagged(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_deprecated_old_name_flagged(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("FASTCODE_FORCE_LLM_MODEL", raising=False)
         monkeypatch.setenv("MODEL", "gpt-4")
         results = validate_env_vars()

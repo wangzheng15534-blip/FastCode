@@ -284,10 +284,9 @@ def test_package_boundary_import_bans() -> None:
                     continue
                 for imported in _import_candidates(py_file, node):
                     for banned, message in banned_imports.items():
-                        is_main_config_schema = (
-                            rel.parent == Path("main")
-                            and rel.name.startswith("_config_schema")
-                        )
+                        is_main_config_schema = rel.parent == Path(
+                            "main"
+                        ) and rel.name.startswith("_config_schema")
                         if is_main_config_schema and banned == "pydantic":
                             continue
                         if _matches_banned_import(imported, banned):
@@ -315,7 +314,7 @@ def test_domain_and_common_modules_use_behavior_names_not_generic_buckets() -> N
     for package_path in BEHAVIOR_NAMED_DOMAIN_PACKAGES:
         for py_file in _iter_python_files(package_path):
             stem = py_file.stem
-            normalized = stem[1:] if stem.startswith("_") else stem
+            normalized = stem.removeprefix("_")
             if normalized not in FORBIDDEN_GENERIC_INTERNAL_NAMES:
                 continue
             violations.append(

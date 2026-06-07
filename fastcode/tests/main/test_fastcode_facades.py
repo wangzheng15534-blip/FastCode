@@ -323,9 +323,7 @@ class TestListAvailableRepos:
         repos = [{"name": "repo-a"}, {"name": "repo-b"}]
         fc.vector_store.scan_available_indexes.return_value = repos
         result = fc.store.list_available_repos()
-        fc.vector_store.scan_available_indexes.assert_called_once_with(
-            use_cache=False
-        )
+        fc.vector_store.scan_available_indexes.assert_called_once_with(use_cache=False)
         assert result is repos
 
 

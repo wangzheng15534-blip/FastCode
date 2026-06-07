@@ -51,7 +51,7 @@ def _has_env_loading(filepath: Path) -> list[str]:
                 isinstance(node.func, ast.Attribute)
                 and isinstance(node.func.value, ast.Name)
                 and node.func.value.id == "os"
-                and node.func.attr in {"getenv"}
+                and node.func.attr == "getenv"
             ):
                 violations.append(
                     f"{filepath.relative_to(PACKAGE_ROOT)}:{node.lineno}: os.getenv()"

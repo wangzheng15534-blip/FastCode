@@ -9,11 +9,11 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 import fastcode.retrieval.context.snapshot as _snapshot
-from fastcode.app.indexing.graph_mapper import document_overlay_node_records
 from fastcode.app.indexing.doc_ingester import KeyDocIngester
 from fastcode.app.indexing.embedder import CodeEmbedder
 from fastcode.app.indexing.extractors.parser import CodeParser
 from fastcode.app.indexing.facade import IndexingFacade
+from fastcode.app.indexing.graph_mapper import document_overlay_node_records
 from fastcode.app.indexing.loader import RepositoryLoader
 from fastcode.app.indexing.pipeline.direct_indexer import DirectIndexer
 from fastcode.app.indexing.pipeline.indexer import CodeIndexer
@@ -61,6 +61,7 @@ from fastcode.app.store.snapshots.projection import ProjectionStore
 from fastcode.app.store.snapshots.snapshot import SnapshotStore
 from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
 from fastcode.app.store.vectors.vector import VectorStore
+from fastcode.common.config import FastCodeConfig
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.infrastructure.execution.scip_runner import SubprocessScipIndexerRuntime
 from fastcode.infrastructure.execution.semantic_helper import (
@@ -71,7 +72,6 @@ from fastcode.infrastructure.graph_runtime.ladybug import LadybugGraphRuntime
 from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphBuilder
-from fastcode.common.config import FastCodeConfig
 from fastcode.main.config import config_from_mapping
 from fastcode.main.defaults import get_default_config
 from fastcode.retrieval.contracts import Hit, SourceCitation
@@ -542,7 +542,7 @@ class FastCode:
                                 publish=True,
                                 enable_scip=True,
                             )
-                            if result and result.get("status") not in {"reused"}:
+                            if result and result.get("status") != "reused":
                                 self.logger.info(
                                     "Graceful update for '%s': %s", name, result
                                 )
@@ -737,7 +737,8 @@ class FastCode:
             return
         try:
             if self.graph_runtime is None:
-                raise RuntimeError("Graph runtime not available")
+                msg = "Graph runtime not available"
+                raise RuntimeError(msg)
             synced = self.graph_runtime.sync_nodes(
                 nodes=document_overlay_node_records(chunks=chunks, mentions=mentions)
             )

@@ -58,7 +58,9 @@ def test_service_state_lock_emits_structured_acquire_release_logs(
 ) -> None:
     lock = _ReadWriteStateLock()
 
-    with caplog.at_level(logging.DEBUG, logger="fastcode.main.runtime_state.state_lock"):
+    with caplog.at_level(
+        logging.DEBUG, logger="fastcode.runtime_support.runtime_state.state_lock"
+    ):
         with lock.write_lock():
             pass
         with lock.read_lock():
@@ -188,6 +190,7 @@ def test_query_semantic_escalation_emits_structured_log(
         _apply_semantic_resolvers=MagicMock(return_value=upgraded_snapshot)
     )
     from fastcode.app.query.facade import QueryFacade
+
     fc.query = QueryFacade(
         query_handler=fc.query_handler,
         vector_store=SimpleNamespace(),

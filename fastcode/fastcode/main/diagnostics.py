@@ -15,9 +15,8 @@ from fastcode.app.store.runs.index_run_contracts import IndexRunRecord
 from fastcode.app.store.snapshots.manifest import ManifestStore
 from fastcode.app.store.snapshots.snapshot import SnapshotStore
 from fastcode.app.store.vectors.vector import VectorStore
-from fastcode.utils.clock import utc_now
-
 from fastcode.runtime_support.runtime_state import RuntimeState
+from fastcode.utils.clock import utc_now
 
 # ---------------------------------------------------------------------------
 # Module-level constants (moved from fastcode.py)

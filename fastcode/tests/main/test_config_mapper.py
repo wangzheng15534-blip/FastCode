@@ -179,7 +179,8 @@ def test_config_to_dict_avoids_runtime_config_generic_serializer(
     )
 
     def _boom_to_dict(_: FastCodeConfig) -> dict[str, object]:
-        raise AssertionError("config_to_dict must not call FastCodeConfig.to_dict()")
+        msg = "config_to_dict must not call FastCodeConfig.to_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(FastCodeConfig, "to_dict", _boom_to_dict)
 

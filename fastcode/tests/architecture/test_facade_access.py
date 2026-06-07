@@ -106,7 +106,9 @@ USE_FLOW_METHODS = {
 }
 
 
-def _extract_fc_attribute_calls(source: str, fc_var_patterns: list[str]) -> list[tuple[str, int, str]]:
+def _extract_fc_attribute_calls(
+    source: str, fc_var_patterns: list[str]
+) -> list[tuple[str, int, str]]:
     """Find all `fc.method()` calls where method is a use_flow dispatch.
 
     Skips `fc.facade.method()` (two-level attribute access is facade usage).
@@ -132,7 +134,9 @@ def _extract_fc_attribute_calls(source: str, fc_var_patterns: list[str]) -> list
     return calls
 
 
-def _check_raw_pattern(source: str, fc_var_patterns: list[str]) -> list[tuple[int, str]]:
+def _check_raw_pattern(
+    source: str, fc_var_patterns: list[str]
+) -> list[tuple[int, str]]:
     """Regex fallback for patterns AST might miss (e.g., function references)."""
     violations: list[tuple[int, str]] = []
     for pattern in fc_var_patterns:
@@ -159,14 +163,20 @@ def test_entry_frames_use_facades():
         # AST-based check
         ast_calls = _extract_fc_attribute_calls(source, fc_patterns)
         for _, lineno, method in ast_calls:
-            violations.append(f"{stem}:{lineno}: direct call fc.{method}() instead of fc.<facade>.{method}()")
+            violations.append(
+                f"{stem}:{lineno}: direct call fc.{method}() instead of fc.<facade>.{method}()"
+            )
 
         # Regex-based check for function references (e.g., passed as callbacks)
         raw = _check_raw_pattern(source, fc_patterns)
         for lineno, call in raw:
-            violations.append(f"{stem}:{lineno}: direct reference {call} instead of fc.<facade>.{call}")
+            violations.append(
+                f"{stem}:{lineno}: direct reference {call} instead of fc.<facade>.{call}"
+            )
 
-    assert not violations, "FCIS violation: entry frames bypass facades\n" + "\n".join(violations)
+    assert not violations, "FCIS violation: entry frames bypass facades\n" + "\n".join(
+        violations
+    )
 
 
 def test_facade_attrs_are_documented():

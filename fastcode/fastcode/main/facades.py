@@ -7,8 +7,9 @@ into entry frames (api/, mcp/) so they never import from main/ directly.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from fastcode.app.indexing.facade import IndexingFacade
 from fastcode.app.indexing.projection_facade import ProjectionFacade

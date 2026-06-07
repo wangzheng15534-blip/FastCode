@@ -6,14 +6,14 @@ from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "fastcode"
 TEST_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = PACKAGE_ROOT.parents[2]
+REPO_ROOT = PACKAGE_ROOT.parents[1]
 WORKSPACE_TEST_ROOT = REPO_ROOT / "tests"
 ROOT_INIT = PACKAGE_ROOT / "__init__.py"
 MAIN_INIT = PACKAGE_ROOT / "main" / "__init__.py"
 FORBIDDEN_GENERIC_LAYOUT_NAMES = {"config", "core", "events"}
 ALLOWED_ROLE_SPECIFIC_LAYOUT_FILES = {
     Path("main/config.py"),
-    Path("kernel/config.py"),
+    Path("common/config.py"),
     Path("runtime_support/events.py"),
 }
 DELETED_COMPATIBILITY_MODULES = {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from collections.abc import Generator, Sequence
@@ -14,6 +15,8 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from fastcode.app.indexing.facade import IndexingFacade
+from fastcode.app.indexing.publishing_facade import PublishingFacade
 from fastcode.app.query.context_payloads import (
     context_bundle_payload,
     turn_journal_payload,
@@ -23,14 +26,15 @@ from fastcode.app.query.context_payloads import (
 from fastcode.app.query.facade import QueryFacade
 from fastcode.app.query.selection.retriever import HybridRetriever
 from fastcode.app.store.artifacts.graph import GraphArtifactStore
-from fastcode.app.store.cache_facade import CacheFacade
-from fastcode.app.indexing.facade import IndexingFacade
 from fastcode.app.store.cache.contracts import (
     ContextActivationRecord,
     ContextBundleRecord,
     TurnJournalRecord,
     WorkingMemoryRecord,
 )
+from fastcode.app.store.cache_facade import CacheFacade
+from fastcode.app.store.context_facade import ContextFacade
+from fastcode.app.store.facade import StoreFacade
 from fastcode.app.store.runs.index_run_contracts import IndexRunRecord
 from fastcode.app.store.snapshots.manifest_contracts import ManifestRecord
 from fastcode.app.store.snapshots.snapshot_contracts import (
@@ -39,8 +43,6 @@ from fastcode.app.store.snapshots.snapshot_contracts import (
     SnapshotRefRecord,
 )
 from fastcode.app.store.vectors.vector import VectorStore
-from fastcode.app.store.facade import StoreFacade
-from fastcode.app.store.context_facade import ContextFacade
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.ir.element import CodeElement
 from fastcode.ir.graph import IRGraphs, IRGraphView
@@ -52,9 +54,7 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.main.config import config_from_mapping, config_to_runtime_mapping
-from fastcode.app.indexing.publishing_facade import PublishingFacade
 from fastcode.main.fastcode import FastCode
-from fastcode.runtime_support.runtime_state import RuntimeState
 from fastcode.retrieval.context.agent_context import (
     AcceptedFact,
     EvidenceRef,
@@ -69,6 +69,7 @@ from fastcode.retrieval.context.context_compiler import (
     build_turn_plan,
     compile_working_memory,
 )
+from fastcode.runtime_support.runtime_state import RuntimeState
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 
 # ---------------------------------------------------------------------------
@@ -90,7 +91,7 @@ def _make_fastcode(
         db_runtime=SimpleNamespace(backend=storage_backend)
     )
     fc.graph_runtime = SimpleNamespace(
-        enabled=graph_enabled, sync_docs=lambda **_: sync_result
+        enabled=graph_enabled, sync_nodes=lambda **_: sync_result
     )
     return fc
 
@@ -121,10 +122,12 @@ def test_api_facade_refs_and_manifests_use_explicit_record_payloads(
     )
 
     def _boom_to_dict(_: object) -> dict[str, Any]:
-        raise AssertionError("FastCode API facade must not call record.to_dict()")
+        msg = "FastCode API facade must not call record.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_store_dict(*_: object, **__: object) -> dict[str, Any]:
-        raise AssertionError("FastCode API facade must prefer typed record APIs")
+        msg = "FastCode API facade must prefer typed record APIs"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(SnapshotRefRecord, "to_dict", _boom_to_dict)
     monkeypatch.setattr(ManifestRecord, "to_dict", _boom_to_dict)
@@ -199,10 +202,12 @@ def test_api_facade_scip_artifacts_use_explicit_record_payloads(
     )
 
     def _boom_to_dict(_: object) -> dict[str, Any]:
-        raise AssertionError("FastCode API facade must not call record.to_dict()")
+        msg = "FastCode API facade must not call record.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_store_dict(*_: object, **__: object) -> dict[str, Any]:
-        raise AssertionError("FastCode API facade must prefer typed record APIs")
+        msg = "FastCode API facade must prefer typed record APIs"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(SCIPArtifactRecord, "to_dict", _boom_to_dict)
 
@@ -319,7 +324,8 @@ def test_code_status_pack_uses_snapshot_record_and_explicit_ir_payloads(
     )
 
     def _boom_to_dict(_: object) -> dict[str, Any]:
-        raise AssertionError("code status export must not call to_dict()")
+        msg = "code status export must not call to_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(IRSnapshot, "to_dict", _boom_to_dict)
     monkeypatch.setattr(IRCodeUnit, "to_dict", _boom_to_dict)
@@ -691,7 +697,7 @@ def test_sync_doc_overlay_records_exceptions_as_warning():
     fc.state = RuntimeState()
     fc.graph_runtime = SimpleNamespace(
         enabled=True,
-        sync_docs=lambda **_: (_ for _ in ()).throw(RuntimeError("db offline")),
+        sync_nodes=lambda **_: (_ for _ in ()).throw(RuntimeError("db offline")),
     )
     warnings = []
 
@@ -1084,7 +1090,8 @@ def test_find_symbol_fallback_uses_explicit_symbol_payload(
     )
 
     def _boom(_: IRSymbol) -> dict[str, Any]:
-        raise AssertionError("find_symbol fallback must not call IRSymbol.to_dict()")
+        msg = "find_symbol fallback must not call IRSymbol.to_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(IRSymbol, "to_dict", _boom)
     fc.store = StoreFacade(
@@ -1275,7 +1282,7 @@ def test_load_multi_repo_cache_delegates_legacy_bm25_without_rebuild(
         load=lambda _builder, _repo_name: True,
         merge=lambda _builder, _repo_name: True,
     )
-    fc._reconstruct_elements_from_metadata = lambda: []
+    fc._reconstruct_elements_from_metadata = list
     fc.cache = _make_cache_facade(fc)
 
     assert fc.cache.load_cached_repos(repo_names=["repo"]) is True
@@ -2201,6 +2208,21 @@ def test_index_repository_uses_snapshot_pipeline_by_default() -> None:
 
 
 def test_index_repository_direct_path_requires_explicit_flag() -> None:
+    from fastcode.common.feature_lifecycle import (
+        CapabilityRegistry,
+        CapabilitySpec,
+        CapabilityStage,
+    )
+
+    with contextlib.suppress(ValueError):
+        CapabilityRegistry.register(
+            CapabilitySpec(
+                name="direct_indexing",
+                stage=CapabilityStage.EXPERIMENTAL,
+                config_key="indexing.allow_direct_index",
+            )
+        )
+
     fc = FastCode.__new__(FastCode)
     fc.state = RuntimeState()
     fc.config = {"indexing": {"allow_direct_index": True}}
@@ -2302,12 +2324,18 @@ def _make_indexing_facade(fc: Any) -> IndexingFacade:
         vector_store=getattr(fc, "vector_store", SimpleNamespace()),
         store=getattr(fc, "store", SimpleNamespace()),
         direct_indexer=getattr(fc, "_direct_indexer", SimpleNamespace()),
-        multi_repo_direct_indexer=getattr(fc, "_multi_repo_direct_indexer", SimpleNamespace()),
+        multi_repo_direct_indexer=getattr(
+            fc, "_multi_repo_direct_indexer", SimpleNamespace()
+        ),
         graph_runtime=getattr(fc, "graph_runtime", None),
         retriever=getattr(fc, "retriever", SimpleNamespace()),
         config=getattr(fc, "config", {}),
         eval_config=getattr(fc, "eval_config", {}),
-        logger=getattr(fc, "logger", SimpleNamespace(info=lambda *_a, **_k: None, error=lambda *_a, **_k: None)),
+        logger=getattr(
+            fc,
+            "logger",
+            SimpleNamespace(info=lambda *_a, **_k: None, error=lambda *_a, **_k: None),
+        ),
         set_repo_root_fn=lambda _path: None,
         apply_env_ignore_patterns_fn=lambda: None,
     )
@@ -2518,7 +2546,11 @@ def test_snapshot_query_stream_releases_service_lock_after_handle_capture() -> N
 
     def _run_stream() -> None:
         try:
-            list(fc.query.query_stream("Where is auth?", filters={"snapshot_id": "snap:1"}))
+            list(
+                fc.query.query_stream(
+                    "Where is auth?", filters={"snapshot_id": "snap:1"}
+                )
+            )
         except Exception as exc:
             errors.append(exc)
 

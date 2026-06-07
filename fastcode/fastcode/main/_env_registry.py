@@ -17,10 +17,12 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-_THIRD_PARTY_WHITELIST = frozenset({
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
-})
+_THIRD_PARTY_WHITELIST = frozenset(
+    {
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+    }
+)
 
 _VERB_PREFIXES = (
     "FASTCODE_FORCE_",
@@ -60,101 +62,132 @@ def _register(spec: EnvVarSpec) -> None:
 # Registry entries
 # ---------------------------------------------------------------------------
 
-_register(EnvVarSpec(
-    name="FASTCODE_FORCE_LLM_MODEL",
-    old_names=("MODEL",),
-    category="FORCE",
-    config_path="generation.model",
-    description="Override the LLM model name",
-))
-_register(EnvVarSpec(
-    name="FASTCODE_FORCE_LLM_BASE_URL",
-    old_names=("BASE_URL",),
-    category="FORCE",
-    config_path="generation.base_url",
-    description="Override the LLM base URL",
-))
-_register(EnvVarSpec(
-    name="FASTCODE_FORCE_REDIS_HOST",
-    old_names=("REDIS_HOST",),
-    category="FORCE",
-    config_path="cache.redis_host",
-    description="Override Redis cache host",
-))
-_register(EnvVarSpec(
-    name="FASTCODE_FORCE_REDIS_PORT",
-    old_names=("REDIS_PORT",),
-    category="FORCE",
-    config_path="cache.redis_port",
-    description="Override Redis cache port",
-))
-_register(EnvVarSpec(
-    name="FASTCODE_STORAGE_BACKEND",
-    category="FORCE",
-    config_path="storage.backend",
-    description="Storage backend: sqlite or postgres",
-))
-_register(EnvVarSpec(
-    name="FASTCODE_POSTGRES_DSN",
-    category="FORCE",
-    config_path="storage.postgres_dsn",
-    description="PostgreSQL connection string",
-))
-_register(EnvVarSpec(
-    name="FASTCODE_PROJECTION_POSTGRES_DSN",
-    category="FORCE",
-    config_path="projection.postgres_dsn",
-    description="Projection store PostgreSQL DSN",
-))
-_register(EnvVarSpec(
-    name="FASTCODE_FORCE_EXCLUDE_SITE_PACKAGES",
-    old_names=("FASTCODE_EXCLUDE_SITE_PACKAGES",),
-    category="FORCE",
-    config_path="repository.exclude_site_packages",
-    description="Exclude vendored site-packages from indexing",
-))
-_register(EnvVarSpec(
-    name="FASTCODE_CORS_ALLOW_ORIGINS",
-    category="FORCE",
-    description="Comma-separated CORS allowed origins",
-))
-_register(EnvVarSpec(
-    name="FASTCODE_CORS_ALLOW_CREDENTIALS",
-    category="FORCE",
-    description="Allow CORS credentials (true/false)",
-))
-_register(EnvVarSpec(
-    name="FASTCODE_SERVER",
-    category="FORCE",
-    description="FastCode API server URL",
-))
-_register(EnvVarSpec(
-    name="FASTCODE_FORCE_HOST",
-    category="FORCE",
-    description="Override server bind host",
-))
-_register(EnvVarSpec(
-    name="FASTCODE_FORCE_PORT",
-    category="FORCE",
-    description="Override server bind port",
-))
-_register(EnvVarSpec(
-    name="OPENAI_API_KEY",
-    category="THIRD_PARTY",
-    config_path="generation.openai_api_key",
-    description="OpenAI API key (third-party)",
-))
-_register(EnvVarSpec(
-    name="ANTHROPIC_API_KEY",
-    category="THIRD_PARTY",
-    config_path="generation.anthropic_api_key",
-    description="Anthropic API key (third-party)",
-))
+_register(
+    EnvVarSpec(
+        name="FASTCODE_FORCE_LLM_MODEL",
+        old_names=("MODEL",),
+        category="FORCE",
+        config_path="generation.model",
+        description="Override the LLM model name",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="FASTCODE_FORCE_LLM_BASE_URL",
+        old_names=("BASE_URL",),
+        category="FORCE",
+        config_path="generation.base_url",
+        description="Override the LLM base URL",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="FASTCODE_FORCE_REDIS_HOST",
+        old_names=("REDIS_HOST",),
+        category="FORCE",
+        config_path="cache.redis_host",
+        description="Override Redis cache host",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="FASTCODE_FORCE_REDIS_PORT",
+        old_names=("REDIS_PORT",),
+        category="FORCE",
+        config_path="cache.redis_port",
+        description="Override Redis cache port",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="FASTCODE_STORAGE_BACKEND",
+        category="FORCE",
+        config_path="storage.backend",
+        description="Storage backend: sqlite or postgres",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="FASTCODE_POSTGRES_DSN",
+        category="FORCE",
+        config_path="storage.postgres_dsn",
+        description="PostgreSQL connection string",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="FASTCODE_PROJECTION_POSTGRES_DSN",
+        category="FORCE",
+        config_path="projection.postgres_dsn",
+        description="Projection store PostgreSQL DSN",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="FASTCODE_FORCE_EXCLUDE_SITE_PACKAGES",
+        old_names=("FASTCODE_EXCLUDE_SITE_PACKAGES",),
+        category="FORCE",
+        config_path="repository.exclude_site_packages",
+        description="Exclude vendored site-packages from indexing",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="FASTCODE_CORS_ALLOW_ORIGINS",
+        category="FORCE",
+        description="Comma-separated CORS allowed origins",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="FASTCODE_CORS_ALLOW_CREDENTIALS",
+        category="FORCE",
+        description="Allow CORS credentials (true/false)",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="FASTCODE_SERVER",
+        category="FORCE",
+        description="FastCode API server URL",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="FASTCODE_FORCE_HOST",
+        category="FORCE",
+        description="Override server bind host",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="FASTCODE_FORCE_PORT",
+        category="FORCE",
+        description="Override server bind port",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="OPENAI_API_KEY",
+        category="THIRD_PARTY",
+        config_path="generation.openai_api_key",
+        description="OpenAI API key (third-party)",
+    )
+)
+_register(
+    EnvVarSpec(
+        name="ANTHROPIC_API_KEY",
+        category="THIRD_PARTY",
+        config_path="generation.anthropic_api_key",
+        description="Anthropic API key (third-party)",
+    )
+)
 
 
 # ---------------------------------------------------------------------------
 # Read helpers
 # ---------------------------------------------------------------------------
+
 
 def read_env(name: str) -> str | None:
     """Read an env var by canonical name, with old-name fallback.
@@ -200,8 +233,6 @@ def validate_env_vars() -> list[str]:
         # Check old-name usage
         for spec in ENV_REGISTRY.values():
             if key in spec.old_names:
-                results.append(
-                    f"Deprecated env var: {key} -> use {spec.name} instead"
-                )
+                results.append(f"Deprecated env var: {key} -> use {spec.name} instead")
 
     return results

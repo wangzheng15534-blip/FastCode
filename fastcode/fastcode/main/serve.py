@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import platform
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -22,10 +23,10 @@ from fastcode.runtime_support.observability import configure_logging
 from .facades import FacadeContainer, facade_container_from_fastcode
 from .fastcode import FastCode
 
-
 # ---------------------------------------------------------------------------
 # Threading env — must run before tokenizers/BLAS import on macOS
 # ---------------------------------------------------------------------------
+
 
 def _apply_darwin_threading_env() -> None:
     if platform.system() == "Darwin":
@@ -38,6 +39,7 @@ def _apply_darwin_threading_env() -> None:
 # ---------------------------------------------------------------------------
 # CORS config — reads env here (assembly_root), not in entry_frame
 # ---------------------------------------------------------------------------
+
 
 def _cors_options_from_env() -> dict[str, Any]:
     from fastcode.main._env_registry import read_env
@@ -57,6 +59,7 @@ def _cors_options_from_env() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # API app factory
 # ---------------------------------------------------------------------------
+
 
 def _create_app(
     *,
@@ -85,7 +88,7 @@ def _create_app(
     )
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info(startup_message)
         app.state.facades = facades
         yield
@@ -149,6 +152,7 @@ def create_web_app(config_path: str | None = None) -> FastAPI:
 # ---------------------------------------------------------------------------
 # MCP facade factory
 # ---------------------------------------------------------------------------
+
 
 def create_mcp_facade(config_path: str | None = None) -> FacadeContainer:
     """Create a FacadeContainer for the MCP server."""

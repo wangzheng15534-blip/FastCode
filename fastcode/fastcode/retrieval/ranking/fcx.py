@@ -57,7 +57,8 @@ def parse_block(text: str) -> dict[str, Any]:
     seen_ids: set[str] = set()
     lines = [line.rstrip() for line in text.splitlines() if line.strip()]
     if not lines:
-        raise ValueError("empty FCX block")
+        msg = "empty FCX block"
+        raise ValueError(msg)
 
     for index, raw_line in enumerate(lines):
         left, separator, tail = raw_line.partition("|")
@@ -76,13 +77,15 @@ def parse_block(text: str) -> dict[str, Any]:
 
         if index == 0:
             if tag != "@fcx":
-                raise ValueError("FCX block must start with @fcx header")
+                msg = "FCX block must start with @fcx header"
+                raise ValueError(msg)
             header = fields
             continue
 
         if record_id:
             if record_id in seen_ids:
-                raise ValueError(f"duplicate FCX record id: {record_id}")
+                msg = f"duplicate FCX record id: {record_id}"
+                raise ValueError(msg)
             seen_ids.add(record_id)
 
         record = {"tag": tag, "id": record_id, "fields": fields}
@@ -91,7 +94,8 @@ def parse_block(text: str) -> dict[str, Any]:
         records.append(record)
 
     if not any(record.get("tag") == "END" for record in records):
-        raise ValueError("FCX block missing END record")
+        msg = "FCX block missing END record"
+        raise ValueError(msg)
     return {"header": header, "records": records}
 
 

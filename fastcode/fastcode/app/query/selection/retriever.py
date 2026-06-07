@@ -520,7 +520,7 @@ class HybridRetriever:
                 content,
                 metadata.get("summary", ""),
                 metadata.get("structure_text", ""),
-                (readme if readme else "")[:1000],  # 确保是字符串
+                (readme or "")[:1000],  # 确保是字符串
             ]
 
             text = " ".join(text_parts)
@@ -674,11 +674,7 @@ class HybridRetriever:
         )
 
     def _active_bm25_elements(self) -> list[CodeElement]:
-        return (
-            self.filtered_bm25_elements
-            if self.filtered_bm25_elements
-            else self.full_bm25_elements
-        )
+        return self.filtered_bm25_elements or self.full_bm25_elements
 
     def _find_code_element_for_ir_unit(
         self,
@@ -722,11 +718,7 @@ class HybridRetriever:
         doc_results: Sequence[Hit],
         repo_filter: list[str] | None = None,
     ) -> list[Hit]:
-        bm25_elements = (
-            self.filtered_bm25_elements
-            if self.filtered_bm25_elements
-            else self.full_bm25_elements
-        )
+        bm25_elements = self.filtered_bm25_elements or self.full_bm25_elements
         return _fusion.apply_doc_projection_to_code(
             query=query,
             query_info=query_info,
@@ -736,7 +728,7 @@ class HybridRetriever:
             doc_projection_beta_max=float(
                 self.retrieval_config.get("doc_projection_beta_max", 0.35)
             ),
-            bm25_elements=bm25_elements if bm25_elements else None,
+            bm25_elements=bm25_elements or None,
             repo_filter=repo_filter,
             debug=self._last_fusion_debug,
         )
@@ -834,7 +826,7 @@ class HybridRetriever:
 
             # Determine the effective repo list: user's selection (repo_filter) or all available repos
             # If user explicitly selected specific repos via repo_filter, use that count
-            effective_repos = repo_filter if repo_filter else available_repos
+            effective_repos = repo_filter or available_repos
 
             if len(effective_repos) > 1:
                 self.logger.info(
@@ -1140,7 +1132,7 @@ class HybridRetriever:
         # 2. get top k
         for repo_name, scores in sorted_repos[:top_k]:
             selected_repos.append(repo_name)
-            print(
+            self.logger.info(
                 f"Selected repo: {repo_name} "
                 f"(semantic: {scores['semantic_score']:.3f}, "
                 f"bm25: {scores['bm25_score']:.3f}, "
@@ -1149,7 +1141,7 @@ class HybridRetriever:
 
         # 3. no repo selected
         if not selected_repos:
-            print(
+            self.logger.info(
                 f"No repositories met the minimum score threshold of {MIN_SCORE_THRESHOLD}"
             )
 
@@ -1355,11 +1347,7 @@ class HybridRetriever:
         results: list[dict[str, Any]] = []
 
         # Use filtered elements if available, otherwise use full elements
-        elements_to_search = (
-            self.filtered_bm25_elements
-            if self.filtered_bm25_elements
-            else self.full_bm25_elements
-        )
+        elements_to_search = self.filtered_bm25_elements or self.full_bm25_elements
 
         for file_info in selected_files:
             repo_name = file_info["repo_name"]
@@ -2402,11 +2390,7 @@ class HybridRetriever:
         results: list[dict[str, Any]] = []
 
         # Use filtered elements if available, otherwise use full elements
-        elements_to_search = (
-            self.filtered_bm25_elements
-            if self.filtered_bm25_elements
-            else self.full_bm25_elements
-        )
+        elements_to_search = self.filtered_bm25_elements or self.full_bm25_elements
 
         for elem in elements_to_search:
             if elem.file_path == file_path or elem.relative_path == file_path:
@@ -2429,11 +2413,7 @@ class HybridRetriever:
         results: list[dict[str, Any]] = []
 
         # Use filtered elements if available, otherwise use full elements
-        elements_to_search = (
-            self.filtered_bm25_elements
-            if self.filtered_bm25_elements
-            else self.full_bm25_elements
-        )
+        elements_to_search = self.filtered_bm25_elements or self.full_bm25_elements
 
         for elem in elements_to_search:
             if elem.type == element_type:
@@ -3047,9 +3027,8 @@ class HybridRetriever:
             current_entries = grouped_entries.setdefault(path_key, [])
             sequence_nos = sequences_by_path.get(path_key)
             if sequence_nos is None or len(sequence_nos) <= len(current_entries):
-                raise RuntimeError(
-                    f"Missing incremental BM25 sequence for path: {path_key}"
-                )
+                msg = f"Missing incremental BM25 sequence for path: {path_key}"
+                raise RuntimeError(msg)
             current_entries.append(
                 {
                     "sequence_no": sequence_nos[len(current_entries)],
@@ -3198,7 +3177,8 @@ class HybridRetriever:
             current_entries = grouped_entries.setdefault(path_key, [])
             sequence_nos = sequences_by_path.get(path_key)
             if sequence_nos is None or len(sequence_nos) <= len(current_entries):
-                raise RuntimeError(f"Missing delta BM25 sequence for path: {path_key}")
+                msg = f"Missing delta BM25 sequence for path: {path_key}"
+                raise RuntimeError(msg)
             current_entries.append(
                 {
                     "sequence_no": sequence_nos[len(current_entries)],
@@ -3351,11 +3331,7 @@ class HybridRetriever:
         try:
             self.repo_root = repo_root
             # Pass BM25 elements reference to iterative agent for retrieving indexed details
-            bm25_elements = (
-                self.filtered_bm25_elements
-                if self.filtered_bm25_elements
-                else self.full_bm25_elements
-            )
+            bm25_elements = self.filtered_bm25_elements or self.full_bm25_elements
             self.iterative_agent = IterativeAgent(
                 self.config, self, repo_root, bm25_elements=bm25_elements
             )
@@ -3393,11 +3369,7 @@ class HybridRetriever:
             Dict with repo statistics or None if unavailable
         """
         try:
-            elements = (
-                self.filtered_bm25_elements
-                if self.filtered_bm25_elements
-                else self.full_bm25_elements
-            )
+            elements = self.filtered_bm25_elements or self.full_bm25_elements
 
             if not elements:
                 return None

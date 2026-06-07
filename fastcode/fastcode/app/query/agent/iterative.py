@@ -446,7 +446,9 @@ class IterativeAgent:
         initial_confidence = self.iteration_history[0].confidence
         final_confidence = self.iteration_history[-1].confidence
         total_confidence_gain = final_confidence - initial_confidence
-        total_lines = _iteration.calculate_total_lines(_hit_records_from_rows(final_elements))
+        total_lines = _iteration.calculate_total_lines(
+            _hit_records_from_rows(final_elements)
+        )
 
         # Efficiency metrics
         overall_roi = (
@@ -1300,14 +1302,14 @@ If confidence < 95:
                     for elem in classes[:10]:
                         sig = elem.get("signature", "")
                         name = elem.get("name", "")
-                        lines.append(f"     - {sig if sig else f'class {name}'}")
+                        lines.append(f"     - {sig or f'class {name}'}")
 
                 if functions:
                     lines.append(f"   Functions ({len(functions)}):")
                     for elem in functions[:10]:
                         sig = elem.get("signature", "")
                         name = elem.get("name", "")
-                        lines.append(f"     - {sig if sig else f'def {name}'}")
+                        lines.append(f"     - {sig or f'def {name}'}")
 
         return "\n".join(lines)
 
@@ -2048,9 +2050,7 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
         self.logger.debug(f"[RESOLVE] Final resolved parameters: {resolved}")
         return resolved
 
-    def _normalize_tool_call(
-        self, tool_call: ToolHistoryEntry | dict[str, Any]
-    ) -> str:
+    def _normalize_tool_call(self, tool_call: ToolHistoryEntry | dict[str, Any]) -> str:
         """Normalize a tool call for deduplication."""
         if isinstance(tool_call, ToolHistoryEntry):
             tool_name = tool_call.tool
@@ -2810,7 +2810,8 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             )
 
             if not response or not getattr(response, "choices", None):
-                raise ValueError(f"Empty response: {response}")
+                msg = f"Empty response: {response}"
+                raise ValueError(msg)
 
             finish_reason = getattr(response.choices[0], "finish_reason", "unknown")
             content = response.choices[0].message.content
@@ -2822,15 +2823,18 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
                 self.logger.error(
                     f"Empty content: finish_reason={finish_reason}, prompt_len={len(prompt)}"
                 )
-                raise ValueError("No content in response")
+                msg = "No content in response"
+                raise ValueError(msg)
 
             return content
 
         if self.provider == "anthropic":
             if not isinstance(self.client, Anthropic):
-                raise RuntimeError("Expected Anthropic client")
+                msg = "Expected Anthropic client"
+                raise RuntimeError(msg)
             if self.model is None:
-                raise RuntimeError("Model must be set for Anthropic")
+                msg = "Model must be set for Anthropic"
+                raise RuntimeError(msg)
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
@@ -2840,7 +2844,8 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
             )
 
             if not response or not getattr(response, "content", None):
-                raise ValueError(f"Empty response: {response}")
+                msg = f"Empty response: {response}"
+                raise ValueError(msg)
 
             stop_reason = getattr(response, "stop_reason", "unknown")
             first_block = response.content[0] if response.content else None
@@ -2853,11 +2858,13 @@ If continuing (confidence < {self.confidence_threshold} and budget available):
                 self.logger.error(
                     f"Empty content: stop_reason={stop_reason}, prompt_len={len(prompt)}"
                 )
-                raise ValueError(f"No text in response: {response}")
+                msg = f"No text in response: {response}"
+                raise ValueError(msg)
 
             return text
 
-        raise ValueError(f"Unknown provider: {self.provider}")
+        msg = f"Unknown provider: {self.provider}"
+        raise ValueError(msg)
 
     # ==================== Methods moved from AccurateSearchAgent ====================
 

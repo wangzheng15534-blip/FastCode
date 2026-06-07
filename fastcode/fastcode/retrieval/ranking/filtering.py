@@ -15,7 +15,10 @@ def apply_filters(
     for hit in results:
         if filters.language is not None and hit.language != filters.language:
             continue
-        if filters.element_type is not None and hit.element_type != filters.element_type:
+        if (
+            filters.element_type is not None
+            and hit.element_type != filters.element_type
+        ):
             continue
         if filters.file_path is not None and filters.file_path not in hit.relative_path:
             continue

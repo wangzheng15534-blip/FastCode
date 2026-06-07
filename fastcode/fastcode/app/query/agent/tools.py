@@ -513,7 +513,7 @@ class AgentTools:
                         structure["classes"].append({"name": match.group(1), "line": i})
 
                 # Detect functions (Python, JavaScript, etc.)
-                elif stripped.startswith("def ") or stripped.startswith("function "):
+                elif stripped.startswith(("def ", "function ")):
                     # Extract function name
                     match = re.match(r"(?:def|function)\s+(\w+)", stripped)
                     if match:
@@ -532,7 +532,7 @@ class AgentTools:
                         )
 
                 # Detect imports
-                elif stripped.startswith("import ") or stripped.startswith("from "):
+                elif stripped.startswith(("import ", "from ")):
                     structure["imports"].append(
                         {
                             "line": i,

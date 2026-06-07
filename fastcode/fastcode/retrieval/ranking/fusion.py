@@ -93,6 +93,7 @@ def _find_code_element_for_ir_unit(
             return serialize_code_element(cast(CodeElement, elem))
     return None
 
+
 def _normalized_hit_totals(results: Sequence[Hit]) -> dict[str, float]:
     if not results:
         return {}
@@ -179,7 +180,7 @@ def compute_adaptive_fusion_params(
     else:
         keyword_text = ""
 
-    signal_text = " ".join([q, intent, keyword_text])
+    signal_text = f"{q} {intent} {keyword_text}"
     tokens = tokenize_signal(signal_text)
     query_entropy = normalized_query_entropy(tokens)
 

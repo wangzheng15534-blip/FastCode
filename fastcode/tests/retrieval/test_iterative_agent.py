@@ -310,7 +310,9 @@ def test_round_n_response_rejects_invalid_llm_payload() -> None:
 
 def test_element_selection_response_parses_to_frozen_records() -> None:
     agent = IterativeAgent.__new__(IterativeAgent)
-    agent.logger = SimpleNamespace(debug=lambda *a, **kw: None, error=lambda *a, **kw: None)
+    agent.logger = SimpleNamespace(
+        debug=lambda *a, **kw: None, error=lambda *a, **kw: None
+    )
 
     result = agent._parse_element_selection_response(
         """

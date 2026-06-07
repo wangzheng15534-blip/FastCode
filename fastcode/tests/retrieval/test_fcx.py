@@ -36,14 +36,7 @@ def test_fcx_render_and_parse_block_roundtrip() -> None:
 
 
 def test_fcx_parse_block_rejects_duplicate_ids() -> None:
-    block = "\n".join(
-        [
-            "@fcx mode=turn v=1 sid=s1 turn=1 snap=snap:1 art=art:1 fp=fcx-v1",
-            "F f1 scope=turn refs=e1,e2",
-            "Q f1 need=evidence | duplicate id",
-            "END refs=2",
-        ]
-    )
+    block = "@fcx mode=turn v=1 sid=s1 turn=1 snap=snap:1 art=art:1 fp=fcx-v1\nF f1 scope=turn refs=e1,e2\nQ f1 need=evidence | duplicate id\nEND refs=2"
 
     with pytest.raises(ValueError, match="duplicate FCX record id"):
         parse_block(block)

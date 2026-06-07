@@ -67,7 +67,12 @@ class TestCalculateRecentConfidenceGain:
         assert calculate_recent_confidence_gain(history) == 15.0
 
     def test_single_entry(self):
-        assert calculate_recent_confidence_gain([_history_entry(confidence=50, total_lines=500)]) == 0.0
+        assert (
+            calculate_recent_confidence_gain(
+                [_history_entry(confidence=50, total_lines=500)]
+            )
+            == 0.0
+        )
 
     def test_empty(self):
         assert calculate_recent_confidence_gain([]) == 0.0
@@ -82,7 +87,12 @@ class TestCalculateRecentLinesAdded:
         assert calculate_recent_lines_added(history) == 300
 
     def test_single_entry(self):
-        assert calculate_recent_lines_added([_history_entry(confidence=50, total_lines=500)]) == 0
+        assert (
+            calculate_recent_lines_added(
+                [_history_entry(confidence=50, total_lines=500)]
+            )
+            == 0
+        )
 
     def test_empty(self):
         assert calculate_recent_lines_added([]) == 0
@@ -198,9 +208,15 @@ class TestShouldContinueIteration:
 
     def test_stops_on_stagnation(self):
         history = (
-            _history_entry(confidence=60, total_lines=5000, confidence_gain=0.3, roi=1.0),
-            _history_entry(confidence=60, total_lines=5500, confidence_gain=0.2, roi=0.5),
-            _history_entry(confidence=60, total_lines=6000, confidence_gain=0.1, roi=0.3),
+            _history_entry(
+                confidence=60, total_lines=5000, confidence_gain=0.3, roi=1.0
+            ),
+            _history_entry(
+                confidence=60, total_lines=5500, confidence_gain=0.2, roi=0.5
+            ),
+            _history_entry(
+                confidence=60, total_lines=6000, confidence_gain=0.1, roi=0.3
+            ),
         )
         assert not should_continue_iteration(
             confidence=60,

@@ -118,7 +118,9 @@ class Hit:
     @classmethod
     def from_retrieval_row(cls, row: dict[str, Any]) -> Hit:
         raw_elem = row.get("element")
-        elem = cast(Mapping[str, Any], raw_elem) if isinstance(raw_elem, Mapping) else {}
+        elem = (
+            cast(Mapping[str, Any], raw_elem) if isinstance(raw_elem, Mapping) else {}
+        )
         metadata = _mapping_payload(elem.get("metadata"))
         element_known = {
             "id",
@@ -301,11 +303,11 @@ class Hit:
             semantic_score=(
                 self.semantic_score if semantic_score is None else semantic_score
             ),
-            keyword_score=self.keyword_score if keyword_score is None else keyword_score,
+            keyword_score=self.keyword_score
+            if keyword_score is None
+            else keyword_score,
             pseudocode_score=(
-                self.pseudocode_score
-                if pseudocode_score is None
-                else pseudocode_score
+                self.pseudocode_score if pseudocode_score is None else pseudocode_score
             ),
             graph_score=self.graph_score if graph_score is None else graph_score,
             total_score=self.total_score if total_score is None else total_score,

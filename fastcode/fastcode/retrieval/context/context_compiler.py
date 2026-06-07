@@ -9,7 +9,8 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from fastcode.retrieval.contracts import SourceCitation
-from fastcode.retrieval.ranking.fcx import render_block as _render_block, render_record as _render_record
+from fastcode.retrieval.ranking.fcx import render_block as _render_block
+from fastcode.retrieval.ranking.fcx import render_record as _render_record
 
 from .agent_context import (
     AcceptanceContract,
@@ -231,9 +232,7 @@ def compile_working_memory(
                 tail=fact.statement,
             )
         )
-    stable_records.append(
-        _render_record("END", fields={"refs": len(stable_records)})
-    )
+    stable_records.append(_render_record("END", fields={"refs": len(stable_records)}))
     stable_fcx = (
         "<fcx:stable>\n"
         + _render_block(mode="stable", header_fields=header, records=stable_records)
@@ -363,7 +362,7 @@ def compile_working_memory(
         + "\n</fcx:obs>"
     )
 
-    full_fcx = "\n\n".join((stable_fcx, turn_fcx, obs_fcx))
+    full_fcx = f"{stable_fcx}\n\n{turn_fcx}\n\n{obs_fcx}"
     return WorkingMemoryArtifact(
         session_id=intent.session_id,
         turn_number=intent.turn_number,

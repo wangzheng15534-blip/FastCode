@@ -216,19 +216,20 @@ class QueryPipeline:
     ) -> dict[str, Any]:
         if not snapshot_id:
             if not repo_name or not ref_name:
-                raise RuntimeError(
-                    "query_snapshot requires snapshot_id or repo_name+ref_name"
-                )
+                msg = "query_snapshot requires snapshot_id or repo_name+ref_name"
+                raise RuntimeError(msg)
             manifest = self.manifest_store.get_branch_manifest_record(
                 repo_name, ref_name
             )
             if not manifest:
-                raise RuntimeError(f"manifest not found for {repo_name}:{ref_name}")
+                msg = f"manifest not found for {repo_name}:{ref_name}"
+                raise RuntimeError(msg)
             snapshot_id = manifest.snapshot_id
 
         snapshot_record = self.snapshot_store.get_snapshot_record(snapshot_id)
         if not snapshot_record:
-            raise RuntimeError(f"snapshot not found: {snapshot_id}")
+            msg = f"snapshot not found: {snapshot_id}"
+            raise RuntimeError(msg)
 
         artifact_key = snapshot_record.artifact_key
         if self.load_snapshot_artifacts is not None:
@@ -237,9 +238,8 @@ class QueryPipeline:
                 snapshot_id=snapshot_id,
             )
             if loaded_artifacts is None:
-                raise RuntimeError(
-                    f"failed to load artifacts for snapshot: {snapshot_id}"
-                )
+                msg = f"failed to load artifacts for snapshot: {snapshot_id}"
+                raise RuntimeError(msg)
             self._ensure_snapshot_symbol_index(snapshot_id)
 
             merged_filters = dict(filters or {})
@@ -269,9 +269,8 @@ class QueryPipeline:
 
         with self._snapshot_query_lock:
             if not self.load_artifacts_by_key(artifact_key):
-                raise RuntimeError(
-                    f"failed to load artifacts for snapshot: {snapshot_id}"
-                )
+                msg = f"failed to load artifacts for snapshot: {snapshot_id}"
+                raise RuntimeError(msg)
             self._ensure_snapshot_symbol_index(snapshot_id)
 
             merged_filters = dict(filters or {})
@@ -322,7 +321,8 @@ class QueryPipeline:
         active_retriever = retriever or self.retriever
 
         if not self.is_repo_indexed():
-            raise RuntimeError("Repository not indexed. Call index_repository() first.")
+            msg = "Repository not indexed. Call index_repository() first."
+            raise RuntimeError(msg)
 
         # Determine if multi-turn mode is enabled
         if enable_multi_turn is None:
@@ -927,7 +927,11 @@ class QueryPipeline:
         lines_value = mapping.get("lines")
         start_line = mapping.get("start_line")
         end_line = mapping.get("end_line")
-        if not lines_value and isinstance(start_line, int) and isinstance(end_line, int):
+        if (
+            not lines_value
+            and isinstance(start_line, int)
+            and isinstance(end_line, int)
+        ):
             lines_value = f"{start_line}-{end_line}"
         lines = str(lines_value or "")
         score_value = mapping.get("score")
@@ -1346,7 +1350,7 @@ class QueryPipeline:
             )
         ]
 
-        return history if history else None
+        return history or None
 
     @staticmethod
     def _dialogue_turn_payload(record: Any) -> dict[str, Any]:
@@ -1371,7 +1375,9 @@ class QueryPipeline:
         Returns:
             Next turn number (1-indexed)
         """
-        session_record = cast(Any, self.cache_manager.get_session_index_record(session_id))
+        session_record = cast(
+            Any, self.cache_manager.get_session_index_record(session_id)
+        )
         if session_record is not None:
             return int(session_record.total_turns) + 1
         return 1

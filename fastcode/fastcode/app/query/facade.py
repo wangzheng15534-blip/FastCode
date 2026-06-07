@@ -89,9 +89,11 @@ class QueryFacade:
     ) -> dict[str, Any]:
         if use_agency_mode:
             from fastcode.common.feature_lifecycle import CapabilityRegistry
+
             CapabilityRegistry.check("agency_mode")
         if enable_multi_turn:
             from fastcode.common.feature_lifecycle import CapabilityRegistry
+
             CapabilityRegistry.check("multi_turn_generation")
         with self._state.read_lock():
             return self._query_handler.query(
@@ -149,16 +151,16 @@ class QueryFacade:
             with self._state.read_lock():
                 snapshot_record = self._snapshot_store.get_snapshot_record(snapshot_id)
                 if not snapshot_record:
-                    raise RuntimeError(f"snapshot not found: {snapshot_id}")
+                    msg = f"snapshot not found: {snapshot_id}"
+                    raise RuntimeError(msg)
                 artifact_key = snapshot_record.artifact_key
                 loaded_artifacts = self._pipeline.load_snapshot_artifacts_handle(
                     artifact_key,
                     snapshot_id=snapshot_id,
                 )
                 if loaded_artifacts is None:
-                    raise RuntimeError(
-                        f"failed to load artifacts for snapshot: {snapshot_id}"
-                    )
+                    msg = f"failed to load artifacts for snapshot: {snapshot_id}"
+                    raise RuntimeError(msg)
                 self._query_handler._ensure_snapshot_symbol_index(snapshot_id)
 
                 merged_filters = dict(filters or {})

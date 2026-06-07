@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -60,6 +61,11 @@ def _assert_agent_context_has_no_compat_serializers() -> None:
     for cls in AGENT_CONTEXT_RECORD_CLASSES:
         assert not hasattr(cls, "to_dict")
         assert not hasattr(cls, "from_dict")
+
+
+@contextmanager
+def _null_context() -> Generator[None, None, None]:
+    yield
 
 
 def _processed_query(
@@ -225,8 +231,10 @@ def test_query_uses_explicit_processed_query_payload() -> None:
     pipeline.query_processor.process.return_value = processed_query
 
     with pytest.MonkeyPatch.context() as monkeypatch:
+
         def _boom_to_dict(self: ProcessedQuery) -> dict[str, Any]:
-            raise AssertionError("query pipeline must not call ProcessedQuery.to_dict()")
+            msg = "query pipeline must not call ProcessedQuery.to_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(ProcessedQuery, "to_dict", _boom_to_dict)
         result = pipeline.query(
@@ -264,10 +272,10 @@ def test_query_stream_uses_explicit_processed_query_payload() -> None:
     ]
 
     with pytest.MonkeyPatch.context() as monkeypatch:
+
         def _boom_to_dict(self: ProcessedQuery) -> dict[str, Any]:
-            raise AssertionError(
-                "query stream must not call ProcessedQuery.to_dict()"
-            )
+            msg = "query stream must not call ProcessedQuery.to_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(ProcessedQuery, "to_dict", _boom_to_dict)
         chunks = list(
@@ -630,9 +638,24 @@ def test_fastcode_query_semantic_escalation_updates_ir_graphs() -> None:
     fc.ir_graph_builder = SimpleNamespace(build_graphs=lambda snap: "ir-graphs")
     fc.retriever = SimpleNamespace(set_ir_graphs=MagicMock())
     fc.snapshot_symbol_index = SimpleNamespace(register_snapshot=MagicMock())
-    fc._apply_semantic_resolvers = MagicMock(return_value=upgraded_snapshot)
+    fc.query_handler = SimpleNamespace(retriever=fc.retriever)
+    fc.pipeline = SimpleNamespace(
+        _apply_semantic_resolvers=MagicMock(return_value=upgraded_snapshot)
+    )
+    from fastcode.app.query.facade import QueryFacade
 
-    result = fc._escalate_query_semantics(
+    fc.query = QueryFacade(
+        query_handler=fc.query_handler,
+        vector_store=SimpleNamespace(),
+        graph_builder=fc.graph_builder,
+        snapshot_store=fc.snapshot_store,
+        ir_graph_builder=fc.ir_graph_builder,
+        snapshot_symbol_index=fc.snapshot_symbol_index,
+        pipeline=fc.pipeline,
+        state=SimpleNamespace(read_lock=_null_context),
+    )
+
+    result = fc.query._escalate_query_semantics(
         snapshot_id="snap:1",
         retrieved=[{"element": {"relative_path": "src/a.py"}}],
         processed_query=_processed_query(
@@ -809,8 +832,22 @@ def test_escalate_query_semantics_returns_skipped_when_snapshot_not_found() -> N
     """
     fc = FastCode.__new__(FastCode)
     fc.snapshot_store = SimpleNamespace(load_snapshot=lambda snapshot_id: None)
+    fc.query_handler = SimpleNamespace(retriever=SimpleNamespace())
+    fc.pipeline = SimpleNamespace()
+    from fastcode.app.query.facade import QueryFacade
 
-    result = fc._escalate_query_semantics(
+    fc.query = QueryFacade(
+        query_handler=fc.query_handler,
+        vector_store=SimpleNamespace(),
+        graph_builder=SimpleNamespace(element_by_id={}),
+        snapshot_store=fc.snapshot_store,
+        ir_graph_builder=SimpleNamespace(),
+        snapshot_symbol_index=SimpleNamespace(),
+        pipeline=fc.pipeline,
+        state=SimpleNamespace(read_lock=_null_context),
+    )
+
+    result = fc.query._escalate_query_semantics(
         snapshot_id="snap:missing",
         retrieved=[{"element": {"relative_path": "a.py"}}],
         processed_query=_processed_query(question="test", filters={}),
@@ -834,8 +871,22 @@ def test_escalate_query_semantics_returns_skipped_when_no_target_paths() -> None
     )
     fc = FastCode.__new__(FastCode)
     fc.snapshot_store = SimpleNamespace(load_snapshot=lambda snapshot_id: snapshot)
+    fc.query_handler = SimpleNamespace(retriever=SimpleNamespace())
+    fc.pipeline = SimpleNamespace()
+    from fastcode.app.query.facade import QueryFacade
 
-    result = fc._escalate_query_semantics(
+    fc.query = QueryFacade(
+        query_handler=fc.query_handler,
+        vector_store=SimpleNamespace(),
+        graph_builder=SimpleNamespace(element_by_id={}),
+        snapshot_store=fc.snapshot_store,
+        ir_graph_builder=SimpleNamespace(),
+        snapshot_symbol_index=SimpleNamespace(),
+        pipeline=fc.pipeline,
+        state=SimpleNamespace(read_lock=_null_context),
+    )
+
+    result = fc.query._escalate_query_semantics(
         snapshot_id="snap:1",
         retrieved=[],
         processed_query=_processed_query(question="test", filters={}),
@@ -869,6 +920,7 @@ def test_escalate_query_semantics_returns_degraded_when_warnings_present() -> No
     fc.ir_graph_builder = SimpleNamespace(build_graphs=lambda snap: "ir-graphs")
     fc.retriever = SimpleNamespace(set_ir_graphs=MagicMock())
     fc.snapshot_symbol_index = SimpleNamespace(register_snapshot=MagicMock())
+    fc.query_handler = SimpleNamespace(retriever=fc.retriever)
 
     def apply_with_warnings(
         *,
@@ -882,9 +934,21 @@ def test_escalate_query_semantics_returns_degraded_when_warnings_present() -> No
         warnings.append("resolver produced a partial result")
         return upgraded_snapshot
 
-    fc._apply_semantic_resolvers = apply_with_warnings
+    fc.pipeline = SimpleNamespace(_apply_semantic_resolvers=apply_with_warnings)
+    from fastcode.app.query.facade import QueryFacade
 
-    result = fc._escalate_query_semantics(
+    fc.query = QueryFacade(
+        query_handler=fc.query_handler,
+        vector_store=SimpleNamespace(),
+        graph_builder=fc.graph_builder,
+        snapshot_store=fc.snapshot_store,
+        ir_graph_builder=fc.ir_graph_builder,
+        snapshot_symbol_index=fc.snapshot_symbol_index,
+        pipeline=fc.pipeline,
+        state=SimpleNamespace(read_lock=_null_context),
+    )
+
+    result = fc.query._escalate_query_semantics(
         snapshot_id="snap:1",
         retrieved=[{"element": {"relative_path": "src/a.py"}}],
         processed_query=_processed_query(question="test", filters={}),

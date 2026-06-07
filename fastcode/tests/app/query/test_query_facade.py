@@ -2,13 +2,39 @@
 
 from __future__ import annotations
 
+import contextlib
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
 from fastcode.app.query.facade import QueryFacade
+from fastcode.common.feature_lifecycle import (
+    CapabilityRegistry,
+    CapabilitySpec,
+    CapabilityStage,
+)
 from fastcode.runtime_support.runtime_state import RuntimeState
 
+# ---------------------------------------------------------------------------
+# Capability registration for tests that use enable_multi_turn or use_agency_mode
+# ---------------------------------------------------------------------------
+
+_MULTI_TURN_SPEC = CapabilitySpec(
+    name="multi_turn_generation",
+    stage=CapabilityStage.EXPERIMENTAL,
+    description="Multi-turn conversation generation",
+)
+
+_AGENCY_MODE_SPEC = CapabilitySpec(
+    name="agency_mode",
+    stage=CapabilityStage.EXPERIMENTAL,
+    description="Agency mode for autonomous query resolution",
+)
+
+# Register once at import time (idempotent)
+with contextlib.suppress(ValueError):
+    for _spec in (_MULTI_TURN_SPEC, _AGENCY_MODE_SPEC):
+        CapabilityRegistry.register(_spec)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -292,8 +318,11 @@ class TestWalkCallChain:
     def test_max_hops_capped_at_5(self) -> None:
         h = _FacadeHarness()
         target = SimpleNamespace(
-            id="fn1", name="fn", type="function",
-            relative_path="a.py", start_line=1,
+            id="fn1",
+            name="fn",
+            type="function",
+            relative_path="a.py",
+            start_line=1,
         )
         h.graph_builder.element_by_name = {"fn": target}
         h.graph_builder.element_by_id = {"fn1": target}

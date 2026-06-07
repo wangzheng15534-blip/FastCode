@@ -932,6 +932,13 @@ def test_reload_specific_repositories_real_vector_and_bm25_artifacts_update_filt
                 "metadata": {},
                 "repo_name": "repo_b",
                 "repo_url": None,
+                "embedding_fingerprint": {
+                    "version": 2,
+                    "provider": "test",
+                    "model": "stub",
+                    "dimension": 2,
+                    "text_schema_version": 1,
+                },
             }
         ],
     )

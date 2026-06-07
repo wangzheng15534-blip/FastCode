@@ -177,10 +177,10 @@ class TestQueryRequestToCore:
 
 
 class TestDbEffectsReturnDataclasses:
-    """Rule 2: store/infrastructure/db.py returns frozen dataclasses, never dict."""
+    """Rule 2: infrastructure/storage/db.py returns frozen dataclasses, never dict."""
 
     def test_db_effects_return_dataclasses_not_dicts(self) -> None:
-        db_effects = PACKAGE_DIR / "store" / "infrastructure" / "db.py"
+        db_effects = PACKAGE_DIR / "infrastructure" / "storage" / "db.py"
         assert db_effects.exists(), f"missing architecture file: {db_effects}"
 
         tree = ast.parse(db_effects.read_text(encoding="utf-8"))
@@ -260,8 +260,8 @@ class TestArchitectureBoundaries:
         return results
 
     def test_infrastructure_does_not_import_api(self) -> None:
-        """store/infrastructure/ must never import from api modules."""
-        infra_dir = PACKAGE_DIR / "store" / "infrastructure"
+        """infrastructure/ must never import from api modules."""
+        infra_dir = PACKAGE_DIR / "infrastructure"
         assert infra_dir.exists(), f"missing architecture directory: {infra_dir}"
 
         violations: list[str] = []

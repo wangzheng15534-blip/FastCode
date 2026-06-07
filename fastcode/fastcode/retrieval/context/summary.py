@@ -35,8 +35,7 @@ def generate_fallback_summary(
 
         if hit.repo_name and rel_path and hit.element_name:
             elem_info = (
-                f"- [{hit.repo_name}/{rel_path}] "
-                f"{hit.element_type}: {hit.element_name}"
+                f"- [{hit.repo_name}/{rel_path}] {hit.element_type}: {hit.element_name}"
             )
             if hit.signature:
                 elem_info += f" ({hit.signature})"

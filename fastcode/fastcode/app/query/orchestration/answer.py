@@ -497,7 +497,7 @@ class AnswerGenerator:
                     in_summary = False
                     buffer = ""
                     # Output remaining content after summary
-                    yield original_chunk, remaining if remaining else None
+                    yield original_chunk, remaining or None
                 else:
                     # Fallback to exact pattern match
                     found_end = False
@@ -509,7 +509,7 @@ class AnswerGenerator:
                             remaining = combined_for_end[end_idx:]
                             in_summary = False
                             buffer = ""
-                            yield original_chunk, remaining if remaining else None
+                            yield original_chunk, remaining or None
                             found_end = True
                             break
 
@@ -533,7 +533,7 @@ class AnswerGenerator:
                     before_summary = combined[:summary_start_idx]
                     in_summary = True
                     buffer = combined[summary_start_idx:]
-                    yield original_chunk, before_summary if before_summary else None
+                    yield original_chunk, before_summary or None
                 else:
                     # Fallback to exact pattern match
                     summary_start_idx = -1
@@ -548,7 +548,7 @@ class AnswerGenerator:
                         before_summary = combined[:summary_start_idx]
                         in_summary = True
                         buffer = combined[summary_start_idx:]
-                        yield original_chunk, before_summary if before_summary else None
+                        yield original_chunk, before_summary or None
                     else:
                         # No summary start detected
                         # Check if chunk might contain partial tag (extended check for regex patterns)
@@ -566,7 +566,7 @@ class AnswerGenerator:
                             # Hold back potential partial tag
                             safe_output = buffer
                             buffer = chunk
-                            yield original_chunk, safe_output if safe_output else None
+                            yield original_chunk, safe_output or None
                         else:
                             # Safe to output
                             output = buffer + chunk
@@ -737,12 +737,14 @@ Symbol Mappings:
 
             # Defensive checks because some providers may return partial/None payloads
             if not response or not getattr(response, "choices", None):
-                raise ValueError(f"Empty response or no choices returned: {response}")
+                msg = f"Empty response or no choices returned: {response}"
+                raise ValueError(msg)
             first_choice = response.choices[0]
             message = getattr(first_choice, "message", None)
             content = getattr(message, "content", None) if message else None
             if content is None:
-                raise ValueError(f"LLM response has no content: {response}")
+                msg = f"LLM response has no content: {response}"
+                raise ValueError(msg)
             return content
 
         except Exception as e:
@@ -791,11 +793,13 @@ Symbol Mappings:
 
             # Defensive checks because some providers may return partial/None payloads
             if not response or not getattr(response, "content", None):
-                raise ValueError(f"Empty response or no content returned: {response}")
+                msg = f"Empty response or no content returned: {response}"
+                raise ValueError(msg)
             first_block = response.content[0] if response.content else None
             text = getattr(first_block, "text", None) if first_block else None
             if text is None:
-                raise ValueError(f"LLM response has no text: {response}")
+                msg = f"LLM response has no text: {response}"
+                raise ValueError(msg)
             return text
 
         except Exception as e:

@@ -10,7 +10,9 @@ import json
 from fastcode.retrieval.contracts import Hit, RetrievalSource, ToolHistoryEntry
 
 
-def format_tool_call_history(history: tuple[ToolHistoryEntry, ...], current_round: int) -> str:
+def format_tool_call_history(
+    history: tuple[ToolHistoryEntry, ...], current_round: int
+) -> str:
     """Format tool call history up to (but not including) *current_round*.
 
     ``"None"`` is returned when there is nothing to show.

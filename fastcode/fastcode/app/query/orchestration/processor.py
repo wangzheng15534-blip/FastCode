@@ -34,9 +34,7 @@ class ProcessedQuery:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keywords", tuple(str(k) for k in self.keywords))
-        object.__setattr__(
-            self, "subqueries", tuple(str(s) for s in self.subqueries)
-        )
+        object.__setattr__(self, "subqueries", tuple(str(s) for s in self.subqueries))
         object.__setattr__(self, "filters", MappingProxyType(dict(self.filters)))
 
     def to_dict(self) -> dict[str, Any]:
@@ -255,9 +253,7 @@ class QueryProcessor:
                 # self.logger.info(f"Repo matching terms: {repo_matching_terms}")
                 self.logger.info(f"pseudocode_hints: {pseudocode_hints}")
                 self.logger.info(f"search_strategy: {search_strategy}")
-                self.logger.info(
-                    f"refined_intent: {llm_enhancement.refined_intent}"
-                )
+                self.logger.info(f"refined_intent: {llm_enhancement.refined_intent}")
                 self.logger.info(
                     f"selected_keywords: {llm_enhancement.selected_keywords}"
                 )
@@ -683,7 +679,7 @@ class QueryProcessor:
 
 User Query: "{query}"
 Extracted Keywords: {", ".join(keywords) if keywords else "None"}
-Filters: {filters if filters else "None"}
+Filters: {filters or "None"}
 CRITICAL INSTRUCTION: Regardless of the language used in the above content, **ALL your output fields below MUST be generated in ENGLISH.**
 
 Please provide:
@@ -731,7 +727,8 @@ Be concise and focus on improving code retrieval accuracy."""
     def _call_anthropic(self, prompt: str) -> str:
         """Call Anthropic API for query enhancement"""
         if self.llm_client is None:
-            raise RuntimeError("Anthropic client not initialized")
+            msg = "Anthropic client not initialized"
+            raise RuntimeError(msg)
         response = self.llm_client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
@@ -930,7 +927,7 @@ Be concise and focus on improving code retrieval accuracy."""
             # Parse rewritten query
             rewritten_query = self._parse_rewritten_query(response)
 
-            return rewritten_query if rewritten_query else query
+            return rewritten_query or query
 
         except Exception as e:
             self.logger.error(f"Reference resolution failed: {e}")
@@ -999,4 +996,4 @@ Be concise and focus on improving code retrieval accuracy."""
         ):
             rewritten = rewritten[1:-1]
 
-        return rewritten if rewritten else None
+        return rewritten or None

@@ -266,7 +266,10 @@ def determine_stopping_reason(
         return "confidence_threshold_reached"
     if current_round >= max_iterations:
         return "max_iterations_reached"
-    if iteration_history and _history_entry(iteration_history[-1]).total_lines >= line_budget:
+    if (
+        iteration_history
+        and _history_entry(iteration_history[-1]).total_lines >= line_budget
+    ):
         return "line_budget_exceeded"
     if len(iteration_history) >= 3:
         recent_gains = [

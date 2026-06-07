@@ -71,9 +71,8 @@ def init_server(facades: Any) -> None:
 
 def _get_facades() -> Any:
     if _facades is None:
-        raise RuntimeError(
-            "FastCode MCP server not initialized. Call init_server(facades) first."
-        )
+        msg = "FastCode MCP server not initialized. Call init_server(facades) first."
+        raise RuntimeError(msg)
     return _facades
 
 
@@ -185,7 +184,7 @@ def get_session_history(session_id: str) -> str:
 def get_turn_context(
     session_id: str,
     turn_number: int | None = None,
-    format: str = "fcx",
+    output_format: str = "fcx",
 ) -> str:
     """Get typed working-memory context for a session turn.
 
@@ -198,7 +197,7 @@ def get_turn_context(
         JSON describing the requested working-memory artifact.
     """
     facades = _get_facades()
-    result = facades.context.get_turn_context(session_id, turn_number, format)
+    result = facades.context.get_turn_context(session_id, turn_number, output_format)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -206,7 +205,7 @@ def get_turn_context(
 def get_context_bundle(
     session_id: str,
     turn_number: int | None = None,
-    format: str = "json",
+    output_format: str = "json",
     token_budget: int = 2048,
 ) -> str:
     """Get a durable context bundle for a session turn.
@@ -222,7 +221,7 @@ def get_context_bundle(
     """
     facades = _get_facades()
     result = facades.context.get_context_bundle(
-        session_id, turn_number, format, token_budget
+        session_id, turn_number, output_format, token_budget
     )
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -230,7 +229,7 @@ def get_context_bundle(
 @mcp.tool()
 def get_context_bundle_by_id(
     bundle_id: str,
-    format: str = "json",
+    output_format: str = "json",
     token_budget: int = 2048,
 ) -> str:
     """Get a durable context bundle by bundle ID.
@@ -244,7 +243,9 @@ def get_context_bundle_by_id(
         JSON describing the requested context bundle.
     """
     facades = _get_facades()
-    result = facades.context.get_context_bundle_by_id(bundle_id, format, token_budget)
+    result = facades.context.get_context_bundle_by_id(
+        bundle_id, output_format, token_budget
+    )
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -674,7 +675,9 @@ def steiner_path(
     import json
 
     facades = _get_facades()
-    return json.dumps(facades.store.compute_steiner_path_for_snapshot(terminals, snapshot_id))
+    return json.dumps(
+        facades.store.compute_steiner_path_for_snapshot(terminals, snapshot_id)
+    )
 
 
 @mcp.tool()

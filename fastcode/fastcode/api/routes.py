@@ -11,9 +11,9 @@ import asyncio
 import logging
 import uuid
 import zipfile
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 
 from fastcode.api.inbound import (
     AgentContextHandoffRequest,
@@ -67,7 +67,6 @@ def _facades(request: Request) -> Any:
     if facades is None:
         raise HTTPException(status_code=500, detail="FastCode not initialized")
     return facades
-
 
 
 @router.get("/")
@@ -760,7 +759,9 @@ async def get_projection_prefix(request: Request, snapshot_id: str):
 
 @router.get("/agent-context/session/{session_id}/latest")
 async def get_latest_turn_context(
-    request: Request, session_id: str, format: str = "fcx"
+    request: Request,
+    session_id: str,
+    output_format: Annotated[str, Query(alias="format")] = "fcx",
 ):
     """Fetch the latest typed working-memory artifact for a session."""
     facades = _facades(request)
@@ -769,7 +770,7 @@ async def get_latest_turn_context(
             facades.context.get_turn_context,
             session_id,
             None,
-            format,
+            output_format,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -782,7 +783,7 @@ async def get_turn_context(
     request: Request,
     session_id: str,
     turn_number: int,
-    format: str = "fcx",
+    output_format: Annotated[str, Query(alias="format")] = "fcx",
 ):
     """Fetch a specific typed working-memory artifact for a session turn."""
     facades = _facades(request)
@@ -791,7 +792,7 @@ async def get_turn_context(
             facades.context.get_turn_context,
             session_id,
             turn_number,
-            format,
+            output_format,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -803,7 +804,7 @@ async def get_turn_context(
 async def get_latest_context_bundle(
     request: Request,
     session_id: str,
-    format: str = "json",
+    output_format: Annotated[str, Query(alias="format")] = "json",
     token_budget: int = 2048,
 ):
     """Fetch the latest durable context bundle for a session."""
@@ -813,7 +814,7 @@ async def get_latest_context_bundle(
             facades.context.get_context_bundle,
             session_id,
             None,
-            format,
+            output_format,
             token_budget,
         )
         return {"status": "success", "result": result}
@@ -827,7 +828,7 @@ async def get_context_bundle(
     request: Request,
     session_id: str,
     turn_number: int,
-    format: str = "json",
+    output_format: Annotated[str, Query(alias="format")] = "json",
     token_budget: int = 2048,
 ):
     """Fetch a durable context bundle for a session turn."""
@@ -837,7 +838,7 @@ async def get_context_bundle(
             facades.context.get_context_bundle,
             session_id,
             turn_number,
-            format,
+            output_format,
             token_budget,
         )
         return {"status": "success", "result": result}
@@ -850,7 +851,7 @@ async def get_context_bundle(
 async def get_context_bundle_by_id(
     request: Request,
     bundle_id: str,
-    format: str = "json",
+    output_format: Annotated[str, Query(alias="format")] = "json",
     token_budget: int = 2048,
 ):
     """Fetch a durable context bundle by bundle ID."""
@@ -859,7 +860,7 @@ async def get_context_bundle_by_id(
         result = await asyncio.to_thread(
             facades.context.get_context_bundle_by_id,
             bundle_id,
-            format,
+            output_format,
             token_budget,
         )
         return {"status": "success", "result": result}

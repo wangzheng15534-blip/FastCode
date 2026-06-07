@@ -31,7 +31,8 @@ class _NoDictSource:
         self.score = 0.75
 
     def to_dict(self) -> dict[str, Any]:
-        raise AssertionError("web source serialization must not call to_dict()")
+        msg = "web source serialization must not call to_dict()"
+        raise AssertionError(msg)
 
 
 class _NoDictTurn:
@@ -51,7 +52,8 @@ class _NoDictTurn:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        raise AssertionError("web history serialization must not call to_dict()")
+        msg = "web history serialization must not call to_dict()"
+        raise AssertionError(msg)
 
 
 class _FakeVectorStore:
@@ -115,7 +117,11 @@ class _FakeFastCode:
 
     @query.setter
     def query(self, value: Any) -> None:
-        self._query_facade = value if isinstance(value, SimpleNamespace) else SimpleNamespace(query=value)
+        self._query_facade = (
+            value
+            if isinstance(value, SimpleNamespace)
+            else SimpleNamespace(query=value)
+        )
 
     def load_repository(self, source: str, is_url: bool | None) -> None:
         self.calls.append(("load_repository", (source, is_url), {}))
@@ -342,6 +348,40 @@ def test_query_endpoint_offloads_blocking_query(
     ]
 
 
+def test_agent_context_api_routes_accept_format_query_alias() -> None:
+    fake = SimpleNamespace(
+        context=SimpleNamespace(
+            get_turn_context=lambda *args: {
+                "session_id": args[0],
+                "turn_number": args[1],
+                "format": args[2],
+            },
+            get_context_bundle=lambda *args: {
+                "session_id": args[0],
+                "turn_number": args[1],
+                "format": args[2],
+                "token_budget": args[3],
+            },
+        )
+    )
+    client = TestClient(_test_app(fake))
+
+    turn_response = client.get(
+        "/api/agent-context/session/sess-1/latest",
+        params={"format": "json"},
+    )
+    bundle_response = client.get(
+        "/api/agent-context/session/sess-1/bundle/latest",
+        params={"format": "rendered", "token_budget": 64},
+    )
+
+    assert turn_response.status_code == 200
+    assert turn_response.json()["result"]["format"] == "json"
+    assert bundle_response.status_code == 200
+    assert bundle_response.json()["result"]["format"] == "rendered"
+    assert bundle_response.json()["result"]["token_budget"] == 64
+
+
 def test_query_endpoint_serializes_sources_explicitly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -479,7 +519,8 @@ def test_upload_endpoints_reject_path_traversal_zip(
     # Simulate the UnsafeArchiveError that FastCode facade would raise
     # when it detects path traversal in the ZIP archive
     def raise_unsafe_archive(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        raise UnsafeArchiveError("unsafe path detected")
+        msg = "unsafe path detected"
+        raise UnsafeArchiveError(msg)
 
     if endpoint == "/api/upload-zip":
         fake.upload_repository_zip = raise_unsafe_archive  # type: ignore[assignment]

@@ -60,7 +60,7 @@ class ContextFacade:
         self,
         session_id: str,
         turn_number: int | None = None,
-        format: str = "fcx",
+        output_format: str = "fcx",
     ) -> dict[str, Any]:
         """Fetch the typed working-memory artifact for a session turn."""
         record = (
@@ -69,9 +69,10 @@ class ContextFacade:
             else self._cache_manager.get_working_memory_record(session_id, turn_number)
         )
         if record is None:
-            raise RuntimeError(
+            msg = (
                 f"working memory not found for session={session_id}, turn={turn_number}"
             )
+            raise RuntimeError(msg)
         artifact = self._parse_working_memory_record_payload(record)
         response: dict[str, Any] = {
             "session_id": record.session_id,
@@ -79,18 +80,19 @@ class ContextFacade:
             "snapshot_id": record.snapshot_id,
             "artifact_key": record.artifact_key,
             "compiler_fingerprint": record.compiler_fingerprint,
-            "format": format,
+            "format": output_format,
         }
-        if format == "fcx":
+        if output_format == "fcx":
             response["stable_fcx"] = record.stable_fcx
             response["turn_fcx"] = record.turn_fcx
             response["obs_fcx"] = record.obs_fcx
             response["full_fcx"] = record.full_fcx
             return response
-        if format == "json":
+        if output_format == "json":
             response["artifact"] = working_memory_payload(artifact)
             return response
-        raise RuntimeError("format must be one of: fcx, json")
+        msg = "format must be one of: fcx, json"
+        raise RuntimeError(msg)
 
     def create_handoff(
         self,
@@ -105,9 +107,10 @@ class ContextFacade:
             else self._cache_manager.get_working_memory_record(session_id, turn_number)
         )
         if record is None:
-            raise RuntimeError(
+            msg = (
                 f"working memory not found for session={session_id}, turn={turn_number}"
             )
+            raise RuntimeError(msg)
         artifact = build_handoff_from_working_memory(
             working_memory=self._parse_working_memory_record_payload(record),
             mode=mode,
@@ -136,14 +139,15 @@ class ContextFacade:
         """Retrieve a persisted handoff artifact by ID."""
         record = self._cache_manager.get_handoff_artifact_record(artifact_id)
         if record is None:
-            raise RuntimeError(f"handoff artifact not found: {artifact_id}")
+            msg = f"handoff artifact not found: {artifact_id}"
+            raise RuntimeError(msg)
         return handoff_payload(self._parse_handoff_record_payload(record))
 
     def get_context_bundle(
         self,
         session_id: str,
         turn_number: int | None = None,
-        format: str = "json",
+        output_format: str = "json",
         token_budget: int = 2048,
     ) -> dict[str, Any]:
         """Fetch a durable context bundle for a session turn."""
@@ -153,21 +157,21 @@ class ContextFacade:
         )
         return self._context_bundle_response(
             bundle,
-            format=format,
+            output_format=output_format,
             token_budget=token_budget,
         )
 
     def get_context_bundle_by_id(
         self,
         bundle_id: str,
-        format: str = "json",
+        output_format: str = "json",
         token_budget: int = 2048,
     ) -> dict[str, Any]:
         """Fetch a durable context bundle by bundle ID."""
         bundle = self._load_context_bundle_artifact(bundle_id=bundle_id)
         return self._context_bundle_response(
             bundle,
-            format=format,
+            output_format=output_format,
             token_budget=token_budget,
         )
 
@@ -188,7 +192,8 @@ class ContextFacade:
         )
         expanded = expand_bundle_source_ref(bundle, ref_id, depth=depth)
         if expanded is None:
-            raise RuntimeError(f"context bundle ref not found: {ref_id}")
+            msg = f"context bundle ref not found: {ref_id}"
+            raise RuntimeError(msg)
         return expanded
 
     def create_context_activation(
@@ -249,9 +254,10 @@ class ContextFacade:
         """Expand a single evidence ref from working memory."""
         record = self._cache_manager.get_working_memory_record(session_id, turn_number)
         if record is None:
-            raise RuntimeError(
+            msg = (
                 f"working memory not found for session={session_id}, turn={turn_number}"
             )
+            raise RuntimeError(msg)
         artifact = self._parse_working_memory_record_payload(record)
         for ref in artifact.evidence_refs:
             if ref.ref_id != ref_id:
@@ -272,7 +278,8 @@ class ContextFacade:
                 "source": ref.source,
                 "fresh": ref.fresh,
             }
-        raise RuntimeError(f"context ref not found: {ref_id}")
+        msg = f"context ref not found: {ref_id}"
+        raise RuntimeError(msg)
 
     def delete_session(self, session_id: str) -> bool:
         """Delete a dialogue session."""
@@ -323,28 +330,32 @@ class ContextFacade:
     ) -> WorkingMemoryArtifact:
         payload = json.loads(str(record.payload_json or "{}"))
         if not isinstance(payload, dict):
-            raise RuntimeError("working memory payload is invalid")
+            msg = "working memory payload is invalid"
+            raise RuntimeError(msg)
         return working_memory_from_payload(payload)
 
     @staticmethod
     def _parse_handoff_record_payload(record: Any) -> HandoffArtifact:
         payload = json.loads(str(record.payload_json or "{}"))
         if not isinstance(payload, dict):
-            raise RuntimeError("handoff artifact payload is invalid")
+            msg = "handoff artifact payload is invalid"
+            raise RuntimeError(msg)
         return handoff_from_payload(payload)
 
     @staticmethod
     def _parse_turn_journal_record_payload(record: Any) -> TurnJournal:
         payload = json.loads(str(record.payload_json or "{}"))
         if not isinstance(payload, dict):
-            raise RuntimeError("turn journal payload is invalid")
+            msg = "turn journal payload is invalid"
+            raise RuntimeError(msg)
         return turn_journal_from_payload(payload)
 
     @staticmethod
     def _parse_context_bundle_record_payload(record: Any) -> ContextBundle:
         payload = json.loads(str(record.payload_json or "{}"))
         if not isinstance(payload, dict):
-            raise RuntimeError("context bundle payload is invalid")
+            msg = "context bundle payload is invalid"
+            raise RuntimeError(msg)
         return context_bundle_from_payload(payload)
 
     @staticmethod
@@ -370,11 +381,13 @@ class ContextFacade:
             )
             record = get_by_id(bundle_id) if callable(get_by_id) else None
             if record is None:
-                raise RuntimeError(f"context bundle not found: {bundle_id}")
+                msg = f"context bundle not found: {bundle_id}"
+                raise RuntimeError(msg)
             return self._parse_context_bundle_record_payload(record)
 
         if not session_id:
-            raise RuntimeError("session_id is required when bundle_id is omitted")
+            msg = "session_id is required when bundle_id is omitted"
+            raise RuntimeError(msg)
 
         record = None
         if turn_number is None:
@@ -396,17 +409,19 @@ class ContextFacade:
             else self._cache_manager.get_working_memory_record(session_id, turn_number)
         )
         if working_memory_record is None:
-            raise RuntimeError(
+            msg = (
                 f"context bundle not found for session={session_id}, turn={turn_number}"
             )
+            raise RuntimeError(msg)
         resolved_turn = int(working_memory_record.turn_number)
         journal_record = self._cache_manager.get_turn_journal_record(
             session_id, resolved_turn
         )
         if journal_record is None:
-            raise RuntimeError(
+            msg = (
                 f"turn journal not found for session={session_id}, turn={resolved_turn}"
             )
+            raise RuntimeError(msg)
         return build_context_bundle(
             working_memory=self._parse_working_memory_record_payload(
                 working_memory_record
@@ -418,7 +433,7 @@ class ContextFacade:
     def _context_bundle_response(
         bundle: ContextBundle,
         *,
-        format: str,
+        output_format: str,
         token_budget: int,
     ) -> dict[str, Any]:
         response: dict[str, Any] = {
@@ -428,18 +443,19 @@ class ContextFacade:
             "snapshot_id": bundle.snapshot_id,
             "artifact_key": bundle.artifact_key,
             "compiler_fingerprint": bundle.compiler_fingerprint,
-            "format": format,
+            "format": output_format,
             "invalidation_key": bundle.distillation.invalidation_key,
             "activation_id": bundle.activation.activation_id,
             "distillation_id": bundle.distillation.distillation_id,
         }
-        if format == "json":
+        if output_format == "json":
             response["bundle"] = context_bundle_payload(bundle)
             return response
-        if format == "rendered":
+        if output_format == "rendered":
             response["rendered"] = render_context_bundle(
                 bundle,
                 token_budget=token_budget,
             )
             return response
-        raise RuntimeError("format must be one of: json, rendered")
+        msg = "format must be one of: json, rendered"
+        raise RuntimeError(msg)

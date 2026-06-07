@@ -14,9 +14,9 @@ import logging
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from fastcode.api.inbound import (
@@ -466,9 +466,7 @@ async def get_repository_summary(request: Request):
         if info["multi_repo_mode"]:
             summary_payload["summary"] = facades.store.get_repository_stats()
         else:
-            summary_payload["summary"] = (
-                facades.store.get_repository_summary()
-            )
+            summary_payload["summary"] = facades.store.get_repository_summary()
     except Exception as e:
         logger.error(f"Failed to build summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -525,7 +523,9 @@ async def new_session(request: Request, clear_session_id: str | None = None):
 
 @router.get("/api/agent-context/session/{session_id}/latest")
 async def get_latest_turn_context(
-    request: Request, session_id: str, format: str = "fcx"
+    request: Request,
+    session_id: str,
+    output_format: Annotated[str, Query(alias="format")] = "fcx",
 ):
     """Fetch the latest typed working-memory artifact for a session."""
     facades = _facades(request)
@@ -534,7 +534,7 @@ async def get_latest_turn_context(
             facades.context.get_turn_context,
             session_id,
             None,
-            format,
+            output_format,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -547,7 +547,7 @@ async def get_turn_context(
     request: Request,
     session_id: str,
     turn_number: int,
-    format: str = "fcx",
+    output_format: Annotated[str, Query(alias="format")] = "fcx",
 ):
     """Fetch a specific typed working-memory artifact for a session turn."""
     facades = _facades(request)
@@ -556,7 +556,7 @@ async def get_turn_context(
             facades.context.get_turn_context,
             session_id,
             turn_number,
-            format,
+            output_format,
         )
         return {"status": "success", "result": result}
     except Exception as e:
@@ -568,7 +568,7 @@ async def get_turn_context(
 async def get_latest_context_bundle(
     request: Request,
     session_id: str,
-    format: str = "json",
+    output_format: Annotated[str, Query(alias="format")] = "json",
     token_budget: int = 2048,
 ):
     """Fetch the latest durable context bundle for a session."""
@@ -578,7 +578,7 @@ async def get_latest_context_bundle(
             facades.context.get_context_bundle,
             session_id,
             None,
-            format,
+            output_format,
             token_budget,
         )
         return {"status": "success", "result": result}
@@ -592,7 +592,7 @@ async def get_context_bundle(
     request: Request,
     session_id: str,
     turn_number: int,
-    format: str = "json",
+    output_format: Annotated[str, Query(alias="format")] = "json",
     token_budget: int = 2048,
 ):
     """Fetch a durable context bundle for a session turn."""
@@ -602,7 +602,7 @@ async def get_context_bundle(
             facades.context.get_context_bundle,
             session_id,
             turn_number,
-            format,
+            output_format,
             token_budget,
         )
         return {"status": "success", "result": result}
@@ -615,7 +615,7 @@ async def get_context_bundle(
 async def get_context_bundle_by_id(
     request: Request,
     bundle_id: str,
-    format: str = "json",
+    output_format: Annotated[str, Query(alias="format")] = "json",
     token_budget: int = 2048,
 ):
     """Fetch a durable context bundle by bundle ID."""
@@ -624,7 +624,7 @@ async def get_context_bundle_by_id(
         result = await asyncio.to_thread(
             facades.context.get_context_bundle_by_id,
             bundle_id,
-            format,
+            output_format,
             token_budget,
         )
         return {"status": "success", "result": result}

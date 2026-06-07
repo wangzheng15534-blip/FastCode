@@ -189,7 +189,8 @@ class _NoDictSource:
         self.score = 0.75
 
     def to_dict(self) -> dict[str, Any]:
-        raise AssertionError("API source serialization must not call to_dict()")
+        msg = "API source serialization must not call to_dict()"
+        raise AssertionError(msg)
 
 
 class _NoDictTurn:
@@ -209,7 +210,8 @@ class _NoDictTurn:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        raise AssertionError("API history serialization must not call to_dict()")
+        msg = "API history serialization must not call to_dict()"
+        raise AssertionError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +235,7 @@ def stores(tmp_path: Any, test_app: Any) -> Any:
     store = _make_snapshot_store(tmp_path)
     fake = _FakeFastCode(store)
     test_app.state.facades = fake
-    yield fake, store, test_app
+    return fake, store, test_app
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +262,9 @@ class TestRepoRefs:
         )
         store.save_snapshot(snap)
 
-        refs = asyncio.run(api.get_repo_refs(_mock_request(app=_app), "my-repo"))["refs"]
+        refs = asyncio.run(api.get_repo_refs(_mock_request(app=_app), "my-repo"))[
+            "refs"
+        ]
         assert len(refs) == 1
         assert refs[0]["branch"] == "develop"
         assert refs[0]["snapshot_id"] == "snap:my-repo:deadbeef"
@@ -295,7 +299,9 @@ class TestScipArtifacts:
     def test_returns_404_when_not_found(self, stores: Any) -> None:
         _fake_fc, _store, _app = stores
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(api.get_scip_artifact(_mock_request(app=_app), "snap:x:nonexistent"))
+            asyncio.run(
+                api.get_scip_artifact(_mock_request(app=_app), "snap:x:nonexistent")
+            )
         assert exc_info.value.status_code == 404
 
     def test_returns_artifact_after_save(self, stores: Any) -> None:
@@ -364,7 +370,9 @@ class TestManifests:
     def test_branch_manifest_returns_404_when_not_found(self, stores: Any) -> None:
         _fake_fc, _store, _app = stores
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(api.get_branch_manifest(_mock_request(app=_app), "no-repo", "main"))
+            asyncio.run(
+                api.get_branch_manifest(_mock_request(app=_app), "no-repo", "main")
+            )
         assert exc_info.value.status_code == 404
 
     def test_branch_manifest_returns_data_after_publish(self, stores: Any) -> None:
@@ -619,7 +627,8 @@ class TestUploadSecurity:
         test_app: Any,
     ) -> None:
         def _raise_unsafe(*_args: Any, **_kwargs: Any) -> Any:
-            raise UnsafeArchiveError("unsafe path detected")
+            msg = "unsafe path detected"
+            raise UnsafeArchiveError(msg)
 
         fake_indexing = SimpleNamespace(
             upload_repository_zip=_raise_unsafe,
@@ -856,6 +865,46 @@ class TestApiSerializationBoundaries:
 
 
 class TestAgentContextRoutes:
+    def test_agent_context_routes_accept_format_query_alias(self, test_app: Any) -> None:
+        fake_fastcode = SimpleNamespace(context=MagicMock())
+        fake_fastcode.context.get_turn_context.return_value = {
+            "session_id": "sess-1",
+            "turn_number": 3,
+            "format": "json",
+        }
+        fake_fastcode.context.get_context_bundle.return_value = {
+            "bundle_id": "ctxb_latest",
+            "session_id": "sess-1",
+            "format": "rendered",
+        }
+        test_app.state.facades = fake_fastcode
+
+        client = TestClient(test_app)
+        turn_response = client.get(
+            "/agent-context/session/sess-1/latest",
+            params={"format": "json"},
+        )
+        bundle_response = client.get(
+            "/agent-context/session/sess-1/bundle/latest",
+            params={"format": "rendered", "token_budget": 64},
+        )
+
+        assert turn_response.status_code == 200
+        assert turn_response.json()["result"]["format"] == "json"
+        fake_fastcode.context.get_turn_context.assert_called_once_with(
+            "sess-1",
+            None,
+            "json",
+        )
+        assert bundle_response.status_code == 200
+        assert bundle_response.json()["result"]["format"] == "rendered"
+        fake_fastcode.context.get_context_bundle.assert_called_once_with(
+            "sess-1",
+            None,
+            "rendered",
+            64,
+        )
+
     def test_agent_context_endpoints_return_fastcode_payloads(self) -> None:
         fake_fastcode = MagicMock()
         fake_fastcode.context.get_turn_context.side_effect = [
@@ -921,16 +970,18 @@ class TestAgentContextRoutes:
             return_value=fake_fastcode,
         ):
             latest = asyncio.run(
-                api.get_latest_turn_context(_mock_request(), "sess-1", format="fcx")
+                api.get_latest_turn_context(
+                    _mock_request(), "sess-1", output_format="fcx"
+                )
             )
             turn = asyncio.run(
-                api.get_turn_context(_mock_request(), "sess-1", 2, format="json")
+                api.get_turn_context(_mock_request(), "sess-1", 2, output_format="json")
             )
             latest_bundle = asyncio.run(
                 api.get_latest_context_bundle(
                     _mock_request(),
                     "sess-1",
-                    format="rendered",
+                    output_format="rendered",
                     token_budget=32,
                 )
             )
@@ -939,7 +990,7 @@ class TestAgentContextRoutes:
                     _mock_request(),
                     "sess-1",
                     2,
-                    format="json",
+                    output_format="json",
                     token_budget=2048,
                 )
             )
@@ -947,7 +998,7 @@ class TestAgentContextRoutes:
                 api.get_context_bundle_by_id(
                     _mock_request(),
                     "ctxb_123",
-                    format="json",
+                    output_format="json",
                     token_budget=2048,
                 )
             )

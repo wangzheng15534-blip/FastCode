@@ -8,12 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fastcode.app.store.cache.contracts import (
-    ContextActivationRecord,
-    HandoffArtifactRecord,
-)
 from fastcode.app.store.context_facade import ContextFacade
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -23,7 +18,7 @@ from fastcode.app.store.context_facade import ContextFacade
 def _make_working_memory_record(
     session_id: str = "sess-1",
     turn_number: int = 1,
-    payload: dict | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> MagicMock:
     payload = payload or _minimal_working_memory_payload(session_id, turn_number)
     rec = MagicMock()
@@ -185,7 +180,7 @@ class TestGetTurnContext:
         facade, cm = _make_facade()
         record = _make_working_memory_record()
         cm.get_latest_working_memory_record.return_value = record
-        result = facade.get_turn_context("sess-1", format="json")
+        result = facade.get_turn_context("sess-1", output_format="json")
         assert result["format"] == "json"
         assert "artifact" in result
 
@@ -244,7 +239,7 @@ class TestGetContextBundle:
         cm.get_latest_working_memory_record.return_value = None
         cm.get_context_bundle_record.return_value = None
         cm.get_latest_context_bundle_record.return_value = _make_bundle_record()
-        result = facade.get_context_bundle("sess-1", format="rendered")
+        result = facade.get_context_bundle("sess-1", output_format="rendered")
         assert result["format"] == "rendered"
         assert "rendered" in result
 
@@ -273,20 +268,20 @@ class TestExpandContextBundleRef:
             "fastcode.app.store.context_facade.expand_bundle_source_ref",
             return_value={"ref_id": "e1", "expanded": True},
         ):
-            result = facade.expand_context_bundle_ref(
-                "e1", bundle_id="bundle-1"
-            )
+            result = facade.expand_context_bundle_ref("e1", bundle_id="bundle-1")
         assert result["ref_id"] == "e1"
 
     def test_raises_when_ref_not_found(self):
         facade, cm = _make_facade()
         cm.get_context_bundle_record_by_id.return_value = _make_bundle_record()
-        with patch(
-            "fastcode.app.store.context_facade.expand_bundle_source_ref",
-            return_value=None,
+        with (
+            patch(
+                "fastcode.app.store.context_facade.expand_bundle_source_ref",
+                return_value=None,
+            ),
+            pytest.raises(RuntimeError, match="context bundle ref not found"),
         ):
-            with pytest.raises(RuntimeError, match="context bundle ref not found"):
-                facade.expand_context_bundle_ref("e1", bundle_id="bundle-1")
+            facade.expand_context_bundle_ref("e1", bundle_id="bundle-1")
 
 
 class TestCreateContextActivation:

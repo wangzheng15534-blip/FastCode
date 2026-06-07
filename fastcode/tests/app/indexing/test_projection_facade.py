@@ -8,7 +8,6 @@ import pytest
 from fastcode.app.indexing.projection_facade import ProjectionFacade
 from fastcode.runtime_support.runtime_state import RuntimeState
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -65,9 +64,7 @@ class TestGetProjectionChunk:
 
     def test_passes_through_service_error(self) -> None:
         h = _FacadeHarness()
-        h.projection_service.get_projection_chunk.side_effect = RuntimeError(
-            "missing"
-        )
+        h.projection_service.get_projection_chunk.side_effect = RuntimeError("missing")
         with pytest.raises(RuntimeError, match="missing"):
             h.facade.get_projection_chunk("p1", "c1")
 
@@ -83,9 +80,7 @@ class TestGetSessionPrefix:
         }
         result = h.facade.get_session_prefix("snap:repo:abc")
         assert result["snapshot_id"] == "snap:repo:abc"
-        h.projection_service.get_session_prefix.assert_called_once_with(
-            "snap:repo:abc"
-        )
+        h.projection_service.get_session_prefix.assert_called_once_with("snap:repo:abc")
 
     def test_passes_through_service_error(self) -> None:
         h = _FacadeHarness()

@@ -63,7 +63,8 @@ def test_scan_file_inventory_prefers_git_blob_oid_for_tracked_clean_files(
     loader.repo_name = "repo"
 
     def _boom_hash(_path: str) -> str:
-        raise AssertionError("tracked clean files should use git blob ids")
+        msg = "tracked clean files should use git blob ids"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(
         "fastcode.app.indexing.file_inventory.compute_file_hash", _boom_hash

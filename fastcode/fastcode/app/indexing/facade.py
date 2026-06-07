@@ -94,6 +94,7 @@ class IndexingFacade:
         enabled = bool(indexing_config.get("allow_direct_index", False))
         if enabled:
             from fastcode.common.feature_lifecycle import CapabilityRegistry
+
             CapabilityRegistry.check("direct_indexing")
         return enabled
 
@@ -107,9 +108,7 @@ class IndexingFacade:
         with self._state_lock():
             return self._load_repository_unlocked(source, is_url, is_zip)
 
-    def upload_repository_zip(
-        self, file_bytes: bytes, filename: str
-    ) -> dict[str, Any]:
+    def upload_repository_zip(self, file_bytes: bytes, filename: str) -> dict[str, Any]:
         with self._state_lock():
             return self._upload_repository_zip_unlocked(file_bytes, filename)
 
@@ -141,9 +140,7 @@ class IndexingFacade:
         self, file_bytes: bytes, filename: str, *, force: bool = False
     ) -> dict[str, Any]:
         with self._state_lock():
-            upload_result = self._upload_repository_zip_unlocked(
-                file_bytes, filename
-            )
+            upload_result = self._upload_repository_zip_unlocked(file_bytes, filename)
             if upload_result.get("status") != "success":
                 return upload_result
             self._index_repository_unlocked(force=force)
@@ -213,9 +210,7 @@ class IndexingFacade:
         self, repo_name: str, repo_path: str | None = None
     ) -> dict[str, Any]:
         if not repo_path or not os.path.isdir(repo_path):
-            self._logger.warning(
-                f"Invalid repo path for '{repo_name}': {repo_path}"
-            )
+            self._logger.warning(f"Invalid repo path for '{repo_name}': {repo_path}")
             return {"status": "path_not_found", "changes": 0}
         return self.run_index_pipeline(
             source=repo_path,
@@ -260,9 +255,7 @@ class IndexingFacade:
                 self._logger.info(f"Set repo_root to: {self._loader.repo_path}")
                 self._retriever.set_repo_root(self._loader.repo_path)
 
-            self._logger.info(
-                f"Loaded repository: {self._state.repo_info.get('name')}"
-            )
+            self._logger.info(f"Loaded repository: {self._state.repo_info.get('name')}")
             self._logger.info(
                 f"Files: {self._state.repo_info.get('file_count')}, "
                 f"Size: {self._state.repo_info.get('total_size_mb', 0):.2f} MB"
@@ -277,9 +270,8 @@ class IndexingFacade:
     ) -> dict[str, Any]:
         max_size = 100 * 1024 * 1024  # 100MB
         if len(file_bytes) > max_size:
-            raise ValueError(
-                f"File too large. Maximum size is {max_size / (1024 * 1024)}MB"
-            )
+            msg = f"File too large. Maximum size is {max_size / (1024 * 1024)}MB"
+            raise ValueError(msg)
 
         archive_filename = Path(filename).name
         repo_name = safe_repo_name_from_archive(archive_filename)
@@ -333,9 +325,7 @@ class IndexingFacade:
         finally:
             try:
                 shutil.rmtree(temp_dir)
-                self._logger.info(
-                    "Cleaned up temporary directory: %s", temp_dir
-                )
+                self._logger.info("Cleaned up temporary directory: %s", temp_dir)
             except Exception as cleanup_error:
                 self._logger.warning(
                     "Failed to clean up temp directory: %s", cleanup_error
@@ -346,13 +336,11 @@ class IndexingFacade:
             return self._index_repository_direct_unlocked(force=force)
         force = force or self._eval_config.get("force_reindex", False)
         if not self._state.repo_loaded:
-            raise RuntimeError(
-                "No repository loaded. Call load_repository() first."
-            )
+            msg = "No repository loaded. Call load_repository() first."
+            raise RuntimeError(msg)
         if not self._loader.repo_path:
-            raise RuntimeError(
-                "No repository path available for indexing."
-            )
+            msg = "No repository path available for indexing."
+            raise RuntimeError(msg)
         return self._pipeline.run_index_pipeline(
             source=self._loader.repo_path,
             is_url=False,
@@ -385,6 +373,7 @@ class IndexingFacade:
         if not self._direct_index_enabled():
             return self._load_multiple_repositories_pipeline_unlocked(sources)
         from fastcode.common.feature_lifecycle import CapabilityRegistry
+
         CapabilityRegistry.check("multi_repo_direct_indexing")
         return self._load_multiple_repositories_direct_unlocked(sources)
 
@@ -414,13 +403,10 @@ class IndexingFacade:
                 pipeline_is_url = resolved_is_url
                 load_repository_cb: Callable[..., None] | None
                 if is_zip:
-                    self._load_repository_unlocked(
-                        source, is_url=False, is_zip=True
-                    )
+                    self._load_repository_unlocked(source, is_url=False, is_zip=True)
                     if not self._loader.repo_path:
-                        raise RuntimeError(
-                            "zip load did not produce a repository path"
-                        )
+                        msg = "zip load did not produce a repository path"
+                        raise RuntimeError(msg)
                     pipeline_source = self._loader.repo_path
                     pipeline_is_url = False
                     load_repository_cb = None
@@ -450,9 +436,7 @@ class IndexingFacade:
                 if repo_name:
                     successfully_indexed.append(repo_name)
             except Exception as e:
-                self._logger.error(
-                    f"Failed to index repository {source}: {e}"
-                )
+                self._logger.error(f"Failed to index repository {source}: {e}")
                 errors.append({"source": source, "error": str(e)})
                 continue
 

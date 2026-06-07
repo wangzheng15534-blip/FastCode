@@ -86,18 +86,20 @@ class RedoWorker:
             try:
                 payload = json.loads(payload)
             except (json.JSONDecodeError, ValueError) as exc:
-                raise RuntimeError(
+                msg = (
                     "redo task "
                     f"{self._field(task, 'task_id')!r} "
                     f"has malformed payload_json: {exc}"
-                ) from exc
+                )
+                raise RuntimeError(msg) from exc
         if not isinstance(payload, dict):
             payload = {}
 
         if task_type == "index_run_recovery":
             run_id = payload.get("run_id")
             if not run_id:
-                raise RuntimeError("redo task missing run_id")
+                msg = "redo task missing run_id"
+                raise RuntimeError(msg)
             self.fastcode.publishing.retry_index_run_recovery(
                 run_id=str(run_id), payload=payload
             )
@@ -112,13 +114,15 @@ class RedoWorker:
         if task_type == "projection_dirty_rebuild":
             snapshot_id = str(payload.get("snapshot_id") or "")
             if not snapshot_id:
-                raise RuntimeError("projection_dirty_rebuild task missing snapshot_id")
+                msg = "projection_dirty_rebuild task missing snapshot_id"
+                raise RuntimeError(msg)
             self._rebuild_dirty_projections(snapshot_id)
             return
         if task_type == "publish_outbox_flush":
             self._flush_outbox()
             return
-        raise RuntimeError(f"unsupported redo task type: {task_type}")
+        msg = f"unsupported redo task type: {task_type}"
+        raise RuntimeError(msg)
 
     def _projection_rebuild_enabled(self, payload: dict[str, Any]) -> bool:
         if "rebuild_dirty_projections" in payload:

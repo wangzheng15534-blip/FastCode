@@ -336,7 +336,7 @@ class CodeParser:
                     imports.append(
                         ImportInfo(
                             module=alias.name,
-                            names=[alias.asname if alias.asname else alias.name],
+                            names=[alias.asname or alias.name],
                             is_from=False,
                             level=0,  # ast.Import always uses absolute imports
                             line=node.lineno,
@@ -630,7 +630,7 @@ class CodeParser:
                     imports.append(
                         ImportInfo(
                             module=module_node,
-                            names=names if names else ["*"],
+                            names=names or ["*"],
                             is_from=True,
                             line=node.start_point[0] + 1,
                             level=0,
@@ -1437,7 +1437,7 @@ class CodeParser:
                     "utf-8"
                 )
                 # Rust doc comments start with /// or //!
-                if comment_text.startswith("//!") or comment_text.startswith("///"):
+                if comment_text.startswith(("//!", "///")):
                     return comment_text[3:].strip()
                 if comment_text.startswith("/*") and comment_text.endswith("*/"):
                     return comment_text[2:-2].strip()
@@ -1636,7 +1636,7 @@ class CodeParser:
                     prev_sibling.start_byte : prev_sibling.end_byte
                 ].decode("utf-8")
                 # Clean up Rust doc comment markers
-                if comment_text.startswith("///") or comment_text.startswith("//!"):
+                if comment_text.startswith(("///", "//!")):
                     return comment_text[3:].strip()
                 if comment_text.startswith("/*") and comment_text.endswith("*/"):
                     return comment_text[2:-2].strip()

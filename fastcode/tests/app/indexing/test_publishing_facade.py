@@ -9,7 +9,6 @@ import pytest
 from fastcode.app.indexing.publishing_facade import PublishingFacade
 from fastcode.ir.types import IRCodeUnit, IRSnapshot
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -340,7 +339,9 @@ class TestProcessSemanticRepairFrontier:
                 list_builds_for_snapshot=lambda _sid: [
                     {"scope_kind": "snapshot", "scope_key": "scope:snapshot"},
                 ],
-                mark_dirty=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("store error")),
+                mark_dirty=lambda **kwargs: (_ for _ in ()).throw(
+                    RuntimeError("store error")
+                ),
             )
         )
         h.pipeline.run_semantic_repair_frontier.return_value = {
@@ -377,7 +378,10 @@ class TestProcessSemanticRepairFrontier:
 
 class TestProjectionDirtyReason:
     def test_edge_surface_returns_graph_topology(self) -> None:
-        assert PublishingFacade._projection_dirty_reason(["edge_surface_hash"]) == "graph_topology"
+        assert (
+            PublishingFacade._projection_dirty_reason(["edge_surface_hash"])
+            == "graph_topology"
+        )
 
     def test_api_surface_returns_api(self) -> None:
         assert PublishingFacade._projection_dirty_reason(["api_surface_hash"]) == "api"
@@ -386,7 +390,10 @@ class TestProjectionDirtyReason:
         assert PublishingFacade._projection_dirty_reason(["signature_hash"]) == "api"
 
     def test_embedding_text_returns_semantic(self) -> None:
-        assert PublishingFacade._projection_dirty_reason(["embedding_text_hash"]) == "semantic"
+        assert (
+            PublishingFacade._projection_dirty_reason(["embedding_text_hash"])
+            == "semantic"
+        )
 
     def test_empty_returns_semantic(self) -> None:
         assert PublishingFacade._projection_dirty_reason([]) == "semantic"
@@ -399,7 +406,9 @@ class TestProjectionBuildIntersectsPaths:
 
     def test_no_intersect_when_disjoint(self) -> None:
         build = {"coverage_paths": ["other/c.py"]}
-        assert not PublishingFacade._projection_build_intersects_paths(build, ["pkg/a.py"])
+        assert not PublishingFacade._projection_build_intersects_paths(
+            build, ["pkg/a.py"]
+        )
 
     def test_empty_coverage_intersects(self) -> None:
         assert PublishingFacade._projection_build_intersects_paths({}, ["pkg/a.py"])

@@ -153,7 +153,9 @@ def test_dispatch_task_raises_on_unsupported_type_double():
 def test_dispatch_semantic_repair_frontier_task_double():
     fc = _FakeFastCode()
     fc.publishing = MagicMock()
-    fc.publishing.process_semantic_repair_frontier.return_value = {"status": "published"}
+    fc.publishing.process_semantic_repair_frontier.return_value = {
+        "status": "published"
+    }
     worker = RedoWorker(fc)
     task = {
         "task_id": "redo_repair",

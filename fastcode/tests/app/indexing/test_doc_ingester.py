@@ -562,7 +562,8 @@ class TestEmbed:
 
         class BrokenEmbedder:
             def embed_text(self, text: str) -> Never:
-                raise RuntimeError("broken")
+                msg = "broken"
+                raise RuntimeError(msg)
 
         ingester = _make_ingester(embedder=BrokenEmbedder())
         result = ingester._embed("test")

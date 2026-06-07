@@ -92,14 +92,16 @@ class PublishingService:
     ) -> dict[str, Any]:
         run = self.index_run_store.get_run_record(run_id)
         if not run:
-            raise RuntimeError(f"index run not found: {run_id}")
+            msg = f"index run not found: {run_id}"
+            raise RuntimeError(msg)
         snapshot_id = run.snapshot_id
         repo_name = run.repo_name
         branch = run.branch
         commit_id = run.commit_id
         snapshot = self.snapshot_store.load_snapshot(snapshot_id)
         if not snapshot:
-            raise RuntimeError(f"snapshot not found for run: {run_id}")
+            msg = f"snapshot not found for run: {run_id}"
+            raise RuntimeError(msg)
 
         manifest = self.manifest_store.publish_record(
             repo_name=repo_name,
@@ -167,14 +169,16 @@ class PublishingService:
             try:
                 run = self.index_run_store.get_run_record(run_id)
                 if not run:
-                    raise RuntimeError(f"run not found: {run_id}")
+                    msg = f"run not found: {run_id}"
+                    raise RuntimeError(msg)
                 snapshot_id = run.snapshot_id
                 repo_name = run.repo_name
                 branch = run.branch
                 commit_id = run.commit_id
                 snapshot = self.snapshot_store.load_snapshot(snapshot_id)
                 if not snapshot:
-                    raise RuntimeError(f"snapshot not found: {snapshot_id}")
+                    msg = f"snapshot not found: {snapshot_id}"
+                    raise RuntimeError(msg)
 
                 ref_name = branch or "HEAD"
                 manifest = self.manifest_store.get_branch_manifest_record(
@@ -225,7 +229,8 @@ class PublishingService:
         payload = payload or {}
         source = payload.get("source")
         if not source:
-            raise RuntimeError(f"redo recovery payload missing source for run {run_id}")
+            msg = f"redo recovery payload missing source for run {run_id}"
+            raise RuntimeError(msg)
         return self._run_index_pipeline(
             source=source,
             is_url=payload.get("is_url"),

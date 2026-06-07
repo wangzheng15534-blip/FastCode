@@ -77,7 +77,8 @@ class PublishingFacade:
         scope_roots = list(payload.get("scope_roots") or [])
         snapshot_id = str(payload.get("snapshot_id") or "")
         if not snapshot_id:
-            raise RuntimeError("semantic_repair_frontier payload missing snapshot_id")
+            msg = "semantic_repair_frontier payload missing snapshot_id"
+            raise RuntimeError(msg)
         result = self._pipeline.run_semantic_repair_frontier(
             snapshot_id=snapshot_id,
             scope_kind=scope_kind,

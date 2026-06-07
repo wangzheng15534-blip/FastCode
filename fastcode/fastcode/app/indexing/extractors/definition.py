@@ -31,11 +31,13 @@ class DefinitionExtractor:
         self.ts_parser = parser or TSParser()
 
         if not self.ts_parser.is_healthy():
-            raise RuntimeError("TSParser could not be initialized.")
+            msg = "TSParser could not be initialized."
+            raise RuntimeError(msg)
 
         lang = self.ts_parser.language
         if lang is None:
-            raise RuntimeError("TSParser language is not available")
+            msg = "TSParser language is not available"
+            raise RuntimeError(msg)
         self.query = Query(lang, self.DEFINITION_QUERY_SCM)
 
     def extract_definitions(self, code: str, file_path: str) -> list[dict[str, Any]]:

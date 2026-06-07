@@ -14,7 +14,8 @@ from fastcode.ir.types import IRSnapshot
 
 class NoDictSnapshot(IRSnapshot):
     def to_dict(self) -> dict[str, Any]:
-        raise AssertionError("PublishingService must publish typed IRSnapshot objects")
+        msg = "PublishingService must publish typed IRSnapshot objects"
+        raise AssertionError(msg)
 
 
 class ManifestDouble:
@@ -28,7 +29,8 @@ class ManifestDouble:
     status = "published"
 
     def to_dict(self) -> dict[str, Any]:
-        raise AssertionError("PublishingService must not call manifest.to_dict()")
+        msg = "PublishingService must not call manifest.to_dict()"
+        raise AssertionError(msg)
 
 
 class IndexRunStoreDouble:
@@ -113,7 +115,8 @@ class TerminusPublisherDouble:
         return True
 
     def publish_snapshot_lineage(self, **_: Any) -> None:
-        raise AssertionError("PublishingService used dict-based lineage publishing")
+        msg = "PublishingService used dict-based lineage publishing"
+        raise AssertionError(msg)
 
     def publish_snapshot_lineage_for_snapshot(
         self,

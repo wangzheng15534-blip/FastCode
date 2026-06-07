@@ -101,10 +101,11 @@ class CodeEmbedder(EmbeddingProvider):
             or 0
         )
         if not isinstance(raw_dim, (int, float, type(None))):
-            raise ValueError(
+            msg = (
                 f"embedding.dimension must be numeric, got {type(raw_dim).__name__}: "
                 f"{raw_dim!r}"
             )
+            raise ValueError(msg)
         self._configured_embedding_dim: int = int(raw_dim or 0)
         self._embedding_dim: int = self._configured_embedding_dim
 
@@ -215,11 +216,12 @@ class CodeEmbedder(EmbeddingProvider):
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
-            raise RuntimeError(
+            msg = (
                 "embedding.provider='sentence_transformers' requires the "
                 "sentence-transformers and torch packages. Install the local "
                 "embedding extra or configure embedding.provider='ollama'."
-            ) from exc
+            )
+            raise RuntimeError(msg) from exc
         model = SentenceTransformer(self.model_name, device=self.device)
         model.max_seq_length = self.max_seq_length
         return model
@@ -382,10 +384,11 @@ class CodeEmbedder(EmbeddingProvider):
                 or 1
             )
             if not isinstance(raw_concurrency, (int, float)):
-                raise ValueError(
+                msg = (
                     f"embedding.ollama_concurrency must be numeric, got "
                     f"{type(raw_concurrency).__name__}: {raw_concurrency!r}"
                 )
+                raise ValueError(msg)
             max_workers = int(raw_concurrency)
             if max_workers > 1 and len(texts) > 1:
                 with ThreadPoolExecutor(
@@ -562,13 +565,15 @@ class CodeEmbedder(EmbeddingProvider):
         matrix = np.empty((len(embeddings), first_row.size), dtype=np.float32)
         for index, embedding in enumerate(embeddings):
             if embedding is None:
-                raise RuntimeError(f"Embedding cache fill failed at index: {index}")
+                msg = f"Embedding cache fill failed at index: {index}"
+                raise RuntimeError(msg)
             row = np.asarray(embedding, dtype=np.float32).reshape(-1)
             if row.size != first_row.size:
-                raise RuntimeError(
+                msg = (
                     f"Embedding cache fill produced inconsistent dimensions: "
                     f"expected {first_row.size}, got {row.size} at index {index}"
                 )
+                raise RuntimeError(msg)
             matrix[index] = row
         return matrix
 
@@ -613,7 +618,8 @@ class CodeEmbedder(EmbeddingProvider):
                 or miss_embeddings.shape[0] != len(miss_texts)
                 or not miss_embeddings.shape[1]
             ):
-                raise RuntimeError("Uncached embedding batch returned invalid shape")
+                msg = "Uncached embedding batch returned invalid shape"
+                raise RuntimeError(msg)
             single_miss_indexes = [indexes for _text, indexes in misses.values()]
             can_return_miss_matrix = (
                 hits == 0
@@ -642,9 +648,8 @@ class CodeEmbedder(EmbeddingProvider):
             i for i, embedding in enumerate(embeddings) if embedding is None
         ]
         if missing_indexes:
-            raise RuntimeError(
-                f"Embedding cache fill failed at indexes: {missing_indexes}"
-            )
+            msg = f"Embedding cache fill failed at indexes: {missing_indexes}"
+            raise RuntimeError(msg)
 
         return self._embedding_rows_to_matrix(embeddings)
 
@@ -669,14 +674,15 @@ class CodeEmbedder(EmbeddingProvider):
             body = json.loads(resp.read().decode("utf-8"))
         vectors = body.get("embeddings")
         if not isinstance(vectors, list) or len(vectors) != len(texts):
-            raise RuntimeError("Ollama batch embedding response missing embeddings")
+            msg = "Ollama batch embedding response missing embeddings"
+            raise RuntimeError(msg)
         if any(not isinstance(v, list) for v in vectors):
-            raise RuntimeError(
-                "Ollama batch embedding response contains non-list entries"
-            )
+            msg = "Ollama batch embedding response contains non-list entries"
+            raise RuntimeError(msg)
         matrix = np.asarray(vectors, dtype=np.float32)
         if matrix.ndim != 2 or matrix.shape[0] != len(texts) or not matrix.shape[1]:
-            raise RuntimeError("Ollama batch embedding response has invalid shape")
+            msg = "Ollama batch embedding response has invalid shape"
+            raise RuntimeError(msg)
         self._embedding_dim = int(matrix.shape[1])
         self._increment_embedding_metric("provider_true_batch_count")
         return matrix
@@ -695,7 +701,8 @@ class CodeEmbedder(EmbeddingProvider):
             body = json.loads(resp.read().decode("utf-8"))
         vector = body.get("embedding")
         if not vector:
-            raise RuntimeError("Ollama embedding response missing 'embedding'")
+            msg = "Ollama embedding response missing 'embedding'"
+            raise RuntimeError(msg)
         embedding = np.asarray(vector, dtype=np.float32)
         if embedding.ndim == 1 and embedding.size:
             self._embedding_dim = int(embedding.size)

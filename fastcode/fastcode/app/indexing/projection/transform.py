@@ -268,9 +268,8 @@ class _ProjectionGraph:
         index = {node: pos for pos, node in enumerate(names)}
         graph: Any = ig.Graph(directed=graph_directed) if ig is not None else None
         if graph is None:
-            raise RuntimeError(
-                "python-igraph is required for projection graph conversion"
-            )
+            msg = "python-igraph is required for projection graph conversion"
+            raise RuntimeError(msg)
         graph.add_vertices(len(names))
         graph.vs["name"] = names
         edges = [(index[src], index[dst]) for src, dst in self.edges()]
@@ -346,7 +345,8 @@ class ProjectionTransformer:
         g = self._build_weighted_graph(snapshot, ir_graphs)
         dg = self._build_directed_weighted_graph(snapshot, ir_graphs)
         if g.number_of_nodes() == 0:
-            raise RuntimeError("projection generation failed: empty graph")
+            msg = "projection generation failed: empty graph"
+            raise RuntimeError(msg)
 
         scoped_nodes, focus_nodes = self._scope_nodes(scope, snapshot, g)
         if not scoped_nodes:

@@ -41,7 +41,8 @@ class _EmbedderStub:
     def embed_code_elements(
         self, _elements: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        raise AssertionError("CodeIndexer should use EmbeddingService.embed_elements")
+        msg = "CodeIndexer should use EmbeddingService.embed_elements"
+        raise AssertionError(msg)
 
     def embed_elements(
         self,
@@ -76,7 +77,8 @@ class _EmbedderStub:
         return mutable_elements
 
     def embed_text(self, _text: str) -> np.ndarray:
-        raise AssertionError("CodeIndexer should use EmbeddingService.embed_many")
+        msg = "CodeIndexer should use EmbeddingService.embed_many"
+        raise AssertionError(msg)
 
     def embed_many(self, texts: Sequence[str]) -> np.ndarray:
         self.prepared_text_batches.append(list(texts))
@@ -88,7 +90,8 @@ class _EmbedderStub:
     def embedding_fingerprint(
         self, *, resolve_dimension: bool = False
     ) -> dict[str, Any]:
-        raise AssertionError("CodeIndexer should use EmbeddingService.fingerprint")
+        msg = "CodeIndexer should use EmbeddingService.fingerprint"
+        raise AssertionError(msg)
 
     def fingerprint(self, *, resolve_dimension: bool = False) -> dict[str, Any]:
         return {

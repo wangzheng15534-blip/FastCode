@@ -2,14 +2,42 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from fastcode.app.indexing.facade import IndexingFacade
+from fastcode.common.feature_lifecycle import (
+    CapabilityRegistry,
+    CapabilitySpec,
+    CapabilityStage,
+)
 from fastcode.runtime_support.runtime_state import RuntimeState
 
+# ---------------------------------------------------------------------------
+# Capability registration for tests that enable direct_indexing
+# ---------------------------------------------------------------------------
+
+_DIRECT_INDEXING_SPEC = CapabilitySpec(
+    name="direct_indexing",
+    stage=CapabilityStage.EXPERIMENTAL,
+    config_key="indexing.allow_direct_index",
+    description="Direct indexing without snapshot pipeline",
+)
+
+_MULTI_REPO_DIRECT_INDEXING_SPEC = CapabilitySpec(
+    name="multi_repo_direct_indexing",
+    stage=CapabilityStage.EXPERIMENTAL,
+    config_key="indexing.allow_direct_index",
+    description="Multi-repo direct indexing",
+)
+
+# Register once at import time (idempotent)
+with contextlib.suppress(ValueError):
+    for _spec in (_DIRECT_INDEXING_SPEC, _MULTI_REPO_DIRECT_INDEXING_SPEC):
+        CapabilityRegistry.register(_spec)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -121,9 +149,16 @@ class TestUploadRepositoryZip:
         h = _FacadeHarness()
         file_bytes = b"fake zip content"
         mock_zip = MagicMock()
-        with patch("fastcode.app.indexing.facade.zipfile.ZipFile", return_value=mock_zip), \
-             patch("fastcode.app.indexing.facade.safe_extract_zip"), \
-             patch("fastcode.app.indexing.facade.safe_repo_name_from_archive", return_value="my-repo"):
+        with (
+            patch(
+                "fastcode.app.indexing.facade.zipfile.ZipFile", return_value=mock_zip
+            ),
+            patch("fastcode.app.indexing.facade.safe_extract_zip"),
+            patch(
+                "fastcode.app.indexing.facade.safe_repo_name_from_archive",
+                return_value="my-repo",
+            ),
+        ):
             result = h.facade.upload_repository_zip(file_bytes, "my-repo.zip")
         assert result["status"] == "success"
         assert "repo_info" in result
@@ -150,7 +185,12 @@ class TestIndexRepository:
 
     def test_index_direct_path(self) -> None:
         h = _FacadeHarness(config={"indexing": {"allow_direct_index": True}})
-        h.direct_indexer.run.return_value = (True, MagicMock(), MagicMock(), MagicMock())
+        h.direct_indexer.run.return_value = (
+            True,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+        )
         h.facade.index_repository(force=False)
         h.direct_indexer.run.assert_called_once()
 
@@ -194,9 +234,16 @@ class TestUploadAndIndex:
         h.state.repo_loaded = True
         h.store.get_repository_summary.return_value = "summary"
         mock_zip = MagicMock()
-        with patch("fastcode.app.indexing.facade.zipfile.ZipFile", return_value=mock_zip), \
-             patch("fastcode.app.indexing.facade.safe_extract_zip"), \
-             patch("fastcode.app.indexing.facade.safe_repo_name_from_archive", return_value="repo"):
+        with (
+            patch(
+                "fastcode.app.indexing.facade.zipfile.ZipFile", return_value=mock_zip
+            ),
+            patch("fastcode.app.indexing.facade.safe_extract_zip"),
+            patch(
+                "fastcode.app.indexing.facade.safe_repo_name_from_archive",
+                return_value="repo",
+            ),
+        ):
             result = h.facade.upload_and_index(b"zipdata", "repo.zip")
         assert result["status"] == "success"
         h.vector_store.invalidate_scan_cache.assert_called_once()
@@ -243,8 +290,10 @@ class TestReindexRepository:
         h = _FacadeHarness()
         h.store.repo_name_from_source.return_value = "my-repo"
         h.vector_store.get_count.return_value = 42
-        with patch("os.path.isdir", return_value=True), \
-             patch("os.path.abspath", return_value="/tmp/my-repo"):
+        with (
+            patch("os.path.isdir", return_value=True),
+            patch("os.path.abspath", return_value="/tmp/my-repo"),
+        ):
             result = h.facade.reindex_repository("/tmp/my-repo")
         assert "42 elements indexed" in result
         assert h.state.repo_indexed is False
@@ -252,8 +301,10 @@ class TestReindexRepository:
     def test_reindex_nonexistent_path(self) -> None:
         h = _FacadeHarness()
         h.store.repo_name_from_source.return_value = "my-repo"
-        with patch("os.path.isdir", return_value=False), \
-             patch("os.path.abspath", return_value="/tmp/missing"):
+        with (
+            patch("os.path.isdir", return_value=False),
+            patch("os.path.abspath", return_value="/tmp/missing"),
+        ):
             result = h.facade.reindex_repository("/tmp/missing")
         assert "Error" in result
 
@@ -261,8 +312,10 @@ class TestReindexRepository:
         h = _FacadeHarness()
         h.store.repo_name_from_source.return_value = "my-repo"
         h.vector_store.get_count.return_value = 0
-        with patch("os.path.isdir", return_value=True), \
-             patch("os.path.abspath", return_value="/tmp/my-repo"):
+        with (
+            patch("os.path.isdir", return_value=True),
+            patch("os.path.abspath", return_value="/tmp/my-repo"),
+        ):
             h.facade.reindex_repository("/tmp/my-repo")
         h.apply_env_ignore_patterns_fn.assert_called_once()
 

@@ -214,7 +214,7 @@ def build_file_inventory(
     repo_root = os.path.abspath(repo_root)
     max_file_size_bytes = int(max_file_size_mb * 1024 * 1024)
     git_context = _git_worktree_root(repo_root) if include_fingerprints else None
-    repo, worktree_root = git_context if git_context else (None, None)
+    repo, worktree_root = git_context or (None, None)
     dirty_paths: set[str] = _dirty_git_paths(repo) if repo is not None else set()
     git_blob_oids = _index_blob_oids(repo) if repo is not None else {}
     files: list[FileFingerprint] = []

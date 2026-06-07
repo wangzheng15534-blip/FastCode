@@ -192,7 +192,8 @@ def test_embed_batch_cache_hits_preallocate_matrix_without_vstack(
     embedder.raw_batches.clear()
 
     def _boom_vstack(_values: object) -> np.ndarray:
-        raise AssertionError("embedding cache batch return must not use np.vstack")
+        msg = "embedding cache batch return must not use np.vstack"
+        raise AssertionError(msg)
 
     monkeypatch.setattr("fastcode.app.indexing.embedder.np.vstack", _boom_vstack)
 
@@ -499,7 +500,8 @@ def test_embedder_initialization_does_not_load_model(
     monkeypatch: Any,
 ) -> None:
     def _boom_load_model(self: CodeEmbedder) -> Any:
-        raise AssertionError("model should load lazily")
+        msg = "model should load lazily"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(CodeEmbedder, "_load_model", _boom_load_model)
 
@@ -545,7 +547,7 @@ embedder = CodeEmbedder({
 assert embedder.model is None
 assert embedder.embedding_fingerprint()['provider'] == 'ollama'
 """
-    subprocess.run([sys.executable, "-c", code], check=True)  # noqa: S603
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 def test_sentence_transformers_missing_dependency_fails_at_model_boundary() -> None:
@@ -579,14 +581,15 @@ except RuntimeError as exc:
 else:
     raise AssertionError('expected missing optional dependency failure')
 """
-    subprocess.run([sys.executable, "-c", code], check=True)  # noqa: S603
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 def test_embedding_fingerprint_without_configured_dimension_does_not_load_model(
     monkeypatch: Any,
 ) -> None:
     def _boom_load_model(self: CodeEmbedder) -> Any:
-        raise AssertionError("fingerprint should not load model")
+        msg = "fingerprint should not load model"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(CodeEmbedder, "_load_model", _boom_load_model)
     embedder = CodeEmbedder(
@@ -610,7 +613,8 @@ def test_cache_hit_validation_without_configured_dimension_does_not_load_model(
     monkeypatch: Any,
 ) -> None:
     def _boom_load_model(self: CodeEmbedder) -> Any:
-        raise AssertionError("cache-hit validation should not load model")
+        msg = "cache-hit validation should not load model"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(CodeEmbedder, "_load_model", _boom_load_model)
     embedder = CodeEmbedder(

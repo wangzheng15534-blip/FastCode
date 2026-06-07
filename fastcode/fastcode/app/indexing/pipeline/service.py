@@ -30,10 +30,10 @@ from urllib.parse import urlparse
 import numpy as np
 from git import GitCommandError, Repo
 
-from fastcode.app.indexing.graph_mapper import document_overlay_node_records
 from fastcode.app.indexing.doc_ingester import KeyDocIngester
 from fastcode.app.indexing.embedder import CodeEmbedder
 from fastcode.app.indexing.file_inventory import FileInventory
+from fastcode.app.indexing.graph_mapper import document_overlay_node_records
 from fastcode.app.indexing.loader import RepositoryLoader
 from fastcode.app.query.selection.retriever import HybridRetriever
 from fastcode.app.store.artifacts.graph import GraphArtifactStore
@@ -43,6 +43,7 @@ from fastcode.app.store.snapshots.snapshot import SnapshotStore
 from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
 from fastcode.app.store.vectors.vector import VectorStore
 from fastcode.app.store.vectors.vector_math import as_float32_matrix, as_float32_vector
+from fastcode.common.identifiers import RepoName, SnapshotId
 from fastcode.graph.build import CodeGraphBuilder
 from fastcode.infrastructure.execution.ports import (
     ScipFileInfoView,
@@ -60,7 +61,6 @@ from fastcode.ir.graph import IRGraphBuilder, IRGraphs
 from fastcode.ir.merge import merge_ir
 from fastcode.ir.types import IRRelation, IRSnapshot, IRUnitSupport
 from fastcode.ir.validate import validate_snapshot
-from fastcode.common.identifiers import RepoName, SnapshotId
 from fastcode.ports.artifacts import (
     FileArtifactStore as FileArtifactStorePort,
 )
@@ -225,7 +225,8 @@ class IndexPipeline:
         output_path: str,
     ) -> str:
         if self.scip_indexer_runtime is None:
-            raise RuntimeError("SCIP indexer runtime is not configured")
+            msg = "SCIP indexer runtime is not configured"
+            raise RuntimeError(msg)
         return self.scip_indexer_runtime.run_indexer(language, repo_path, output_path)
 
     def _scip_profile(self, language: str) -> Any | None:
@@ -262,7 +263,8 @@ class IndexPipeline:
 
     def _load_scip_artifact(self, path: str) -> SCIPIndex:
         if self.scip_indexer_runtime is None:
-            raise RuntimeError("SCIP indexer runtime is not configured")
+            msg = "SCIP indexer runtime is not configured"
+            raise RuntimeError(msg)
         return self.scip_indexer_runtime.load_artifact(path)
 
     def _run_scip_for_language(
@@ -334,11 +336,12 @@ class IndexPipeline:
         if not target or not self.loader.repo_path:
             return
         if getattr(self.loader, "repo_load_mode", None) == "in_place":
-            raise RuntimeError(
+            msg = (
                 "Ref/commit checkout would mutate an in-place local repository. "
                 "Set repository.local_source_mode='copy' or 'hardlink', or load "
                 "a workspace clone before indexing a different ref."
             )
+            raise RuntimeError(msg)
         try:
             repo = Repo(self.loader.repo_path)
             repo.git.checkout(target)
@@ -349,7 +352,8 @@ class IndexPipeline:
                 invalidate_inventory()
             self.logger.info(f"Checked out target: {target}")
         except (GitCommandError, Exception) as e:
-            raise RuntimeError(f"Failed to checkout target '{target}': {e}")
+            msg = f"Failed to checkout target '{target}': {e}"
+            raise RuntimeError(msg)
 
     def _resolve_snapshot_ref(
         self,
@@ -2675,7 +2679,7 @@ class IndexPipeline:
         try:
             with open(metadata_path, "rb") as f:
                 increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
-                data = pickle.load(f)  # noqa: S301 - FastCode-owned vector artifact.
+                data = pickle.load(f)
             metadata = data.get("metadata", [])
             if isinstance(metadata, list):
                 return cast(list[dict[str, Any]], metadata)
@@ -3714,7 +3718,7 @@ class IndexPipeline:
                         next_ids.update(
                             str(pred) for pred in graph.predecessors(node_id)
                         )
-                    except Exception:  # noqa: S112
+                    except Exception:
                         continue
             next_ids -= visited_ids
             if not next_ids:
@@ -4160,12 +4164,15 @@ class IndexPipeline:
     ) -> dict[str, Any]:
         record = self.snapshot_store.get_snapshot_record(snapshot_id)
         if not record:
-            raise RuntimeError(f"snapshot not found: {snapshot_id}")
+            msg = f"snapshot not found: {snapshot_id}"
+            raise RuntimeError(msg)
         snapshot = self.snapshot_store.load_snapshot(snapshot_id)
         if snapshot is None:
-            raise RuntimeError(f"snapshot IR not found: {snapshot_id}")
+            msg = f"snapshot IR not found: {snapshot_id}"
+            raise RuntimeError(msg)
         if not self._load_artifacts_by_key(record.artifact_key):
-            raise RuntimeError(f"failed to load artifacts for snapshot: {snapshot_id}")
+            msg = f"failed to load artifacts for snapshot: {snapshot_id}"
+            raise RuntimeError(msg)
 
         elements = self._reconstruct_elements_from_metadata()
         change_kind_set = set(change_kinds) if change_kinds else None
@@ -4506,9 +4513,8 @@ class IndexPipeline:
             lock_name, owner_id=run_id, ttl_seconds=600
         )
         if fencing_token is None:
-            raise RuntimeError(
-                f"snapshot is currently locked for indexing: {snapshot_id}"
-            )
+            msg = f"snapshot is currently locked for indexing: {snapshot_id}"
+            raise RuntimeError(msg)
         lock_token: int = fencing_token
         stage_id: str | None = None
         materialization_counters = MaterializationCounters()
@@ -4536,7 +4542,8 @@ class IndexPipeline:
             else:
                 elements = planned_elements
                 if incremental_plan is None:
-                    raise RuntimeError("incremental prefilter returned no plan")
+                    msg = "incremental prefilter returned no plan"
+                    raise RuntimeError(msg)
                 embedded_from_plan_cache = (
                     self._embed_missing_indexed_element_embeddings(elements)
                 )
@@ -4609,7 +4616,8 @@ class IndexPipeline:
                 )
             )
             if vectors.size == 0 and not artifact_delta_mode:
-                raise RuntimeError("No embeddings produced during indexing")
+                msg = "No embeddings produced during indexing"
+                raise RuntimeError(msg)
             if vectors.size > 0:
                 temp_store.add_vectors(vectors, metadata)
 
@@ -5179,7 +5187,8 @@ class IndexPipeline:
             }
             errors = validate_snapshot(merged_snapshot)
             if errors:
-                raise RuntimeError(f"IR validation failed: {errors[:5]}")
+                msg = f"IR validation failed: {errors[:5]}"
+                raise RuntimeError(msg)
 
             self.snapshot_symbol_index.register_snapshot(merged_snapshot)
 
@@ -5245,7 +5254,8 @@ class IndexPipeline:
 
             self.index_run_store.mark_status(run_id, "persisting")
             if not self.snapshot_store.validate_fencing_token(lock_name, lock_token):
-                raise RuntimeError(f"stale_lock_detected_for_snapshot:{snapshot_id}")
+                msg = f"stale_lock_detected_for_snapshot:{snapshot_id}"
+                raise RuntimeError(msg)
 
             # Artifact persistence — only after fencing confirmed valid.
             self._invalidate_loaded_artifact_handle(artifact_key)
@@ -5709,7 +5719,8 @@ class IndexPipeline:
             if doc_elements_payload:
                 all_pg_elements.extend(doc_elements_payload)
             if not self.pg_retrieval_store:
-                raise RuntimeError("pg_retrieval_store not initialized")
+                msg = "pg_retrieval_store not initialized"
+                raise RuntimeError(msg)
             with self._profile_store_surface(pipeline_profile, "pg", snapshot_db_path):
                 publish_pg_delta = getattr(
                     self.pg_retrieval_store, "publish_elements_delta", None

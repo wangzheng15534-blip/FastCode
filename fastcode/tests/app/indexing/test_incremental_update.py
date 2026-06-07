@@ -343,7 +343,8 @@ class TestApplyIncrementalUpdate:
     ) -> None:
         class _ExplodingList(list[object]):
             def __iter__(self) -> Iterator[object]:
-                raise AssertionError("component stream should stay lazy until access")
+                msg = "component stream should stay lazy until access"
+                raise AssertionError(msg)
 
         old = _build_simple_snapshot(
             {"a.py": "h1", "b.py": "h2"},
@@ -448,7 +449,12 @@ class TestApplyIncrementalUpdate:
         new_changed_symbol = _make_symbol_unit("b.py", "new_func")
         old = _make_snapshot(
             snapshot_id="snap:test:old",
-            units=[stable_file, stable_symbol, _make_file_unit("b.py", "h2"), old_changed_symbol],
+            units=[
+                stable_file,
+                stable_symbol,
+                _make_file_unit("b.py", "h2"),
+                old_changed_symbol,
+            ],
             commit_id="old123",
         )
         new = _make_snapshot(
@@ -861,7 +867,8 @@ class TestApplyIncrementalUpdate:
         )
 
         def _boom(*_args: object, **_kwargs: object) -> dict[str, object]:
-            raise AssertionError("incremental relink must not call to_dict()")
+            msg = "incremental relink must not call to_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(IRUnitSupport, "to_dict", _boom)
 

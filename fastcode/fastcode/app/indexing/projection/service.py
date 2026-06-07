@@ -122,10 +122,12 @@ class ProjectionService:
         if snapshot_id:
             return snapshot_id
         if not repo_name or not ref_name:
-            raise RuntimeError("projection requires snapshot_id or repo_name+ref_name")
+            msg = "projection requires snapshot_id or repo_name+ref_name"
+            raise RuntimeError(msg)
         manifest = self.manifest_store.get_branch_manifest_record(repo_name, ref_name)
         if not manifest:
-            raise RuntimeError(f"manifest not found for {repo_name}:{ref_name}")
+            msg = f"manifest not found for {repo_name}:{ref_name}"
+            raise RuntimeError(msg)
         return manifest.snapshot_id
 
     def _mirror_projection_artifacts(
@@ -201,27 +203,28 @@ class ProjectionService:
         from fastcode.ir.projection import ProjectionScope
 
         if scope_kind not in {"snapshot", "query", "entity"}:
-            raise RuntimeError("scope_kind must be one of: snapshot, query, entity")
+            msg = "scope_kind must be one of: snapshot, query, entity"
+            raise RuntimeError(msg)
         if not self.projection_store.enabled:
-            raise RuntimeError(
-                "projection store is not configured (set projection.postgres_dsn)"
-            )
+            msg = "projection store is not configured (set projection.postgres_dsn)"
+            raise RuntimeError(msg)
 
         resolved_snapshot_id = self._resolve_snapshot_id(
             snapshot_id, repo_name, ref_name
         )
         snapshot_record = self.snapshot_store.get_snapshot_record(resolved_snapshot_id)
         if not snapshot_record:
-            raise RuntimeError(f"snapshot not found: {resolved_snapshot_id}")
+            msg = f"snapshot not found: {resolved_snapshot_id}"
+            raise RuntimeError(msg)
 
         if not self._load_artifacts_by_key(snapshot_record.artifact_key):
-            raise RuntimeError(
-                f"failed to load artifacts for snapshot: {resolved_snapshot_id}"
-            )
+            msg = f"failed to load artifacts for snapshot: {resolved_snapshot_id}"
+            raise RuntimeError(msg)
 
         snapshot = self.snapshot_store.load_snapshot(resolved_snapshot_id)
         if not snapshot:
-            raise RuntimeError(f"IR snapshot not found: {resolved_snapshot_id}")
+            msg = f"IR snapshot not found: {resolved_snapshot_id}"
+            raise RuntimeError(msg)
         ir_graphs = self.snapshot_store.load_ir_graphs(resolved_snapshot_id)
 
         scope_key = self.projection_scope_key(
@@ -302,8 +305,7 @@ class ProjectionService:
 
         builds = self.projection_store.list_build_records_for_snapshot(snapshot_id)
         builds_by_scope = {
-            (build.scope_kind, build.scope_key): build
-            for build in builds
+            (build.scope_kind, build.scope_key): build for build in builds
         }
         rebuilt: list[str] = []
         skipped = 0
@@ -351,12 +353,12 @@ class ProjectionService:
 
     def get_projection_layer(self, projection_id: str, layer: str) -> dict[str, Any]:
         if not self.projection_store.enabled:
-            raise RuntimeError(
-                "projection store is not configured (set projection.postgres_dsn)"
-            )
+            msg = "projection store is not configured (set projection.postgres_dsn)"
+            raise RuntimeError(msg)
         layer_payload = self.projection_store.get_layer(projection_id, layer)
         if not layer_payload:
-            raise RuntimeError(f"projection layer not found: {projection_id}:{layer}")
+            msg = f"projection layer not found: {projection_id}:{layer}"
+            raise RuntimeError(msg)
         build = self._projection_build_record_payload(
             self.projection_store.get_build_record(projection_id)
         )
@@ -369,14 +371,12 @@ class ProjectionService:
 
     def get_projection_chunk(self, projection_id: str, chunk_id: str) -> dict[str, Any]:
         if not self.projection_store.enabled:
-            raise RuntimeError(
-                "projection store is not configured (set projection.postgres_dsn)"
-            )
+            msg = "projection store is not configured (set projection.postgres_dsn)"
+            raise RuntimeError(msg)
         chunk_payload = self.projection_store.get_chunk(projection_id, chunk_id)
         if not chunk_payload:
-            raise RuntimeError(
-                f"projection chunk not found: {projection_id}:{chunk_id}"
-            )
+            msg = f"projection chunk not found: {projection_id}:{chunk_id}"
+            raise RuntimeError(msg)
         build = self._projection_build_record_payload(
             self.projection_store.get_build_record(projection_id)
         )
@@ -390,9 +390,8 @@ class ProjectionService:
     def get_session_prefix(self, snapshot_id: str) -> dict[str, Any]:
         """Return L0+L1 projection data for system prompt injection."""
         if not self.projection_store.enabled:
-            raise RuntimeError(
-                "projection store is not configured (set projection.postgres_dsn)"
-            )
+            msg = "projection store is not configured (set projection.postgres_dsn)"
+            raise RuntimeError(msg)
 
         with self.projection_store._connect() as conn, conn.cursor() as cur:
             cur.execute(

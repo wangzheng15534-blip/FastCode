@@ -338,7 +338,8 @@ class _FakePostgresLockRuntime:
                 del self.locks[str(lock_name)]
             return _FakeCursor(None)
 
-        raise AssertionError(f"unexpected SQL: {sql}")
+        msg = f"unexpected SQL: {sql}"
+        raise AssertionError(msg)
 
 
 def test_postgres_lock_reacquire_by_same_owner_preserves_fencing_token():
@@ -390,7 +391,7 @@ def _make_minimal_pipeline(tmp: str) -> IndexPipeline:
         loader=SimpleNamespace(
             repo_path=tmp,
             get_repository_info=lambda: {"name": "repo", "url": tmp},
-            scan_files=lambda: [],
+            scan_files=lambda include_fingerprints=True: [],
         ),
         snapshot_store=store,
         manifest_store=ManifestStore(store.db_runtime),
@@ -525,9 +526,13 @@ def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
                     "active indexing path must not call CodeElement.to_dict()"
                 ),
             ),
-            patch("fastcode.app.indexing.pipeline.service.VectorStore", return_value=temp_store),
             patch(
-                "fastcode.app.indexing.pipeline.service.CodeGraphBuilder", return_value=temp_graph
+                "fastcode.app.indexing.pipeline.service.VectorStore",
+                return_value=temp_store,
+            ),
+            patch(
+                "fastcode.app.indexing.pipeline.service.CodeGraphBuilder",
+                return_value=temp_graph,
             ),
             patch(
                 "fastcode.app.indexing.pipeline.service.HybridRetriever",
@@ -537,7 +542,10 @@ def test_pipeline_layer_contract_records_disabled_scip_non_silently() -> None:
                 "fastcode.app.indexing.pipeline.service.build_ir_from_ast",
                 return_value=ast_snapshot,
             ),
-            patch("fastcode.app.indexing.pipeline.service.validate_snapshot", return_value=[]),
+            patch(
+                "fastcode.app.indexing.pipeline.service.validate_snapshot",
+                return_value=[],
+            ),
             patch.object(
                 pipeline,
                 "_apply_semantic_resolvers",
@@ -734,7 +742,10 @@ def test_snapshot_artifact_handle_cache_metrics_track_hits_and_misses() -> None:
         )
 
         with (
-            patch("fastcode.app.indexing.pipeline.service.VectorStore", return_value=vector_store),
+            patch(
+                "fastcode.app.indexing.pipeline.service.VectorStore",
+                return_value=vector_store,
+            ),
             patch(
                 "fastcode.app.indexing.pipeline.service.CodeGraphBuilder",
                 return_value=graph_builder,
@@ -1062,7 +1073,10 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
                 )
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.VectorStore", return_value=temp_store)
+                patch(
+                    "fastcode.app.indexing.pipeline.service.VectorStore",
+                    return_value=temp_store,
+                )
             )
             stack.enter_context(
                 patch(
@@ -1102,10 +1116,16 @@ def test_pipeline_layer2_records_experimental_scip_languages_non_silently() -> N
                 )
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.merge_ir", return_value=scip_snapshot)
+                patch(
+                    "fastcode.app.indexing.pipeline.service.merge_ir",
+                    return_value=scip_snapshot,
+                )
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.validate_snapshot", return_value=[])
+                patch(
+                    "fastcode.app.indexing.pipeline.service.validate_snapshot",
+                    return_value=[],
+                )
             )
             stack.enter_context(
                 patch.object(
@@ -1547,9 +1567,8 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
 
         def _guard_file_ir_unit_payload(unit: IRCodeUnit) -> dict[str, Any]:
             if unit.path == "a.py":
-                raise AssertionError(
-                    "incremental file IR delta must not serialize unchanged shards"
-                )
+                msg = "incremental file IR delta must not serialize unchanged shards"
+                raise AssertionError(msg)
             return original_code_unit_payload(unit)
 
         with ExitStack() as stack:
@@ -1570,7 +1589,10 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
                 patch.object(pipeline, "_build_git_meta", return_value={})
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.VectorStore", return_value=temp_store)
+                patch(
+                    "fastcode.app.indexing.pipeline.service.VectorStore",
+                    return_value=temp_store,
+                )
             )
             stack.enter_context(
                 patch(
@@ -1591,7 +1613,10 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
                 )
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.merge_ir", return_value=ast_snapshot)
+                patch(
+                    "fastcode.app.indexing.pipeline.service.merge_ir",
+                    return_value=ast_snapshot,
+                )
             )
             stack.enter_context(
                 patch.object(
@@ -1601,7 +1626,10 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
                 )
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.validate_snapshot", return_value=[])
+                patch(
+                    "fastcode.app.indexing.pipeline.service.validate_snapshot",
+                    return_value=[],
+                )
             )
             stack.enter_context(
                 patch.object(
@@ -2181,9 +2209,8 @@ def test_incremental_implementation_local_change_reuses_graph_shards() -> None:
                 return temp_graph
             if len(graph_builder_calls) == 2:
                 return SimpleNamespace()
-            raise AssertionError(
-                "implementation-local graph delta must not rebuild full graph"
-            )
+            msg = "implementation-local graph delta must not rebuild full graph"
+            raise AssertionError(msg)
 
         pipeline.loader.scan_files = lambda: [
             {
@@ -2224,7 +2251,10 @@ def test_incremental_implementation_local_change_reuses_graph_shards() -> None:
                 patch.object(pipeline, "_build_git_meta", return_value={})
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.VectorStore", return_value=temp_store)
+                patch(
+                    "fastcode.app.indexing.pipeline.service.VectorStore",
+                    return_value=temp_store,
+                )
             )
             stack.enter_context(
                 patch(
@@ -2245,10 +2275,16 @@ def test_incremental_implementation_local_change_reuses_graph_shards() -> None:
                 )
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.merge_ir", return_value=ast_snapshot)
+                patch(
+                    "fastcode.app.indexing.pipeline.service.merge_ir",
+                    return_value=ast_snapshot,
+                )
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.validate_snapshot", return_value=[])
+                patch(
+                    "fastcode.app.indexing.pipeline.service.validate_snapshot",
+                    return_value=[],
+                )
             )
             stack.enter_context(
                 patch.object(
@@ -2586,7 +2622,8 @@ def test_incremental_no_change_reuses_artifacts_without_embedding_provider_calls
                 return temp_graph
             if len(graph_builder_calls) == 2:
                 return SimpleNamespace()
-            raise AssertionError("unchanged run must not rebuild full graph")
+            msg = "unchanged run must not rebuild full graph"
+            raise AssertionError(msg)
 
         current_files = []
         for rel_path, abs_path in sorted(paths.items()):
@@ -2651,7 +2688,10 @@ def test_incremental_no_change_reuses_artifacts_without_embedding_provider_calls
                 patch.object(pipeline, "_build_git_meta", return_value={})
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.VectorStore", return_value=temp_store)
+                patch(
+                    "fastcode.app.indexing.pipeline.service.VectorStore",
+                    return_value=temp_store,
+                )
             )
             stack.enter_context(
                 patch(
@@ -2678,7 +2718,10 @@ def test_incremental_no_change_reuses_artifacts_without_embedding_provider_calls
                 )
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.validate_snapshot", return_value=[])
+                patch(
+                    "fastcode.app.indexing.pipeline.service.validate_snapshot",
+                    return_value=[],
+                )
             )
             stack.enter_context(
                 patch.object(
@@ -2954,9 +2997,12 @@ def test_incremental_diff_reuses_inventory_fingerprints(
         pipeline = _make_minimal_pipeline(tmp)
 
         def _boom_hash(_path: str) -> str:
-            raise AssertionError("pre-fingerprinted inventory should not be rehashed")
+            msg = "pre-fingerprinted inventory should not be rehashed"
+            raise AssertionError(msg)
 
-        monkeypatch.setattr("fastcode.app.indexing.pipeline.service.compute_file_hash", _boom_hash)
+        monkeypatch.setattr(
+            "fastcode.app.indexing.pipeline.service.compute_file_hash", _boom_hash
+        )
 
         changes = pipeline._detect_file_changes(
             {
@@ -2992,9 +3038,12 @@ def test_snapshot_ref_reuses_inventory_fingerprints(
         pipeline = _make_minimal_pipeline(tmp)
 
         def _boom_hash(_path: str) -> str:
-            raise AssertionError("snapshot identity should use inventory fingerprints")
+            msg = "snapshot identity should use inventory fingerprints"
+            raise AssertionError(msg)
 
-        monkeypatch.setattr("fastcode.app.indexing.pipeline.service.compute_file_hash", _boom_hash)
+        monkeypatch.setattr(
+            "fastcode.app.indexing.pipeline.service.compute_file_hash", _boom_hash
+        )
 
         snapshot_ref = pipeline._resolve_snapshot_ref(
             "repo",
@@ -3219,9 +3268,8 @@ def test_incremental_compatibility_does_not_touch_embedding_dim_property() -> No
 
             @property
             def embedding_dim(self) -> int:
-                raise AssertionError(
-                    "compatibility planning should not probe dimension"
-                )
+                msg = "compatibility planning should not probe dimension"
+                raise AssertionError(msg)
 
             def embedding_fingerprint_record(self) -> _Fingerprint:
                 return _Fingerprint()
@@ -4785,10 +4833,16 @@ def test_stale_fencing_token_writes_no_artifact_files() -> None:
                 )
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.merge_ir", return_value=ast_snapshot)
+                patch(
+                    "fastcode.app.indexing.pipeline.service.merge_ir",
+                    return_value=ast_snapshot,
+                )
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.validate_snapshot", return_value=[])
+                patch(
+                    "fastcode.app.indexing.pipeline.service.validate_snapshot",
+                    return_value=[],
+                )
             )
             stack.enter_context(
                 patch.object(
@@ -4849,7 +4903,9 @@ def test_stale_fencing_token_writes_no_artifact_files() -> None:
             )
             stack.enter_context(
                 patch.object(
-                    pipeline.snapshot_store, "find_by_artifact_key", return_value=None
+                    pipeline.snapshot_store,
+                    "find_by_artifact_key_record",
+                    return_value=None,
                 )
             )
             stack.enter_context(
@@ -4875,7 +4931,10 @@ def test_stale_fencing_token_writes_no_artifact_files() -> None:
                 )
             )
             stack.enter_context(
-                patch("fastcode.app.indexing.pipeline.service.VectorStore", return_value=temp_store)
+                patch(
+                    "fastcode.app.indexing.pipeline.service.VectorStore",
+                    return_value=temp_store,
+                )
             )
 
             with pytest.raises(RuntimeError, match="stale_lock_detected"):

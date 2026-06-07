@@ -100,7 +100,8 @@ class RepositoryLoader:
             shutil.move(repo_path, backup_path)
             return backup_path
         except Exception as e:
-            raise RuntimeError(f"Failed to backup existing repository {repo_path}: {e}")
+            msg = f"Failed to backup existing repository {repo_path}: {e}"
+            raise RuntimeError(msg)
 
     def _prepare_repo_path(self, repo_name: str, target_dir: str | None = None) -> str:
         """Prepare destination path under repository workspace."""
@@ -251,7 +252,8 @@ class RepositoryLoader:
 
         except GitCommandError as e:
             self.logger.error(f"Failed to clone repository: {e}")
-            raise RuntimeError(f"Failed to clone repository: {e}")
+            msg = f"Failed to clone repository: {e}"
+            raise RuntimeError(msg)
 
     def load_from_path(self, path: str, target_dir: str | None = None) -> str:
         """
@@ -266,10 +268,12 @@ class RepositoryLoader:
             Path to the loaded repository root
         """
         if not os.path.exists(path):
-            raise ValueError(f"Path does not exist: {path}")
+            msg = f"Path does not exist: {path}"
+            raise ValueError(msg)
 
         if not os.path.isdir(path):
-            raise ValueError(f"Path is not a directory: {path}")
+            msg = f"Path is not a directory: {path}"
+            raise ValueError(msg)
 
         source_path = os.path.abspath(path)
         self.repo_name = os.path.basename(source_path)
@@ -429,10 +433,12 @@ class RepositoryLoader:
             Path to extracted repository
         """
         if not os.path.exists(zip_path):
-            raise ValueError(f"ZIP file does not exist: {zip_path}")
+            msg = f"ZIP file does not exist: {zip_path}"
+            raise ValueError(msg)
 
         if not zipfile.is_zipfile(zip_path):
-            raise ValueError(f"File is not a valid ZIP archive: {zip_path}")
+            msg = f"File is not a valid ZIP archive: {zip_path}"
+            raise ValueError(msg)
 
         self.logger.info(f"Extracting repository from ZIP: {zip_path}")
 
@@ -486,10 +492,12 @@ class RepositoryLoader:
 
         except zipfile.BadZipFile as e:
             self.logger.error(f"Invalid ZIP file: {e}")
-            raise RuntimeError(f"Invalid ZIP file: {e}")
+            msg = f"Invalid ZIP file: {e}"
+            raise RuntimeError(msg)
         except Exception as e:
             self.logger.error(f"Failed to extract ZIP file: {e}")
-            raise RuntimeError(f"Failed to extract ZIP file: {e}")
+            msg = f"Failed to extract ZIP file: {e}"
+            raise RuntimeError(msg)
 
     def _load_gitignore_patterns(self) -> list[str]:
         """
@@ -530,7 +538,8 @@ class RepositoryLoader:
     ) -> FileInventory:
         """Scan repository files into a typed planner inventory."""
         if not self.repo_path:
-            raise RuntimeError("No repository loaded")
+            msg = "No repository loaded"
+            raise RuntimeError(msg)
 
         if (
             include_fingerprints
@@ -610,7 +619,8 @@ class RepositoryLoader:
             Dictionary with repository information
         """
         if not self.repo_path:
-            raise RuntimeError("No repository loaded")
+            msg = "No repository loaded"
+            raise RuntimeError(msg)
 
         info: dict[str, Any] = {
             "name": self.repo_name,

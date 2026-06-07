@@ -279,7 +279,8 @@ def test_save_relational_facts_for_index_uses_delta_for_safe_incremental_plan() 
             return True
 
         def save_relational_facts(self, _snapshot: IRSnapshot) -> None:
-            raise AssertionError("safe incremental plans should use delta persistence")
+            msg = "safe incremental plans should use delta persistence"
+            raise AssertionError(msg)
 
     pipeline = IndexPipeline.__new__(IndexPipeline)
     store = _DeltaStore()
@@ -440,7 +441,8 @@ def test_save_ir_graphs_for_index_publishes_graph_delta() -> None:
             }
 
         def save_ir_graphs(self, _snapshot_id: str, _ir_graphs: Any) -> None:
-            raise AssertionError("safe incremental graph publication should use delta")
+            msg = "safe incremental graph publication should use delta"
+            raise AssertionError(msg)
 
     pipeline = IndexPipeline.__new__(IndexPipeline)
     store = _GraphDeltaStore()

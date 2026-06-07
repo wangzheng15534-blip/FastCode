@@ -34,11 +34,13 @@ class ImportExtractor:
         self.ts_parser = parser or TSParser()
 
         if not self.ts_parser.is_healthy():
-            raise RuntimeError("TSParser could not be initialized.")
+            msg = "TSParser could not be initialized."
+            raise RuntimeError(msg)
 
         lang = self.ts_parser.language
         if lang is None:
-            raise RuntimeError("TSParser.language must be set after healthy check")
+            msg = "TSParser.language must be set after healthy check"
+            raise RuntimeError(msg)
         self.query = Query(lang, self.IMPORT_QUERY_SCM)
 
     def extract_imports(self, code: str) -> list[dict[str, Any]]:

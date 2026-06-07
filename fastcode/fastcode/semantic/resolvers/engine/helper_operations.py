@@ -392,7 +392,8 @@ class SemanticHelperOperations:
         cwd: str,
     ) -> Any:
         if self._helper_runtime is None:
-            raise RuntimeError("semantic helper runtime is not configured")
+            msg = "semantic helper runtime is not configured"
+            raise RuntimeError(msg)
         return self._helper_runtime.run(
             command,
             cwd=cwd,

@@ -30,7 +30,8 @@ def load_scip_artifact(path: str) -> SCIPIndex:
     Current v1 supports JSON-shaped SCIP payloads.
     """
     if not os.path.exists(path):
-        raise FileNotFoundError(f"SCIP artifact not found: {path}")
+        msg = f"SCIP artifact not found: {path}"
+        raise FileNotFoundError(msg)
 
     ext = os.path.splitext(path)[1].lower()
     if ext in {".json", ".scip.json"}:
@@ -47,11 +48,11 @@ def load_scip_artifact(path: str) -> SCIPIndex:
             pb_index.ParseFromString(raw)  # type: ignore[attribute-access]
             return _protobuf_to_scip_index(pb_index)
         except (ImportError, OSError, ValueError, ProtobufDecodeError) as exc:
-            raise ValueError(f".scip artifact could not be parsed: {exc}") from exc
+            msg = f".scip artifact could not be parsed: {exc}"
+            raise ValueError(msg) from exc
 
-    raise ValueError(
-        "Unsupported SCIP artifact format. Provide .scip, .json, or .scip.json."
-    )
+    msg = "Unsupported SCIP artifact format. Provide .scip, .json, or .scip.json."
+    raise ValueError(msg)
 
 
 def _protobuf_to_scip_index(pb_index: Any) -> SCIPIndex:

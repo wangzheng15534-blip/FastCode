@@ -11,8 +11,7 @@ from fastcode.api.outbound import DiagnosticBundleResponse, IndexRunResponse
 
 
 def _mock_request() -> MagicMock:
-    req = MagicMock()
-    return req
+    return MagicMock()
 
 
 class _FakeFastCode:

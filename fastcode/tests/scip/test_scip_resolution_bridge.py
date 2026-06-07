@@ -214,31 +214,29 @@ class TestNamespaceStrategy:
         assert result.match_strategy == "lexical"
         assert result.confidence == pytest.approx(0.95)
 
+    def test_same_directory_namespace_strategy_match(self):
+        unit = _make_unit("u:1", "Helper", path="src/utils/helper.py")
+        bridge = SCIPResolutionBridge(_make_snapshot(unit))
+        result = bridge._resolve_namespace("Helper", "src/utils/design.md")
+        assert result is not None
+        assert result.symbol_id == "u:1"
+        assert result.match_strategy == "namespace"
+        assert result.confidence == pytest.approx(0.70)
+
     def test_different_directory_no_match(self):
         unit = _make_unit("u:1", "Helper", path="src/utils/helper.py")
-        SCIPResolutionBridge(_make_snapshot(unit))
-        # Mention from different directory -- should not match via namespace
-        # (also not lexical since display_name doesn't match mention_text exactly
-        #  -- it does here, so this would be lexical. Let's use a non-matching name.)
-        unit2 = _make_unit("u:2", "Helper", path="src/core/helper.py")
-        bridge2 = SCIPResolutionBridge(_make_snapshot(unit2))
-        # From wrong directory, "Helper" would match lexical anyway.
-        # Test with a name that doesn't exist in lexical index but does in namespace:
-        assert (
-            bridge2.resolve("Helper", context_path="src/utils/design.md") is not None
-        )  # lexical wins
+        bridge = SCIPResolutionBridge(_make_snapshot(unit))
+        assert bridge._resolve_namespace("Helper", "src/other/design.md") is None
 
     def test_no_context_path_skips_namespace(self):
         unit = _make_unit("u:1", "Helper", path="src/utils/helper.py")
         bridge = SCIPResolutionBridge(_make_snapshot(unit))
-        # Without context_path, namespace strategy is skipped.
-        # "Helper" would still match lexical though, so use a non-matching mention.
-        assert bridge.resolve("HelperNope", context_path=None) is None
+        assert bridge._resolve_namespace("Helper", context_path=None) is None
 
     def test_no_units_in_directory(self):
         unit = _make_unit("u:1", "Helper", path="src/utils/helper.py")
         bridge = SCIPResolutionBridge(_make_snapshot(unit))
-        assert bridge.resolve("HelperNope", context_path="src/other/doc.md") is None
+        assert bridge._resolve_namespace("Helper", context_path="src/other/doc.md") is None
 
 
 # ---------------------------------------------------------------------------
@@ -318,31 +316,14 @@ class TestCascadeOrdering:
         assert result.match_strategy == "lexical"
         assert result.confidence == pytest.approx(0.95)
 
-    def test_namespace_wins_when_no_lexical(self):
-        """When lexical doesn't match but namespace does, namespace wins."""
-        # The bridge's namespace strategy only matches display_name within the same dir.
-        # For lexical to miss, the mention must not be in the name index.
-        # But namespace checks display_name too. So if the mention IS the display_name,
-        # lexical would catch it first.
-        #
-        # To truly test namespace > semantic, we need a case where:
-        # - mention != any display_name (lexical misses)
-        # - mention == display_name of a unit in the same dir (namespace hits)
-        # This is impossible by definition: if mention == display_name, lexical hits first.
-        #
-        # The cascade is: lexical -> namespace -> semantic.
-        # Lexical checks display_name and qualified_name.
-        # Namespace checks display_name within same directory.
-        # So namespace can only fire when lexical has already missed, which means
-        # the mention doesn't match any display_name or qualified_name anywhere.
-        #
-        # This means namespace strategy, as currently defined (exact display_name
-        # match within same directory), can NEVER fire because lexical would have
-        # caught it already. This is a known design tension.
-        #
-        # For now, we test the ordering by verifying lexical always wins when
-        # the name exists.
-        pass
+    def test_lexical_wins_when_namespace_also_matches(self):
+        """Public cascade prefers lexical when namespace could also match."""
+        unit = _make_unit("u:1", "Helper", path="src/utils/helper.py")
+        bridge = SCIPResolutionBridge(_make_snapshot(unit))
+        result = bridge.resolve("Helper", context_path="src/utils/design.md")
+        assert result is not None
+        assert result.symbol_id == "u:1"
+        assert result.match_strategy == "lexical"
 
     def test_semantic_wins_when_lexical_and_namespace_miss(self):
         """When lexical and namespace both miss, semantic can still match."""
@@ -364,27 +345,19 @@ class TestCascadeOrdering:
 
     def test_semantic_fires_when_no_lexical_match(self):
         """Semantic matches when mention text differs from display_name but vectors are similar."""
-        # Create a scenario where the mention doesn't match any display_name exactly
-        # but the embedder produces similar vectors.
         unit = _make_unit("u:1", "DatabaseConnection", path="src/db.py")
-        embedder = _FakeEmbedder(dim=8)
+        embedder = _ControlledEmbedder(
+            {"DatabaseConnection": [1.0, 0.0], "DBConn": [0.99, 0.14]}
+        )
         bridge = SCIPResolutionBridge(
             _make_snapshot(unit),
             embedder=embedder,
             semantic_threshold=0.5,
         )
-        # Use a mention that won't match lexical but will match semantically.
-        # With FakeEmbedder, different texts produce different vectors.
-        # We need a mention whose vector has cosine sim >= 0.5 with "DatabaseConnection".
-        # Since FakeEmbedder is deterministic based on characters, let's just verify
-        # the cascade reaches semantic for a non-matching name.
         result = bridge.resolve("DBConn")
-        # DBConn is not "DatabaseConnection", so lexical misses.
-        # Namespace misses (no context_path).
-        # Semantic may or may not match depending on vector similarity.
-        # We just verify no crash and either None or a semantic result.
-        if result is not None:
-            assert result.match_strategy == "semantic"
+        assert result is not None
+        assert result.symbol_id == "u:1"
+        assert result.match_strategy == "semantic"
 
 
 # ---------------------------------------------------------------------------
@@ -422,7 +395,8 @@ class TestEdgeCases:
 
         class _BrokenEmbedder:
             def embed_batch(self, texts: Any) -> Never:
-                raise RuntimeError("embedding service down")
+                msg = "embedding service down"
+                raise RuntimeError(msg)
 
         unit = _make_unit("u:1", "Foo")
         bridge = SCIPResolutionBridge(_make_snapshot(unit), embedder=_BrokenEmbedder())

@@ -46,9 +46,12 @@ def test_as_float32_matrix_sequence_preallocates_without_vstack(
     monkeypatch: Any,
 ) -> None:
     def _boom_vstack(_values: object) -> np.ndarray:
-        raise AssertionError("sequence conversion should preallocate rows")
+        msg = "sequence conversion should preallocate rows"
+        raise AssertionError(msg)
 
-    monkeypatch.setattr("fastcode.app.store.vectors.vector_math.np.vstack", _boom_vstack)
+    monkeypatch.setattr(
+        "fastcode.app.store.vectors.vector_math.np.vstack", _boom_vstack
+    )
 
     matrix = as_float32_matrix(
         [

@@ -14,23 +14,26 @@ from fastcode.common.feature_lifecycle import (
     _Registry,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def registry() -> _Registry:
-    r = _Registry()
-    return r
+    return _Registry()
 
 
 def _stable(name: str = "cap_a", **kw: object) -> CapabilitySpec:
-    return CapabilitySpec(stage=CapabilityStage.STABLE, name=name, description="test", **kw)
+    return CapabilitySpec(
+        stage=CapabilityStage.STABLE, name=name, description="test", **kw
+    )
 
 
 def _experimental(name: str = "cap_exp", **kw: object) -> CapabilitySpec:
-    return CapabilitySpec(stage=CapabilityStage.EXPERIMENTAL, name=name, description="test", **kw)
+    return CapabilitySpec(
+        stage=CapabilityStage.EXPERIMENTAL, name=name, description="test", **kw
+    )
 
 
 def _deprecated(name: str = "cap_dep", **kw: object) -> CapabilitySpec:
@@ -59,6 +62,7 @@ def _removed(name: str = "cap_old", **kw: object) -> CapabilitySpec:
 # Registration
 # ---------------------------------------------------------------------------
 
+
 class TestRegistration:
     def test_register_and_get(self, registry: _Registry) -> None:
         spec = _stable()
@@ -78,6 +82,7 @@ class TestRegistration:
 # ---------------------------------------------------------------------------
 # check() behaviour per stage
 # ---------------------------------------------------------------------------
+
 
 class TestCheckStable:
     def test_stable_is_silent(self, registry: _Registry) -> None:
@@ -140,6 +145,7 @@ class TestCheckRemoved:
 # Queries
 # ---------------------------------------------------------------------------
 
+
 class TestQueries:
     def test_all_by_stage(self, registry: _Registry) -> None:
         registry.register(_stable(name="a"))
@@ -169,6 +175,7 @@ class TestQueries:
 # ---------------------------------------------------------------------------
 # CapabilitySpec frozen
 # ---------------------------------------------------------------------------
+
 
 class TestSpecFrozen:
     def test_frozen(self) -> None:

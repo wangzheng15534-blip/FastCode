@@ -14,7 +14,8 @@ class NonEmptyString:
     def __post_init__(self) -> None:
         normalized = self.value.strip()
         if not normalized:
-            raise ValueError("string must be non-empty")
+            msg = "string must be non-empty"
+            raise ValueError(msg)
         object.__setattr__(self, "value", normalized)
 
     @classmethod

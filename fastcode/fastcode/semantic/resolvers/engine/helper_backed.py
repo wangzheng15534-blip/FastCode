@@ -35,7 +35,10 @@ from fastcode.semantic.resolvers.engine.helper_operations import (
     SemanticHelperOperations,
     SemanticHelperSpec,
 )
-from fastcode.semantic.resolvers.engine.resolver_support import _hash_id, _normalize_path
+from fastcode.semantic.resolvers.engine.resolver_support import (
+    _hash_id,
+    _normalize_path,
+)
 
 logger = logging.getLogger(__name__)
 

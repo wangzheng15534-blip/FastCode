@@ -110,7 +110,7 @@ def require_postgres_e2e() -> str:
             cur.execute("SELECT 1")
             cur.fetchone()
     except Exception as exc:
-        pytest.fail(f"E2E PostgreSQL unavailable at {dsn}: {type(exc).__name__}: {exc}")
+        pytest.skip(f"E2E PostgreSQL unavailable at {dsn}: {type(exc).__name__}: {exc}")
     return dsn
 
 

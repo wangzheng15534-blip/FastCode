@@ -30,10 +30,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fastcode.app.indexing.graph_mapper import document_overlay_node_records
 from fastcode.app.indexing.doc_ingester import KeyDocIngester
 from fastcode.app.indexing.embedder import CodeEmbedder
 from fastcode.app.indexing.extractors.parser import CodeParser
+from fastcode.app.indexing.graph_mapper import document_overlay_node_records
 from fastcode.app.indexing.loader import RepositoryLoader
 from fastcode.app.indexing.pipeline.indexer import CodeIndexer
 from fastcode.app.indexing.pipeline.service import IndexPipeline

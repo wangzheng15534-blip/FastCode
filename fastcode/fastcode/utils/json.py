@@ -330,7 +330,8 @@ def robust_json_parse(json_str: str) -> Any:
         pass
 
     # All strategies failed
-    raise json.JSONDecodeError("All parsing strategies failed", json_str, 0)
+    msg = "All parsing strategies failed"
+    raise json.JSONDecodeError(msg, json_str, 0)
 
 
 def load_json_object(path: str | Path) -> dict[str, Any] | None:

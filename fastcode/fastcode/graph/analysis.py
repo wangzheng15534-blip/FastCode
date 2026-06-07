@@ -290,7 +290,7 @@ def _text_or_none(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value)
-    return text if text else None
+    return text or None
 
 
 def _int_or_none(value: Any) -> int | None:

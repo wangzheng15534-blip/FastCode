@@ -39,7 +39,8 @@ class _Registry:
 
     def register(self, spec: CapabilitySpec) -> None:
         if spec.name in self._specs:
-            raise ValueError(f"Capability already registered: {spec.name}")
+            msg = f"Capability already registered: {spec.name}"
+            raise ValueError(msg)
         self._specs[spec.name] = spec
 
     def get(self, name: str) -> CapabilitySpec:
@@ -69,7 +70,10 @@ class _Registry:
             if spec.removed_in:
                 msg += f". Removal planned for {spec.removed_in}"
             warnings.warn(msg, DeprecationWarning, stacklevel=3)
-        if spec.stage == CapabilityStage.EXPERIMENTAL and name not in self._warned_experimental:
+        if (
+            spec.stage == CapabilityStage.EXPERIMENTAL
+            and name not in self._warned_experimental
+        ):
             self._warned_experimental.add(name)
             msg = f"Capability {spec.name!r} is experimental and may change without notice"
             warnings.warn(msg, UserWarning, stacklevel=3)

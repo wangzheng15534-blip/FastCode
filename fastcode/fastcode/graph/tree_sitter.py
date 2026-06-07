@@ -107,7 +107,8 @@ class TSParser:
 
             lang = Language(tree_sitter_go.language())
         else:
-            raise ValueError(f"Unsupported language: {language_name}")
+            msg = f"Unsupported language: {language_name}"
+            raise ValueError(msg)
 
         # Cache the language
         self.languages_cache[language_name] = lang
@@ -124,7 +125,8 @@ class TSParser:
             self.current_language_name = language_name.lower()
             self.language = self._load_language(self.current_language_name)
             if self.parser is None:
-                raise RuntimeError("Parser not initialized")
+                msg = "Parser not initialized"
+                raise RuntimeError(msg)
             self.parser.set_language(self.language)  # type: ignore[attr-defined]
             self.logger.debug(f"Switched parser to {self.current_language_name}")
         except Exception as e:
@@ -156,7 +158,8 @@ class TSParser:
 
             # Parse the code
             if self.parser is None:
-                raise RuntimeError("Parser not initialized")
+                msg = "Parser not initialized"
+                raise RuntimeError(msg)
             return self.parser.parse(code_bytes)
 
         except Exception as e:

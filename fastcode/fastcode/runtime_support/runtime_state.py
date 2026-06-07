@@ -132,9 +132,8 @@ class _ReadWriteStateLock:
         ident = threading.get_ident()
         with self._condition:
             if self._writer != ident:
-                raise RuntimeError(
-                    "cannot release state write lock not owned by thread"
-                )
+                msg = "cannot release state write lock not owned by thread"
+                raise RuntimeError(msg)
             self._write_depth -= 1
             _STATE_LOCK_LOGGER.debug(
                 "Released service state write lock",

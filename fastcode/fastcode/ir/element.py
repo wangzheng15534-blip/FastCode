@@ -75,7 +75,8 @@ def serialize_code_element(element: CodeElement) -> CodeElementMeta:
 def deserialize_code_element(payload: Any) -> CodeElement:
     """Reconstruct a CodeElement from a stable serialized payload."""
     if not isinstance(payload, Mapping):
-        raise TypeError("Code element payload must be a mapping")
+        msg = "Code element payload must be a mapping"
+        raise TypeError(msg)
     mapping = cast(Mapping[str, Any], payload)
     metadata = mapping.get("metadata")
     return CodeElement(

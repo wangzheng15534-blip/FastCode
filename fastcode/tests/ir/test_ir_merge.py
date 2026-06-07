@@ -139,7 +139,8 @@ def test_merge_clone_avoids_dict_roundtrip(monkeypatch: pytest.MonkeyPatch) -> N
     )
 
     def _boom(*_args: object, **_kwargs: object) -> dict[str, object]:
-        raise AssertionError("merge clone must not call to_dict()")
+        msg = "merge clone must not call to_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(IRCodeUnit, "to_dict", _boom)
     monkeypatch.setattr(IRUnitSupport, "to_dict", _boom)

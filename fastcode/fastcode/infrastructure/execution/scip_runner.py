@@ -72,15 +72,17 @@ def run_scip_indexer(
     """Run the SCIP indexer for the given language."""
     cmd = get_indexer_command(language, output_path)
     if cmd is None:
-        raise RuntimeError(f"No SCIP indexer available for language: {language}")
+        msg = f"No SCIP indexer available for language: {language}"
+        raise RuntimeError(msg)
 
     binary_name = cmd[0]
     binary_path = shutil.which(binary_name)
     if not binary_path:
-        raise RuntimeError(
+        msg = (
             f"SCIP indexer '{binary_name}' not found in PATH. "
             f"Install it to enable {language} support via SCIP."
         )
+        raise RuntimeError(msg)
 
     cmd[0] = binary_path
     logger.info("Running SCIP indexer: %s", " ".join(cmd))
@@ -92,10 +94,11 @@ def run_scip_indexer(
         text=True,
     )
     if proc.returncode != 0:
-        raise RuntimeError(
+        msg = (
             f"{binary_name} failed ({proc.returncode}): "
             f"{proc.stderr.strip() or proc.stdout.strip()}"
         )
+        raise RuntimeError(msg)
     return output_path
 
 

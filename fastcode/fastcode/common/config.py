@@ -84,12 +84,14 @@ def _default_projection_edge_weights() -> ProjectionEdgeWeights:
 
 def _require_minimum(field_name: str, value: int | float, minimum: int | float) -> None:
     if value < minimum:
-        raise ValueError(f"{field_name} must be >= {minimum}")
+        msg = f"{field_name} must be >= {minimum}"
+        raise ValueError(msg)
 
 
 def _require_maximum(field_name: str, value: int | float, maximum: int | float) -> None:
     if value > maximum:
-        raise ValueError(f"{field_name} must be <= {maximum}")
+        msg = f"{field_name} must be <= {maximum}"
+        raise ValueError(msg)
 
 
 def _string_tuple(values: tuple[str, ...]) -> tuple[str, ...]:
@@ -154,7 +156,8 @@ class StorageConfig:
         _require_minimum("storage.pool_min", self.pool_min, 1)
         _require_minimum("storage.pool_max", self.pool_max, 1)
         if self.pool_max < self.pool_min:
-            raise ValueError("storage.pool_max must be >= storage.pool_min")
+            msg = "storage.pool_max must be >= storage.pool_min"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -223,7 +226,8 @@ class IndexingConfig:
     def __post_init__(self) -> None:
         levels = tuple(_indexing_level(level) for level in self.levels)
         if not levels:
-            raise ValueError("indexing.levels must not be empty")
+            msg = "indexing.levels must not be empty"
+            raise ValueError(msg)
         object.__setattr__(self, "levels", levels)
 
 
@@ -382,7 +386,8 @@ class DocsIntegrationConfig:
         _require_minimum("docs_integration.chunk_overlap", self.chunk_overlap, 0)
         _require_minimum("docs_integration.max_chunk_chars", self.max_chunk_chars, 1)
         if self.chunk_overlap >= self.chunk_size:
-            raise ValueError("docs_integration.chunk_overlap must be < chunk_size")
+            msg = "docs_integration.chunk_overlap must be < chunk_size"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -499,11 +504,13 @@ class ProjectionConfig:
     def __post_init__(self) -> None:
         resolutions = _float_tuple(self.leiden_resolutions)
         if not resolutions:
-            raise ValueError("projection.leiden_resolutions must not be empty")
+            msg = "projection.leiden_resolutions must not be empty"
+            raise ValueError(msg)
         for resolution in resolutions:
             _require_minimum("projection.leiden_resolutions", resolution, 0)
             if resolution == 0:
-                raise ValueError("projection.leiden_resolutions must be > 0")
+                msg = "projection.leiden_resolutions must be > 0"
+                raise ValueError(msg)
         object.__setattr__(self, "leiden_resolutions", resolutions)
         edge_weights = _float_items(self.edge_weights)
         for _name, weight in edge_weights:

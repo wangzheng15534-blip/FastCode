@@ -75,7 +75,8 @@ def edit_class_fixture(name: str) -> EditClassFixture:
     elif name == "new_file":
         after["pkg/new_feature.py"] = "def enabled() -> bool:\n    return True\n"
     else:
-        raise ValueError(f"unknown edit fixture: {name}")
+        msg = f"unknown edit fixture: {name}"
+        raise ValueError(msg)
     return EditClassFixture(name=name, before=before, after=after)
 
 
@@ -112,7 +113,8 @@ def helper_semantic_fixture(name: str) -> EditClassFixture:
             .replace("from pkg.base import Base", "from pkg.base import Base, Mixin")
         )
     else:
-        raise ValueError(f"unknown helper semantic fixture: {name}")
+        msg = f"unknown helper semantic fixture: {name}"
+        raise ValueError(msg)
     return EditClassFixture(name=name, before=before, after=after)
 
 

@@ -137,7 +137,8 @@ def test_build_ir_from_ast_uses_supplied_file_fingerprint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _boom_hash(_path: str) -> str:
-        raise AssertionError("file should not be rehashed when fingerprint is supplied")
+        msg = "file should not be rehashed when fingerprint is supplied"
+        raise AssertionError(msg)
 
     monkeypatch.setattr("fastcode.scip.ast_adapter.compute_file_hash", _boom_hash)
     snapshot = build_ir_from_ast(

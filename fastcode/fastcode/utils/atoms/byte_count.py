@@ -13,7 +13,8 @@ class ByteCount:
 
     def __post_init__(self) -> None:
         if self.value < 0:
-            raise ValueError("byte count must be >= 0")
+            msg = "byte count must be >= 0"
+            raise ValueError(msg)
 
     @classmethod
     def from_bytes(cls, value: int) -> ByteCount:

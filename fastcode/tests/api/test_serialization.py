@@ -19,7 +19,8 @@ class _NoDictPathSource:
         self.score = 0.75
 
     def to_dict(self) -> dict[str, object]:
-        raise AssertionError("serializer must not call to_dict()")
+        msg = "serializer must not call to_dict()"
+        raise AssertionError(msg)
 
 
 class _NoDictTurn:
@@ -39,7 +40,8 @@ class _NoDictTurn:
         }
 
     def to_dict(self) -> dict[str, object]:
-        raise AssertionError("serializer must not call to_dict()")
+        msg = "serializer must not call to_dict()"
+        raise AssertionError(msg)
 
 
 def test_serialize_query_source_supports_path_only_and_single_line_lines() -> None:

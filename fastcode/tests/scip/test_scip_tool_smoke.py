@@ -40,7 +40,7 @@ def test_stable_scip_tool_binary_reports_version(
     if binary_path is None:
         pytest.skip(f"{binary_name} not installed for {language} SCIP smoke")
 
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [binary_path, "--version"],
         check=False,
         text=True,

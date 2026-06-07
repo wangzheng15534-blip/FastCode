@@ -136,7 +136,9 @@ def test_run_scip_indexer_success(tmp_path: pathlib.Path):
     from fastcode.infrastructure.execution.scip_runner import run_scip_indexer
 
     output = tmp_path / "index.scip"
-    with patch("fastcode.infrastructure.execution.scip_runner.subprocess.run") as mock_run:
+    with patch(
+        "fastcode.infrastructure.execution.scip_runner.subprocess.run"
+    ) as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         with patch(
             "fastcode.infrastructure.execution.scip_runner.shutil.which",
@@ -151,7 +153,10 @@ def test_run_scip_indexer_not_installed(tmp_path: pathlib.Path):
     from fastcode.infrastructure.execution.scip_runner import run_scip_indexer
 
     with (
-        patch("fastcode.infrastructure.execution.scip_runner.shutil.which", return_value=None),
+        patch(
+            "fastcode.infrastructure.execution.scip_runner.shutil.which",
+            return_value=None,
+        ),
         pytest.raises(RuntimeError, match="not found"),
     ):
         run_scip_indexer("python", str(tmp_path), str(tmp_path / "out.scip"))
@@ -161,7 +166,9 @@ def test_run_scip_indexer_failure(tmp_path: pathlib.Path):
     """run_scip_indexer raises when indexer exits non-zero."""
     from fastcode.infrastructure.execution.scip_runner import run_scip_indexer
 
-    with patch("fastcode.infrastructure.execution.scip_runner.subprocess.run") as mock_run:
+    with patch(
+        "fastcode.infrastructure.execution.scip_runner.subprocess.run"
+    ) as mock_run:
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error msg")
         with (
             patch(
@@ -212,7 +219,8 @@ def test_detect_scip_languages_from_file_infos_uses_inventory_without_walk(
     """Inventory-backed language detection must not rescan the repo."""
 
     def _boom_walk(_repo_path: str) -> Iterator[tuple[str, list[str], list[str]]]:
-        raise AssertionError("precomputed file inventory should avoid os.walk")
+        msg = "precomputed file inventory should avoid os.walk"
+        raise AssertionError(msg)
         yield  # pragma: no cover
 
     monkeypatch.setattr("fastcode.scip.indexers.os.walk", _boom_walk)
@@ -238,7 +246,8 @@ def test_detect_scip_languages_in_paths_does_not_fallback_to_repo_walk(
     (tmp_path / "README.md").write_text("# docs\n")
 
     def _boom_walk(_repo_path: str) -> Iterator[tuple[str, list[str], list[str]]]:
-        raise AssertionError("scoped SCIP detection must not walk the full repo")
+        msg = "scoped SCIP detection must not walk the full repo"
+        raise AssertionError(msg)
         yield  # pragma: no cover
 
     monkeypatch.setattr("fastcode.scip.indexers.os.walk", _boom_walk)

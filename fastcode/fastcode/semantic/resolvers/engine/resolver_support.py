@@ -16,8 +16,7 @@ def _hash_id(prefix: str, payload: str) -> str:
 
 def _normalize_path(path: str) -> str:
     normalized = path.replace("\\", "/")
-    if normalized.startswith("./"):
-        normalized = normalized[2:]
+    normalized = normalized.removeprefix("./")
     return posixpath.normpath(normalized)
 
 

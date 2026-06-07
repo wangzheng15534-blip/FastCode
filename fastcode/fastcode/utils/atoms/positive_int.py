@@ -13,7 +13,8 @@ class PositiveInt:
 
     def __post_init__(self) -> None:
         if self.value <= 0:
-            raise ValueError("value must be > 0")
+            msg = "value must be > 0"
+            raise ValueError(msg)
 
     @classmethod
     def parse(cls, value: int) -> PositiveInt:

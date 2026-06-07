@@ -66,8 +66,7 @@ def get_file_extension(file_path: str) -> str:
 
 def get_repo_name_from_url(url: str) -> str:
     """Extract a repository name from a URL or URL-like path."""
-    if url.endswith(".git"):
-        url = url[:-4]
+    url = url.removesuffix(".git")
     parts = url.rstrip("/").split("/")
     return parts[-1] if parts else "unknown_repo"
 

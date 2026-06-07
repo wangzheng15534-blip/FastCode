@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from fastcode.semantic.resolution import ResolverSpec, SemanticCapability
 from fastcode.semantic.resolvers.engine.graph_backed import GraphBackedSemanticResolver
-from fastcode.semantic.resolvers.engine.helper_backed import HelperBackedSemanticResolver
+from fastcode.semantic.resolvers.engine.helper_backed import (
+    HelperBackedSemanticResolver,
+)
 
 _FORTRAN_SPEC = ResolverSpec(
     language="fortran",

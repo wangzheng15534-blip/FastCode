@@ -9,8 +9,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from fastcode.ir.graph import IRGraphBuilder, IRGraphView
-from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot
 from fastcode.graph.analysis import (
     GraphToolContext,
     compute_directed_path,
@@ -26,6 +24,8 @@ from fastcode.graph.analysis import (
     format_path_node,
     resolve_unit_id,
 )
+from fastcode.ir.graph import IRGraphBuilder, IRGraphView
+from fastcode.ir.types import IRCodeUnit, IRRelation, IRSnapshot
 
 # ---------------------------------------------------------------------------
 # Factories
@@ -144,7 +144,8 @@ def _compact_fc(
     payload = _symbol_index_payload(units, snapshot.snapshot_id)
 
     def _load_snapshot(_snapshot_id: str) -> IRSnapshot:
-        raise AssertionError("compact graph MCP path should not full-load IRSnapshot")
+        msg = "compact graph MCP path should not full-load IRSnapshot"
+        raise AssertionError(msg)
 
     return SimpleNamespace(
         snapshot_id=snapshot.snapshot_id,

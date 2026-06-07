@@ -169,9 +169,8 @@ class PathUtils:
 
         # Security: ensure repo_root exists and is a directory
         if not os.path.isdir(self.repo_root):
-            raise ValueError(
-                f"Repository root does not exist or is not a directory: {self.repo_root}"
-            )
+            msg = f"Repository root does not exist or is not a directory: {self.repo_root}"
+            raise ValueError(msg)
 
     def resolve_path(self, path: str) -> str | None:
         """

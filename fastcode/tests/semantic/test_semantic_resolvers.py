@@ -23,7 +23,9 @@ from fastcode.ir.types import (
 )
 from fastcode.main.fastcode import FastCode
 from fastcode.semantic.resolution import ResolutionPatch
-from fastcode.semantic.resolvers.engine.helper_backed import HelperBackedSemanticResolver
+from fastcode.semantic.resolvers.engine.helper_backed import (
+    HelperBackedSemanticResolver,
+)
 from fastcode.semantic.resolvers.engine.helper_operations import (
     SemanticHelperInvocation,
 )
@@ -82,7 +84,8 @@ class _SemanticHelperRuntime:
 
     def run(self, command: list[str], *, cwd: str, timeout: int) -> Any:
         if self.run_mock is None:
-            raise AssertionError("unexpected helper runtime execution")
+            msg = "unexpected helper runtime execution"
+            raise AssertionError(msg)
         return self.run_mock(command, cwd=cwd, timeout=timeout)
 
 
@@ -178,7 +181,7 @@ def _wire_pipeline(fc: Any) -> None:
         logger=SimpleNamespace(
             info=lambda *a, **kw: None, warning=lambda *a, **kw: None
         ),
-        loader=SimpleNamespace(repo_path=None, scan_files=lambda: []),
+        loader=SimpleNamespace(repo_path=None, scan_files=list),
         snapshot_store=SimpleNamespace(),
         manifest_store=SimpleNamespace(),
         index_run_store=SimpleNamespace(),
@@ -264,10 +267,12 @@ def test_apply_resolution_patch_avoids_generic_ir_dict_round_trips(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _boom_to_dict(self: object) -> dict[str, Any]:
-        raise AssertionError(f"{type(self).__name__}.to_dict should stay cold")
+        msg = f"{type(self).__name__}.to_dict should stay cold"
+        raise AssertionError(msg)
 
     def _boom_from_dict(cls: type[object], _payload: dict[str, Any]) -> object:
-        raise AssertionError(f"{cls.__name__}.from_dict should stay cold")
+        msg = f"{cls.__name__}.from_dict should stay cold"
+        raise AssertionError(msg)
 
     for cls in (IRCodeUnit, IRUnitSupport, IRRelation, IRUnitEmbedding):
         monkeypatch.setattr(cls, "to_dict", _boom_to_dict)
@@ -728,7 +733,8 @@ def test_apply_resolution_patch_records_resolver_run_metadata():
 def test_apply_resolution_patch_uses_explicit_patch_metadata_serializers():
     class NestedMapping(dict[str, object]):
         def items(self) -> NoReturn:
-            raise AssertionError("recursive metadata normalization was used")
+            msg = "recursive metadata normalization was used"
+            raise AssertionError(msg)
 
         def __repr__(self) -> str:
             return "<nested-payload>"
@@ -1385,7 +1391,8 @@ def test_resolver_failure_gracefully_degrades():
             target_paths: Any,
             graph_context: Any,
         ) -> NoReturn:
-            raise RuntimeError("resolver crashed")
+            msg = "resolver crashed"
+            raise RuntimeError(msg)
 
     fc.semantic_resolver_registry = SemanticResolverRegistry([BrokenResolver()])
     fc.pipeline.semantic_resolver_registry = fc.semantic_resolver_registry
@@ -2829,7 +2836,9 @@ def test_is_scip_available_checks_binary_presence():
     """is_scip_available must check PATH for the indexer binary."""
     from fastcode.infrastructure.execution.scip_runner import is_scip_available
 
-    with patch("fastcode.infrastructure.execution.scip_runner.shutil.which", return_value=None):
+    with patch(
+        "fastcode.infrastructure.execution.scip_runner.shutil.which", return_value=None
+    ):
         assert is_scip_available("python") is False
 
     with patch(
@@ -2934,7 +2943,11 @@ _HELPER_RESOLVER_SPECS: list[tuple[str, str, str]] = [
         "fastcode.semantic.resolvers.languages.js_ts",
         "ts_semantic_helper.js",
     ),
-    ("GoCompilerResolver", "fastcode.semantic.resolvers.languages.go", "go_semantic_helper.go"),
+    (
+        "GoCompilerResolver",
+        "fastcode.semantic.resolvers.languages.go",
+        "go_semantic_helper.go",
+    ),
     (
         "JavaCompilerResolver",
         "fastcode.semantic.resolvers.languages.java",

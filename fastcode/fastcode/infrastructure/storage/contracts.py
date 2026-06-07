@@ -7,7 +7,6 @@ capabilities, not semantic business traits.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from contextlib import AbstractContextManager
 from typing import Any, Protocol
 

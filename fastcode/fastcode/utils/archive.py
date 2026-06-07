@@ -43,7 +43,8 @@ class ZipExtractionLimits:
             ByteCount.coerce(self.max_member_uncompressed_bytes),
         )
         if self.max_compression_ratio <= 0:
-            raise ValueError("max_compression_ratio must be > 0")
+            msg = "max_compression_ratio must be > 0"
+            raise ValueError(msg)
 
 
 _SAFE_REPO_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -80,25 +81,31 @@ def _is_special_file(info: zipfile.ZipInfo) -> bool:
 
 def _validate_member_path(member_name: str, destination: Path) -> Path:
     if not member_name or "\x00" in member_name:
-        raise UnsafeArchiveError("ZIP member has an empty or invalid name")
+        msg = "ZIP member has an empty or invalid name"
+        raise UnsafeArchiveError(msg)
     if member_name.startswith(("/", "\\")):
-        raise UnsafeArchiveError(f"ZIP member uses an absolute path: {member_name}")
+        msg = f"ZIP member uses an absolute path: {member_name}"
+        raise UnsafeArchiveError(msg)
 
     posix_path = PurePosixPath(member_name)
     windows_path = PureWindowsPath(member_name)
     if posix_path.is_absolute() or windows_path.is_absolute() or windows_path.drive:
-        raise UnsafeArchiveError(f"ZIP member uses an absolute path: {member_name}")
+        msg = f"ZIP member uses an absolute path: {member_name}"
+        raise UnsafeArchiveError(msg)
     if any(part in {"", ".", ".."} for part in posix_path.parts):
-        raise UnsafeArchiveError(f"ZIP member uses an unsafe path: {member_name}")
+        msg = f"ZIP member uses an unsafe path: {member_name}"
+        raise UnsafeArchiveError(msg)
     if any(part in {"", ".", ".."} for part in windows_path.parts):
-        raise UnsafeArchiveError(f"ZIP member uses an unsafe path: {member_name}")
+        msg = f"ZIP member uses an unsafe path: {member_name}"
+        raise UnsafeArchiveError(msg)
 
     target = (destination / Path(*posix_path.parts)).resolve()
     destination_resolved = destination.resolve()
     if os.path.commonpath([str(destination_resolved), str(target)]) != str(
         destination_resolved
     ):
-        raise UnsafeArchiveError(f"ZIP member escapes extraction root: {member_name}")
+        msg = f"ZIP member escapes extraction root: {member_name}"
+        raise UnsafeArchiveError(msg)
     return target
 
 
@@ -118,32 +125,29 @@ def validate_zip_members(
         limits.max_member_uncompressed_bytes
     ).as_bytes()
     if len(infos) > max_members:
-        raise UnsafeArchiveError(
-            f"ZIP archive has too many members: {len(infos)} > {max_members}"
-        )
+        msg = f"ZIP archive has too many members: {len(infos)} > {max_members}"
+        raise UnsafeArchiveError(msg)
 
     total_size = 0
     validated: list[tuple[zipfile.ZipInfo, Path]] = []
     for info in infos:
         if _is_special_file(info):
-            raise UnsafeArchiveError(
-                f"ZIP member is a symlink or special file: {info.filename}"
-            )
+            msg = f"ZIP member is a symlink or special file: {info.filename}"
+            raise UnsafeArchiveError(msg)
         target = _validate_member_path(info.filename.rstrip("/"), destination)
         if not info.is_dir():
             total_size += int(info.file_size)
             if info.file_size > max_member_uncompressed_bytes:
-                raise UnsafeArchiveError(
-                    f"ZIP member is too large after extraction: {info.filename}"
-                )
+                msg = f"ZIP member is too large after extraction: {info.filename}"
+                raise UnsafeArchiveError(msg)
             if total_size > max_total_uncompressed_bytes:
-                raise UnsafeArchiveError("ZIP archive expands beyond configured limit")
+                msg = "ZIP archive expands beyond configured limit"
+                raise UnsafeArchiveError(msg)
             if info.compress_size > 0:
                 ratio = float(info.file_size) / float(info.compress_size)
                 if ratio > limits.max_compression_ratio:
-                    raise UnsafeArchiveError(
-                        f"ZIP member compression ratio is suspicious: {info.filename}"
-                    )
+                    msg = f"ZIP member compression ratio is suspicious: {info.filename}"
+                    raise UnsafeArchiveError(msg)
         validated.append((info, target))
     return validated
 

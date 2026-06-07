@@ -15,11 +15,17 @@ class RetryPolicy:
 
     def __post_init__(self) -> None:
         if self.minimum_seconds < 1:
-            raise ValueError("minimum_seconds must be >= 1")
+            msg = "minimum_seconds must be >= 1"
+            raise ValueError(msg)
         if self.base < 2:
-            raise ValueError("base must be >= 2")
-        if self.maximum_seconds is not None and self.maximum_seconds < self.minimum_seconds:
-            raise ValueError("maximum_seconds must be >= minimum_seconds")
+            msg = "base must be >= 2"
+            raise ValueError(msg)
+        if (
+            self.maximum_seconds is not None
+            and self.maximum_seconds < self.minimum_seconds
+        ):
+            msg = "maximum_seconds must be >= minimum_seconds"
+            raise ValueError(msg)
 
 
 DEFAULT_RETRY_POLICY = RetryPolicy()

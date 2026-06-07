@@ -56,11 +56,11 @@ class DBRuntime(StoreDatabaseRuntime):
 
         if self.backend == "postgres":
             if not self.postgres_dsn:
-                raise RuntimeError(
-                    "postgres backend selected but no postgres_dsn configured"
-                )
+                msg = "postgres backend selected but no postgres_dsn configured"
+                raise RuntimeError(msg)
             if psycopg is None:
-                raise RuntimeError("postgres backend requires psycopg")
+                msg = "postgres backend requires psycopg"
+                raise RuntimeError(msg)
             if ConnectionPool is not None:
                 self.pool = ConnectionPool(
                     conninfo=self.postgres_dsn,
@@ -74,7 +74,8 @@ class DBRuntime(StoreDatabaseRuntime):
                     "psycopg_pool not available — PostgreSQL connections will not be pooled"
                 )
         elif not self.sqlite_path:
-            raise RuntimeError("sqlite backend requires sqlite_path")
+            msg = "sqlite backend requires sqlite_path"
+            raise RuntimeError(msg)
 
     def close(self) -> None:
         """Close the connection pool if it exists."""
@@ -122,7 +123,8 @@ class DBRuntime(StoreDatabaseRuntime):
                     yield conn
                 return
             if psycopg is None or dict_row is None:
-                raise RuntimeError("postgres backend requires psycopg")
+                msg = "postgres backend requires psycopg"
+                raise RuntimeError(msg)
             conn = psycopg.connect(
                 self.postgres_dsn,  # type: ignore[arg-type]
                 autocommit=False,
@@ -136,7 +138,8 @@ class DBRuntime(StoreDatabaseRuntime):
             return
 
         if self.sqlite_path is None:
-            raise RuntimeError("sqlite backend requires sqlite_path")
+            msg = "sqlite backend requires sqlite_path"
+            raise RuntimeError(msg)
         conn = sqlite3.connect(self.sqlite_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")

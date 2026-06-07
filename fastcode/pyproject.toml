@@ -216,9 +216,13 @@ packages = ["fastcode"]                                                   # pack
     "S108",    # design: hardcoded /tmp/ paths in test fixtures — no production exposure
     "S310",    # design: urllib to localhost in e2e tests only
     "S324",    # design: MD5/SHA1 for test artifact hashing — not cryptographic
+    "S603",    # design: subprocess calls in test fixtures — controlled test input
     "S607",    # design: partial paths for system binaries in e2e test subprocess calls
     "S608",    # design: SQL in test assertions uses string literals, not user input
     "B017",    # design: pytest.raises(Exception) is intentional for error-path tests
+    "T20",     # design: print() allowed for debug output during test runs
+    "A001",    # design: test imports may shadow builtins
+    "A002",    # design: test params shadow builtins (id=1, list=[...], input=...)
 ]
 "fastcode/app/query/selection/retriever.py" = [
     "ANN201",  # complexity: retrieve() and index_for_bm25 need return types (track: annotate all public methods)
@@ -230,6 +234,7 @@ packages = ["fastcode"]                                                   # pack
     "PLR1714", # complexity: merge comparisons in fusion score logic (track: part of fusion refactor)
     "PLR2004", # design: fusion thresholds (0.5, 0.7) are tuning knobs, not domain constants
     "S301",    # design: pickle for BM25 index serialization, not deserializing untrusted input
+    "N806",    # design: MIN_SCORE_THRESHOLD is a named constant used as threshold
 ]
 "fastcode/retrieval/scip_transform.py" = [
     "PLC0415", # external-dep: protobuf may not be installed; lazy import guards import error
@@ -250,6 +255,9 @@ packages = ["fastcode"]                                                   # pack
 ]
 "fastcode/infrastructure/execution/scip_runner.py" = [
     "S603",    # design: subprocess for SCIP indexer binary invocation; shell=False is already used
+]
+"fastcode/infrastructure/execution/semantic_helper.py" = [
+    "S603",    # design: subprocess for semantic helper tooling; shell=False is already used
 ]
 "fastcode/retrieval/iteration.py" = [
     "PLR2004", # design: threshold constants (0.85, 3) from original HKUDS iterative refinement logic
@@ -373,6 +381,7 @@ packages = ["fastcode"]                                                   # pack
 "fastcode/app/store/snapshots/snapshot.py" = [
     "S301",    # design: pickle for IR graph persistence — trusted local store, not untrusted input
     "S324",    # design: MD5 for snapshot ID generation — not cryptographic
+    "S608",    # design: SQL with f-string interpolation for controlled column/placeholder clauses, not user input
 ]
 "fastcode/app/store/vectors/vector.py" = [
     "S301",    # design: pickle for FAISS index serialization — trusted data round-trip only
@@ -391,6 +400,8 @@ packages = ["fastcode"]                                                   # pack
 ]
 "fastcode/app/indexing/pipeline/service.py" = [
     "S324",    # design: SHA1 for idempotency keys — not cryptographic
+    "S301",    # design: pickle for metadata loading — trusted local store
+    "S112",    # design: try-except-continue in graph traversal — individual node failures are non-fatal
 ]
 "fastcode/utils/hashing.py" = [
     "S324",    # design: SHA1 for payload hashing — not cryptographic
@@ -404,6 +415,14 @@ packages = ["fastcode"]                                                   # pack
 ]
 "fastcode/infrastructure/graph_runtime/ladybug.py" = [
     "S110",    # design: try-except-pass in doc graph operations — individual doc failures are non-fatal
+    "S603",    # design: subprocess for SCIP indexer binary; shell=False is already used
+    "S310",    # design: urllib to TerminusDB endpoint — controlled environment
+]
+"fastcode/app/indexing/pipeline/manifest.py" = [
+    "S301",    # design: pickle for trusted local metadata persistence
+]
+"**/*.pyi" = [
+    "N803",    # design: stub parameters match upstream C++ API names
 ]
 "fastcode/semantic/resolvers/*.py" = [
     "S603",    # design: subprocess for language tooling (go vet, tsc, dotnet, etc.); shell=False is already used
@@ -468,6 +487,7 @@ markers = [
     "regression: guards against previously-identified bugs",
     "audit_finding(id): regression test linked to a documented incident register entry",
     "perf: performance benchmark tests",
+    "property: property-based tests (hypothesis @given or manual invariant checks)",
     # --- Framework markers (auto-registered by plugins) ---
     "hypothesis: hypothesis property-based tests (auto-applied by @given)",
     "snapshot: syrupy snapshot tests",

@@ -28,7 +28,8 @@ def _resolve_source_options(
 ) -> tuple[str, bool, bool]:
     source = repo_url or repo_path or repo_zip
     if source is None:
-        raise click.ClickException("Repository source is required")
+        msg = "Repository source is required"
+        raise click.ClickException(msg)
     return source, bool(repo_url), bool(repo_zip)
 
 
@@ -53,8 +54,12 @@ def cli(ctx: click.Context, server: str) -> None:
 
 
 @cli.command()
-@click.option("--host", envvar="FASTCODE_FORCE_HOST", default="127.0.0.1", help="Bind host")
-@click.option("--port", "-p", envvar="FASTCODE_FORCE_PORT", default=8000, help="Bind port")
+@click.option(
+    "--host", envvar="FASTCODE_FORCE_HOST", default="127.0.0.1", help="Bind host"
+)
+@click.option(
+    "--port", "-p", envvar="FASTCODE_FORCE_PORT", default=8000, help="Bind port"
+)
 @click.option("--reload", is_flag=True, help="Enable auto-reload")
 def serve(host: str, port: int, reload: bool) -> None:
     """Start the FastCode API server."""

@@ -67,4 +67,5 @@ class AgentContextEvent:
             self, "event_type", _agent_context_event_type(self.event_type)
         )
         if self.turn_number < 0:
-            raise ValueError("agent_context.turn_number must be >= 0")
+            msg = "agent_context.turn_number must be >= 0"
+            raise ValueError(msg)

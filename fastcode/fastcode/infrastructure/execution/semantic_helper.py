@@ -20,7 +20,7 @@ class SubprocessSemanticHelperRuntime(SemanticHelperRuntime):
     def run(self, command: Sequence[str], *, cwd: str, timeout: int) -> Any:
         """Run an external semantic helper command."""
         try:
-            return subprocess.run(  # noqa: S603 - resolver builds controlled helper commands.
+            return subprocess.run(
                 list(command),
                 capture_output=True,
                 text=True,

@@ -22,9 +22,8 @@ class RepoName:
     def __post_init__(self) -> None:
         normalized = NonEmptyString.parse(self.value).as_str()
         if any(part in normalized for part in ("/", "\\", "\x00", ":")):
-            raise KernelError.invalid_repo_name(
-                "repo name must not contain path separators, null bytes, or ':'"
-            )
+            msg = "repo name must not contain path separators, null bytes, or ':'"
+            raise KernelError.invalid_repo_name(msg)
         object.__setattr__(self, "value", normalized)
 
     @classmethod
@@ -44,17 +43,16 @@ class SnapshotId:
     def __post_init__(self) -> None:
         normalized = NonEmptyString.parse(self.value).as_str()
         if not normalized.startswith("snap:"):
-            raise KernelError.invalid_snapshot_id("snapshot id must start with 'snap:'")
+            msg = "snapshot id must start with 'snap:'"
+            raise KernelError.invalid_snapshot_id(msg)
         suffix = normalized.removeprefix("snap:")
         if not suffix:
-            raise KernelError.invalid_snapshot_id(
-                "snapshot id must include a non-empty suffix after 'snap:'"
-            )
+            msg = "snapshot id must include a non-empty suffix after 'snap:'"
+            raise KernelError.invalid_snapshot_id(msg)
         parts = suffix.split(":")
         if any(not part for part in parts):
-            raise KernelError.invalid_snapshot_id(
-                "snapshot id must not contain empty path segments"
-            )
+            msg = "snapshot id must not contain empty path segments"
+            raise KernelError.invalid_snapshot_id(msg)
         if len(parts) >= 2:
             RepoName.parse(parts[0])
         object.__setattr__(self, "value", normalized)
@@ -82,9 +80,8 @@ class ArtifactKey:
     def __post_init__(self) -> None:
         normalized = NonEmptyString.parse(self.value).as_str()
         if not _ARTIFACT_KEY_RE.fullmatch(normalized):
-            raise KernelError.invalid_artifact_key(
-                "artifact key must match [A-Za-z0-9:_-]+"
-            )
+            msg = "artifact key must match [A-Za-z0-9:_-]+"
+            raise KernelError.invalid_artifact_key(msg)
         object.__setattr__(self, "value", normalized)
 
     @classmethod
@@ -94,7 +91,9 @@ class ArtifactKey:
     @classmethod
     def for_snapshot(cls, snapshot_id: SnapshotId | str) -> ArtifactKey:
         snapshot = (
-            snapshot_id if isinstance(snapshot_id, SnapshotId) else SnapshotId.parse(snapshot_id)
+            snapshot_id
+            if isinstance(snapshot_id, SnapshotId)
+            else SnapshotId.parse(snapshot_id)
         )
         digest = hashlib.sha256(snapshot.as_str().encode("utf-8")).hexdigest()[:20]
         return cls(f"snap_{digest}")

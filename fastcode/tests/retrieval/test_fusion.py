@@ -48,8 +48,8 @@ def _default_fusion_config() -> FusionConfig:
 # ---------------------------------------------------------------------------
 
 
-def test_design_intent_lowers_alpha():
-    """Design-oriented queries should lower alpha below alpha_base."""
+def test_doc_affinity_signal_lowers_alpha():
+    """The fusion formula should lower alpha for strong document affinity."""
     code_hits = [_mk_hit("code:1", "function", 0.45), _mk_hit("code:2", "class", 0.42)]
     doc_hits = [
         _mk_hit("doc:1", "design_document", 0.82),
@@ -278,6 +278,54 @@ def test_project_doc_priors_builds_grounded_priors():
     assert projection.evidence["ir:service"]
 
 
+def test_doc_projection_noisy_or_exact_value():
+    """Score-space doc projection uses bounded noisy-or, not rank-space RRF."""
+    doc_hits = [
+        _mk_hit(
+            "doc:1",
+            "design_document",
+            1.0,
+            element={
+                "id": "doc:1",
+                "type": "design_document",
+                "name": "doc:1",
+                "metadata": {
+                    "trace_links": [
+                        {"unit_id": "ir:auth", "weight": 0.8},
+                    ],
+                },
+            },
+        ),
+        _mk_hit(
+            "doc:2",
+            "design_document",
+            0.5,
+            element={
+                "id": "doc:2",
+                "type": "design_document",
+                "name": "doc:2",
+                "metadata": {
+                    "trace_links": [
+                        {"unit_id": "ir:auth", "weight": 0.4},
+                    ],
+                },
+            },
+        ),
+    ]
+
+    projection = project_doc_priors(
+        query="architecture rationale",
+        query_info={"intent": "design_rationale"},
+        doc_results=doc_hits,
+        config=_default_fusion_config(),
+        doc_projection_beta_max=0.35,
+    )
+
+    assert projection.priors["ir:auth"] == pytest.approx(0.84)
+    assert projection.beta == pytest.approx(0.35 * projection.p_doc)
+    assert 0.0 <= projection.priors["ir:auth"] <= 1.0
+
+
 def test_project_doc_priors_empty_doc_results():
     """Empty doc results should produce empty priors."""
     projection = project_doc_priors(
@@ -388,6 +436,53 @@ def test_apply_doc_projection_adds_projected_only():
     assert by_id["code:repo"].traceability
 
 
+def test_apply_doc_projection_seed_score_exact_value():
+    """Code seed scores use a convex mixture of retrieval score and doc prior."""
+    code_hit = _mk_hit(
+        "code:auth",
+        "function",
+        0.5,
+        element={
+            "id": "code:auth",
+            "type": "function",
+            "name": "code:auth",
+            "metadata": {"ir_symbol_id": "ir:auth"},
+        },
+    )
+    doc_hit = _mk_hit(
+        "doc:1",
+        "design_document",
+        1.0,
+        element={
+            "id": "doc:1",
+            "type": "design_document",
+            "name": "doc:1",
+            "metadata": {"trace_links": [{"unit_id": "ir:auth", "weight": 0.75}]},
+        },
+    )
+
+    projected = apply_doc_projection_to_code(
+        query="architecture rationale",
+        query_info={"intent": "design_rationale"},
+        code_results=[code_hit],
+        doc_results=[doc_hit],
+        config=_default_fusion_config(),
+        doc_projection_beta_max=0.35,
+    )
+
+    projection = project_doc_priors(
+        query="architecture rationale",
+        query_info={"intent": "design_rationale"},
+        doc_results=[doc_hit],
+        config=_default_fusion_config(),
+        doc_projection_beta_max=0.35,
+    )
+    expected_seed = ((1.0 - projection.beta) * 1.0) + (projection.beta * 0.75)
+    assert projected[0].retrieval_score == pytest.approx(0.5)
+    assert projected[0].projection_score == pytest.approx(0.75)
+    assert projected[0].seed_score == pytest.approx(expected_seed)
+
+
 # ---------------------------------------------------------------------------
 # extract_trace_links
 # ---------------------------------------------------------------------------
@@ -494,3 +589,59 @@ def test_more_code_strength_higher_alpha():
         config=config,
     )
     assert alpha_high > alpha_low
+
+
+@pytest.mark.parametrize(
+    (
+        "query",
+        "query_info",
+        "code_results",
+        "doc_results",
+        "expected",
+    ),
+    [
+        (
+            "What is the architecture rationale for branch indexing design?",
+            {"intent": "design_rationale"},
+            [_mk_hit("code:1", "function", 0.45), _mk_hit("code:2", "class", 0.42)],
+            [
+                _mk_hit("doc:1", "design_document", 0.82),
+                _mk_hit("doc:2", "design_document", 0.7),
+            ],
+            (0.603325974633622, 79.43818992347916, 48.9007630321913),
+        ),
+        (
+            "fix the bug in the function call trace",
+            {},
+            [_mk_hit("code:1", "function", 0.9), _mk_hit("code:2", "class", 0.85)],
+            [_mk_hit("doc:1", "design_document", 0.3)],
+            (0.8847272162292118, 41.93844684256931, 85.62399692446665),
+        ),
+        (
+            "test",
+            {},
+            [],
+            [],
+            (0.8, 81.33832873117059, 81.33832873117059),
+        ),
+    ],
+)
+def test_adaptive_fusion_params_exact_values(
+    query: str,
+    query_info: dict[str, Any],
+    code_results: list[Hit],
+    doc_results: list[Hit],
+    expected: tuple[float, float, float],
+):
+    """Finite formula scenarios use exact values, not only directional checks."""
+    alpha, k_code, k_doc = compute_adaptive_fusion_params(
+        query=query,
+        query_info=query_info,
+        code_results=code_results,
+        doc_results=doc_results,
+        config=_default_fusion_config(),
+    )
+
+    assert alpha == pytest.approx(expected[0], abs=1e-12)
+    assert k_code == pytest.approx(expected[1], abs=1e-12)
+    assert k_doc == pytest.approx(expected[2], abs=1e-12)

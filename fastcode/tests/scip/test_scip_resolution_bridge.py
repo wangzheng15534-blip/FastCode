@@ -265,18 +265,13 @@ class TestSemanticStrategy:
 
     def test_semantic_below_threshold(self):
         unit = _make_unit("u:1", "BranchIndexer", path="src/main.py")
-        embedder = _FakeEmbedder(dim=8)
+        embedder = _ControlledEmbedder(
+            {"BranchIndexer": [1.0, 0.0], "DifferentConcept": [0.0, 1.0]}
+        )
         bridge = SCIPResolutionBridge(
             _make_snapshot(unit), embedder=embedder, semantic_threshold=0.99
         )
-        # Threshold 0.99 is very high; even perfect self-similarity might not reach it
-        # depending on vector quality. But with our FakeEmbedder, self-sim is 1.0.
-        # Let's use a mention that definitely won't match: empty or very different.
-        # Actually, any non-empty text will produce some vector. Let's just verify
-        # the mechanism by using a very high threshold.
-        # Self-match should still work at 1.0 > 0.99.
-        result = bridge.resolve("BranchIndexer")
-        assert result is not None  # self-similarity is 1.0
+        assert bridge.resolve("DifferentConcept") is None
 
     def test_no_embedder_skips_semantic(self):
         unit = _make_unit("u:1", "Something", path="src/x.py")

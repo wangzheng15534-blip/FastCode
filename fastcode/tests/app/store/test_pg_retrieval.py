@@ -24,7 +24,8 @@ class _FakeCursor:
     def execute(self, sql: Any, params: dict[str, Any] | None = None) -> None:
         self.execute_calls += 1
         if self.execute_calls == 1:
-            raise RuntimeError("force fallback path")
+            msg = "force fallback path"
+            raise RuntimeError(msg)
 
     def fetchall(self) -> Any:
         return list(self.rows)
@@ -87,7 +88,8 @@ class _FakeDBRuntime:
 
 class _ExplodingMetadata:
     def __str__(self) -> str:
-        raise AssertionError("metadata for unreturned fallback row was materialized")
+        msg = "metadata for unreturned fallback row was materialized"
+        raise AssertionError(msg)
 
 
 class _OpaqueValue:
@@ -260,14 +262,12 @@ def test_semantic_search_compatibility_serializes_records_explicitly_double(
     store.db_runtime = _FakeDBRuntime(_FakeConn(cursor))
 
     def _boom_element(_: PgRetrievalElementRecord) -> dict[str, Any]:
-        raise AssertionError(
-            "pg retrieval compatibility must not call element.to_dict()"
-        )
+        msg = "pg retrieval compatibility must not call element.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_result(_: PgRetrievalResultRecord) -> dict[str, Any]:
-        raise AssertionError(
-            "pg retrieval compatibility must not call result.to_dict()"
-        )
+        msg = "pg retrieval compatibility must not call result.to_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(PgRetrievalElementRecord, "to_dict", _boom_element)
     monkeypatch.setattr(PgRetrievalResultRecord, "to_dict", _boom_result)
@@ -401,14 +401,12 @@ def test_keyword_search_compatibility_serializes_records_explicitly_double(
     store.db_runtime = _FakeDBRuntime(_FakeConn(cursor))
 
     def _boom_element(_: PgRetrievalElementRecord) -> dict[str, Any]:
-        raise AssertionError(
-            "pg retrieval compatibility must not call element.to_dict()"
-        )
+        msg = "pg retrieval compatibility must not call element.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_result(_: PgRetrievalResultRecord) -> dict[str, Any]:
-        raise AssertionError(
-            "pg retrieval compatibility must not call result.to_dict()"
-        )
+        msg = "pg retrieval compatibility must not call result.to_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(PgRetrievalElementRecord, "to_dict", _boom_element)
     monkeypatch.setattr(PgRetrievalResultRecord, "to_dict", _boom_result)

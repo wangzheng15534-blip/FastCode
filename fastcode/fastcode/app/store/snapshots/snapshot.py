@@ -16,6 +16,8 @@ from typing import Any, cast
 
 import numpy as np
 
+from fastcode.common.identifiers import ArtifactKey, SnapshotId
+from fastcode.infrastructure.storage.contracts import StoreDatabaseRuntime
 from fastcode.ir.types import (
     IRAttachment,
     IRCodeUnit,
@@ -28,8 +30,6 @@ from fastcode.ir.types import (
     IRUnitEmbedding,
     IRUnitSupport,
 )
-from fastcode.common.identifiers import ArtifactKey, SnapshotId
-from fastcode.infrastructure.storage.contracts import StoreDatabaseRuntime
 from fastcode.runtime_support.retry import exponential_backoff_seconds
 from fastcode.utils.clock import SystemClock, utc_now
 from fastcode.utils.filesystem import ensure_dir, normalize_path
@@ -3473,7 +3473,7 @@ class SnapshotStore:
             FROM snapshot_documents
             WHERE snapshot_id=?{doc_clause}
             ON CONFLICT(snapshot_id, doc_id) DO NOTHING
-            """,  # noqa: S608
+            """,
             (snapshot_id, previous_snapshot_id, *doc_params),
         )
 
@@ -3490,7 +3490,7 @@ class SnapshotStore:
             FROM symbols
             WHERE snapshot_id=?{sym_clause}
             ON CONFLICT(snapshot_id, symbol_id) DO NOTHING
-            """,  # noqa: S608
+            """,
             (snapshot_id, previous_snapshot_id, *sym_params),
         )
 
@@ -3509,7 +3509,7 @@ class SnapshotStore:
                 ON d.snapshot_id=o.snapshot_id AND d.doc_id=o.doc_id
             WHERE o.snapshot_id=?{occ_clause}
             ON CONFLICT(snapshot_id, occurrence_id) DO NOTHING
-            """,  # noqa: S608
+            """,
             (snapshot_id, previous_snapshot_id, *occ_params),
         )
 
@@ -3540,7 +3540,7 @@ class SnapshotStore:
                 ON dst.snapshot_id=e.snapshot_id AND dst.symbol_id=e.dst_id
             WHERE e.snapshot_id=?{edge_doc_clause}{edge_src_clause}{edge_dst_clause}
             ON CONFLICT(snapshot_id, edge_id) DO NOTHING
-            """,  # noqa: S608
+            """,
             (
                 snapshot_id,
                 previous_snapshot_id,
@@ -3576,7 +3576,7 @@ class SnapshotStore:
                     OR (a.target_type IN ('document', 'doc', 'file'){att_doc_clause})
                 )
             ON CONFLICT(snapshot_id, attachment_id) DO NOTHING
-            """,  # noqa: S608
+            """,
             (
                 snapshot_id,
                 previous_snapshot_id,

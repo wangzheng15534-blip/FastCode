@@ -348,7 +348,8 @@ def _context_activation_record(
 def _embedding_cache_payload(value: dict[str, Any]) -> bytes:
     raw_buffer = value.get("embedding_bytes")
     if not isinstance(raw_buffer, (bytes, bytearray, memoryview)):
-        raise TypeError("embedding_bytes must be bytes-like")
+        msg = "embedding_bytes must be bytes-like"
+        raise TypeError(msg)
     metadata = {k: v for k, v in value.items() if k != "embedding_bytes"}
     metadata_bytes = json.dumps(metadata, separators=(",", ":"), sort_keys=True).encode(
         "utf-8"
@@ -403,7 +404,8 @@ def _decode_marshaled_value(value: Any) -> Any:
         remainder = payload[len(_CACHE_EMBEDDING_KIND) :]
         delimiter_index = remainder.find(b":")
         if delimiter_index <= 0:
-            raise ValueError("invalid embedding cache payload header")
+            msg = "invalid embedding cache payload header"
+            raise ValueError(msg)
         metadata_len = int(remainder[:delimiter_index].decode("ascii"))
         metadata_start = delimiter_index + 1
         metadata_end = metadata_start + metadata_len
@@ -411,9 +413,11 @@ def _decode_marshaled_value(value: Any) -> Any:
             remainder[metadata_start:metadata_end].decode("utf-8")
         )
         if not isinstance(metadata_obj, dict):
-            raise ValueError("invalid embedding cache metadata")
+            msg = "invalid embedding cache metadata"
+            raise ValueError(msg)
         metadata = cast(dict[str, Any], metadata_obj)
         metadata["embedding_bytes"] = remainder[metadata_end:]
         return metadata
 
-    raise ValueError("unsupported cache payload kind")
+    msg = "unsupported cache payload kind"
+    raise ValueError(msg)

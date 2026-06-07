@@ -51,10 +51,12 @@ def test_file_artifact_store_upserts_and_loads_file_ir_by_content_identity(
         )
 
         def _boom_row_to_dict(_: object) -> dict[str, Any]:
-            raise AssertionError("file artifact store must not call row_to_dict()")
+            msg = "file artifact store must not call row_to_dict()"
+            raise AssertionError(msg)
 
         def _boom_record_to_dict(_: FileArtifactRecord) -> dict[str, Any]:
-            raise AssertionError("file artifact compatibility payload is explicit")
+            msg = "file artifact compatibility payload is explicit"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(
             store.db_runtime,
@@ -172,10 +174,12 @@ def test_file_artifact_store_upserts_parsed_elements_without_embeddings(
         )
 
         def _boom_row_to_dict(_: object) -> dict[str, Any]:
-            raise AssertionError("parsed element store must not call row_to_dict()")
+            msg = "parsed element store must not call row_to_dict()"
+            raise AssertionError(msg)
 
         def _boom_record_to_dict(_: FileArtifactRecord) -> dict[str, Any]:
-            raise AssertionError("parsed element payloads must be explicit")
+            msg = "parsed element payloads must be explicit"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(
             store.db_runtime,
@@ -246,10 +250,12 @@ def test_file_artifact_store_upserts_embedding_refs_by_content_identity(
         )
 
         def _boom_row_to_dict(_: object) -> dict[str, Any]:
-            raise AssertionError("embedding ref store must not call row_to_dict()")
+            msg = "embedding ref store must not call row_to_dict()"
+            raise AssertionError(msg)
 
         def _boom_record_to_dict(_: FileArtifactRecord) -> dict[str, Any]:
-            raise AssertionError("embedding ref payloads must be explicit")
+            msg = "embedding ref payloads must be explicit"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(
             store.db_runtime,
@@ -341,10 +347,12 @@ def test_file_artifact_store_upserts_semantic_facts_by_content_identity(
         )
 
         def _boom_row_to_dict(_: object) -> dict[str, Any]:
-            raise AssertionError("semantic fact store must not call row_to_dict()")
+            msg = "semantic fact store must not call row_to_dict()"
+            raise AssertionError(msg)
 
         def _boom_record_to_dict(_: FileArtifactRecord) -> dict[str, Any]:
-            raise AssertionError("semantic fact payloads must be explicit")
+            msg = "semantic fact payloads must be explicit"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(
             store.db_runtime,

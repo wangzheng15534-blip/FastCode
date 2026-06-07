@@ -173,12 +173,12 @@ def test_query_result_record_accessors_use_explicit_serializers(
     manager = CacheManager(_cache_config(tmp_path, cache_queries=True))
 
     def _boom_to_dict(_: QueryResultCacheRecord) -> dict[str, object]:
-        raise AssertionError(
-            "cache manager must not call QueryResultCacheRecord.to_dict()"
-        )
+        msg = "cache manager must not call QueryResultCacheRecord.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_from_dict(cls: type[object], _payload: dict[str, Any]) -> object:
-        raise AssertionError(f"cache manager must not call {cls.__name__}.from_dict()")
+        msg = f"cache manager must not call {cls.__name__}.from_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(QueryResultCacheRecord, "to_dict", _boom_to_dict)
     monkeypatch.setattr(
@@ -238,15 +238,16 @@ def test_dialogue_record_accessors_use_explicit_serializers(
     manager = CacheManager(_cache_config(tmp_path))
 
     def _boom_turn(_: DialogueTurnRecord) -> dict[str, object]:
-        raise AssertionError("cache manager must not call DialogueTurnRecord.to_dict()")
+        msg = "cache manager must not call DialogueTurnRecord.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_session(_: DialogueSessionRecord) -> dict[str, object]:
-        raise AssertionError(
-            "cache manager must not call DialogueSessionRecord.to_dict()"
-        )
+        msg = "cache manager must not call DialogueSessionRecord.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_from_dict(cls: type[object], _payload: dict[str, Any]) -> object:
-        raise AssertionError(f"cache manager must not call {cls.__name__}.from_dict()")
+        msg = f"cache manager must not call {cls.__name__}.from_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(DialogueTurnRecord, "to_dict", _boom_turn)
     monkeypatch.setattr(DialogueSessionRecord, "to_dict", _boom_session)
@@ -335,35 +336,32 @@ def test_agent_context_records_roundtrip_and_delete_with_session(
     manager = CacheManager(_cache_config(tmp_path))
 
     def _boom_working_memory(_: WorkingMemoryRecord) -> dict[str, object]:
-        raise AssertionError(
-            "cache manager must not call WorkingMemoryRecord.to_dict()"
-        )
+        msg = "cache manager must not call WorkingMemoryRecord.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_journal(_: TurnJournalRecord) -> dict[str, object]:
-        raise AssertionError("cache manager must not call TurnJournalRecord.to_dict()")
+        msg = "cache manager must not call TurnJournalRecord.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_handoff(_: HandoffArtifactRecord) -> dict[str, object]:
-        raise AssertionError(
-            "cache manager must not call HandoffArtifactRecord.to_dict()"
-        )
+        msg = "cache manager must not call HandoffArtifactRecord.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_bundle(_: ContextBundleRecord) -> dict[str, object]:
-        raise AssertionError(
-            "cache manager must not call ContextBundleRecord.to_dict()"
-        )
+        msg = "cache manager must not call ContextBundleRecord.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_distillation(_: ContextDistillationRecord) -> dict[str, object]:
-        raise AssertionError(
-            "cache manager must not call ContextDistillationRecord.to_dict()"
-        )
+        msg = "cache manager must not call ContextDistillationRecord.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_activation(_: ContextActivationRecord) -> dict[str, object]:
-        raise AssertionError(
-            "cache manager must not call ContextActivationRecord.to_dict()"
-        )
+        msg = "cache manager must not call ContextActivationRecord.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_from_dict(cls: type[object], _payload: dict[str, Any]) -> object:
-        raise AssertionError(f"cache manager must not call {cls.__name__}.from_dict()")
+        msg = f"cache manager must not call {cls.__name__}.from_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(WorkingMemoryRecord, "to_dict", _boom_working_memory)
     monkeypatch.setattr(TurnJournalRecord, "to_dict", _boom_journal)

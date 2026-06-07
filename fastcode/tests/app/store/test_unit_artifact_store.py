@@ -166,7 +166,8 @@ def test_unit_artifact_store_list_avoids_generic_row_to_dict(
         )
 
         def _boom(_: object) -> dict[str, Any]:
-            raise AssertionError("unit artifact store must not call row_to_dict()")
+            msg = "unit artifact store must not call row_to_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom, raising=False)
 
@@ -244,7 +245,8 @@ def test_unit_artifact_legacy_payload_avoids_record_to_dict(
         )
 
         def _boom(_: UnitArtifactRecord) -> dict[str, Any]:
-            raise AssertionError("unit artifact compatibility shim must be explicit")
+            msg = "unit artifact compatibility shim must be explicit"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(UnitArtifactRecord, "to_dict", _boom)
 
@@ -283,7 +285,8 @@ def test_unit_artifact_delta_copies_previous_records_without_legacy_payload(
         )
 
         def _boom(_: str) -> list[dict[str, Any]]:
-            raise AssertionError("delta copy must use typed unit artifact records")
+            msg = "delta copy must use typed unit artifact records"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(store, "list_snapshot_units", _boom)
 
@@ -462,12 +465,12 @@ def test_file_ir_shards_replace_and_list_typed_records(
         )
 
         def _boom_row_to_dict(_: object) -> dict[str, Any]:
-            raise AssertionError("file IR shard reads must not call row_to_dict()")
+            msg = "file IR shard reads must not call row_to_dict()"
+            raise AssertionError(msg)
 
         def _boom_record_to_dict(_: FileIRShardRecord) -> dict[str, Any]:
-            raise AssertionError(
-                "file IR shard compatibility payloads must be explicit"
-            )
+            msg = "file IR shard compatibility payloads must be explicit"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(
             store.db_runtime,
@@ -521,10 +524,12 @@ def test_file_ir_shard_delta_copies_unchanged_shards_as_typed_records(
         )
 
         def _boom_legacy_list(_: str) -> list[dict[str, Any]]:
-            raise AssertionError("delta copy must use typed file IR shard records")
+            msg = "delta copy must use typed file IR shard records"
+            raise AssertionError(msg)
 
         def _boom_record_to_dict(_: FileIRShardRecord) -> dict[str, Any]:
-            raise AssertionError("delta copy must not materialize record to_dict()")
+            msg = "delta copy must not materialize record to_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(store, "list_file_ir_shards", _boom_legacy_list)
         monkeypatch.setattr(FileIRShardRecord, "to_dict", _boom_record_to_dict)

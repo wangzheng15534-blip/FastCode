@@ -528,7 +528,8 @@ class _FakePostgresQueueRuntime:
             )
             return _FakeCursor(row={"cnt": count})
 
-        raise AssertionError(f"unexpected SQL: {sql}")
+        msg = f"unexpected SQL: {sql}"
+        raise AssertionError(msg)
 
 
 metadata_st = st.dictionaries(
@@ -679,12 +680,14 @@ class TestSnapshotSaveLoadProperties:
         )
 
         def _boom_to_dict(_: object) -> dict[str, Any]:
-            raise AssertionError("snapshot store must not call to_dict()")
+            msg = "snapshot store must not call to_dict()"
+            raise AssertionError(msg)
 
         def _boom_from_dict(
             _cls: object, _data: dict[str, Any]
         ) -> IRSnapshot | IRCodeUnit | IRUnitSupport | IRRelation | IRUnitEmbedding:
-            raise AssertionError("snapshot store must not call from_dict()")
+            msg = "snapshot store must not call from_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(IRSnapshot, "to_dict", _boom_to_dict)
         monkeypatch.setattr(IRSnapshot, "from_dict", classmethod(_boom_from_dict))
@@ -710,19 +713,23 @@ class TestSnapshotSaveLoadProperties:
     def test_file_ir_shard_payloads_use_explicit_serializers(self) -> None:
         class NoDictCodeUnit(IRCodeUnit):
             def to_dict(self) -> dict[str, Any]:
-                raise AssertionError("file IR shards must not call unit.to_dict()")
+                msg = "file IR shards must not call unit.to_dict()"
+                raise AssertionError(msg)
 
         class NoDictUnitSupport(IRUnitSupport):
             def to_dict(self) -> dict[str, Any]:
-                raise AssertionError("file IR shards must not call support.to_dict()")
+                msg = "file IR shards must not call support.to_dict()"
+                raise AssertionError(msg)
 
         class NoDictRelation(IRRelation):
             def to_dict(self) -> dict[str, Any]:
-                raise AssertionError("file IR shards must not call relation.to_dict()")
+                msg = "file IR shards must not call relation.to_dict()"
+                raise AssertionError(msg)
 
         class NoDictEmbedding(IRUnitEmbedding):
             def to_dict(self) -> dict[str, Any]:
-                raise AssertionError("file IR shards must not call embedding.to_dict()")
+                msg = "file IR shards must not call embedding.to_dict()"
+                raise AssertionError(msg)
 
         snap = IRSnapshot(
             repo_name="repo",
@@ -802,7 +809,8 @@ class TestSnapshotSaveLoadProperties:
     def test_file_ir_shard_metadata_does_not_use_generic_safe_jsonable(self) -> None:
         class OpaqueMetadata:
             def to_dict(self) -> dict[str, Any]:
-                raise AssertionError("IR shard metadata must not call to_dict()")
+                msg = "IR shard metadata must not call to_dict()"
+                raise AssertionError(msg)
 
             def __repr__(self) -> str:
                 return "OpaqueMetadata(value)"
@@ -1122,7 +1130,8 @@ class TestSnapshotSaveLoadProperties:
         ) -> dict[str, Any]:
             del cls
             if unit.path == "pkg/a.py":
-                raise AssertionError("unchanged units should reuse previous shards")
+                msg = "unchanged units should reuse previous shards"
+                raise AssertionError(msg)
             return original_payload(unit)
 
         monkeypatch.setattr(
@@ -1489,7 +1498,8 @@ class TestSnapshotSaveLoadProperties:
         def _boom_from_dict(
             _cls: object, _data: dict[str, Any]
         ) -> IRSnapshot | IRDocument | IRSymbol | IROccurrence | IREdge:
-            raise AssertionError("snapshot store must not call from_dict()")
+            msg = "snapshot store must not call from_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(IRSnapshot, "from_dict", classmethod(_boom_from_dict))
         monkeypatch.setattr(IRDocument, "from_dict", classmethod(_boom_from_dict))
@@ -1636,7 +1646,8 @@ class TestSnapshotStoreQueries:
         store.save_snapshot(snap)
 
         def _boom(_: object) -> dict[str, Any]:
-            raise AssertionError("snapshot store must not call row_to_dict()")
+            msg = "snapshot store must not call row_to_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom, raising=False)
 
@@ -1660,17 +1671,16 @@ class TestSnapshotStoreQueries:
         saved = store.save_snapshot(snap)
 
         def _boom_row(_: object) -> dict[str, Any]:
-            raise AssertionError("snapshot store must not call row_to_dict()")
+            msg = "snapshot store must not call row_to_dict()"
+            raise AssertionError(msg)
 
         def _boom_snapshot(_: SnapshotRecord) -> dict[str, Any]:
-            raise AssertionError(
-                "snapshot store must not call SnapshotRecord.to_dict()"
-            )
+            msg = "snapshot store must not call SnapshotRecord.to_dict()"
+            raise AssertionError(msg)
 
         def _boom_ref(_: SnapshotRefRecord) -> dict[str, Any]:
-            raise AssertionError(
-                "snapshot store must not call SnapshotRefRecord.to_dict()"
-            )
+            msg = "snapshot store must not call SnapshotRefRecord.to_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row, raising=False)
         monkeypatch.setattr(SnapshotRecord, "to_dict", _boom_snapshot)
@@ -1893,17 +1903,16 @@ class TestScipArtifactRefProperties:
             pass
 
         def _boom_row(_: object) -> dict[str, Any]:
-            raise AssertionError("snapshot store must not call row_to_dict()")
+            msg = "snapshot store must not call row_to_dict()"
+            raise AssertionError(msg)
 
         def _boom_to_dict(_: SCIPArtifactRef) -> dict[str, Any]:
-            raise AssertionError(
-                "snapshot store must not call SCIPArtifactRef.to_dict()"
-            )
+            msg = "snapshot store must not call SCIPArtifactRef.to_dict()"
+            raise AssertionError(msg)
 
         def _boom_record_to_dict(_: SCIPArtifactRecord) -> dict[str, Any]:
-            raise AssertionError(
-                "snapshot store must not call SCIPArtifactRecord.to_dict()"
-            )
+            msg = "snapshot store must not call SCIPArtifactRecord.to_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom_row, raising=False)
         monkeypatch.setattr(SCIPArtifactRef, "to_dict", _boom_to_dict)
@@ -1957,23 +1966,28 @@ class TestSnapshotStoreRelationalFacts:
     def test_relational_fact_payloads_do_not_call_record_to_dict_double(self) -> None:
         class NoDictDocument(IRDocument):
             def to_dict(self) -> dict[str, Any]:
-                raise AssertionError("document payload should stay field-explicit")
+                msg = "document payload should stay field-explicit"
+                raise AssertionError(msg)
 
         class NoDictSymbol(IRSymbol):
             def to_dict(self) -> dict[str, Any]:
-                raise AssertionError("symbol payload should stay field-explicit")
+                msg = "symbol payload should stay field-explicit"
+                raise AssertionError(msg)
 
         class NoDictOccurrence(IROccurrence):
             def to_dict(self) -> dict[str, Any]:
-                raise AssertionError("occurrence payload should stay field-explicit")
+                msg = "occurrence payload should stay field-explicit"
+                raise AssertionError(msg)
 
         class NoDictEdge(IREdge):
             def to_dict(self) -> dict[str, Any]:
-                raise AssertionError("edge payload should stay field-explicit")
+                msg = "edge payload should stay field-explicit"
+                raise AssertionError(msg)
 
         class NoDictAttachment(IRAttachment):
             def to_dict(self) -> dict[str, Any]:
-                raise AssertionError("attachment payload should stay field-explicit")
+                msg = "attachment payload should stay field-explicit"
+                raise AssertionError(msg)
 
         assert SnapshotStore._document_payload(
             NoDictDocument(
@@ -2514,12 +2528,12 @@ class TestSnapshotStoreRedoProperties:
         store.db_runtime = runtime
 
         def _boom(_: object) -> dict[str, Any]:
-            raise AssertionError("snapshot store must not call row_to_dict()")
+            msg = "snapshot store must not call row_to_dict()"
+            raise AssertionError(msg)
 
         def _boom_task(_: RedoTaskRecord) -> dict[str, Any]:
-            raise AssertionError(
-                "snapshot store must not call RedoTaskRecord.to_dict()"
-            )
+            msg = "snapshot store must not call RedoTaskRecord.to_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(
             snapshot_module, "utc_now", lambda: "2026-05-05T00:00:05+00:00"
@@ -2557,7 +2571,8 @@ class TestSnapshotStoreRedoProperties:
         store.db_runtime = runtime
 
         def _boom(_: object) -> dict[str, Any]:
-            raise AssertionError("snapshot store must not call row_to_dict()")
+            msg = "snapshot store must not call row_to_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(
             snapshot_module, "utc_now", lambda: "2026-05-05T00:00:10+00:00"
@@ -2638,12 +2653,12 @@ class TestSnapshotStoreOutboxPostgresProperties:
         store.db_runtime = runtime
 
         def _boom(_: object) -> dict[str, Any]:
-            raise AssertionError("snapshot store must not call row_to_dict()")
+            msg = "snapshot store must not call row_to_dict()"
+            raise AssertionError(msg)
 
         def _boom_event(_: OutboxEventRecord) -> dict[str, Any]:
-            raise AssertionError(
-                "snapshot store must not call OutboxEventRecord.to_dict()"
-            )
+            msg = "snapshot store must not call OutboxEventRecord.to_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(
             snapshot_module, "utc_now", lambda: "2026-05-05T00:00:06+00:00"
@@ -2684,7 +2699,8 @@ class TestSnapshotStoreOutboxPostgresProperties:
         store.db_runtime = runtime
 
         def _boom(_: object) -> dict[str, Any]:
-            raise AssertionError("snapshot store must not call row_to_dict()")
+            msg = "snapshot store must not call row_to_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(runtime, "row_to_dict", _boom, raising=False)
 
@@ -2756,7 +2772,8 @@ class TestIRGraphsRoundtrip:
                 return "<opaque-graph-value>"
 
             def to_dict(self) -> dict[str, Any]:
-                raise AssertionError("graph serialization must stay field-explicit")
+                msg = "graph serialization must stay field-explicit"
+                raise AssertionError(msg)
 
         store = _make_store()
         snap = IRSnapshot(repo_name="repo", snapshot_id="snap:repo:opaque-graph")

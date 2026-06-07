@@ -41,9 +41,8 @@ class ProjectionStore:
         self.enabled = bool(self.dsn)
         self.pool = None
         if self.enabled and psycopg is None:
-            raise RuntimeError(
-                "projection store requires psycopg; install dependency first"
-            )
+            msg = "projection store requires psycopg; install dependency first"
+            raise RuntimeError(msg)
         if self.enabled:
             pool_min = int(storage_cfg.get("pool_min", 1))
             pool_max = int(storage_cfg.get("pool_max", 8))
@@ -62,13 +61,13 @@ class ProjectionStore:
 
     def _connect(self) -> Any:
         if not self.enabled:
-            raise RuntimeError(
-                "projection store is not configured (projection.postgres_dsn missing)"
-            )
+            msg = "projection store is not configured (projection.postgres_dsn missing)"
+            raise RuntimeError(msg)
         if self.pool is not None:
             return self.pool.connection()
         if psycopg is None:
-            raise RuntimeError("projection store requires psycopg")
+            msg = "projection store requires psycopg"
+            raise RuntimeError(msg)
         return psycopg.connect(self.dsn, autocommit=False)
 
     def _init_db(self) -> None:

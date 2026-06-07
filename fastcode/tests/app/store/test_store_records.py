@@ -408,15 +408,15 @@ def test_pg_retrieval_result_record_avoids_nested_record_serializers(
     record = PgRetrievalResultRecord(element=element, score=0.75)
 
     def _boom_to_dict(_: PgRetrievalElementRecord) -> dict[str, Any]:
-        raise AssertionError("PgRetrievalResultRecord must not call element.to_dict()")
+        msg = "PgRetrievalResultRecord must not call element.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_from_dict(
         cls: type[PgRetrievalElementRecord],
         data: dict[str, Any],
     ) -> PgRetrievalElementRecord:
-        raise AssertionError(
-            f"PgRetrievalResultRecord must not call {cls.__name__}.from_dict()"
-        )
+        msg = f"PgRetrievalResultRecord must not call {cls.__name__}.from_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(PgRetrievalElementRecord, "to_dict", _boom_to_dict)
     monkeypatch.setattr(

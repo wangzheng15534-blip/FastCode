@@ -291,9 +291,8 @@ class TestExplicitManifestBoundaries:
         store = _make_store()
 
         def _boom(_: ManifestRecord) -> dict[str, object]:
-            raise AssertionError(
-                "manifest store must not call ManifestRecord.to_dict()"
-            )
+            msg = "manifest store must not call ManifestRecord.to_dict()"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(ManifestRecord, "to_dict", _boom)
 

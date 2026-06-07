@@ -21,12 +21,14 @@ pytestmark = [pytest.mark.test_double]
 class _MetadataBomb(dict[str, Any]):
     def __getitem__(self, key: str) -> Any:
         if key == "metadata":
-            raise AssertionError("metadata for unreturned overview was materialized")
+            msg = "metadata for unreturned overview was materialized"
+            raise AssertionError(msg)
         return super().__getitem__(key)
 
     def get(self, key: str, default: Any = None) -> Any:
         if key == "metadata":
-            raise AssertionError("metadata for unreturned overview was materialized")
+            msg = "metadata for unreturned overview was materialized"
+            raise AssertionError(msg)
         return super().get(key, default)
 
 
@@ -74,7 +76,8 @@ def test_add_vectors_uses_growing_row_buffer_without_vstack_double(
     store.initialize(2)
 
     def _boom_vstack(_values: object) -> np.ndarray:
-        raise AssertionError("vector row appends should not use np.vstack")
+        msg = "vector row appends should not use np.vstack"
+        raise AssertionError(msg)
 
     monkeypatch.setattr("fastcode.app.store.vectors.vector.np.vstack", _boom_vstack)
 
@@ -151,7 +154,8 @@ def test_vector_search_compatibility_serializes_records_explicitly_double(
     )
 
     def _boom(_: VectorSearchResultRecord) -> dict[str, Any]:
-        raise AssertionError("vector search compatibility must not call to_dict()")
+        msg = "vector search compatibility must not call to_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(VectorSearchResultRecord, "to_dict", _boom)
 
@@ -357,7 +361,8 @@ def test_repository_overview_legacy_load_avoids_record_to_dict_double(
     )
 
     def _boom(_: RepositoryOverviewRecord) -> dict[str, Any]:
-        raise AssertionError("repo overview compatibility load must be explicit")
+        msg = "repo overview compatibility load must be explicit"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(RepositoryOverviewRecord, "to_dict", _boom)
 
@@ -402,7 +407,8 @@ def test_repository_overview_legacy_search_avoids_record_to_dict_double(
     )
 
     def _boom(_: RepositoryOverviewRecord) -> dict[str, Any]:
-        raise AssertionError("repo overview compatibility search must be explicit")
+        msg = "repo overview compatibility search must be explicit"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(RepositoryOverviewRecord, "to_dict", _boom)
 

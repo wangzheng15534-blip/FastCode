@@ -495,9 +495,8 @@ class GraphArtifactStore:
                 sequence_nos = sequences_by_path.get(path_key)
                 seen_count = grouped_seen.get(path_key, 0)
                 if sequence_nos is None or len(sequence_nos) <= seen_count:
-                    raise RuntimeError(
-                        f"Missing incremental graph sequence for path: {path_key}"
-                    )
+                    msg = f"Missing incremental graph sequence for path: {path_key}"
+                    raise RuntimeError(msg)
                 grouped_seen[path_key] = seen_count + 1
                 sequence_no = sequence_nos[seen_count]
 

@@ -30,7 +30,8 @@ def test_get_run_record_avoids_generic_row_to_dict(
     )
 
     def _boom(_: object) -> dict[str, object]:
-        raise AssertionError("index run store must not call row_to_dict()")
+        msg = "index run store must not call row_to_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom, raising=False)
 
@@ -87,7 +88,8 @@ def test_get_latest_run_record_returns_newest_typed_record(
         conn.commit()
 
     def _boom(_: object) -> dict[str, object]:
-        raise AssertionError("latest run lookup must not call row_to_dict()")
+        msg = "latest run lookup must not call row_to_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom, raising=False)
 
@@ -116,7 +118,8 @@ def test_claim_next_publish_task_record_returns_running_record_after_claim(
     )
 
     def _boom(_: object) -> dict[str, object]:
-        raise AssertionError("index run store must not call row_to_dict()")
+        msg = "index run store must not call row_to_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(store.db_runtime, "row_to_dict", _boom, raising=False)
 
@@ -160,22 +163,19 @@ def test_index_run_record_helpers_do_not_call_record_serializers(
     )
 
     def _boom_run(_: IndexRunRecord) -> dict[str, object]:
-        raise AssertionError(
-            "index run payload helper must not call IndexRunRecord.to_dict()"
-        )
+        msg = "index run payload helper must not call IndexRunRecord.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_task(_: PublishTaskRecord) -> dict[str, object]:
-        raise AssertionError(
-            "publish task payload helper must not call PublishTaskRecord.to_dict()"
-        )
+        msg = "publish task payload helper must not call PublishTaskRecord.to_dict()"
+        raise AssertionError(msg)
 
     def _boom_from_dict(
         cls: type[IndexRunRecord] | type[PublishTaskRecord],
         _: dict[str, object],
     ) -> IndexRunRecord | PublishTaskRecord:
-        raise AssertionError(
-            f"index run store must not call {cls.__name__}.from_dict()"
-        )
+        msg = f"index run store must not call {cls.__name__}.from_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(IndexRunRecord, "to_dict", _boom_run)
     monkeypatch.setattr(PublishTaskRecord, "to_dict", _boom_task)

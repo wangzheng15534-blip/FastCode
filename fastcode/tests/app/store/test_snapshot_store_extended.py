@@ -1414,7 +1414,8 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
                 assert result is not None
                 assert result.snapshot_id == snap_id
             except Exception:
-                raise AssertionError(f"load_snapshot({snap_id}) raised unexpectedly")
+                msg = f"load_snapshot({snap_id}) raised unexpectedly"
+                raise AssertionError(msg)
 
     @invariant()
     def get_scip_ref_matches_last_save(self):
@@ -1427,7 +1428,7 @@ class SnapshotStoreMachine(RuleBasedStateMachine):
     @invariant()
     def find_by_repo_commit_returns_record(self):
         """INVARIANT: find_by_repo_commit always returns a record for saved data."""
-        for _snap_id, snap in self.saved_snapshots.items():
+        for snap in self.saved_snapshots.values():
             result = self.store.find_by_repo_commit_record(
                 snap.repo_name, snap.commit_id
             )

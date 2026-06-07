@@ -349,7 +349,8 @@ class TestConnect:
         try:
             with rt.connect() as conn:
                 conn_ref = conn
-                raise ValueError("boom")
+                msg = "boom"
+                raise ValueError(msg)
         except ValueError:
             pass
         assert conn_ref is not None
@@ -625,7 +626,8 @@ class TestConnectionPooling:
 
         def _register(conn: Any) -> None:
             assert isinstance(conn, _Conn)
-            raise RuntimeError("adapter setup failed")
+            msg = "adapter setup failed"
+            raise RuntimeError(msg)
 
         monkeypatch.setattr(mod, "register_vector", _register)
 
@@ -689,7 +691,8 @@ class TestRollbackBehavior:
             try:
                 rt.begin_write(conn)
                 conn.execute("INSERT INTO t VALUES (2)")
-                raise ValueError("simulated")
+                msg = "simulated"
+                raise ValueError(msg)
             except ValueError:
                 conn.rollback()
             cur = rt.execute(conn, "SELECT COUNT(*) FROM t")
@@ -712,7 +715,8 @@ class TestRollbackBehavior:
         try:
             with rt.connect() as conn:
                 conn.execute("CREATE TABLE t (x INTEGER)")
-                raise RuntimeError("boom")
+                msg = "boom"
+                raise RuntimeError(msg)
         except RuntimeError:
             pass
         assert conn is not None
@@ -817,7 +821,8 @@ class TestDbRuntimeEdgeExtras:
             try:
                 rt.begin_write(conn)
                 conn.execute("INSERT INTO t VALUES (2)")
-                raise RuntimeError("force rollback")
+                msg = "force rollback"
+                raise RuntimeError(msg)
             except RuntimeError:
                 pass
             cur = rt.execute(conn, "SELECT COUNT(*) FROM t")

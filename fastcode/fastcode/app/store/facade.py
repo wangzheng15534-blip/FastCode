@@ -191,10 +191,12 @@ class StoreFacade:
     ) -> dict[str, Any]:
         snapshot_record = self._snapshot_store.get_snapshot_record(snapshot_id)
         if snapshot_record is None:
-            raise RuntimeError(f"snapshot not found: {snapshot_id}")
+            msg = f"snapshot not found: {snapshot_id}"
+            raise RuntimeError(msg)
         snapshot = self._snapshot_store.load_snapshot(snapshot_id)
         if snapshot is None:
-            raise RuntimeError(f"snapshot payload not found: {snapshot_id}")
+            msg = f"snapshot payload not found: {snapshot_id}"
+            raise RuntimeError(msg)
         ir_graphs = (
             self._snapshot_store.load_ir_graphs(snapshot_id)
             if include_graph_facts
@@ -336,7 +338,9 @@ class StoreFacade:
         max_hops: int = 3,
         graph_types: list[str] | None = None,
     ) -> dict[str, Any]:
-        from fastcode.graph.analysis import compute_impact_analysis_for_snapshot as _impl
+        from fastcode.graph.analysis import (
+            compute_impact_analysis_for_snapshot as _impl,
+        )
 
         return _impl(
             self._graph_analysis_ctx(),
@@ -350,7 +354,9 @@ class StoreFacade:
         self,
         snapshot_id: str,
     ) -> dict[str, Any]:
-        from fastcode.graph.analysis import compute_leiden_clusters_for_snapshot as _impl
+        from fastcode.graph.analysis import (
+            compute_leiden_clusters_for_snapshot as _impl,
+        )
 
         return _impl(self._graph_analysis_ctx(), snapshot_id)
 
@@ -371,9 +377,7 @@ class StoreFacade:
     ) -> dict[str, Any]:
         from fastcode.graph.analysis import compute_find_callers_for_snapshot as _impl
 
-        return _impl(
-            self._graph_analysis_ctx(), symbol, snapshot_id, max_hops
-        )
+        return _impl(self._graph_analysis_ctx(), symbol, snapshot_id, max_hops)
 
     # ------------------------------------------------------------------
     # SCIP

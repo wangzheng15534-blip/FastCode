@@ -223,18 +223,22 @@ class VectorStore:
             metadata: List of metadata dictionaries for each vector
         """
         if self.dimension is None:
-            raise RuntimeError("Vector store not initialized")
+            msg = "Vector store not initialized"
+            raise RuntimeError(msg)
         if self.index is None and not self._ensure_faiss_index():
-            raise RuntimeError("Vector store not initialized")
+            msg = "Vector store not initialized"
+            raise RuntimeError(msg)
 
         if len(vectors) != len(metadata):
-            raise ValueError("Number of vectors must match number of metadata entries")
+            msg = "Number of vectors must match number of metadata entries"
+            raise ValueError(msg)
 
         # FAISS cosine normalization mutates input buffers, so this backend
         # boundary explicitly owns a mutable float32 matrix.
         vectors = as_float32_matrix(vectors, copy_policy="mutable")
         if vectors.ndim != 2 or vectors.shape[0] == 0:
-            raise ValueError("vectors must be a non-empty 2D float32 matrix")
+            msg = "vectors must be a non-empty 2D float32 matrix"
+            raise ValueError(msg)
 
         # Normalize if using cosine similarity
         if self.distance_metric == "cosine":
@@ -415,7 +419,8 @@ class VectorStore:
         """
         normalized_embedding = self._normalize_repo_overview_embedding(embedding)
         if normalized_embedding is None:
-            raise ValueError("Repository overview embedding must be a numeric vector")
+            msg = "Repository overview embedding must be a numeric vector"
+            raise ValueError(msg)
         normalized_metadata = metadata
         embedding_fingerprint = self._repo_overview_embedding_fingerprint(
             {"metadata": normalized_metadata},
@@ -821,7 +826,8 @@ class VectorStore:
 
         vectors = self._vector_matrix_for_persist()
         if len(vectors) != len(self.metadata):
-            raise RuntimeError("Vector/metadata count mismatch during persistence")
+            msg = "Vector/metadata count mismatch during persistence"
+            raise RuntimeError(msg)
 
         grouped_counts = self._path_row_counts(self.metadata)
         plan = self._build_incremental_shard_plan(
@@ -922,7 +928,8 @@ class VectorStore:
             else np.empty((0, int(self.dimension)), dtype=np.float32)
         )
         if len(vectors) != len(self.metadata):
-            raise RuntimeError("Vector/metadata count mismatch during delta publish")
+            msg = "Vector/metadata count mismatch during delta publish"
+            raise RuntimeError(msg)
 
         plan = self._build_delta_shard_plan(
             previous_name=previous_name,
@@ -1668,7 +1675,8 @@ class VectorStore:
             return rows
 
         if self.index is None or self.dimension is None:
-            raise RuntimeError("Vector rows unavailable for persistence")
+            msg = "Vector rows unavailable for persistence"
+            raise RuntimeError(msg)
 
         vectors = np.zeros((len(self.metadata), self.dimension), dtype=np.float32)
         for i in range(len(self.metadata)):
@@ -2207,9 +2215,8 @@ class VectorStore:
             seen_count = grouped_seen.get(path_key, 0)
             sequence_nos = sequences_by_path.get(path_key)
             if sequence_nos is None or len(sequence_nos) <= seen_count:
-                raise RuntimeError(
-                    f"Missing incremental vector sequence for path: {path_key}"
-                )
+                msg = f"Missing incremental vector sequence for path: {path_key}"
+                raise RuntimeError(msg)
             grouped_seen[path_key] = seen_count + 1
             ordered_rows.append((sequence_nos[seen_count], vectors[row_index]))
         ordered_rows.sort(key=lambda item: item[0])
@@ -2241,7 +2248,8 @@ class VectorStore:
     def _write_vector_bundle(self, name: str) -> None:
         vectors = self._vector_matrix_for_persist()
         if len(vectors) != len(self.metadata):
-            raise RuntimeError("Vector/metadata count mismatch during persistence")
+            msg = "Vector/metadata count mismatch during persistence"
+            raise RuntimeError(msg)
 
         shard_dir = self._vector_shards_dir(name)
         ensure_dir(shard_dir)
@@ -2328,9 +2336,8 @@ class VectorStore:
             if sequence_nos is None or len(sequence_nos) <= len(
                 grouped_rows.get(path_key, [])
             ):
-                raise RuntimeError(
-                    f"Missing incremental vector sequence for path: {path_key}"
-                )
+                msg = f"Missing incremental vector sequence for path: {path_key}"
+                raise RuntimeError(msg)
             sequence_no = sequence_nos[len(grouped_rows.get(path_key, []))]
             grouped_rows.setdefault(path_key, []).append(
                 (sequence_no, row_index, vectors[row_index])
@@ -2428,9 +2435,8 @@ class VectorStore:
             sequence_nos = sequences_by_path.get(path_key)
             seen_count = grouped_seen.get(path_key, 0)
             if sequence_nos is None or len(sequence_nos) <= seen_count:
-                raise RuntimeError(
-                    f"Missing delta vector sequence for path: {path_key}"
-                )
+                msg = f"Missing delta vector sequence for path: {path_key}"
+                raise RuntimeError(msg)
             grouped_seen[path_key] = seen_count + 1
             grouped_rows.setdefault(path_key, []).append(
                 (sequence_nos[seen_count], row_index, vectors[row_index])
@@ -2747,9 +2753,8 @@ class VectorStore:
             sequence_nos = sequences_by_path.get(path_key)
             current_entries = grouped_entries.setdefault(path_key, [])
             if sequence_nos is None or len(sequence_nos) <= len(current_entries):
-                raise RuntimeError(
-                    f"Missing incremental metadata sequence for path: {path_key}"
-                )
+                msg = f"Missing incremental metadata sequence for path: {path_key}"
+                raise RuntimeError(msg)
             current_entries.append(
                 {"sequence_no": sequence_nos[len(current_entries)], "payload": meta}
             )
@@ -2907,9 +2912,8 @@ class VectorStore:
             sequence_nos = sequences_by_path.get(path_key)
             seen_count = grouped_seen.get(path_key, 0)
             if sequence_nos is None or len(sequence_nos) <= seen_count:
-                raise RuntimeError(
-                    f"Missing delta metadata sequence for path: {path_key}"
-                )
+                msg = f"Missing delta metadata sequence for path: {path_key}"
+                raise RuntimeError(msg)
             grouped_seen[path_key] = seen_count + 1
             grouped_entries.setdefault(path_key, []).append(
                 {

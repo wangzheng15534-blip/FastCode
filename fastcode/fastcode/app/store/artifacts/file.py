@@ -6,13 +6,13 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, cast
 
+from fastcode.infrastructure.storage.contracts import StoreDatabaseRuntime
 from fastcode.ports.artifacts import (
     FileArtifactRecordView,
 )
 from fastcode.ports.artifacts import (
     FileArtifactStore as FileArtifactStorePort,
 )
-from fastcode.infrastructure.storage.contracts import StoreDatabaseRuntime
 from fastcode.utils.clock import SystemClock
 from fastcode.utils.filesystem import normalize_path
 

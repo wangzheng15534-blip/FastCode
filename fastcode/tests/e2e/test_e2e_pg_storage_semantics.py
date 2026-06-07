@@ -193,8 +193,8 @@ def test_e2e_postgres_storage_semantics_gate(
     """Verify P0.6 storage semantics against a real PostgreSQL database."""
     dsn = require_postgres_e2e
     prefix = f"pg_storage_{uuid.uuid4().hex[:10]}"
-    snapshot_id_v1 = f"{prefix}:snap:v1"
-    snapshot_id_v2 = f"{prefix}:snap:v2"
+    snapshot_id_v1 = f"snap:{prefix}:v1"
+    snapshot_id_v2 = f"snap:{prefix}:v2"
     lock_name = f"{prefix}:index-lock"
 
     _cleanup_pg_storage_semantics_rows(dsn, prefix)

@@ -148,14 +148,16 @@ class PgRetrievalStore:
     @staticmethod
     def _vector_literal_from_array(vec: np.ndarray) -> str:
         if vec.size == 0:
-            raise ValueError("Cannot create vector literal from empty sequence")
+            msg = "Cannot create vector literal from empty sequence"
+            raise ValueError(msg)
         return "[" + ",".join(f"{float(v):.8f}" for v in vec) + "]"
 
     @classmethod
     def _vector_literal(cls, vec: Sequence[float] | np.ndarray) -> str:
         array = cls._vector_array(vec)
         if array is None:
-            raise ValueError("Cannot create vector literal from empty sequence")
+            msg = "Cannot create vector literal from empty sequence"
+            raise ValueError(msg)
         return cls._vector_literal_from_array(array)
 
     def _vector_parameter(self, vec: np.ndarray | None) -> np.ndarray | str | None:
@@ -462,9 +464,8 @@ class PgRetrievalStore:
             and PgRetrievalStore._is_embedding_like_metadata_key(metadata_key)
             and PgRetrievalStore._looks_like_numeric_vector(value)
         ):
-            raise ValueError(
-                "Embedding/vector arrays must not be serialized into PG metadata JSON"
-            )
+            msg = "Embedding/vector arrays must not be serialized into PG metadata JSON"
+            raise ValueError(msg)
         if isinstance(value, Mapping):
             payload: dict[str, Any] = {}
             for k, v in cast(Mapping[Any, Any], value).items():
@@ -486,9 +487,8 @@ class PgRetrievalStore:
                 for item in cast(set[Any], value)
             ]
         if isinstance(value, np.ndarray):
-            raise ValueError(
-                "NumPy arrays must not be serialized into PG metadata JSON"
-            )
+            msg = "NumPy arrays must not be serialized into PG metadata JSON"
+            raise ValueError(msg)
         if isinstance(value, np.integer):  # type: ignore[arg-type]
             return int(cast(Any, value))
         if isinstance(value, np.floating):  # type: ignore[arg-type]

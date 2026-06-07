@@ -25,7 +25,8 @@ class _RecordingCursor:
     def executemany(self, sql: Any, params_seq: Any) -> None:
         self._call_count += 1
         if self._fail_on_second and self._call_count == 2:
-            raise RuntimeError("search_documents write failed")
+            msg = "search_documents write failed"
+            raise RuntimeError(msg)
         self.calls.append((sql, list(params_seq)))
 
     def execute(self, sql: Any, params: Any = ()) -> None:

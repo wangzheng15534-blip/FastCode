@@ -94,7 +94,8 @@ def test_dirty_scope_helpers_use_explicit_serializers(
 
     def responder(sql: str, _params: tuple[Any, ...]) -> tuple[Any, list[Any]]:
         if "FROM projection_dirty_scopes" not in sql:
-            raise AssertionError(f"unexpected SQL: {sql}")
+            msg = f"unexpected SQL: {sql}"
+            raise AssertionError(msg)
         if "ORDER BY updated_at DESC" in sql:
             return None, [dirty_row]
         return dirty_row, []
@@ -102,9 +103,8 @@ def test_dirty_scope_helpers_use_explicit_serializers(
     store, _executed = _make_store(responder)
 
     def _boom(_: ProjectionDirtyScopeRecord) -> dict[str, Any]:
-        raise AssertionError(
-            "projection store must not call ProjectionDirtyScopeRecord.to_dict()"
-        )
+        msg = "projection store must not call ProjectionDirtyScopeRecord.to_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(ProjectionDirtyScopeRecord, "to_dict", _boom)
 
@@ -138,18 +138,19 @@ def test_mark_dirty_merges_existing_scope_via_typed_record(
             return existing_row, []
         if "INSERT INTO projection_dirty_scopes" in sql:
             return None, []
-        raise AssertionError(f"unexpected SQL: {sql}")
+        msg = f"unexpected SQL: {sql}"
+        raise AssertionError(msg)
 
     store, executed = _make_store(responder)
 
     def _boom(_: ProjectionDirtyScopeRecord) -> dict[str, Any]:
-        raise AssertionError(
-            "projection store must not call ProjectionDirtyScopeRecord.to_dict()"
-        )
+        msg = "projection store must not call ProjectionDirtyScopeRecord.to_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(ProjectionDirtyScopeRecord, "to_dict", _boom)
     monkeypatch.setattr(
-        "fastcode.app.store.snapshots.projection.utc_now", lambda: "2026-05-05T00:00:10+00:00"
+        "fastcode.app.store.snapshots.projection.utc_now",
+        lambda: "2026-05-05T00:00:10+00:00",
     )
 
     store.mark_dirty(
@@ -192,19 +193,20 @@ def test_build_helpers_use_explicit_serializers(
 
     def responder(sql: str, _params: tuple[Any, ...]) -> tuple[Any, list[Any]]:
         if "FROM projection_builds" not in sql:
-            raise AssertionError(f"unexpected SQL: {sql}")
+            msg = f"unexpected SQL: {sql}"
+            raise AssertionError(msg)
         if "WHERE projection_id=%s" in sql:
             return build_row, []
         if "WHERE snapshot_id=%s AND status='ready'" in sql:
             return None, [build_row]
-        raise AssertionError(f"unexpected SQL: {sql}")
+        msg = f"unexpected SQL: {sql}"
+        raise AssertionError(msg)
 
     store, _executed = _make_store(responder)
 
     def _boom(_: ProjectionBuildRecord) -> dict[str, Any]:
-        raise AssertionError(
-            "projection store must not call ProjectionBuildRecord.to_dict()"
-        )
+        msg = "projection store must not call ProjectionBuildRecord.to_dict()"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(ProjectionBuildRecord, "to_dict", _boom)
 
@@ -234,7 +236,8 @@ def test_save_prunes_stale_chunks_before_upserting_current_chunk_set(
 
     store, executed = _make_store(responder)
     monkeypatch.setattr(
-        "fastcode.app.store.snapshots.projection.utc_now", lambda: "2026-05-05T00:00:10+00:00"
+        "fastcode.app.store.snapshots.projection.utc_now",
+        lambda: "2026-05-05T00:00:10+00:00",
     )
 
     result = ProjectionBuildResult(

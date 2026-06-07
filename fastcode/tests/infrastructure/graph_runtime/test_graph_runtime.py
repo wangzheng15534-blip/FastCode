@@ -66,7 +66,8 @@ def test_postgres_attach_loads_extension_before_attach():
                 statement == "LOAD postgres"
                 and "INSTALL postgres" not in self.statements
             ):
-                raise RuntimeError("Extension: postgres has not been installed")
+                msg = "Extension: postgres has not been installed"
+                raise RuntimeError(msg)
             return []
 
     conn = _Conn()
@@ -91,6 +92,75 @@ def test_postgres_attach_loads_extension_before_attach():
     ]
     assert rt.postgres_attached is True
     assert rt.postgres_attach_error is None
+
+
+def test_sync_nodes_writes_generic_node_records() -> None:
+    class _Conn:
+        def __init__(self) -> None:
+            self.statements: list[str] = []
+
+        def execute(self, statement: str) -> list[object]:
+            self.statements.append(statement)
+            return []
+
+    class _Node:
+        collection = "design_documents"
+        key_field = "chunk_id"
+        key_value = "chunk-1"
+        property_names = ("chunk_id", "snapshot_id", "content")
+
+        @staticmethod
+        def property_value(name: str) -> str:
+            return {
+                "chunk_id": "chunk-1",
+                "snapshot_id": "snap:1",
+                "content": "hello",
+            }[name]
+
+    conn = _Conn()
+    rt = LadybugGraphRuntime({})
+    rt.enabled = True
+    rt._conn = conn
+
+    assert rt.sync_nodes(nodes=[_Node()]) is True
+
+    assert conn.statements == [
+        'MATCH (n:design_documents {chunk_id: "chunk-1"}) DELETE n',
+        (
+            'CREATE (n:design_documents {chunk_id: "chunk-1", '
+            'snapshot_id: "snap:1", content: "hello"})'
+        ),
+    ]
+
+
+def test_sync_nodes_rejects_unsafe_property_name() -> None:
+    class _Conn:
+        def __init__(self) -> None:
+            self.statements: list[str] = []
+
+        def execute(self, statement: str) -> list[object]:
+            self.statements.append(statement)
+            return []
+
+    conn = _Conn()
+    rt = LadybugGraphRuntime({})
+    rt.enabled = True
+    rt._conn = conn
+
+    assert (
+        rt.sync_nodes(
+            nodes=[
+                {
+                    "collection": "design_documents",
+                    "key_field": "chunk_id) DELETE n",
+                    "key_value": "chunk-1",
+                    "_properties": {"chunk_id) DELETE n": "chunk-1"},
+                }
+            ]
+        )
+        is False
+    )
+    assert conn.statements == []
 
 
 # --- Properties ---

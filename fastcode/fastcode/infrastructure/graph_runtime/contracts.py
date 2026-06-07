@@ -24,3 +24,11 @@ class DocumentGraphRuntime(Protocol):
     ) -> bool:
         """Persist document chunks and mentions into the graph overlay."""
         ...
+
+    def sync_nodes(
+        self,
+        *,
+        nodes: Iterable[Any],
+    ) -> bool:
+        """Persist pre-built graph node records into the overlay."""
+        ...

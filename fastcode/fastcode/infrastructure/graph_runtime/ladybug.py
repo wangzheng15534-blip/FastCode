@@ -7,10 +7,9 @@ Uses LadybugDB's Cypher-like query language for graph storage.
 
 from __future__ import annotations
 
-import builtins
 import logging
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any, cast
 from urllib.parse import parse_qsl, unquote, urlparse
 
@@ -27,6 +26,15 @@ def _esc(val: Any) -> str:
     s = s.replace("\x00", "").replace("\n", " ").replace("\r", " ")
     s = s.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
     return f'"{s}"'
+
+
+def _prop_name(name: Any) -> str:
+    """Validate a Cypher property identifier used in generated statements."""
+    value = str(name or "")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+        msg = f"unsafe graph property name: {value!r}"
+        raise ValueError(msg)
+    return value
 
 
 class LadybugGraphRuntime(DocumentGraphRuntime):
@@ -59,8 +67,8 @@ class LadybugGraphRuntime(DocumentGraphRuntime):
             import real_ladybug  # type: ignore[import-untyped]
 
             # ruff-format: off
-            _Database: Any = builtins.getattr(real_ladybug, "Database")  # noqa: B009
-            _Connection: Any = builtins.getattr(real_ladybug, "Connection")  # noqa: B009
+            _Database: Any = real_ladybug.Database
+            _Connection: Any = real_ladybug.Connection
             # ruff-format: on
             db: Any = _Database(self.db_path)
             self._conn = _Connection(database=db)
@@ -156,17 +164,21 @@ class LadybugGraphRuntime(DocumentGraphRuntime):
     def _sanitize_attach_dsn(dsn: str) -> str:
         raw = (dsn or "").strip()
         if not raw:
-            raise ValueError("empty postgres attach dsn")
+            msg = "empty postgres attach dsn"
+            raise ValueError(msg)
         # Reject SQL-control characters/tokens to prevent statement injection.
         forbidden_tokens = (";", "--", "/*", "*/", "\x00", "\n", "\r")
         if any(tok in raw for tok in forbidden_tokens):
-            raise ValueError("unsafe postgres attach dsn")
+            msg = "unsafe postgres attach dsn"
+            raise ValueError(msg)
         if "://" in raw:
             parsed = urlparse(raw)
             if parsed.scheme not in {"postgres", "postgresql"}:
-                raise ValueError("unsupported postgres attach dsn scheme")
+                msg = "unsupported postgres attach dsn scheme"
+                raise ValueError(msg)
         elif not re.fullmatch(r"[A-Za-z0-9_\-.:/@?&=%+, ]+", raw):
-            raise ValueError("unsupported postgres attach dsn format")
+            msg = "unsupported postgres attach dsn format"
+            raise ValueError(msg)
         # Escape single quotes for SQL literal context.
         return raw.replace("'", "''")
 
@@ -245,6 +257,66 @@ class LadybugGraphRuntime(DocumentGraphRuntime):
             return True
         except Exception as e:
             self.logger.warning(f"Ladybug sync failed: {e}")
+            return False
+
+    def sync_nodes(
+        self,
+        *,
+        nodes: Iterable[Any],
+    ) -> bool:
+        """Sync pre-built node records to LadybugDB.
+
+        Accepts objects with ``collection``, ``key_field``, ``key_value``,
+        and ``_properties`` attributes (e.g. ``DocumentOverlayNodeRecord``)
+        or plain dicts with the same keys.
+        """
+        if not self.enabled or not self._conn:
+            return False
+        try:
+            for node in nodes:
+                # Support both dataclass-like objects and plain dicts
+                if isinstance(node, Mapping):
+                    collection = node.get("collection", "")
+                    key_field = node.get("key_field", "")
+                    key_value = node.get("key_value", "")
+                    properties = dict(
+                        cast(Mapping[str, Any], node.get("_properties", {}))
+                    )
+                else:
+                    collection = getattr(node, "collection", "")
+                    key_field = getattr(node, "key_field", "")
+                    key_value = getattr(node, "key_value", "")
+                    property_names = getattr(node, "property_names", ())
+                    property_value = getattr(node, "property_value", None)
+                    if property_names and callable(property_value):
+                        properties = {
+                            str(name): property_value(name) for name in property_names
+                        }
+                    else:
+                        properties = dict(getattr(node, "_properties", {}))
+                if not key_field or not key_value:
+                    continue
+                key_name = _prop_name(key_field)
+                properties.setdefault(key_name, key_value)
+                # Map generic collection names to table names
+                table = (
+                    self._doc_table
+                    if collection == "design_documents"
+                    else self._mention_table
+                )
+                # Upsert: delete old node then create new one
+                self._conn.execute(
+                    f"MATCH (n:{table} "
+                    f"{{{key_name}: {_esc(key_value)}}}) DELETE n"
+                )
+                prop_parts = ", ".join(
+                    f"{_prop_name(name)}: {_esc(properties.get(name))}"
+                    for name in properties
+                )
+                self._conn.execute(f"CREATE (n:{table} {{{prop_parts}}})")
+            return True
+        except Exception as e:
+            self.logger.warning(f"Ladybug sync_nodes failed: {e}")
             return False
 
     def query_docs(self, *, snapshot_id: str) -> list[dict[str, Any]]:

@@ -13,7 +13,7 @@ from typing import Any, cast
 
 import fastcode.retrieval.graph.graph_build as _graph_build
 from fastcode.ir.types import IRRelation, IRSnapshot
-from fastcode.ports.publishing import EventSink, LineagePublisher
+from fastcode.ports.publishing import EventSink, LineagePublisher, SnapshotView
 from fastcode.utils.hashing import deterministic_event_id
 
 
@@ -128,7 +128,8 @@ class TerminusPublisher(LineagePublisher):
         idempotency_key: str | None = None,
     ) -> None:
         if not self.endpoint:
-            raise RuntimeError("Terminus endpoint is not configured")
+            msg = "Terminus endpoint is not configured"
+            raise RuntimeError(msg)
 
         payload = self.build_lineage_payload(
             snapshot=snapshot,
@@ -140,21 +141,40 @@ class TerminusPublisher(LineagePublisher):
 
     def publish_snapshot_lineage_for_snapshot(
         self,
-        snapshot: IRSnapshot,
+        snapshot: SnapshotView,
         manifest: Any,
         git_meta: dict[str, Any],
         previous_snapshot_symbols: dict[str, str] | None = None,
         idempotency_key: str | None = None,
     ) -> None:
         if not self.endpoint:
-            raise RuntimeError("Terminus endpoint is not configured")
+            msg = "Terminus endpoint is not configured"
+            raise RuntimeError(msg)
 
-        payload = self.build_lineage_payload_for_snapshot(
-            snapshot=snapshot,
-            manifest=manifest,
-            git_meta=git_meta,
-            previous_snapshot_symbols=previous_snapshot_symbols,
-        )
+        # When the caller passes an IRSnapshot (the common case), use the
+        # typed payload builder; otherwise fall back to the dict-based path.
+        if isinstance(snapshot, IRSnapshot):
+            payload = self.build_lineage_payload_for_snapshot(
+                snapshot=snapshot,
+                manifest=manifest,
+                git_meta=git_meta,
+                previous_snapshot_symbols=previous_snapshot_symbols,
+            )
+        else:
+            snapshot_dict: dict[str, Any] = {
+                "repo_name": snapshot.repo_name,
+                "snapshot_id": snapshot.snapshot_id,
+                "branch": snapshot.branch,
+                "commit_id": snapshot.commit_id,
+                "documents": list(snapshot.documents),
+                "symbols": list(snapshot.symbols),
+            }
+            payload = self.build_lineage_payload(
+                snapshot=snapshot_dict,
+                manifest=manifest,
+                git_meta=git_meta,
+                previous_snapshot_symbols=previous_snapshot_symbols,
+            )
         self._do_post(payload, idempotency_key=idempotency_key)
 
     def _do_post(
@@ -164,7 +184,8 @@ class TerminusPublisher(LineagePublisher):
     ) -> None:
         """Execute the HTTP POST to TerminusDB."""
         if not self.endpoint:
-            raise RuntimeError("Terminus endpoint is not configured")
+            msg = "Terminus endpoint is not configured"
+            raise RuntimeError(msg)
 
         body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
@@ -180,10 +201,12 @@ class TerminusPublisher(LineagePublisher):
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 if resp.status >= 300:
-                    raise RuntimeError(f"Terminus publish failed: HTTP {resp.status}")
+                    msg = f"Terminus publish failed: HTTP {resp.status}"
+                    raise RuntimeError(msg)
                 self.logger.info("Published snapshot lineage to Terminus")
         except urllib.error.URLError as e:
-            raise RuntimeError(f"Terminus publish error: {e}") from e
+            msg = f"Terminus publish error: {e}"
+            raise RuntimeError(msg) from e
 
     def build_code_graph_payload(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         """Build TerminusDB payload for code graph (symbol nodes + relation edges)."""
@@ -277,10 +300,11 @@ class TerminusPublisher(LineagePublisher):
         """
         if not self.endpoint:
             return []
-        raise NotImplementedError(
+        msg = (
             "load_graph_nodes requires a TerminusDB query endpoint; "
             "publish-only mode is currently supported"
         )
+        raise NotImplementedError(msg)
 
     def load_graph_edges(
         self, snapshot_id: str, edge_type: str | None = None
@@ -291,10 +315,11 @@ class TerminusPublisher(LineagePublisher):
         """
         if not self.endpoint:
             return []
-        raise NotImplementedError(
+        msg = (
             "load_graph_edges requires a TerminusDB query endpoint; "
             "publish-only mode is currently supported"
         )
+        raise NotImplementedError(msg)
 
     def build_lineage_payload(
         self,
@@ -363,9 +388,11 @@ class TerminusPublisher(LineagePublisher):
         code_graph: dict[str, Any],
     ) -> dict[str, Any]:
         if not snapshot_id:
-            raise ValueError("snapshot_id is required for lineage payload")
+            msg = "snapshot_id is required for lineage payload"
+            raise ValueError(msg)
         if not repo_name:
-            raise ValueError("repo_name is required for lineage payload")
+            msg = "repo_name is required for lineage payload"
+            raise ValueError(msg)
 
         repo_node_id = f"repo:{repo_name}"
         branch_node_id = f"branch:{repo_name}:{branch}" if branch else None

@@ -742,7 +742,8 @@ class TestTypedSnapshotLineage:
 
         class NoDictSnapshot(IRSnapshot):
             def to_dict(self) -> dict[str, Any]:
-                raise AssertionError("typed lineage must not call IRSnapshot.to_dict()")
+                msg = "typed lineage must not call IRSnapshot.to_dict()"
+                raise AssertionError(msg)
 
         publisher = _make_publisher()
         snapshot = NoDictSnapshot(

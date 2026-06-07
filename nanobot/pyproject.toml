@@ -83,6 +83,11 @@ target-version = "py311"
 select = ["E", "F", "I", "N", "W"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+"nanobot/agent/tools/web.py" = [
+    "N803",  # design: public tool schema uses extractMode/maxChars
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

@@ -26,6 +26,7 @@ def _get_fastcode_url() -> str:
 # Tool 1: Load and Index Repository
 # ============================================================
 
+
 class FastCodeLoadRepoTool(Tool):
     """Load and index a code repository for querying."""
 
@@ -95,12 +96,16 @@ class FastCodeLoadRepoTool(Tool):
                 else:
                     lines.append(str(summary))
                 lines.append("")
-                lines.append("You can now use fastcode_query to ask questions about this repository.")
+                lines.append(
+                    "You can now use fastcode_query to ask questions about this repository."
+                )
                 return "\n".join(lines)
         except httpx.ConnectError:
             return "Error: Cannot connect to FastCode backend. Is the FastCode service running?"
         except httpx.HTTPStatusError as e:
-            return f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            return (
+                f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            )
         except Exception as e:
             return f"Error loading repository: {str(e)}"
 
@@ -108,6 +113,7 @@ class FastCodeLoadRepoTool(Tool):
 # ============================================================
 # Tool 2: Query Repository (Core Tool)
 # ============================================================
+
 
 class FastCodeQueryTool(Tool):
     """Query a code repository using natural language."""
@@ -232,7 +238,9 @@ class FastCodeQueryTool(Tool):
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 400:
                 return "Error: No repository indexed. Use fastcode_load_repo first."
-            return f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            return (
+                f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            )
         except Exception as e:
             return f"Error querying repository: {str(e)}"
 
@@ -240,6 +248,7 @@ class FastCodeQueryTool(Tool):
 # ============================================================
 # Tool 3: List Repositories
 # ============================================================
+
 
 class FastCodeListReposTool(Tool):
     """List available and loaded repositories."""
@@ -307,6 +316,7 @@ class FastCodeListReposTool(Tool):
 # Tool 4: System Status
 # ============================================================
 
+
 class FastCodeStatusTool(Tool):
     """Check FastCode system status."""
 
@@ -373,6 +383,7 @@ class FastCodeStatusTool(Tool):
 # Tool 5: Session Management
 # ============================================================
 
+
 class FastCodeSessionTool(Tool):
     """Manage FastCode dialogue sessions."""
 
@@ -418,7 +429,6 @@ class FastCodeSessionTool(Tool):
     ) -> str:
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-
                 if action == "new":
                     response = await client.post(f"{self._api_url}/new-session")
                     response.raise_for_status()
@@ -477,7 +487,9 @@ class FastCodeSessionTool(Tool):
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return f"Error: Session '{session_id}' not found."
-            return f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            return (
+                f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            )
         except Exception as e:
             return f"Error managing session: {str(e)}"
 
@@ -485,6 +497,7 @@ class FastCodeSessionTool(Tool):
 # ============================================================
 # Tool 6: Search Symbol
 # ============================================================
+
 
 class FastCodeSearchSymbolTool(Tool):
     """Search for a symbol (function, class, method) by name, ID, or path."""
@@ -579,7 +592,9 @@ class FastCodeSearchSymbolTool(Tool):
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return f"No symbol found matching your criteria in snapshot '{snapshot_id}'."
-            return f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            return (
+                f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            )
         except Exception as e:
             return f"Error searching symbol: {str(e)}"
 
@@ -587,6 +602,7 @@ class FastCodeSearchSymbolTool(Tool):
 # ============================================================
 # Tool 7: Call Chain (Graph Operations)
 # ============================================================
+
 
 class FastCodeCallChainTool(Tool):
     """Trace call chains (callers/callees) for a symbol via the graph API."""
@@ -651,7 +667,11 @@ class FastCodeCallChainTool(Tool):
                 if direction in ("callees", "both"):
                     resp = await client.get(
                         f"{self._api_url}/graph/callees",
-                        params={"snapshot_id": snapshot_id, "symbol_id": symbol_id, "max_hops": max_hops},
+                        params={
+                            "snapshot_id": snapshot_id,
+                            "symbol_id": symbol_id,
+                            "max_hops": max_hops,
+                        },
                     )
                     resp.raise_for_status()
                     results["callees"] = resp.json().get("callees", [])
@@ -659,7 +679,11 @@ class FastCodeCallChainTool(Tool):
                 if direction in ("callers", "both"):
                     resp = await client.get(
                         f"{self._api_url}/graph/callers",
-                        params={"snapshot_id": snapshot_id, "symbol_id": symbol_id, "max_hops": max_hops},
+                        params={
+                            "snapshot_id": snapshot_id,
+                            "symbol_id": symbol_id,
+                            "max_hops": max_hops,
+                        },
                     )
                     resp.raise_for_status()
                     results["callers"] = resp.json().get("callers", [])
@@ -695,7 +719,9 @@ class FastCodeCallChainTool(Tool):
         except httpx.ConnectError:
             return "Error: Cannot connect to FastCode backend. Is the FastCode service running?"
         except httpx.HTTPStatusError as e:
-            return f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            return (
+                f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            )
         except Exception as e:
             return f"Error tracing call chain: {str(e)}"
 
@@ -703,6 +729,7 @@ class FastCodeCallChainTool(Tool):
 # ============================================================
 # Tool 8: Build / Fetch Projections
 # ============================================================
+
 
 class FastCodeBuildProjectionTool(Tool):
     """Build or fetch multi-layer projection artifacts (L0/L1/L2)."""
@@ -787,7 +814,6 @@ class FastCodeBuildProjectionTool(Tool):
     ) -> str:
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
-
                 if action == "build":
                     if not scope_kind:
                         return "Error: scope_kind is required for build action."
@@ -833,7 +859,9 @@ class FastCodeBuildProjectionTool(Tool):
         except httpx.ConnectError:
             return "Error: Cannot connect to FastCode backend. Is the FastCode service running?"
         except httpx.HTTPStatusError as e:
-            return f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            return (
+                f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            )
         except Exception as e:
             return f"Error with projection: {str(e)}"
 
@@ -841,6 +869,7 @@ class FastCodeBuildProjectionTool(Tool):
 # ============================================================
 # Tool 9: Index Run (Snapshot-based Pipeline)
 # ============================================================
+
 
 class FastCodeIndexRunTool(Tool):
     """Run the snapshot-based index pipeline (IR-first approach)."""
@@ -947,7 +976,9 @@ class FastCodeIndexRunTool(Tool):
         except httpx.ConnectError:
             return "Error: Cannot connect to FastCode backend. Is the FastCode service running?"
         except httpx.HTTPStatusError as e:
-            return f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            return (
+                f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            )
         except Exception as e:
             return f"Error running index pipeline: {str(e)}"
 
@@ -955,6 +986,7 @@ class FastCodeIndexRunTool(Tool):
 # ============================================================
 # Tool 10: Upload Repository (ZIP)
 # ============================================================
+
 
 class FastCodeUploadRepoTool(Tool):
     """Upload a ZIP file and index it as a repository."""
@@ -1022,7 +1054,9 @@ class FastCodeUploadRepoTool(Tool):
         except httpx.ConnectError:
             return "Error: Cannot connect to FastCode backend. Is the FastCode service running?"
         except httpx.HTTPStatusError as e:
-            return f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            return (
+                f"Error: FastCode API returned status {e.response.status_code}: {e.response.text}"
+            )
         except Exception as e:
             return f"Error uploading repository: {str(e)}"
 
@@ -1030,6 +1064,7 @@ class FastCodeUploadRepoTool(Tool):
 # ============================================================
 # Helper: create all FastCode tools at once
 # ============================================================
+
 
 def create_all_tools(api_url: str | None = None) -> list[Tool]:
     """

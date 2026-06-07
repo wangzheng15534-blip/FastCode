@@ -35,6 +35,40 @@ from fastcode.utils.materialization import (
 )
 
 
+def _single_modified_file_prefilter_contract(
+    *, previous_artifact_key: str
+) -> dict[str, Any]:
+    return {
+        "previous_snapshot_id": "snap:repo:prev",
+        "previous_artifact_key": previous_artifact_key,
+        "artifact_delta_mode": True,
+        "added": 0,
+        "modified": 1,
+        "removed": 0,
+        "unchanged": 1,
+        "added_paths": [],
+        "modified_paths": ["b.py"],
+        "removed_paths": [],
+        "unchanged_paths": ["a.py"],
+        "changed_paths": ["b.py"],
+        "ast_ir_rebuilt_elements": 1,
+        "ast_ir_reused_files": 1,
+        "reused_elements": 1,
+        "reindexed_elements": 1,
+        "reused_changed_embeddings": 0,
+        "semantic_frontier_widened": 1,
+        "api_frontier_changed": 1,
+        "api_frontier_changed_paths": ["b.py"],
+        "package_scope_roots": ["."],
+        "change_kinds": [
+            "api_surface_hash",
+            "edge_surface_hash",
+            "embedding_text_hash",
+            "signature_hash",
+        ],
+    }
+
+
 def _make_snapshot_store(tmp: str) -> SnapshotStore:
     return SnapshotStore(
         tmp,
@@ -1736,35 +1770,9 @@ def test_pipeline_incremental_prefilter_only_indexes_changed_files() -> None:
         assert semantic_facts_payload["supports"][0]["support_id"] == "support:b"
         assert semantic_facts_payload["relations"][0]["relation_id"] == "rel:b"
         prefilter = result["incremental_prefilter"]
-        expected_prefilter = {
-            "previous_snapshot_id": "snap:repo:prev",
-            "previous_artifact_key": previous_record.artifact_key,
-            "artifact_delta_mode": True,
-            "added": 0,
-            "modified": 1,
-            "removed": 0,
-            "unchanged": 1,
-            "added_paths": [],
-            "modified_paths": ["b.py"],
-            "removed_paths": [],
-            "unchanged_paths": ["a.py"],
-            "changed_paths": ["b.py"],
-            "ast_ir_rebuilt_elements": 1,
-            "ast_ir_reused_files": 1,
-            "reused_elements": 1,
-            "reindexed_elements": 1,
-            "reused_changed_embeddings": 0,
-            "semantic_frontier_widened": 1,
-            "api_frontier_changed": 1,
-            "api_frontier_changed_paths": ["b.py"],
-            "package_scope_roots": ["."],
-            "change_kinds": [
-                "api_surface_hash",
-                "edge_surface_hash",
-                "embedding_text_hash",
-                "signature_hash",
-            ],
-        }
+        expected_prefilter = _single_modified_file_prefilter_contract(
+            previous_artifact_key=previous_record.artifact_key
+        )
         for key, value in expected_prefilter.items():
             assert prefilter[key] == value
         plan_changes = result["plan_changes"]

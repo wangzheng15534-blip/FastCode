@@ -928,6 +928,14 @@ class TestProjectionContract:
             metadata={"source_modes": ["ast"]},
         )
         result = _build_result(snap)
+        symbol_chunk = next(
+            chunk
+            for chunk in result.chunks
+            if chunk["meta"]["aggregation"]["representative"] == "sym:1"
+        )
+        assert symbol_chunk["meta"]["aggregation"]["top_members"] == ["sym:1"]
+        assert symbol_chunk["meta"]["centrality"]["degree"] == 2.0
+        assert symbol_chunk["meta"]["centrality"]["degree_centrality"] == 1.0
         safe_chunks = _strip_timestamps(result.chunks)
         snapshot.assert_match(safe_chunks)
 

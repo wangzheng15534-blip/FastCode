@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 import fastcode.api.routes as api
-from fastcode.main.fastcode import _ReadWriteStateLock
+from fastcode.runtime_support.runtime_state import _ReadWriteStateLock
 
 pytestmark = [pytest.mark.perf]
 
@@ -117,7 +117,10 @@ def _run_query_lock_workload(
 
 async def _run_query_endpoint_requests(query_count: int) -> int:
     from types import SimpleNamespace
-    mock_req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(fastcode=None)))
+
+    mock_req = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(fastcode=None))
+    )
     responses = await asyncio.gather(
         *(
             api.query_repository(
@@ -131,7 +134,7 @@ async def _run_query_endpoint_requests(query_count: int) -> int:
                     repo_filter=None,
                     multi_turn=False,
                     session_id=f"bench-{index}",
-                )
+                ),
             )
             for index in range(query_count)
         )

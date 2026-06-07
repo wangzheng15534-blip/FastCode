@@ -4,6 +4,8 @@ Baseline performance test: IR validation at scale.
 Run: pytest tests/bench_validation.py -v --benchmark-only
 """
 
+from typing import Any
+
 import pytest
 
 from fastcode.ir.types import IRDocument, IREdge, IROccurrence, IRSnapshot, IRSymbol
@@ -81,7 +83,7 @@ def _make_snapshot(num_symbols: int, num_occurrences: int) -> IRSnapshot:
     ],
 )
 def test_validation_throughput_perf(
-    num_symbols: int, num_occurrences: int, benchmark: pytest.BenchmarkFixture
+    num_symbols: int, num_occurrences: int, benchmark: Any
 ):
     """Benchmark validate_snapshot throughput."""
     snap = _make_snapshot(num_symbols, num_occurrences)

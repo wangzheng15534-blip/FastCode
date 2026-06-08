@@ -201,6 +201,7 @@ def _snippet_payload(
     )
     payload: dict[str, Any] = {
         "ref_id": ref_id,
+        "element_id": hit.element_id,
         "name": hit.element_name,
         "type": hit.element_type,
         "start_line": hit.start_line,
@@ -208,6 +209,8 @@ def _snippet_payload(
         "lines": _line_label(hit.start_line, hit.end_line),
         "score": _rounded_score(_hit_score(hit)),
         "source": hit.source_kind.value,
+        "evidence_refs": _evidence_refs(hit, ref_id=ref_id),
+        "graph_relationships": _graph_relationships(hit),
         "fresh": fresh,
         "language": hit.language,
         "expansion": {
@@ -225,6 +228,53 @@ def _snippet_payload(
         payload["code"] = line_numbered_code
         payload["omitted_code_chars"] = max(0, len(code) - code_char_limit)
     return payload
+
+
+def _evidence_refs(hit: Hit, *, ref_id: str) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = [
+        {
+            "ref_id": ref_id,
+            "kind": "retrieval_hit",
+            "element_id": hit.element_id,
+            "source": hit.source_kind.value,
+            "score": _rounded_score(_hit_score(hit)),
+            "scores": {
+                "semantic": _rounded_score(hit.semantic_score),
+                "keyword": _rounded_score(hit.keyword_score),
+                "pseudocode": _rounded_score(hit.pseudocode_score),
+                "graph": _rounded_score(hit.graph_score),
+            },
+        }
+    ]
+    for index, evidence in enumerate(hit.traceability, 1):
+        refs.append(
+            {
+                "ref_id": f"{ref_id}:trace:{index}",
+                "kind": "projection_trace",
+                "doc_id": evidence.doc_id,
+                "unit_id": evidence.link.unit_id,
+                "evidence_type": evidence.link.evidence_type,
+                "chunk_id": evidence.link.chunk_id,
+                "confidence": evidence.link.confidence,
+                "score": _rounded_score(evidence.doc_score),
+                "contribution": _rounded_score(evidence.contribution),
+            }
+        )
+    return refs
+
+
+def _graph_relationships(hit: Hit) -> list[dict[str, Any]]:
+    if not hit.related_to:
+        return []
+    return [
+        {
+            "source_element_id": hit.related_to,
+            "target_element_id": hit.element_id,
+            "relationship": "related",
+            "provenance": hit.source_kind.value,
+            "score": _rounded_score(hit.graph_score or _hit_score(hit)),
+        }
+    ]
 
 
 def _line_label(start_line: int, end_line: int) -> str:

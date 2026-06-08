@@ -199,6 +199,26 @@ def format_explore_code_response(result: dict[str, Any]) -> str:
             signature = snippet.get("signature")
             if signature:
                 lines.append(f"  {signature}")
+            evidence_refs = snippet.get("evidence_refs", [])
+            if isinstance(evidence_refs, list) and evidence_refs:
+                evidence_ids = [
+                    str(ref.get("ref_id"))
+                    for ref in evidence_refs[:3]
+                    if isinstance(ref, dict) and ref.get("ref_id")
+                ]
+                if evidence_ids:
+                    lines.append(f"  evidence: {', '.join(evidence_ids)}")
+            relationships = snippet.get("graph_relationships", [])
+            if isinstance(relationships, list) and relationships:
+                for relationship in relationships[:3]:
+                    if not isinstance(relationship, dict):
+                        continue
+                    lines.append(
+                        "  graph: "
+                        f"{relationship.get('source_element_id', '?')} -> "
+                        f"{relationship.get('target_element_id', '?')} "
+                        f"({relationship.get('relationship', 'related')})"
+                    )
             code = snippet.get("code")
             if code:
                 language = snippet.get("language", "")

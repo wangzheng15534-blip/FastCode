@@ -167,6 +167,23 @@ class TestFormatExploreCodeResponse:
                                 "score": 0.9,
                                 "language": "python",
                                 "signature": "def authenticate()",
+                                "evidence_refs": [
+                                    {
+                                        "ref_id": "e1",
+                                        "kind": "retrieval_hit",
+                                    },
+                                    {
+                                        "ref_id": "e1:trace:1",
+                                        "kind": "projection_trace",
+                                    },
+                                ],
+                                "graph_relationships": [
+                                    {
+                                        "source_element_id": "u:caller",
+                                        "target_element_id": "u:auth",
+                                        "relationship": "calls",
+                                    }
+                                ],
                                 "code": "   7 | def authenticate():",
                             }
                         ],
@@ -186,6 +203,8 @@ class TestFormatExploreCodeResponse:
         assert "## g1 repo/src/auth.py" in result
         assert "e1 [function] authenticate L7-9" in result
         assert "def authenticate()" in result
+        assert "evidence: e1, e1:trace:1" in result
+        assert "graph: u:caller -> u:auth (calls)" in result
         assert "get_file_summary" in result
 
     def test_empty(self):

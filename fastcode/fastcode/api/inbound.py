@@ -82,6 +82,29 @@ class QuerySnapshotRequest(BaseModel):
     )
 
 
+class ExploreCodeRequest(BaseModel):
+    question: str = Field(..., description="Question or topic to explore")
+    snapshot_id: str | None = Field(None, description="Direct snapshot ID")
+    repo_name: str | None = Field(
+        None, description="Repository name (when resolving by ref)"
+    )
+    ref_name: str | None = Field(
+        None, description="Branch/ref name (when resolving by ref)"
+    )
+    filters: dict[str, Any] | None = Field(
+        None, description="Optional retrieval filters"
+    )
+    repo_filter: list[str] | None = Field(
+        None, description="Repository names to search"
+    )
+    detail_level: str = Field(
+        "standard", description="Explore detail level: minimal, standard, or full"
+    )
+    max_snippets: int | None = Field(
+        None, description="Maximum snippets to return before reporting omissions"
+    )
+
+
 class ProjectionBuildRequest(BaseModel):
     scope_kind: str = Field(
         ..., description="Projection scope: snapshot | query | entity"

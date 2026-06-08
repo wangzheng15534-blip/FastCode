@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 from rank_bm25 import BM25Okapi
 
+from fastcode.app.query.orchestration.processor import ProcessedQuery
 from fastcode.app.query.selection.retriever import (
     HybridRetriever,
     _fusion_config_from_runtime,
@@ -77,6 +78,61 @@ def _mk_retriever() -> HybridRetriever:
     retriever.retrieval_backend = "local"
     retriever.pg_retrieval_store = None
     return retriever
+
+
+def test_retrieve_honors_deterministic_explore_flags() -> None:
+    def _list_hits(hits: Any) -> list[Any]:
+        return list(hits)
+
+    def _same_hits(hits: Any, _filters: Any) -> Any:
+        return hits
+
+    retriever = _mk_retriever()
+    retriever.logger = MagicMock()
+    retriever.enable_agency_mode = True
+    retriever.iterative_agent = object()
+    retriever.select_repos_by_overview = True
+    retriever.vector_store = SimpleNamespace(get_repository_names=lambda: ["a", "b"])
+    retriever.current_loaded_repos = None
+    retriever.ir_snapshot_id = None
+    retriever.max_results = 5
+    retriever.graph_weight = 0
+    retriever._retrieve_code_channel = MagicMock(
+        return_value=SimpleNamespace(ranked_results=[])
+    )
+    retriever._retrieve_doc_channel = MagicMock()
+    retriever._apply_doc_projection_to_code_hits = MagicMock()
+    retriever._rerank_hits = MagicMock(side_effect=_list_hits)
+    retriever._adaptive_fuse_channel_hits = MagicMock()
+    retriever._apply_filters_to_hits = MagicMock(side_effect=_same_hits)
+    retriever._diversify_hits = MagicMock(side_effect=_list_hits)
+    retriever._enhance_with_file_selection = MagicMock()
+    retriever._apply_agency_mode = MagicMock()
+    retriever._select_relevant_repositories_by_llm = MagicMock()
+    retriever._select_relevant_repositories = MagicMock()
+    retriever._final_repo_filter = MagicMock(side_effect=lambda rows, _repos: rows)
+
+    query = ProcessedQuery(
+        original="Where is auth?",
+        expanded="Where is auth?",
+        keywords=["auth"],
+        intent="where",
+        subqueries=[],
+        filters={},
+    )
+    result = retriever.retrieve(
+        query,
+        repo_filter=["a", "b"],
+        enable_file_selection=False,
+        enable_repo_selection=False,
+        use_agency_mode=False,
+    )
+
+    assert result == []
+    retriever._apply_agency_mode.assert_not_called()
+    retriever._enhance_with_file_selection.assert_not_called()
+    retriever._select_relevant_repositories_by_llm.assert_not_called()
+    retriever._select_relevant_repositories.assert_not_called()
 
 
 def _element(

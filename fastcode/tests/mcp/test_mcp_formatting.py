@@ -6,6 +6,7 @@ from fastcode.mcp.formatting import (
     format_call_chain,
     format_code_qa_response,
     format_delete_repo_metadata,
+    format_explore_code_response,
     format_file_summary,
     format_indexed_repos,
     format_repo_overview,
@@ -138,6 +139,57 @@ class TestFormatCallChain:
         assert "Callers" in result
         assert "entry" in result
         assert "Callees" in result
+
+
+class TestFormatExploreCodeResponse:
+    def test_formats_grouped_refs_lines_code_and_next_actions(self):
+        result = format_explore_code_response(
+            {
+                "query": "Where is auth?",
+                "snapshot_id": "snap:repo:1",
+                "freshness": {"state": "fresh"},
+                "completeness": {
+                    "state": "complete",
+                    "returned_snippets": 1,
+                    "omitted_snippets": 0,
+                },
+                "groups": [
+                    {
+                        "ref_id": "g1",
+                        "repo": "repo",
+                        "file": "src/auth.py",
+                        "snippets": [
+                            {
+                                "ref_id": "e1",
+                                "type": "function",
+                                "name": "authenticate",
+                                "lines": "7-9",
+                                "score": 0.9,
+                                "language": "python",
+                                "signature": "def authenticate()",
+                                "code": "   7 | def authenticate():",
+                            }
+                        ],
+                    }
+                ],
+                "next_actions": [
+                    {
+                        "tool": "get_file_summary",
+                        "arguments": {"file_path": "src/auth.py"},
+                    }
+                ],
+            }
+        )
+
+        assert "Explore: Where is auth?" in result
+        assert "Snapshot: snap:repo:1" in result
+        assert "## g1 repo/src/auth.py" in result
+        assert "e1 [function] authenticate L7-9" in result
+        assert "def authenticate()" in result
+        assert "get_file_summary" in result
+
+    def test_empty(self):
+        assert "No source snippets" in format_explore_code_response({"groups": []})
 
 
 class TestFormatRepoOverview:

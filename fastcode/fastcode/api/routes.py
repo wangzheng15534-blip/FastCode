@@ -21,6 +21,7 @@ from fastcode.api.inbound import (
     DeleteReposRequest,
     ExpandContextBundleRefRequest,
     ExpandContextRefRequest,
+    ExploreCodeRequest,
     IndexMultipleRequest,
     IndexRunRequest,
     LoadRepositoriesRequest,
@@ -35,6 +36,7 @@ from fastcode.api.inbound import (
 from fastcode.api.outbound import (
     ApiStatus,
     DiagnosticBundleResponse,
+    ExploreCodeResponse,
     IndexRunResponse,
     NewSessionRecord,
     NewSessionResponse,
@@ -45,6 +47,8 @@ from fastcode.api.serialization import (
     serialize_diagnostic_bundle_record,
     serialize_diagnostic_bundle_response,
     serialize_dialogue_history,
+    serialize_explore_code_response,
+    serialize_explore_code_response_record,
     serialize_index_run_response,
     serialize_index_run_response_record,
     serialize_new_session_response,
@@ -496,6 +500,38 @@ async def query_snapshot(request: Request, req: QuerySnapshotRequest):
         )
     except Exception as e:
         logger.error(f"Snapshot query failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/explore-code", response_model=ExploreCodeResponse)
+async def explore_code(request: Request, req: ExploreCodeRequest):
+    """Return deterministic grouped source context without LLM answer generation."""
+    facades = _facades(request)
+    if not req.snapshot_id and not (req.repo_name and req.ref_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Explore code requires snapshot_id or repo_name+ref_name",
+        )
+
+    try:
+        result = await asyncio.to_thread(
+            facades.query.explore_code,
+            question=req.question,
+            repo_name=req.repo_name,
+            ref_name=req.ref_name,
+            snapshot_id=req.snapshot_id,
+            filters=dict(req.filters) if req.filters else None,
+            repo_filter=list(req.repo_filter or ()),
+            detail_level=req.detail_level,
+            max_snippets=req.max_snippets,
+        )
+        return serialize_explore_code_response(
+            serialize_explore_code_response_record(result)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Explore code failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

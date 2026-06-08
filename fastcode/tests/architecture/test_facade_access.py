@@ -60,6 +60,7 @@ USE_FLOW_METHODS = {
     "query",
     "query_snapshot",
     "query_stream",
+    "explore_code",
     "search_symbols",
     "get_file_structure",
     "walk_call_chain",

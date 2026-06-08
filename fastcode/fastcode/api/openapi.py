@@ -8,6 +8,7 @@ from fastcode.api.inbound import (
     DeleteReposRequest,
     ExpandContextBundleRefRequest,
     ExpandContextRefRequest,
+    ExploreCodeRequest,
     IndexMultipleRequest,
     IndexRunRequest,
     LoadRepositoriesRequest,
@@ -18,6 +19,7 @@ from fastcode.api.inbound import (
 )
 from fastcode.api.outbound import (
     DiagnosticBundleResponse,
+    ExploreCodeResponse,
     IndexRunResponse,
     NewSessionResponse,
     QueryResponse,
@@ -29,6 +31,8 @@ OPENAPI_SCHEMA_MODELS = (
     ContextActivationRequest,
     DeleteReposRequest,
     DiagnosticBundleResponse,
+    ExploreCodeRequest,
+    ExploreCodeResponse,
     ExpandContextBundleRefRequest,
     ExpandContextRefRequest,
     IndexMultipleRequest,

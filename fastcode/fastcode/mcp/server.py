@@ -36,6 +36,7 @@ from fastcode.mcp.formatting import (
     format_call_chain,
     format_code_qa_response,
     format_delete_repo_metadata,
+    format_explore_code_response,
     format_file_summary,
     format_indexed_repos,
     format_repo_overview,
@@ -151,6 +152,40 @@ def code_qa(
         result.get("sources", []),
         sid,
     )
+
+
+@mcp.tool()
+def explore_code(
+    question: str,
+    repos: list[str],
+    snapshot_id: str | None = None,
+    repo_name: str | None = None,
+    ref_name: str | None = None,
+    detail_level: str = "standard",
+    max_snippets: int | None = None,
+) -> str:
+    """Explore relevant source without generating an LLM answer.
+
+    Returns grouped, line-numbered source snippets with freshness,
+    completeness, stable refs, and next-action hints.
+    """
+    facades = _get_facades()
+    ready_names = facades.ensure_repos_ready(repos)
+    if not ready_names:
+        return "Error: None of the specified repositories could be loaded or indexed."
+    if not facades.ensure_loaded(ready_names):
+        return "Error: Failed to load repository indexes."
+
+    result = facades.query.explore_code(
+        question=question,
+        snapshot_id=snapshot_id,
+        repo_name=repo_name,
+        ref_name=ref_name,
+        repo_filter=ready_names,
+        detail_level=detail_level,
+        max_snippets=max_snippets,
+    )
+    return format_explore_code_response(result)
 
 
 @mcp.tool()

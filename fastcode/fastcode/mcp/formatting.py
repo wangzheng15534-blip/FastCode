@@ -157,6 +157,68 @@ def format_call_chain(
     return "\n".join(parts)
 
 
+def format_explore_code_response(result: dict[str, Any]) -> str:
+    groups = result.get("groups")
+    if not isinstance(groups, list) or not groups:
+        return "No source snippets found for this explore request."
+
+    freshness = result.get("freshness", {})
+    completeness = result.get("completeness", {})
+    lines = [
+        f"Explore: {result.get('query', '')}",
+        (
+            "Freshness: "
+            f"{freshness.get('state', 'unknown')} | "
+            "Completeness: "
+            f"{completeness.get('state', 'unknown')} "
+            f"({completeness.get('returned_snippets', 0)} shown, "
+            f"{completeness.get('omitted_snippets', 0)} omitted)"
+        ),
+    ]
+    snapshot_id = result.get("snapshot_id")
+    if snapshot_id:
+        lines.append(f"Snapshot: {snapshot_id}")
+
+    for group in groups:
+        repo = group.get("repo", "")
+        file_path = group.get("file", "")
+        location = f"{repo}/{file_path}" if repo else str(file_path)
+        lines.append(f"\n## {group.get('ref_id', '?')} {location}")
+        snippets = group.get("snippets", [])
+        if not isinstance(snippets, list):
+            continue
+        for snippet in snippets:
+            if not isinstance(snippet, dict):
+                continue
+            name = snippet.get("name", "")
+            kind = snippet.get("type", "")
+            ref_id = snippet.get("ref_id", "?")
+            line_label = snippet.get("lines", "")
+            score = snippet.get("score", "")
+            lines.append(f"- {ref_id} [{kind}] {name} L{line_label} score={score}")
+            signature = snippet.get("signature")
+            if signature:
+                lines.append(f"  {signature}")
+            code = snippet.get("code")
+            if code:
+                language = snippet.get("language", "")
+                lines.append(f"```{language}")
+                lines.append(str(code))
+                lines.append("```")
+
+    next_actions = result.get("next_actions", [])
+    if isinstance(next_actions, list) and next_actions:
+        lines.append("\nNext actions:")
+        for action in next_actions[:5]:
+            if not isinstance(action, dict):
+                continue
+            lines.append(
+                f"- {action.get('tool', 'tool')}: {action.get('arguments', {})}"
+            )
+
+    return "\n".join(lines)
+
+
 def format_repo_overview(
     repo_name: str,
     metadata: dict[str, Any],

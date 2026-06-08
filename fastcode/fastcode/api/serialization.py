@@ -9,6 +9,8 @@ from fastcode.api.outbound import (
     ApiStatus,
     DiagnosticBundleRecord,
     DiagnosticBundleResponse,
+    ExploreCodeResponse,
+    ExploreCodeResponseRecord,
     IndexRunResponse,
     IndexRunResponseRecord,
     NewSessionRecord,
@@ -449,6 +451,22 @@ def serialize_query_response(record: QueryResponseRecord) -> QueryResponse:
         total_tokens=record.total_tokens,
         session_id=record.session_id,
         turn_number=record.turn_number,
+    )
+
+
+def serialize_explore_code_response_record(result: Any) -> ExploreCodeResponseRecord:
+    return ExploreCodeResponseRecord(
+        status=ApiStatus.SUCCESS,
+        result=_mapping_or_empty(result),
+    )
+
+
+def serialize_explore_code_response(
+    record: ExploreCodeResponseRecord,
+) -> ExploreCodeResponse:
+    return ExploreCodeResponse(
+        status=record.status,
+        result=dict(record.result),
     )
 
 

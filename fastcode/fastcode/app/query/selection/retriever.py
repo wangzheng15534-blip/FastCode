@@ -739,6 +739,7 @@ class HybridRetriever:
         filters: dict[str, Any] | None = None,
         repo_filter: list[str] | None = None,
         enable_file_selection: bool = True,
+        enable_repo_selection: bool = True,
         use_agency_mode: bool | None = None,
         dialogue_history: list[dict[str, Any]] | None = None,
         compiled_context: str | None = None,
@@ -753,6 +754,8 @@ class HybridRetriever:
             filters: Optional filters (file_type, language, etc.)
             repo_filter: Optional list of repository names to search in
             enable_file_selection: Whether to use LLM for file selection (multi-repo only)
+            enable_repo_selection: Whether to select repositories from overviews.
+                                   Disable for deterministic product explore.
             use_agency_mode: Whether to use agency mode (None = auto-decide based on intent)
             dialogue_history: Previous dialogue summaries for multi-turn context
             compiled_context: Optional typed FCX context from prior turns
@@ -813,14 +816,18 @@ class HybridRetriever:
             self.logger.info(f"Retrieving for query: {query_str}")
 
         # Determine if agency mode should be used
-        should_use_agency = self.enable_agency_mode
+        should_use_agency = (
+            self.enable_agency_mode
+            if use_agency_mode is None
+            else bool(use_agency_mode)
+        )
 
         # ========================================
         # STEP 1: Repository Selection (Independent of agency mode)
         # Select relevant repositories based on overview if configured
         # ========================================
 
-        if self.select_repos_by_overview:
+        if enable_repo_selection and self.select_repos_by_overview:
             # Check if we have multiple repositories
             available_repos = self.vector_store.get_repository_names()
 

@@ -1,10 +1,8 @@
 """
 QueryFacade -- narrow API surface extracted from FastCode.
 
-Wraps QueryPipeline + VectorStore + CodeGraphBuilder with 6 public methods
-and 2 internal helpers.  ``query``, ``query_snapshot``, and ``query_stream``
-acquire the RuntimeState read lock; ``search_symbols``, ``get_file_structure``,
-and ``walk_call_chain`` operate on loaded metadata without locking.
+Wraps QueryPipeline + VectorStore + CodeGraphBuilder. Query and explore flows
+acquire the RuntimeState read lock; metadata lookups operate on loaded state.
 """
 
 from __future__ import annotations
@@ -125,6 +123,31 @@ class QueryFacade:
                 filters=filters,
                 session_id=session_id,
                 enable_multi_turn=enable_multi_turn,
+            )
+
+    def explore_code(
+        self,
+        question: str,
+        *,
+        repo_name: str | None = None,
+        ref_name: str | None = None,
+        snapshot_id: str | None = None,
+        filters: dict[str, Any] | None = None,
+        repo_filter: list[str] | None = None,
+        detail_level: str = "standard",
+        max_snippets: int | None = None,
+    ) -> dict[str, Any]:
+        """Return deterministic source context without LLM answer generation."""
+        with self._state.read_lock():
+            return self._query_handler.explore_code(
+                question=question,
+                repo_name=repo_name,
+                ref_name=ref_name,
+                snapshot_id=snapshot_id,
+                filters=filters,
+                repo_filter=repo_filter,
+                detail_level=detail_level,
+                max_snippets=max_snippets,
             )
 
     def query_stream(

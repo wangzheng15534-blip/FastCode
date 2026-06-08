@@ -109,6 +109,7 @@ def _query_pipeline(
     *,
     semantic_escalation_cb: Callable[..., dict[str, Any] | None] | None = None,
     retrieve_side_effect: Any = None,
+    load_snapshot_artifacts: Callable[..., Any | None] | None = None,
 ) -> QueryPipeline:
     retriever = MagicMock()
     retriever.enable_agency_mode = False
@@ -145,8 +146,109 @@ def _query_pipeline(
         snapshot_symbol_index=MagicMock(),
         is_repo_indexed=lambda: True,
         load_artifacts_by_key=lambda artifact_key: True,
+        load_snapshot_artifacts=load_snapshot_artifacts,
         semantic_escalation_cb=semantic_escalation_cb,
     )
+
+
+def test_explore_code_uses_rule_based_retrieval_without_answer_generation() -> None:
+    processed_query = _processed_query(
+        question="Where is auth handled?",
+        intent="where",
+        filters={"type": "function"},
+    )
+    retrieved = [
+        {
+            "element": {
+                "id": "u:auth",
+                "type": "function",
+                "name": "authenticate",
+                "repo_name": "repo",
+                "relative_path": "src/auth.py",
+                "language": "python",
+                "start_line": 7,
+                "end_line": 9,
+                "code": "def authenticate():\n    return True",
+            },
+            "total_score": 0.9,
+            "score": 0.9,
+            "source": "semantic",
+        }
+    ]
+    pipeline = _query_pipeline()
+    pipeline.query_processor.process.return_value = processed_query
+    pipeline.retriever.retrieve.return_value = retrieved
+
+    result = pipeline.explore_code(
+        "Where is auth handled?",
+        filters={"type": "function"},
+        repo_filter=["repo"],
+    )
+
+    pipeline.query_processor.process.assert_called_once_with(
+        "Where is auth handled?",
+        dialogue_history=None,
+        use_llm_enhancement=False,
+    )
+    pipeline.retriever.retrieve.assert_called_once_with(
+        processed_query,
+        filters={"type": "function"},
+        repo_filter=["repo"],
+        enable_file_selection=False,
+        enable_repo_selection=False,
+        use_agency_mode=False,
+        dialogue_history=None,
+        compiled_context=None,
+    )
+    pipeline.answer_generator.generate.assert_not_called()
+    assert result["freshness"]["state"] == "unknown"
+    assert result["groups"][0]["file"] == "src/auth.py"
+    assert result["groups"][0]["snippets"][0]["ref_id"] == "e1"
+
+
+def test_explore_code_snapshot_uses_loaded_artifact_handle() -> None:
+    processed_query = _processed_query(question="Where is auth handled?")
+    snapshot_record = SimpleNamespace(artifact_key="artifact:old")
+    snapshot_retriever = MagicMock()
+    snapshot_retriever.retrieve.return_value = [
+        {
+            "element": {
+                "id": "u:auth",
+                "type": "function",
+                "name": "authenticate",
+                "repo_name": "repo",
+                "relative_path": "src/auth.py",
+                "language": "python",
+                "start_line": 7,
+                "end_line": 9,
+                "code": "def authenticate():\n    return True",
+            },
+            "total_score": 0.9,
+            "score": 0.9,
+            "source": "semantic",
+        }
+    ]
+    loaded_artifacts = SimpleNamespace(
+        artifact_key="artifact:new",
+        retriever=snapshot_retriever,
+    )
+    pipeline = _query_pipeline(
+        load_snapshot_artifacts=lambda *args, **kwargs: loaded_artifacts
+    )
+    pipeline.query_processor.process.return_value = processed_query
+    pipeline.snapshot_store.get_snapshot_record.return_value = snapshot_record
+
+    result = pipeline.explore_code(
+        "Where is auth handled?",
+        snapshot_id="snap:repo:1",
+    )
+
+    pipeline.snapshot_store.get_snapshot_record.assert_called_once_with("snap:repo:1")
+    snapshot_retriever.retrieve.assert_called_once()
+    pipeline.answer_generator.generate.assert_not_called()
+    assert result["snapshot_id"] == "snap:repo:1"
+    assert result["artifact_key"] == "artifact:new"
+    assert result["freshness"]["state"] == "fresh"
 
 
 def test_agency_mode_uses_detected_intent_for_local_escalation() -> None:

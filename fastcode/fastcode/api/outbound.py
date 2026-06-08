@@ -112,6 +112,16 @@ class QueryResponseRecord:
 
 
 @dataclass(frozen=True)
+class ExploreCodeResponseRecord:
+    status: ApiStatus
+    result: Mapping[str, Any] = MappingProxyType({})
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "status", ApiStatus(self.status))
+        object.__setattr__(self, "result", _mapping_proxy(self.result))
+
+
+@dataclass(frozen=True)
 class NewSessionRecord:
     session_id: str
 
@@ -204,6 +214,11 @@ class QueryResponse(BaseModel):
     total_tokens: int | None = None
     session_id: str | None = None
     turn_number: int | None = None
+
+
+class ExploreCodeResponse(BaseModel):
+    status: ApiStatus
+    result: dict[str, Any] = Field(default_factory=_empty_payload)
 
 
 class NewSessionResponse(BaseModel):

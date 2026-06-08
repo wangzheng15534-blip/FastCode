@@ -165,6 +165,47 @@ class TestQuerySnapshot:
         assert lock_held
 
 
+class TestExploreCode:
+    def test_delegates_to_query_handler(self) -> None:
+        h = _FacadeHarness()
+        h.query_handler.explore_code.return_value = {"groups": []}
+        result = h.facade.explore_code(
+            question="q",
+            repo_name="repo",
+            ref_name="main",
+            snapshot_id="snap:repo:abc",
+            filters={"type": "function"},
+            repo_filter=["repo"],
+            detail_level="minimal",
+            max_snippets=3,
+        )
+
+        assert result == {"groups": []}
+        h.query_handler.explore_code.assert_called_once_with(
+            question="q",
+            repo_name="repo",
+            ref_name="main",
+            snapshot_id="snap:repo:abc",
+            filters={"type": "function"},
+            repo_filter=["repo"],
+            detail_level="minimal",
+            max_snippets=3,
+        )
+
+    def test_acquires_read_lock(self) -> None:
+        h = _FacadeHarness()
+        lock_held = False
+
+        def _side_effect(**kwargs: Any) -> dict[str, Any]:
+            nonlocal lock_held
+            lock_held = h.state._lock._readers > 0
+            return {}
+
+        h.query_handler.explore_code.side_effect = _side_effect
+        h.facade.explore_code(question="q")
+        assert lock_held
+
+
 # ---------------------------------------------------------------------------
 # search_symbols
 # ---------------------------------------------------------------------------

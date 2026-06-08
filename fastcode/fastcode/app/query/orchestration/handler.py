@@ -55,6 +55,7 @@ from fastcode.retrieval.context.context_compiler import (
     build_turn_plan,
     compile_working_memory,
 )
+from fastcode.retrieval.context.explore import build_explore_code_payload
 from fastcode.retrieval.contracts import Hit, SourceCitation
 from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 
@@ -287,6 +288,166 @@ class QueryPipeline:
         result["snapshot_id"] = snapshot_id
         result["artifact_key"] = artifact_key
         return result
+
+    def explore_code(
+        self,
+        question: str,
+        *,
+        repo_name: str | None = None,
+        ref_name: str | None = None,
+        snapshot_id: str | None = None,
+        filters: dict[str, Any] | None = None,
+        repo_filter: list[str] | None = None,
+        detail_level: str = "standard",
+        max_snippets: int | None = None,
+        retriever: HybridRetriever | None = None,
+    ) -> dict[str, Any]:
+        """Return deterministic source context without LLM answer generation."""
+        if snapshot_id or (repo_name and ref_name):
+            return self._explore_code_snapshot(
+                question,
+                repo_name=repo_name,
+                ref_name=ref_name,
+                snapshot_id=snapshot_id,
+                filters=filters,
+                repo_filter=repo_filter,
+                detail_level=detail_level,
+                max_snippets=max_snippets,
+            )
+
+        return self._explore_code_current(
+            question,
+            filters=filters,
+            repo_filter=repo_filter,
+            detail_level=detail_level,
+            max_snippets=max_snippets,
+            retriever=retriever,
+            snapshot_id=None,
+            artifact_key=None,
+        )
+
+    def _explore_code_snapshot(
+        self,
+        question: str,
+        *,
+        repo_name: str | None,
+        ref_name: str | None,
+        snapshot_id: str | None,
+        filters: dict[str, Any] | None,
+        repo_filter: list[str] | None,
+        detail_level: str,
+        max_snippets: int | None,
+    ) -> dict[str, Any]:
+        if not snapshot_id:
+            if not repo_name or not ref_name:
+                msg = "explore_code requires snapshot_id or repo_name+ref_name"
+                raise RuntimeError(msg)
+            manifest = self.manifest_store.get_branch_manifest_record(
+                repo_name, ref_name
+            )
+            if not manifest:
+                msg = f"manifest not found for {repo_name}:{ref_name}"
+                raise RuntimeError(msg)
+            snapshot_id = manifest.snapshot_id
+
+        snapshot_record = self.snapshot_store.get_snapshot_record(snapshot_id)
+        if not snapshot_record:
+            msg = f"snapshot not found: {snapshot_id}"
+            raise RuntimeError(msg)
+
+        artifact_key = snapshot_record.artifact_key
+        if self.load_snapshot_artifacts is not None:
+            loaded_artifacts = self.load_snapshot_artifacts(
+                artifact_key,
+                snapshot_id=snapshot_id,
+            )
+            if loaded_artifacts is None:
+                msg = f"failed to load artifacts for snapshot: {snapshot_id}"
+                raise RuntimeError(msg)
+            self._ensure_snapshot_symbol_index(snapshot_id)
+
+            merged_filters = dict(filters or {})
+            merged_filters["snapshot_id"] = snapshot_id
+            merged_filters["artifact_key"] = getattr(
+                loaded_artifacts,
+                "artifact_key",
+                artifact_key,
+            )
+            return self._explore_code_current(
+                question,
+                filters=merged_filters,
+                repo_filter=repo_filter,
+                detail_level=detail_level,
+                max_snippets=max_snippets,
+                retriever=loaded_artifacts.retriever,
+                snapshot_id=snapshot_id,
+                artifact_key=getattr(loaded_artifacts, "artifact_key", artifact_key),
+            )
+
+        with self._snapshot_query_lock:
+            if not self.load_artifacts_by_key(artifact_key):
+                msg = f"failed to load artifacts for snapshot: {snapshot_id}"
+                raise RuntimeError(msg)
+            self._ensure_snapshot_symbol_index(snapshot_id)
+            merged_filters = dict(filters or {})
+            merged_filters["snapshot_id"] = snapshot_id
+            merged_filters["artifact_key"] = artifact_key
+            return self._explore_code_current(
+                question,
+                filters=merged_filters,
+                repo_filter=repo_filter,
+                detail_level=detail_level,
+                max_snippets=max_snippets,
+                retriever=None,
+                snapshot_id=snapshot_id,
+                artifact_key=artifact_key,
+            )
+
+    def _explore_code_current(
+        self,
+        question: str,
+        *,
+        filters: dict[str, Any] | None,
+        repo_filter: list[str] | None,
+        detail_level: str,
+        max_snippets: int | None,
+        retriever: HybridRetriever | None,
+        snapshot_id: str | None,
+        artifact_key: str | None,
+    ) -> dict[str, Any]:
+        active_retriever = retriever or self.retriever
+        if not self.is_repo_indexed():
+            msg = "Repository not indexed. Call index_repository() first."
+            raise RuntimeError(msg)
+
+        processed_query = self.query_processor.process(
+            question,
+            dialogue_history=None,
+            use_llm_enhancement=False,
+        )
+        retrieved = active_retriever.retrieve(
+            processed_query,
+            filters=filters,
+            repo_filter=repo_filter,
+            enable_file_selection=False,
+            enable_repo_selection=False,
+            use_agency_mode=False,
+            dialogue_history=None,
+            compiled_context=None,
+        )
+        hits = tuple(Hit.from_retrieval_row(item) for item in retrieved)
+        payload = build_explore_code_payload(
+            question=question,
+            hits=hits,
+            snapshot_id=snapshot_id,
+            artifact_key=artifact_key,
+            repo_filter=tuple(repo_filter or ()),
+            detail_level=detail_level,
+            max_snippets=max_snippets,
+        )
+        payload["query_info"] = processed_query_payload(processed_query)
+        payload["context_elements"] = len(retrieved)
+        return payload
 
     def query(
         self,

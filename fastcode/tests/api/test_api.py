@@ -530,6 +530,87 @@ class TestIndexMultiple:
         assert result["status"] == "success"
 
 
+class TestExploreCode:
+    def test_requires_snapshot_scope(self) -> None:
+        req = api.ExploreCodeRequest(
+            question="Where is auth?",
+            snapshot_id=None,
+            repo_name=None,
+            ref_name=None,
+            filters=None,
+            repo_filter=None,
+            detail_level="standard",
+            max_snippets=None,
+        )
+        fake_fastcode = MagicMock()
+
+        with (
+            patch("fastcode.api.routes._facades", return_value=fake_fastcode),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            asyncio.run(api.explore_code(_mock_request(), req))
+
+        assert exc_info.value.status_code == 400
+        fake_fastcode.query.explore_code.assert_not_called()
+
+    def test_offloads_and_maps_request_to_query_facade(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        offloaded: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
+
+        async def record_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+            offloaded.append((func, args, kwargs))
+            return func(*args, **kwargs)
+
+        fake_fastcode = MagicMock()
+        fake_fastcode.query.explore_code.return_value = {
+            "query": "Where is auth?",
+            "snapshot_id": "snap:repo:1",
+            "freshness": {"state": "fresh"},
+            "groups": [
+                {
+                    "ref_id": "g1",
+                    "repo": "repo",
+                    "file": "src/auth.py",
+                    "snippets": [{"ref_id": "e1", "name": "authenticate"}],
+                }
+            ],
+        }
+        monkeypatch.setattr(api.asyncio, "to_thread", record_to_thread)
+        req = api.ExploreCodeRequest(
+            question="Where is auth?",
+            snapshot_id="snap:repo:1",
+            repo_name=None,
+            ref_name=None,
+            filters={"type": "function"},
+            repo_filter=["repo"],
+            detail_level="minimal",
+            max_snippets=2,
+        )
+
+        with patch("fastcode.api.routes._facades", return_value=fake_fastcode):
+            response = asyncio.run(api.explore_code(_mock_request(), req))
+
+        assert response.status == "success"
+        assert response.result["groups"][0]["snippets"][0]["ref_id"] == "e1"
+        assert offloaded == [
+            (
+                fake_fastcode.query.explore_code,
+                (),
+                {
+                    "question": "Where is auth?",
+                    "repo_name": None,
+                    "ref_name": None,
+                    "snapshot_id": "snap:repo:1",
+                    "filters": {"type": "function"},
+                    "repo_filter": ["repo"],
+                    "detail_level": "minimal",
+                    "max_snippets": 2,
+                },
+            )
+        ]
+
+
 class TestBlockingEndpointOffloads:
     """Blocking repository operations must stay off the event loop."""
 
@@ -865,7 +946,9 @@ class TestApiSerializationBoundaries:
 
 
 class TestAgentContextRoutes:
-    def test_agent_context_routes_accept_format_query_alias(self, test_app: Any) -> None:
+    def test_agent_context_routes_accept_format_query_alias(
+        self, test_app: Any
+    ) -> None:
         fake_fastcode = SimpleNamespace(context=MagicMock())
         fake_fastcode.context.get_turn_context.return_value = {
             "session_id": "sess-1",

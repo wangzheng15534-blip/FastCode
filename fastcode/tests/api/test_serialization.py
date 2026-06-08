@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastcode.api.outbound import QuerySourceRecord
 from fastcode.api.serialization import (
     serialize_dialogue_history,
+    serialize_explore_code_response,
+    serialize_explore_code_response_record,
     serialize_query_source,
     serialize_query_source_record,
     serialize_query_source_record_payload,
@@ -118,3 +120,32 @@ def test_serialize_dialogue_history_uses_nested_source_serializer() -> None:
             },
         }
     ]
+
+
+def test_serialize_explore_code_response_wraps_open_payload_without_to_dict() -> None:
+    class _NoDictExplore:
+        def to_dict(self) -> dict[str, object]:
+            msg = "explore serializer must not call to_dict()"
+            raise AssertionError(msg)
+
+    result = {
+        "query": "Where is auth?",
+        "freshness": {"state": "fresh"},
+        "groups": [
+            {
+                "ref_id": "g1",
+                "repo": "repo",
+                "file": "src/auth.py",
+                "snippets": [{"ref_id": "e1", "name": "authenticate"}],
+            }
+        ],
+        "ignored": _NoDictExplore(),
+    }
+
+    response = serialize_explore_code_response(
+        serialize_explore_code_response_record(result)
+    )
+
+    assert response.status == "success"
+    assert response.result["query"] == "Where is auth?"
+    assert response.result["groups"][0]["snippets"][0]["ref_id"] == "e1"

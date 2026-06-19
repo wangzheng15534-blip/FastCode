@@ -339,11 +339,10 @@
     {
       "path": "fastcode/fastcode/client/cli.py",
       "roles": [
-        "assembly_root",
         "entry_frame"
       ],
       "entry_type": [
-        "cli"
+        "web"
       ],
       "route_axes": [
         "client"
@@ -386,6 +385,15 @@
       "axis": "client",
       "names": [
         "agent_flow"
+      ]
+    },
+    {
+      "path": "fastcode/tests",
+      "roles": [
+        "acceptance_test"
+      ],
+      "names": [
+        "tests"
       ]
     },
     {

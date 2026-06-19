@@ -15,6 +15,7 @@ from typing import Any, cast
 from fastcode.app.store.snapshots.manifest import ManifestStore
 from fastcode.app.store.snapshots.manifest_contracts import ManifestRecord
 from fastcode.app.store.snapshots.snapshot import SnapshotStore
+from fastcode.app.store.code_status_keys import default_code_status_keys
 from fastcode.app.store.snapshots.snapshot_contracts import (
     SCIPArtifactRecord,
     SnapshotRefRecord,
@@ -208,6 +209,7 @@ class StoreFacade:
             manifest=self.get_snapshot_manifest(snapshot_id),
             ir_graphs=ir_graphs,
             include_graph_facts=include_graph_facts,
+            **default_code_status_keys(),
         )
 
     # ------------------------------------------------------------------

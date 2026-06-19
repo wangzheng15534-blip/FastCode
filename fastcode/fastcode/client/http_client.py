@@ -273,6 +273,9 @@ class FastCodeClient:
     def create_handoff(self, **kwargs: Any) -> dict[str, Any]:
         return self._post("/agent-context/handoff", json=kwargs)
 
+    def get_handoff(self, artifact_id: str) -> dict[str, Any]:
+        return self._get(f"/agent-context/handoff/{artifact_id}")
+
     # ------------------------------------------------------------------
     # SCIP & code status
     # ------------------------------------------------------------------

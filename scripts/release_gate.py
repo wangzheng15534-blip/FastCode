@@ -40,7 +40,7 @@ HELPER_ASSET_SUFFIXES = [
     "fastcode/semantic/resolvers/julia_semantic_helper.py",
 ]
 CORE_ENTRYPOINTS = ["fastcode"]
-SERVICE_ENTRYPOINTS = ["fastcode-api", "fastcode-mcp", "fastcode-web"]
+SERVICE_ENTRYPOINTS = ["fastcode-api", "fastcode-mcp"]
 SERVICE_EXTRAS = ("api", "mcp", "postgres", "redis")
 HEAVY_EXTRAS = ("docs", "local-embeddings", "nanobot", "scip")
 

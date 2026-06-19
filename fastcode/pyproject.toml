@@ -51,9 +51,8 @@ nanobot-ai = { workspace = true }
 
 [project.scripts]
 fastcode = "fastcode.client.cli:cli"
-fastcode-api = "fastcode.client.api_server:main"
-fastcode-mcp = "fastcode.client.mcp_server:main"
-fastcode-web = "fastcode.client.web_server:main"
+fastcode-api = "fastcode.main.api_server:main"
+fastcode-mcp = "fastcode.main.mcp_server:main"
 
 [project.optional-dependencies]
 api = [

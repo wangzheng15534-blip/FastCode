@@ -13,6 +13,7 @@ import sys
 
 import click
 
+from fastcode.client.agent_flow import AgentFlow
 from fastcode.client.http_client import FastCodeClient
 
 
@@ -45,7 +46,11 @@ def cli(ctx: click.Context, server: str) -> None:
     """FastCode - Repository-Level Code Understanding System"""
     ctx.ensure_object(dict)
     ctx.obj["server"] = server
-    ctx.obj["client"] = _make_client(server)
+    # Build one FastCodeClient (run_kit) and reuse it for the AgentFlow so the
+    # process never constructs two independent transport wrappers.
+    client = _make_client(server)
+    ctx.obj["client"] = client
+    ctx.obj["agent_flow"] = AgentFlow(client)
 
 
 # ======================================================================
@@ -574,11 +579,10 @@ def repo_stats(ctx: click.Context) -> None:
 @click.pass_context
 def list_sessions(ctx: click.Context) -> None:
     """List all dialogue sessions."""
-    client = ctx.obj["client"]
+    agent_flow = ctx.obj["agent_flow"]
 
     try:
-        result = client.list_sessions()
-        sessions = result.get("sessions", [])
+        sessions = agent_flow.list_sessions()
 
         if not sessions:
             click.echo("No dialogue sessions found")
@@ -621,10 +625,10 @@ def list_sessions(ctx: click.Context) -> None:
 @click.pass_context
 def show_session(ctx: click.Context, session_id: str) -> None:
     """Show dialogue history for a session."""
-    client = ctx.obj["client"]
+    agent_flow = ctx.obj["agent_flow"]
 
     try:
-        result = client.get_session(session_id)
+        result = agent_flow.get_session(session_id)
         history = result.get("history", [])
 
         if not history:
@@ -664,10 +668,10 @@ def show_session(ctx: click.Context, session_id: str) -> None:
 @click.pass_context
 def delete_session(ctx: click.Context, session_id: str, confirm: bool) -> None:
     """Delete a dialogue session."""
-    client = ctx.obj["client"]
+    agent_flow = ctx.obj["agent_flow"]
 
     try:
-        result = client.get_session(session_id)
+        result = agent_flow.get_session(session_id)
         history = result.get("history", [])
 
         if not history:
@@ -681,7 +685,7 @@ def delete_session(ctx: click.Context, session_id: str, confirm: bool) -> None:
                 click.echo("Cancelled.")
                 return
 
-        client.delete_session(session_id)
+        agent_flow.delete_session(session_id)
         click.echo(f"Successfully deleted session: {session_id}")
 
     except Exception as e:
@@ -777,6 +781,103 @@ def config_check() -> None:
     for w in warnings_list:
         click.echo(w)
     sys.exit(1)
+
+
+# ======================================================================
+# Agent-context commands (AI-agent-optimized surface via AgentFlow)
+# ======================================================================
+
+
+@cli.command("agent-context")
+@click.argument("session_id")
+@click.option("--turn", type=int, help="Turn number (default: latest)")
+@click.option(
+    "--token-budget", type=int, default=2048, help="Token budget for the bundle"
+)
+@click.option("--format", "output_format", default="json", help="Output format")
+@click.pass_context
+def agent_context(
+    ctx: click.Context,
+    session_id: str,
+    turn: int | None,
+    token_budget: int,
+    output_format: str,
+) -> None:
+    """Fetch the durable, LLM-ready context bundle for a session turn."""
+    agent_flow = ctx.obj["agent_flow"]
+
+    try:
+        result = agent_flow.get_context_for_llm(
+            session_id,
+            turn_number=turn,
+            token_budget=token_budget,
+            output_format=output_format,
+        )
+        click.echo(json.dumps(result, indent=2))
+    except Exception as e:
+        click.echo(f"Error: {e!s}", err=True)
+        sys.exit(1)
+
+
+@cli.command("handoff")
+@click.argument("session_id")
+@click.option("--turn", type=int, help="Turn number (default: latest)")
+@click.option("--mode", default="summary", help="Handoff mode (default: summary)")
+@click.pass_context
+def handoff(
+    ctx: click.Context, session_id: str, turn: int | None, mode: str
+) -> None:
+    """Persist a handoff artifact for a session turn."""
+    agent_flow = ctx.obj["agent_flow"]
+
+    try:
+        result = agent_flow.handoff_artifact(
+            session_id=session_id, turn_number=turn, mode=mode
+        )
+        click.echo(json.dumps(result, indent=2))
+    except Exception as e:
+        click.echo(f"Error: {e!s}", err=True)
+        sys.exit(1)
+
+
+@cli.command("activate")
+@click.option("--session-id", required=True, help="Session id")
+@click.option("--turn", type=int, help="Turn number")
+@click.option("--bundle-id", help="Bundle id")
+@click.option("--ref", "refs", multiple=True, help="Active ref id (repeatable)")
+@click.option("--fact", "facts", multiple=True, help="Active fact id (repeatable)")
+@click.option(
+    "--hypothesis", "hypotheses", multiple=True, help="Active hypothesis id (repeatable)"
+)
+@click.option("--reason", help="Reason for the activation")
+@click.pass_context
+def activate(
+    ctx: click.Context,
+    session_id: str,
+    turn: int | None,
+    bundle_id: str | None,
+    refs: tuple[str, ...],
+    facts: tuple[str, ...],
+    hypotheses: tuple[str, ...],
+    reason: str | None,
+) -> None:
+    """Record an activation for a context bundle."""
+    agent_flow = ctx.obj["agent_flow"]
+
+    try:
+        result = agent_flow.activate(
+            session_id=session_id,
+            turn_number=turn,
+            bundle_id=bundle_id,
+            active_ref_ids=list(refs) or None,
+            active_fact_ids=list(facts) or None,
+            active_hypothesis_ids=list(hypotheses) or None,
+            reason=reason,
+        )
+        click.echo(json.dumps(result, indent=2))
+    except Exception as e:
+        click.echo(f"Error: {e!s}", err=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,9 +17,11 @@ from fastcode.main._config_runtime import (
     config_from_mapping,
     config_to_dict,
 )
+from fastcode.main.defaults import get_default_config
 from fastcode.runtime_support.observability import setup_logging_from_config
 
 __all__ = [
+    "bootstrap_runtime_config",
     "config_from_dto",
     "config_from_mapping",
     "config_to_dict",
@@ -31,9 +34,40 @@ __all__ = [
 ]
 
 
+def bootstrap_runtime_config(
+    config_path: str | None, project_root: str
+) -> FastCodeConfig:
+    """Resolve a config path (or fall back to defaults) into the frozen runtime config.
+
+    Single entry point for the assembly root so it never names the individual
+    config-ingress loader functions directly.
+    """
+    if config_path and os.path.exists(config_path):
+        return load_runtime_config(config_path)
+    raw_default_config = get_default_config()
+    resolved_default_config = prepare_runtime_config_mapping(
+        raw_default_config,
+        project_root=project_root,
+    )
+    return config_from_mapping(resolved_default_config)
+
+
 def setup_logging(config: dict[str, Any]) -> logging.Logger:
     """Set up process logging from runtime config."""
     return setup_logging_from_config(config, logger_name="fastcode")
+
+
+def apply_darwin_threading_env() -> None:
+    """Pin thread counts on macOS so tokenizers/BLAS do not oversubscribe.
+
+    Must run before tokenizers/BLAS import. No-op on non-Darwin platforms.
+    """
+    if platform.system() != "Darwin":
+        return
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
 
 
 def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:

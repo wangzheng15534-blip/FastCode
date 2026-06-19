@@ -19,6 +19,7 @@ import faiss
 import numpy as np
 
 from fastcode.ir.element import CodeElementMeta
+from fastcode.utils import io
 from fastcode.utils.filesystem import ensure_dir
 from fastcode.utils.materialization import (
     BOUNDARY_JSON_DECODE,
@@ -953,7 +954,7 @@ class VectorStore:
         )
         index_path = self._legacy_index_path(name)
         if os.path.exists(index_path):
-            os.remove(index_path)
+            io.remove_file(index_path)
         self.invalidate_scan_cache()
         return {
             **vector_stats,
@@ -1341,7 +1342,7 @@ class VectorStore:
             "_metadata.pkl",
         )
         repo_names: set[str] = set()
-        for entry in os.listdir(self.persist_dir):
+        for entry in io.list_dir(self.persist_dir):
             for suffix in suffixes:
                 if entry.endswith(suffix):
                     repo_names.add(entry.removesuffix(suffix))
@@ -1705,7 +1706,7 @@ class VectorStore:
             faiss.write_index(self.index, index_path)
             return
         if os.path.exists(index_path):
-            os.remove(index_path)
+            io.remove_file(index_path)
 
     @staticmethod
     def _metadata_embedding_fingerprint_value(meta: Mapping[str, Any]) -> Any:
@@ -1802,10 +1803,8 @@ class VectorStore:
 
     @staticmethod
     def _write_npy_atomic(path: str, array: np.ndarray) -> None:
-        tmp_path = f"{path}.tmp"
-        with open(tmp_path, "wb") as handle:
+        with io.atomic_open_write(path, mode="wb") as handle:
             np.save(handle, array, allow_pickle=False)
-        os.replace(tmp_path, path)
 
     @staticmethod
     def _vector_entry_files(entry: Mapping[str, Any]) -> list[str]:
@@ -1890,10 +1889,7 @@ class VectorStore:
             and os.path.exists(shard_path)
         )
         if not unchanged:
-            tmp_path = f"{shard_path}.tmp"
-            with open(tmp_path, "wb") as handle:
-                handle.write(shard_bytes)
-            os.replace(tmp_path, shard_path)
+            io.atomic_write_bytes(shard_path, shard_bytes)
         return (
             {
                 "path_key": path_key,
@@ -2004,7 +2000,7 @@ class VectorStore:
         if os.path.abspath(source_path) == os.path.abspath(target_path):
             return
         if os.path.exists(target_path):
-            os.remove(target_path)
+            io.remove_file(target_path)
         try:
             os.link(source_path, target_path)
         except OSError:
@@ -2233,9 +2229,8 @@ class VectorStore:
         if not os.path.exists(manifest_path):
             return None
         try:
-            with open(manifest_path, encoding="utf-8") as handle:
-                increment_materialization_boundary(BOUNDARY_JSON_DECODE)
-                data = json.load(handle)
+            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+            data = json.loads(io.read_text(manifest_path))
         except (OSError, json.JSONDecodeError):
             return None
         if not isinstance(data, dict):
@@ -2304,17 +2299,15 @@ class VectorStore:
                         continue
                     stale_path = os.path.join(shard_dir, file_name)
                     if os.path.exists(stale_path):
-                        os.remove(stale_path)
+                        io.remove_file(stale_path)
 
         manifest_path = self._vector_manifest_path(name)
-        tmp_manifest = f"{manifest_path}.tmp"
-        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+        with io.atomic_open_write(manifest_path, mode="w", encoding="utf-8") as handle:
             increment_materialization_boundary(
                 BOUNDARY_JSON_ENCODE,
                 items=len(manifest["shards"]),
             )
             json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
-        os.replace(tmp_manifest, manifest_path)
 
     def _write_vector_bundle_with_sequences(
         self,
@@ -2394,20 +2387,18 @@ class VectorStore:
             manifest["shards"].append(entry)
             written += 1
 
-        for entry_name in os.listdir(shard_dir):
+        for entry_name in io.list_dir(shard_dir):
             if not entry_name.endswith((".npz", ".npy")) or entry_name in active_files:
                 continue
-            os.remove(os.path.join(shard_dir, entry_name))
+            io.remove_file(os.path.join(shard_dir, entry_name))
 
         manifest_path = self._vector_manifest_path(name)
-        tmp_manifest = f"{manifest_path}.tmp"
-        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+        with io.atomic_open_write(manifest_path, mode="w", encoding="utf-8") as handle:
             increment_materialization_boundary(
                 BOUNDARY_JSON_ENCODE,
                 items=len(manifest["shards"]),
             )
             json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
-        os.replace(tmp_manifest, manifest_path)
         return {
             "vector_shards_reused": reused,
             "vector_shards_written": written,
@@ -2500,21 +2491,19 @@ class VectorStore:
             manifest["shards"].append(entry)
             written += 1
 
-        for entry_name in os.listdir(shard_dir):
+        for entry_name in io.list_dir(shard_dir):
             if not entry_name.endswith((".npz", ".npy")) or entry_name in active_files:
                 continue
-            os.remove(os.path.join(shard_dir, entry_name))
+            io.remove_file(os.path.join(shard_dir, entry_name))
 
         manifest["shards"].sort(key=lambda entry: str(entry.get("path_key") or ""))
         manifest_path = self._vector_manifest_path(name)
-        tmp_manifest = f"{manifest_path}.tmp"
-        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+        with io.atomic_open_write(manifest_path, mode="w", encoding="utf-8") as handle:
             increment_materialization_boundary(
                 BOUNDARY_JSON_ENCODE,
                 items=len(manifest["shards"]),
             )
             json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
-        os.replace(tmp_manifest, manifest_path)
         return {
             "vector_shards_reused": reused,
             "vector_shards_written": written,
@@ -2643,9 +2632,8 @@ class VectorStore:
         if not os.path.exists(manifest_path):
             return None
         try:
-            with open(manifest_path, encoding="utf-8") as handle:
-                increment_materialization_boundary(BOUNDARY_JSON_DECODE)
-                data = json.load(handle)
+            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+            data = json.loads(io.read_text(manifest_path))
         except (OSError, json.JSONDecodeError):
             return None
         if not isinstance(data, dict):
@@ -2702,10 +2690,7 @@ class VectorStore:
                 and existing.get("digest") == digest
                 and os.path.exists(shard_path)
             ):
-                tmp_path = f"{shard_path}.tmp"
-                with open(tmp_path, "wb") as handle:
-                    handle.write(shard_bytes)
-                os.replace(tmp_path, shard_path)
+                io.atomic_write_bytes(shard_path, shard_bytes)
             manifest["shards"].append(
                 {
                     "path_key": path_key,
@@ -2722,21 +2707,19 @@ class VectorStore:
                     continue
                 stale_path = os.path.join(shard_dir, str(shard_file))
                 if os.path.exists(stale_path):
-                    os.remove(stale_path)
+                    io.remove_file(stale_path)
 
         manifest_path = self._metadata_manifest_path(name)
-        tmp_manifest = f"{manifest_path}.tmp"
-        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+        with io.atomic_open_write(manifest_path, mode="w", encoding="utf-8") as handle:
             increment_materialization_boundary(
                 BOUNDARY_JSON_ENCODE,
                 items=len(manifest["shards"]),
             )
             json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
-        os.replace(tmp_manifest, manifest_path)
 
         legacy_metadata_path = self._legacy_metadata_path(name)
         if os.path.exists(legacy_metadata_path):
-            os.remove(legacy_metadata_path)
+            io.remove_file(legacy_metadata_path)
 
     def _write_metadata_bundle_with_sequences(
         self,
@@ -2778,10 +2761,7 @@ class VectorStore:
             shard_file = self._metadata_shard_filename(path_key)
             shard_path = os.path.join(shard_dir, shard_file)
             active_files.add(shard_file)
-            tmp_path = f"{shard_path}.tmp"
-            with open(tmp_path, "wb") as handle:
-                handle.write(shard_bytes)
-            os.replace(tmp_path, shard_path)
+            io.atomic_write_bytes(shard_path, shard_bytes)
             manifest["shards"].append(
                 {
                     "path_key": path_key,
@@ -2792,24 +2772,22 @@ class VectorStore:
             )
             written += 1
 
-        for entry_name in os.listdir(shard_dir):
+        for entry_name in io.list_dir(shard_dir):
             if not entry_name.endswith(".pkl") or entry_name in active_files:
                 continue
-            os.remove(os.path.join(shard_dir, entry_name))
+            io.remove_file(os.path.join(shard_dir, entry_name))
 
         manifest_path = self._metadata_manifest_path(name)
-        tmp_manifest = f"{manifest_path}.tmp"
-        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+        with io.atomic_open_write(manifest_path, mode="w", encoding="utf-8") as handle:
             increment_materialization_boundary(
                 BOUNDARY_JSON_ENCODE,
                 items=len(manifest["shards"]),
             )
             json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
-        os.replace(tmp_manifest, manifest_path)
 
         legacy_metadata_path = self._legacy_metadata_path(name)
         if os.path.exists(legacy_metadata_path):
-            os.remove(legacy_metadata_path)
+            io.remove_file(legacy_metadata_path)
         return {"metadata_shards_written": written}
 
     def _load_metadata_entries_by_path(
@@ -2830,9 +2808,8 @@ class VectorStore:
                 continue
             shard_path = os.path.join(shard_dir, str(shard_file))
             try:
-                with open(shard_path, "rb") as handle:
-                    increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
-                    payload = pickle.load(handle)
+                increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
+                payload = pickle.loads(io.read_bytes(shard_path))
             except Exception as exc:
                 self.logger.warning(
                     "Failed to read previous metadata shard %s: %s",
@@ -2949,10 +2926,7 @@ class VectorStore:
             shard_file = self._metadata_shard_filename(path_key)
             shard_path = os.path.join(shard_dir, shard_file)
             active_files.add(shard_file)
-            tmp_path = f"{shard_path}.tmp"
-            with open(tmp_path, "wb") as handle:
-                handle.write(shard_bytes)
-            os.replace(tmp_path, shard_path)
+            io.atomic_write_bytes(shard_path, shard_bytes)
             manifest["shards"].append(
                 {
                     "path_key": path_key,
@@ -2964,25 +2938,23 @@ class VectorStore:
             if path_key not in previous_entries:
                 written += 1
 
-        for entry_name in os.listdir(shard_dir):
+        for entry_name in io.list_dir(shard_dir):
             if not entry_name.endswith(".pkl") or entry_name in active_files:
                 continue
-            os.remove(os.path.join(shard_dir, entry_name))
+            io.remove_file(os.path.join(shard_dir, entry_name))
 
         manifest["shards"].sort(key=lambda entry: str(entry.get("path_key") or ""))
         manifest_path = self._metadata_manifest_path(name)
-        tmp_manifest = f"{manifest_path}.tmp"
-        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+        with io.atomic_open_write(manifest_path, mode="w", encoding="utf-8") as handle:
             increment_materialization_boundary(
                 BOUNDARY_JSON_ENCODE,
                 items=len(manifest["shards"]),
             )
             json.dump(manifest, handle, ensure_ascii=False, sort_keys=True, indent=2)
-        os.replace(tmp_manifest, manifest_path)
 
         legacy_metadata_path = self._legacy_metadata_path(name)
         if os.path.exists(legacy_metadata_path):
-            os.remove(legacy_metadata_path)
+            io.remove_file(legacy_metadata_path)
         return {
             "metadata_shards_reused": reused,
             "metadata_shards_written": written,
@@ -3002,9 +2974,8 @@ class VectorStore:
                     if not shard_file:
                         continue
                     shard_path = os.path.join(shard_dir, str(shard_file))
-                    with open(shard_path, "rb") as handle:
-                        increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
-                        payload = pickle.load(handle)
+                    increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
+                    payload = pickle.loads(io.read_bytes(shard_path))
                     entries = (
                         payload.get("entries", []) if isinstance(payload, dict) else []
                     )
@@ -3041,9 +3012,8 @@ class VectorStore:
         if not os.path.exists(metadata_path):
             return None
         try:
-            with open(metadata_path, "rb") as handle:
-                increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
-                data = pickle.load(handle)
+            increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
+            data = pickle.loads(io.read_bytes(metadata_path))
             return cast(dict[str, Any], data) if isinstance(data, dict) else None
         except Exception as e:
             self.logger.warning(f"Failed to load metadata bundle for {name}: {e}")
@@ -3090,9 +3060,8 @@ class VectorStore:
                         self._metadata_shards_dir(name), str(first["shard_file"])
                     )
                     try:
-                        with open(shard_path, "rb") as handle:
-                            increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
-                            payload = pickle.load(handle)
+                        increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
+                        payload = pickle.loads(io.read_bytes(shard_path))
                         entries = (
                             payload.get("entries", [])
                             if isinstance(payload, dict)
@@ -3287,9 +3256,8 @@ class VectorStore:
         include_embeddings: bool,
         decode_metadata: bool,
     ) -> dict[str, _RepoOverviewStoredEntry]:
-        with open(self._repo_overview_manifest_path(), encoding="utf-8") as f:
-            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
-            raw_manifest = json.load(f)
+        increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+        raw_manifest = json.loads(io.read_text(self._repo_overview_manifest_path()))
 
         repos = raw_manifest.get("repos")
         if not isinstance(repos, dict):
@@ -3344,9 +3312,8 @@ class VectorStore:
         include_embeddings: bool,
         decode_metadata: bool,
     ) -> dict[str, _RepoOverviewStoredEntry]:
-        with open(self._legacy_repo_overview_path(), "rb") as f:
-            increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
-            raw_overviews = pickle.load(f)
+        increment_materialization_boundary(BOUNDARY_PICKLE_LOAD)
+        raw_overviews = pickle.loads(io.read_bytes(self._legacy_repo_overview_path()))
         if not isinstance(raw_overviews, dict):
             return {}
 
@@ -3495,7 +3462,7 @@ class VectorStore:
         if not overviews:
             for path in (manifest_path, embeddings_path, legacy_path):
                 if os.path.exists(path):
-                    os.remove(path)
+                    io.remove_file(path)
             return
 
         manifest_repos: dict[str, _RepoOverviewManifestEntry] = {}
@@ -3533,29 +3500,29 @@ class VectorStore:
         if not manifest_repos:
             for path in (manifest_path, embeddings_path, legacy_path):
                 if os.path.exists(path):
-                    os.remove(path)
+                    io.remove_file(path)
             return
 
         manifest_payload = {
             "version": _REPO_OVERVIEW_STORAGE_VERSION,
             "repos": manifest_repos,
         }
-        manifest_tmp = f"{manifest_path}.tmp"
         embeddings_tmp = f"{embeddings_path}.tmp.npz"
 
-        with open(manifest_tmp, "w", encoding="utf-8") as f:
+        with io.atomic_open_write(
+            manifest_path, mode="w", encoding="utf-8"
+        ) as manifest_handle:
             increment_materialization_boundary(
                 BOUNDARY_JSON_ENCODE,
                 items=len(manifest_repos),
             )
             json.dump(
                 manifest_payload,
-                f,
+                manifest_handle,
                 sort_keys=True,
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
-        os.replace(manifest_tmp, manifest_path)
 
         archive_payload: dict[str, Any] = {
             "repo_names": np.asarray(repo_names, dtype=np.str_)
@@ -3563,7 +3530,7 @@ class VectorStore:
         for index, embedding in enumerate(embeddings):
             archive_payload[f"e{index}"] = embedding
         np.savez_compressed(embeddings_tmp, **archive_payload)
-        os.replace(embeddings_tmp, embeddings_path)
+        io.atomic_replace(embeddings_tmp, embeddings_path)
 
         if os.path.exists(legacy_path):
-            os.remove(legacy_path)
+            io.remove_file(legacy_path)

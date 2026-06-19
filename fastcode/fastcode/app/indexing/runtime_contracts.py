@@ -1,8 +1,10 @@
-"""Document graph runtime capability contracts.
+"""Indexing-side capability contract for the document graph runtime.
 
-Generic facility trait owned by the graph_runtime effect_facility unit.
-Moved from axis_surface (ports) because this is a generic infrastructure
-capability, not a semantic business trait.
+Following the FCIS consumer-owns-the-port rule (mirrors zotero's
+``zotero-app/src/catalog/port.rs``): the capability trait lives with the
+use_flow consumer that needs it. The concrete effect_facility adapter
+(``fastcode.infrastructure.graph_runtime.ladybug.LadybugGraphRuntime``) satisfies
+this structurally and is injected at assembly time; it does not import this module.
 """
 
 from __future__ import annotations

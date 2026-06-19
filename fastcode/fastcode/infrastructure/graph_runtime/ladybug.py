@@ -13,8 +13,6 @@ from collections.abc import Iterable, Mapping
 from typing import Any, cast
 from urllib.parse import parse_qsl, unquote, urlparse
 
-from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
-
 logger = logging.getLogger(__name__)
 
 
@@ -37,7 +35,7 @@ def _prop_name(name: Any) -> str:
     return value
 
 
-class LadybugGraphRuntime(DocumentGraphRuntime):
+class LadybugGraphRuntime:
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         self.logger = logging.getLogger(__name__)

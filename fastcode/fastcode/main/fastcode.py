@@ -5,18 +5,10 @@ Main FastCode Class - Orchestrate all components
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
 import os
-from collections.abc import Sequence
 from typing import Any, cast
 
-import fastcode.retrieval.context.snapshot as _snapshot
-from fastcode.app.indexing.doc_ingester import KeyDocIngester
-from fastcode.app.indexing.embedder import CodeEmbedder
-from fastcode.app.indexing.extractors.parser import CodeParser
-from fastcode.app.indexing.facade import IndexingFacade
+from fastcode.app.app_runtime import build_app_runtime
 from fastcode.app.indexing.graph_mapper import document_overlay_node_records
-from fastcode.app.indexing.loader import RepositoryLoader
-from fastcode.app.indexing.pipeline.direct_indexer import DirectIndexer
-from fastcode.app.indexing.pipeline.indexer import CodeIndexer
 from fastcode.app.indexing.pipeline.manifest import (
     build_file_manifest,
     collect_unchanged_elements,
@@ -25,80 +17,24 @@ from fastcode.app.indexing.pipeline.manifest import (
     load_file_manifest,
     save_file_manifest,
 )
-from fastcode.app.indexing.pipeline.multi_repo_direct import MultiRepoDirectIndexer
-from fastcode.app.indexing.pipeline.redo_worker import RedoWorker
-from fastcode.app.indexing.pipeline.service import IndexPipeline
-from fastcode.app.indexing.projection.service import ProjectionService
-from fastcode.app.indexing.projection.transform import ProjectionTransformer
-from fastcode.app.indexing.projection_facade import ProjectionFacade
-from fastcode.app.indexing.publishing import PublishingService
-from fastcode.app.indexing.publishing_facade import PublishingFacade
-from fastcode.app.indexing.terminus import TerminusPublisher
-from fastcode.app.query.facade import QueryFacade
-from fastcode.app.query.orchestration.answer import AnswerGenerator
-from fastcode.app.query.orchestration.handler import QueryPipeline
-from fastcode.app.query.orchestration.processor import QueryProcessor
-from fastcode.app.query.selection.retriever import HybridRetriever
-from fastcode.app.store.artifacts.file import FileArtifactStore
-from fastcode.app.store.artifacts.graph import GraphArtifactStore
-from fastcode.app.store.artifacts.unit import UnitArtifactStore
+from fastcode.app.indexing.pipeline.redo_worker import RedoDeps, RedoWorker
+from fastcode.app.indexing.runtime_contracts import DocumentGraphRuntime
 from fastcode.app.store.cache.rehydration import (
     reconstruct_elements_from_metadata,
 )
-from fastcode.app.store.cache.rehydration import (
-    save_to_cache as _save_to_cache_impl,
-)
-from fastcode.app.store.cache.rehydration import (
-    try_load_from_cache as _try_load_from_cache_impl,
-)
-from fastcode.app.store.cache.service import CacheManager
-from fastcode.app.store.cache_facade import CacheFacade
-from fastcode.app.store.context_facade import ContextFacade
-from fastcode.app.store.facade import StoreFacade
-from fastcode.app.store.runs.index_run import IndexRunStore
-from fastcode.app.store.snapshots.manifest import ManifestStore
-from fastcode.app.store.snapshots.projection import ProjectionStore
-from fastcode.app.store.snapshots.snapshot import SnapshotStore
-from fastcode.app.store.vectors.pg_retrieval import PgRetrievalStore
-from fastcode.app.store.vectors.vector import VectorStore
 from fastcode.common.config import FastCodeConfig
-from fastcode.graph.build import CodeGraphBuilder
-from fastcode.infrastructure.execution.scip_runner import SubprocessScipIndexerRuntime
-from fastcode.infrastructure.execution.semantic_helper import (
-    SubprocessSemanticHelperRuntime,
-)
-from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
 from fastcode.infrastructure.graph_runtime.ladybug import LadybugGraphRuntime
 from fastcode.infrastructure.storage.runtime import DBRuntime
 from fastcode.ir.element import CodeElement
-from fastcode.ir.graph import IRGraphBuilder
-from fastcode.main.config import config_from_mapping
-from fastcode.main.defaults import get_default_config
-from fastcode.retrieval.contracts import Hit, SourceCitation
 from fastcode.runtime_support.runtime_state import RuntimeState
-from fastcode.semantic.resolvers.engine.registry import (
-    build_default_semantic_resolver_registry,
-)
-from fastcode.semantic.symbol_index import SnapshotSymbolIndex
 from fastcode.utils.filesystem import ensure_dir
 
 from .config import (
+    bootstrap_runtime_config,
     config_to_runtime_mapping,
-    load_runtime_config,
-    prepare_runtime_config_mapping,
     setup_logging,
 )
 from .diagnostics import DiagnosticBuilder
-
-
-class _VectorSearchStoreFactory:
-    """Composition-root factory for query-scoped temporary vector stores."""
-
-    def __init__(self, config: dict[str, Any]) -> None:
-        self._config = config
-
-    def create_vector_search_store(self) -> VectorStore:
-        return VectorStore(self._config)
 
 
 class FastCode:
@@ -116,9 +52,8 @@ class FastCode:
             os.path.join(os.path.dirname(__file__), "..", "..", "..")
         )
 
-        # Load configuration
+        # Load configuration via the config run_kit entry point.
         if config_path is None:
-            # Try to find config in standard locations
             possible_paths = [
                 "config/config.yaml",
                 "../config/config.yaml",
@@ -129,17 +64,7 @@ class FastCode:
                     config_path = path
                     break
 
-        if config_path and os.path.exists(config_path):
-            self.runtime_config = load_runtime_config(config_path)
-        else:
-            # Use default configuration
-            raw_default_config = get_default_config()
-            resolved_default_config = prepare_runtime_config_mapping(
-                raw_default_config,
-                project_root=project_root,
-            )
-            self.runtime_config = config_from_mapping(resolved_default_config)
-
+        self.runtime_config = bootstrap_runtime_config(config_path, project_root)
         self.config = config_to_runtime_mapping(self.runtime_config)
 
         # Evaluation-specific overrides (keep core system decoupled)
@@ -166,242 +91,60 @@ class FastCode:
         self.logger = setup_logging(self.config)
         self.logger.info("Initializing FastCode system")
 
-        # Runtime state (extracted for injection into facades)
+        # Runtime state (shared mutable state for facades)
         self.state = RuntimeState()
 
-        # Initialize components
-        self.loader = RepositoryLoader(self.config)
-        self.parser = CodeParser(self.config)
-        self.embedder = CodeEmbedder(self.config)
-        self.vector_store = VectorStore(self.config)
-        self.vector_store_factory = _VectorSearchStoreFactory(self.config)
-        self.indexer = CodeIndexer(
-            self.config, self.loader, self.parser, self.embedder, self.vector_store
-        )
-        self.graph_builder = CodeGraphBuilder(self.config)
-        self.graph_artifact_store = GraphArtifactStore(self.config)
-        self.ir_graph_builder = IRGraphBuilder()
-
-        # Get repo_root from config if available
+        # Resolve repo_root and ensure it exists.
         config_repo_root: str = str(self.config.get("repo_root") or ".")
         config_repo_root = os.path.abspath(config_repo_root)
         ensure_dir(config_repo_root)
         self.logger.info(f"Configured repo_root: {config_repo_root}")
 
-        self.retriever = HybridRetriever(
-            self.config,
-            self.vector_store,
-            self.embedder,
-            self.graph_builder,
-            repo_root=config_repo_root,
-            vector_store_factory=self.vector_store_factory,
-        )
-        self.query_processor = QueryProcessor(self.config)
-        self.answer_generator = AnswerGenerator(self.config)
-        self.cache_manager = CacheManager(self.config)
-
-        persist_dir = self.vector_store.persist_dir
+        # --- Effect facilities (built here; entry_frame -> effect_facility is legal) ---
+        persist_dir = self.config.get("vector_store", {}).get("persist_directory") or ""
         storage_cfg: dict[str, Any] = self.config.get("storage", {}) or {}
         db_runtime = DBRuntime.from_storage_config(
             sqlite_path=os.path.join(os.path.abspath(persist_dir), "lineage.db"),
             storage_cfg=storage_cfg,
         )
-        self.snapshot_store = SnapshotStore(persist_dir, db_runtime=db_runtime)
-        self.manifest_store = ManifestStore(db_runtime)
-        self.index_run_store = IndexRunStore(db_runtime)
-        self.unit_artifact_store = UnitArtifactStore(db_runtime)
-        self.file_artifact_store = FileArtifactStore(db_runtime)
-        self.terminus_publisher = TerminusPublisher(self.config)
-        self.projection_transformer = ProjectionTransformer(self.config)
-        self.projection_store = ProjectionStore(self.config)
-        self.snapshot_symbol_index = SnapshotSymbolIndex()
-        self.store = StoreFacade(
-            vector_store=self.vector_store,
-            snapshot_store=self.snapshot_store,
-            manifest_store=self.manifest_store,
-            snapshot_symbol_index=self.snapshot_symbol_index,
-            state=self.state,
-            config=self.config,
-            projection_store=self.projection_store,
-            projection_transformer=self.projection_transformer,
-        )
-        self.pg_retrieval_store = PgRetrievalStore(db_runtime, self.config)
-        self.retriever.set_pg_retrieval_store(self.pg_retrieval_store)
-        self.doc_ingester = KeyDocIngester(self.config, self.embedder)
-        self.graph_runtime: DocumentGraphRuntime | None = None
+        graph_runtime: DocumentGraphRuntime | None = None
         try:
-            self.graph_runtime = LadybugGraphRuntime(self.config)
+            graph_runtime = LadybugGraphRuntime(self.config)
         except ImportError:
             self.logger.info(
                 "LadybugGraphRuntime unavailable — graph persistence disabled"
             )
 
-        self._redo_worker: RedoWorker | None = None
-        if db_runtime.backend == "postgres":
-            poll_interval = int(storage_cfg.get("redo_poll_interval_seconds", 30))
-            self._redo_worker = RedoWorker(self, poll_interval_seconds=poll_interval)
-            self._redo_worker.start()
-
-        self.semantic_helper_runtime = SubprocessSemanticHelperRuntime()
-        self.scip_indexer_runtime = SubprocessScipIndexerRuntime()
-        self.semantic_resolver_registry = build_default_semantic_resolver_registry(
-            semantic_helper_runtime=self.semantic_helper_runtime
-        )
-
-        # State lives on self.state (RuntimeState) — no direct fields
-
-        # --- IndexPipeline ---
-        self.pipeline = IndexPipeline(
+        # --- use_flow assembly (delegated; main imports no meaning_core/effect_tool) ---
+        rt = build_app_runtime(
             config=self.config,
             logger=self.logger,
-            loader=self.loader,
-            snapshot_store=self.snapshot_store,
-            manifest_store=self.manifest_store,
-            index_run_store=self.index_run_store,
-            unit_artifact_store=self.unit_artifact_store,
-            file_artifact_store=self.file_artifact_store,
-            snapshot_symbol_index=self.snapshot_symbol_index,
-            vector_store=self.vector_store,
-            embedder=self.embedder,
-            indexer=self.indexer,
-            retriever=self.retriever,
-            graph_builder=self.graph_builder,
-            ir_graph_builder=self.ir_graph_builder,
-            graph_artifact_store=self.graph_artifact_store,
-            pg_retrieval_store=self.pg_retrieval_store,
-            terminus_publisher=self.terminus_publisher,
-            doc_ingester=self.doc_ingester,
-            semantic_resolver_registry=self.semantic_resolver_registry,
-            set_repo_indexed=lambda v: setattr(self.state, "repo_indexed", v),
-            set_repo_loaded=lambda v: setattr(self.state, "repo_loaded", v),
-            set_repo_info=lambda v: setattr(self.state, "repo_info", v),
-            semantic_helper_runtime=self.semantic_helper_runtime,
-            scip_indexer_runtime=self.scip_indexer_runtime,
-        )
-
-        # --- Direct indexing (use_flow delegate) ---
-        self._direct_indexer = DirectIndexer(
-            config=self.config,
-            loader=self.loader,
-            indexer=self.indexer,
-            embedder=self.embedder,
-            vector_store=self.vector_store,
-            graph_builder=self.graph_builder,
-            retriever=self.retriever,
-            graph_artifact_store=self.graph_artifact_store,
-            should_use_cache_fn=self._should_use_cache,
-            try_load_from_cache_fn=self._try_load_from_cache,
-            should_persist_fn=self._should_persist_indexes,
-            save_to_cache_fn=self._save_to_cache,
-            set_repo_root_fn=self._set_repo_root,
-            log_statistics_fn=self._log_statistics,
-        )
-        self._multi_repo_direct_indexer = MultiRepoDirectIndexer(
-            config=self.config,
-            loader=self.loader,
-            parser=self.parser,
-            embedder=self.embedder,
-            vector_store=self.vector_store,
-            graph_builder=self.graph_builder,
-            graph_artifact_store=self.graph_artifact_store,
-            set_repo_root_fn=self._set_repo_root,
-            infer_is_url_fn=self._infer_is_url,
-        )
-
-        # --- IndexingFacade ---
-        self.indexing = IndexingFacade(
-            loader=self.loader,
-            pipeline=self.pipeline,
+            db_runtime=db_runtime,
+            graph_runtime=graph_runtime,
             state=self.state,
-            vector_store=self.vector_store,
-            store=self.store,
-            direct_indexer=self._direct_indexer,
-            multi_repo_direct_indexer=self._multi_repo_direct_indexer,
-            graph_runtime=self.graph_runtime,
-            retriever=self.retriever,
-            config=self.config,
             eval_config=self.eval_config,
-            logger=self.logger,
             set_repo_root_fn=self._set_repo_root,
             apply_env_ignore_patterns_fn=self.apply_env_ignore_patterns,
         )
+        self._attach_runtime(rt)
 
-        # --- Services ---
-        self.projection_service = ProjectionService(
-            config=self.config,
-            logger=self.logger,
-            projection_store=self.projection_store,
-            projection_transformer=self.projection_transformer,
-            snapshot_store=self.snapshot_store,
-            manifest_store=self.manifest_store,
-            load_artifacts_by_key=self.pipeline._load_artifacts_by_key,
-        )
-        self.projection = ProjectionFacade(
-            service=self.projection_service,
-            state=self.state,
-        )
-        self.publishing_service = PublishingService(
-            config=self.config,
-            logger=self.logger,
-            index_run_store=self.index_run_store,
-            manifest_store=self.manifest_store,
-            snapshot_store=self.snapshot_store,
-            terminus_publisher=self.terminus_publisher,
-            redo_worker=self._redo_worker,
-            build_git_meta=self.pipeline._build_git_meta,
-            previous_snapshot_symbol_versions=self.pipeline._previous_snapshot_symbol_versions,
-            run_index_pipeline_cb=self.indexing.run_index_pipeline,
-        )
-        self.publishing = PublishingFacade(
-            publishing_service=self.publishing_service,
-            pipeline=self.pipeline,
-            projection_store=self.projection_store,
-            snapshot_store=self.snapshot_store,
-            config=self.config,
-        )
-
-        self.query_handler = QueryPipeline(
-            config=self.config,
-            logger=self.logger,
-            retriever=self.retriever,
-            query_processor=self.query_processor,
-            answer_generator=self.answer_generator,
-            cache_manager=self.cache_manager,
-            manifest_store=self.manifest_store,
-            snapshot_store=self.snapshot_store,
-            snapshot_symbol_index=self.snapshot_symbol_index,
-            is_repo_indexed=lambda: self.state.repo_indexed,
-            load_artifacts_by_key=self.pipeline._load_artifacts_by_key,
-            load_snapshot_artifacts=self.pipeline.load_snapshot_artifacts_handle,
-            get_session_prefix=self.projection.get_session_prefix,
-            semantic_escalation_cb=None,  # wired after QueryFacade creation
-        )
-
-        self.query = QueryFacade(
-            query_handler=self.query_handler,
-            vector_store=self.vector_store,
-            graph_builder=self.graph_builder,
-            snapshot_store=self.snapshot_store,
-            ir_graph_builder=self.ir_graph_builder,
-            snapshot_symbol_index=self.snapshot_symbol_index,
-            pipeline=self.pipeline,
-            state=self.state,
-        )
-        self.query_handler.semantic_escalation_cb = self.query._escalate_query_semantics
-
-        # --- ContextFacade ---
-        self.context = ContextFacade(self.cache_manager)
-
-        # --- CacheFacade ---
-        self.cache = CacheFacade(
-            cache_manager=self.cache_manager,
-            vector_store=self.vector_store,
-            embedder=self.embedder,
-            retriever=self.retriever,
-            graph_builder=self.graph_builder,
-            graph_artifact_store=self.graph_artifact_store,
-            state=self.state,
-        )
+        # --- Redo worker (postgres only); needs the assembled facades ---
+        self._redo_worker: RedoWorker | None = None
+        if db_runtime.backend == "postgres":
+            poll_interval = int(storage_cfg.get("redo_poll_interval_seconds", 30))
+            self._redo_worker = RedoWorker(
+                RedoDeps(
+                    snapshot_store=self.snapshot_store,
+                    publishing=self.publishing,
+                    terminus_publisher=self.terminus_publisher,
+                    projection_service=self.projection_service,
+                    config=self.config,
+                ),
+                poll_interval_seconds=poll_interval,
+            )
+            self._redo_worker.start()
+        # Keep the publishing service's redo_worker handle in sync.
+        self.publishing_service.redo_worker = self._redo_worker  # type: ignore[attr-defined]
 
         # --- DiagnosticBuilder ---
         self._diagnostic_builder = DiagnosticBuilder(
@@ -419,6 +162,24 @@ class FastCode:
         )
 
         # Multi-repository state lives on self.state
+
+    def _attach_runtime(self, rt: Any) -> None:
+        """Copy the assembled use_flow graph onto self for legacy attribute access."""
+        for name in (
+            "loader", "parser", "embedder", "vector_store", "indexer",
+            "graph_builder", "graph_artifact_store", "ir_graph_builder",
+            "retriever", "query_processor", "answer_generator", "cache_manager",
+            "snapshot_store", "manifest_store", "index_run_store",
+            "unit_artifact_store", "file_artifact_store", "terminus_publisher",
+            "projection_transformer", "projection_store", "snapshot_symbol_index",
+            "store", "pg_retrieval_store", "doc_ingester",
+            "semantic_helper_runtime", "scip_indexer_runtime",
+            "semantic_resolver_registry", "pipeline", "direct_indexer",
+            "multi_repo_direct_indexer", "indexing", "projection_service",
+            "projection", "publishing_service", "publishing",
+            "query_handler", "query", "context", "cache", "graph_runtime",
+        ):
+            setattr(self, name, getattr(rt, name))
 
     def _set_runtime_config(self, config: FastCodeConfig) -> None:
         """Replace canonical runtime config and refresh the shell mapping view."""
@@ -630,24 +391,6 @@ class FastCode:
     @staticmethod
     def _projection_params_hash(scope: Any, projection_algo_version: str = "v1") -> str:
         return ProjectionService.projection_params_hash(scope, projection_algo_version)
-
-    def _extract_sources_from_elements(
-        self, elements: Sequence[Hit]
-    ) -> list[dict[str, Any]]:
-        """Extract source information from retrieved elements"""
-        sources = _snapshot.extract_sources_from_elements(elements)
-        return [self._source_citation_payload(source) for source in sources]
-
-    @staticmethod
-    def _source_citation_payload(source: SourceCitation) -> dict[str, Any]:
-        return {
-            "repository": source.repository,
-            "file": source.file,
-            "name": source.name,
-            "element_type": source.element_type,
-            "lines": source.lines,
-            "score": source.score,
-        }
 
     def _try_load_from_cache(self) -> bool:
         """Try to load indexed data from cache for single repository."""

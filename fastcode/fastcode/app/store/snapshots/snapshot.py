@@ -16,8 +16,8 @@ from typing import Any, cast
 
 import numpy as np
 
+from fastcode.app.store.runtime_contracts import StoreDatabaseRuntime
 from fastcode.common.identifiers import ArtifactKey, SnapshotId
-from fastcode.infrastructure.storage.contracts import StoreDatabaseRuntime
 from fastcode.ir.types import (
     IRAttachment,
     IRCodeUnit,
@@ -31,6 +31,7 @@ from fastcode.ir.types import (
     IRUnitSupport,
 )
 from fastcode.runtime_support.retry import exponential_backoff_seconds
+from fastcode.utils import io as io
 from fastcode.utils.clock import SystemClock, utc_now
 from fastcode.utils.filesystem import ensure_dir, normalize_path
 from fastcode.utils.ids import PrefixedIdGenerator
@@ -223,10 +224,8 @@ class SnapshotStore:
 
     @classmethod
     def _write_json_atomic(cls, path: str, payload: Any) -> None:
-        tmp_path = f"{path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as handle:
+        with io.atomic_open_write(path, mode="w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp_path, path)
 
     @classmethod
     def _write_snapshot_json_shard(
@@ -403,12 +402,12 @@ class SnapshotStore:
     def _cleanup_shard_dir(cls, directory: str, active_files: set[str]) -> None:
         if not os.path.isdir(directory):
             return
-        for entry_name in os.listdir(directory):
+        for entry_name in io.list_dir(directory):
             if entry_name in active_files:
                 continue
             path = os.path.join(directory, entry_name)
             if os.path.isfile(path):
-                os.remove(path)
+                io.remove_file(path)
 
     def _write_snapshot_shards(self, snapshot: IRSnapshot) -> str:
         snap_dir = self.snapshot_dir(snapshot.snapshot_id)
@@ -476,14 +475,12 @@ class SnapshotStore:
             if embedding.vector is not None:
                 vector_file = self._snapshot_embedding_vector_filename(path_key)
                 vector_path = os.path.join(vector_dir, vector_file)
-                tmp_vector_path = f"{vector_path}.tmp"
-                with open(tmp_vector_path, "wb") as handle:
+                with io.atomic_open_write(vector_path, mode="wb") as handle:
                     np.save(
                         handle,
                         np.asarray(embedding.vector, dtype=np.float32),
                         allow_pickle=False,
                     )
-                os.replace(tmp_vector_path, vector_path)
                 vector_ref = os.path.join("embedding_vectors", vector_file)
                 active_vector_files.add(vector_file)
             embeddings_by_path.setdefault(path_key, []).append(
@@ -627,8 +624,7 @@ class SnapshotStore:
                 "ir_shards_deleted": 0,
                 "fallback_full_rewrite": 1,
             }
-        with open(previous_manifest_path, encoding="utf-8") as handle:
-            previous_manifest = json.load(handle)
+        previous_manifest = io.read_json(previous_manifest_path)
         previous_mapping = (
             cast(Mapping[str, Any], previous_manifest)
             if isinstance(previous_manifest, Mapping)
@@ -738,14 +734,12 @@ class SnapshotStore:
             if embedding.vector is not None:
                 vector_file = self._snapshot_embedding_vector_filename(path_key)
                 vector_path = os.path.join(vector_dir, vector_file)
-                tmp_vector_path = f"{vector_path}.tmp"
-                with open(tmp_vector_path, "wb") as handle:
+                with io.atomic_open_write(vector_path, mode="wb") as handle:
                     np.save(
                         handle,
                         np.asarray(embedding.vector, dtype=np.float32),
                         allow_pickle=False,
                     )
-                os.replace(tmp_vector_path, vector_path)
                 vector_ref = os.path.join("embedding_vectors", vector_file)
                 changed_vector_files.add(vector_file)
             embeddings_by_path.setdefault(path_key, []).append(
@@ -885,9 +879,9 @@ class SnapshotStore:
         )
         deleted = 0
         for directory, active_files in active_by_dir.items():
-            before = set(os.listdir(directory)) if os.path.isdir(directory) else set()
+            before = set(io.list_dir(directory)) if os.path.isdir(directory) else set()
             self._cleanup_shard_dir(directory, active_files)
-            after = set(os.listdir(directory)) if os.path.isdir(directory) else set()
+            after = set(io.list_dir(directory)) if os.path.isdir(directory) else set()
             deleted += len(before - after)
 
         manifest = {
@@ -1173,9 +1167,8 @@ class SnapshotStore:
             if not shard_file:
                 continue
             shard_path = os.path.join(snap_dir, subdir, str(shard_file))
-            with open(shard_path, encoding="utf-8") as handle:
-                increment_materialization_boundary(BOUNDARY_JSON_DECODE)
-                payload = json.load(handle)
+            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+            payload = json.loads(io.read_text(shard_path))
             shard_rows = payload.get("rows", []) if isinstance(payload, dict) else []
             rows.extend(
                 dict(cast(Mapping[str, Any], row))
@@ -1648,8 +1641,7 @@ class SnapshotStore:
     ) -> None:
         symbol_index_path = self.snapshot_symbol_index_path(snapshot_id)
         ensure_dir(os.path.dirname(symbol_index_path))
-        tmp_symbol_index_path = f"{symbol_index_path}.tmp"
-        with open(tmp_symbol_index_path, "w", encoding="utf-8") as f:
+        with io.atomic_open_write(symbol_index_path, mode="w", encoding="utf-8") as f:
             json.dump(
                 payload,
                 f,
@@ -1658,7 +1650,6 @@ class SnapshotStore:
             )
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_symbol_index_path, symbol_index_path)
 
     @classmethod
     def _snapshot_symbol_index_payload(cls, snapshot: IRSnapshot) -> dict[str, Any]:
@@ -1991,9 +1982,8 @@ class SnapshotStore:
                 return None
         else:
             try:
-                with open(path, encoding="utf-8") as f:
-                    increment_materialization_boundary(BOUNDARY_JSON_DECODE)
-                    data = json.load(f)
+                increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+                data = json.loads(io.read_text(path))
             except (json.JSONDecodeError, UnicodeDecodeError):
                 logging.getLogger(__name__).warning(
                     "snapshot symbol index at %s is not valid JSON, skipping", path
@@ -2168,12 +2158,10 @@ class SnapshotStore:
             nodes_file, edges_file = self._ir_graph_edge_filenames(str(name))
             nodes_path = os.path.join(shard_dir, nodes_file)
             edges_path = os.path.join(shard_dir, edges_file)
-            with open(f"{nodes_path}.tmp", "wb") as handle:
+            with io.atomic_open_write(nodes_path, mode="wb") as handle:
                 np.save(handle, np.asarray(nodes, dtype=str), allow_pickle=False)
-            os.replace(f"{nodes_path}.tmp", nodes_path)
-            with open(f"{edges_path}.tmp", "wb") as handle:
+            with io.atomic_open_write(edges_path, mode="wb") as handle:
                 np.save(handle, encoded_edges, allow_pickle=False)
-            os.replace(f"{edges_path}.tmp", edges_path)
             active_files.update({nodes_file, edges_file})
             cast(dict[str, Any], manifest["graphs"])[str(name)] = {
                 "storage": "typed_arrays.v1",
@@ -2207,8 +2195,7 @@ class SnapshotStore:
                 "ir_graph_shards_written": 0,
                 "fallback_full_rewrite": 1,
             }
-        with open(previous_manifest_path, encoding="utf-8") as handle:
-            previous_manifest = json.load(handle)
+        previous_manifest = io.read_json(previous_manifest_path)
         if not (
             isinstance(previous_manifest, Mapping)
             and previous_manifest.get("schema_version")
@@ -2309,12 +2296,10 @@ class SnapshotStore:
             nodes_file, edges_file = self._ir_graph_edge_filenames(str(name))
             nodes_path = os.path.join(shard_dir, nodes_file)
             edges_path = os.path.join(shard_dir, edges_file)
-            with open(f"{nodes_path}.tmp", "wb") as handle:
+            with io.atomic_open_write(nodes_path, mode="wb") as handle:
                 np.save(handle, np.asarray(nodes, dtype=str), allow_pickle=False)
-            os.replace(f"{nodes_path}.tmp", nodes_path)
-            with open(f"{edges_path}.tmp", "wb") as handle:
+            with io.atomic_open_write(edges_path, mode="wb") as handle:
                 np.save(handle, encoded_edges, allow_pickle=False)
-            os.replace(f"{edges_path}.tmp", edges_path)
             active_files.update({nodes_file, edges_file})
             cast(dict[str, Any], manifest["graphs"])[str(name)] = {
                 "storage": "typed_arrays.v1",
@@ -2355,11 +2340,11 @@ class SnapshotStore:
                 serializable[name] = nx.node_link_data(graph)
             else:
                 serializable[name] = self._graph_json_payload(graph)
-        with open(path, "w", encoding="utf-8") as handle:
-            increment_materialization_boundary(
-                BOUNDARY_JSON_ENCODE,
-                items=len(serializable),
-            )
+        increment_materialization_boundary(
+            BOUNDARY_JSON_ENCODE,
+            items=len(serializable),
+        )
+        with io.atomic_open_write(path, mode="w", encoding="utf-8") as handle:
             json.dump({"graphs": serializable}, handle, ensure_ascii=False)
         return path
 
@@ -2470,10 +2455,9 @@ class SnapshotStore:
         from fastcode.ir.graph import IRGraphView
 
         try:
-            with open(path, encoding="utf-8") as f:
-                increment_materialization_boundary(BOUNDARY_GRAPH_FULL_LOAD)
-                increment_materialization_boundary(BOUNDARY_JSON_DECODE)
-                data = json.load(f)
+            increment_materialization_boundary(BOUNDARY_GRAPH_FULL_LOAD)
+            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+            data = json.loads(io.read_text(path))
         except (json.JSONDecodeError, UnicodeDecodeError):
             logging.getLogger(__name__).warning(
                 "ir_graphs at %s is not JSON (legacy pickle format?), skipping", path
@@ -2556,10 +2540,9 @@ class SnapshotStore:
         ir_path = record.ir_path
         if not ir_path or not os.path.exists(ir_path):
             return None
-        with open(ir_path, encoding="utf-8") as f:
-            increment_materialization_boundary(BOUNDARY_SNAPSHOT_FULL_LOAD)
-            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
-            data = json.load(f)
+        increment_materialization_boundary(BOUNDARY_SNAPSHOT_FULL_LOAD)
+        increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+        data = json.loads(io.read_text(ir_path))
         if (
             isinstance(data, Mapping)
             and data.get("schema_version") == self.SNAPSHOT_SHARD_SCHEMA_VERSION
@@ -2574,9 +2557,8 @@ class SnapshotStore:
         record = self.get_snapshot_record(snapshot_id)
         if not record or not record.ir_path or not os.path.exists(record.ir_path):
             return None
-        with open(record.ir_path, encoding="utf-8") as handle:
-            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
-            payload = json.load(handle)
+        increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+        payload = json.loads(io.read_text(record.ir_path))
         if not isinstance(payload, Mapping):
             return None
         return {
@@ -2598,9 +2580,8 @@ class SnapshotStore:
         record = self.get_snapshot_record(snapshot_id)
         if not record or not record.ir_path or not os.path.exists(record.ir_path):
             return []
-        with open(record.ir_path, encoding="utf-8") as handle:
-            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
-            manifest = json.load(handle)
+        increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+        manifest = json.loads(io.read_text(record.ir_path))
         if not (
             isinstance(manifest, Mapping)
             and manifest.get("schema_version") == self.SNAPSHOT_SHARD_SCHEMA_VERSION
@@ -2635,9 +2616,8 @@ class SnapshotStore:
         record = self.get_snapshot_record(snapshot_id)
         if not record or not record.ir_path or not os.path.exists(record.ir_path):
             return []
-        with open(record.ir_path, encoding="utf-8") as handle:
-            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
-            manifest = json.load(handle)
+        increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+        manifest = json.loads(io.read_text(record.ir_path))
         if not (
             isinstance(manifest, Mapping)
             and manifest.get("schema_version") == self.SNAPSHOT_SHARD_SCHEMA_VERSION
@@ -2676,9 +2656,8 @@ class SnapshotStore:
         record = self.get_snapshot_record(snapshot_id)
         if not record or not record.ir_path or not os.path.exists(record.ir_path):
             return []
-        with open(record.ir_path, encoding="utf-8") as handle:
-            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
-            manifest = json.load(handle)
+        increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+        manifest = json.loads(io.read_text(record.ir_path))
         if not (
             isinstance(manifest, Mapping)
             and manifest.get("schema_version") == self.SNAPSHOT_SHARD_SCHEMA_VERSION
@@ -2716,9 +2695,8 @@ class SnapshotStore:
         record = self.get_snapshot_record(snapshot_id)
         if not record or not record.ir_path or not os.path.exists(record.ir_path):
             return []
-        with open(record.ir_path, encoding="utf-8") as handle:
-            increment_materialization_boundary(BOUNDARY_JSON_DECODE)
-            manifest = json.load(handle)
+        increment_materialization_boundary(BOUNDARY_JSON_DECODE)
+        manifest = json.loads(io.read_text(record.ir_path))
         if not (
             isinstance(manifest, Mapping)
             and manifest.get("schema_version") == self.SNAPSHOT_SHARD_SCHEMA_VERSION

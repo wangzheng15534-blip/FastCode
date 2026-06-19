@@ -9,15 +9,31 @@ import json
 import logging
 import threading
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, cast
 
 from fastcode.ports.jobs import RedoJobQueue
 from fastcode.ports.publishing import EventSink
 
 
+@dataclass
+class RedoDeps:
+    """Narrow handle to the assembled use_flow objects the redo worker needs.
+
+    Replaces the old whole-``FastCode`` dependency so the worker does not hold
+    the assembly-root identity.
+    """
+
+    snapshot_store: Any
+    publishing: Any
+    terminus_publisher: Any
+    projection_service: Any
+    config: Any
+
+
 class RedoWorker:
-    def __init__(self, fastcode: Any, poll_interval_seconds: int = 30) -> None:
-        self.fastcode = fastcode
+    def __init__(self, deps: RedoDeps, poll_interval_seconds: int = 30) -> None:
+        self.deps = deps
         self.poll_interval_seconds = max(1, int(poll_interval_seconds))
         self.logger = logging.getLogger(__name__)
         self._stop_event = threading.Event()
@@ -30,10 +46,10 @@ class RedoWorker:
         return getattr(payload, name, None)
 
     def _redo_queue(self) -> RedoJobQueue:
-        return cast(RedoJobQueue, self.fastcode.snapshot_store)
+        return cast(RedoJobQueue, self.deps.snapshot_store)
 
     def _event_sink(self) -> EventSink:
-        return cast(EventSink, self.fastcode.snapshot_store)
+        return cast(EventSink, self.deps.snapshot_store)
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -100,12 +116,12 @@ class RedoWorker:
             if not run_id:
                 msg = "redo task missing run_id"
                 raise RuntimeError(msg)
-            self.fastcode.publishing.retry_index_run_recovery(
+            self.deps.publishing.retry_index_run_recovery(
                 run_id=str(run_id), payload=payload
             )
             return
         if task_type == "semantic_repair_frontier":
-            result = self.fastcode.publishing.process_semantic_repair_frontier(
+            result = self.deps.publishing.process_semantic_repair_frontier(
                 payload=payload
             )
             if self._projection_rebuild_enabled(payload):
@@ -127,7 +143,7 @@ class RedoWorker:
     def _projection_rebuild_enabled(self, payload: dict[str, Any]) -> bool:
         if "rebuild_dirty_projections" in payload:
             return bool(payload.get("rebuild_dirty_projections"))
-        config = getattr(self.fastcode, "config", {}) or {}
+        config = getattr(self.deps, "config", {}) or {}
         projection_cfg: Any = {}
         if isinstance(config, dict):
             projection_cfg = config.get("projection", {})
@@ -158,7 +174,7 @@ class RedoWorker:
             self._rebuild_dirty_projections(snapshot_id)
 
     def _rebuild_dirty_projections(self, snapshot_id: str) -> None:
-        projection_service = getattr(self.fastcode, "projection_service", None)
+        projection_service = getattr(self.deps, "projection_service", None)
         rebuild = getattr(projection_service, "rebuild_dirty_projections", None)
         if not callable(rebuild):
             self.logger.debug(
@@ -177,7 +193,7 @@ class RedoWorker:
 
     def _flush_outbox(self) -> None:
         """Flush the TerminusDB publish outbox."""
-        publisher = getattr(self.fastcode, "terminus_publisher", None)
+        publisher = getattr(self.deps, "terminus_publisher", None)
         if not publisher or not publisher.is_configured():
             self.logger.debug(
                 "TerminusDB publisher not configured, skipping outbox flush"

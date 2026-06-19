@@ -1,8 +1,10 @@
-"""Low-level storage runtime capability contracts.
+"""Store-side capability contract for the SQL runtime.
 
-Generic facility traits owned by the storage effect_facility unit.
-Moved from axis_surface (ports) because these are generic infrastructure
-capabilities, not semantic business traits.
+Following the FCIS consumer-owns-the-port rule (mirrors zotero's
+``zotero-app/src/catalog/port.rs``): the capability trait lives with the
+use_flow consumer that needs it. The concrete effect_facility adapter
+(``fastcode.infrastructure.storage.runtime.DBRuntime``) satisfies this
+structurally and is injected at assembly time; it does not import this module.
 """
 
 from __future__ import annotations

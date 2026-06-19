@@ -6,9 +6,9 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, cast
 
-from fastcode.infrastructure.storage.contracts import StoreDatabaseRuntime
 from fastcode.utils.clock import SystemClock
 from fastcode.utils.filesystem import normalize_path
+from fastcode.app.store.runtime_contracts import StoreDatabaseRuntime
 
 from .unit_contracts import FileIRShardRecord, UnitArtifactRecord
 

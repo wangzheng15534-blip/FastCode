@@ -8,8 +8,6 @@ and wires it into the apps so entry frames never import from main/.
 from __future__ import annotations
 
 import logging
-import os
-import platform
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from fastcode.runtime_support.observability import configure_logging
 
+from .config import apply_darwin_threading_env
 from .facades import FacadeContainer, facade_container_from_fastcode
 from .fastcode import FastCode
 
@@ -29,11 +28,7 @@ from .fastcode import FastCode
 
 
 def _apply_darwin_threading_env() -> None:
-    if platform.system() == "Darwin":
-        os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        os.environ["OMP_NUM_THREADS"] = "1"
-        os.environ["OPENBLAS_NUM_THREADS"] = "1"
-        os.environ["MKL_NUM_THREADS"] = "1"
+    apply_darwin_threading_env()
 
 
 # ---------------------------------------------------------------------------

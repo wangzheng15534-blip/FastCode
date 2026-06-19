@@ -8,6 +8,7 @@ import os
 import re
 from typing import Any
 
+from fastcode.utils import io as io
 from fastcode.utils.path_utils import PathUtils
 
 
@@ -87,7 +88,7 @@ class AgentTools:
             result: dict[str, Any] = {"success": True, "path": path, "contents": []}
 
             # List directory contents
-            for item in sorted(os.listdir(full_path)):
+            for item in sorted(io.list_dir(full_path)):
                 # Skip hidden files if not included
                 if not include_hidden and item.startswith("."):
                     continue
@@ -309,8 +310,7 @@ class AgentTools:
                     # 5b. Content search
                     # -------------------------------------------------
                     try:
-                        with open(file_path, encoding="utf-8", errors="ignore") as f:
-                            content = f.read()
+                        content = io.read_text(file_path, errors="ignore")
 
                         file_matches: list[dict[str, Any]] = []
                         lines = content.split("\n")
@@ -485,12 +485,13 @@ class AgentTools:
             return {"success": False, "error": f"File does not exist: {file_path}"}
 
         try:
-            with open(full_path, encoding="utf-8", errors="ignore") as f:
-                lines: list[str] = []
-                for i, line in enumerate(f):
-                    if i >= max_lines:
-                        break
-                    lines.append(str(line).rstrip())
+            lines: list[str] = []
+            for i, line in enumerate(
+                io.read_text(full_path, errors="ignore").split("\n")
+            ):
+                if i >= max_lines:
+                    break
+                lines.append(str(line).rstrip())
 
             # Extract structure (simple pattern matching)
             structure: dict[str, Any] = {
@@ -577,8 +578,7 @@ class AgentTools:
             }
 
         try:
-            with open(full_path, encoding="utf-8", errors="ignore") as f:
-                content = f.read(max_chars)
+            content = io.read_text(full_path, errors="ignore")[:max_chars]
 
             # Count lines
             lines = content.split("\n")

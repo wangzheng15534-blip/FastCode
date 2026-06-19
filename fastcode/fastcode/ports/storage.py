@@ -1,8 +1,8 @@
-"""Low-level storage runtime capability ports — moved to effect_facility.
+"""Store-facing semantic capability ports.
 
-StoreDatabaseRuntime moved to infrastructure/storage/contracts.py.
-DocumentGraphRuntime moved to infrastructure/graph_runtime/contracts.py.
-
-These are generic facility traits implemented by their respective
-effect_facility units, not semantic business capabilities.
+This module keeps the semantic store-facing capability ports consumed only by
+use_flow code. Low-level effect runtime traits (``StoreDatabaseRuntime``) are
+owned by their use_flow consumer at ``fastcode.app.store.runtime_contracts``
+per the FCIS consumer-owns-the-port rule; concrete effect_facility adapters
+satisfy them structurally without importing them.
 """

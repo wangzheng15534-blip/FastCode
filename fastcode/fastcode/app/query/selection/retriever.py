@@ -53,6 +53,7 @@ from fastcode.retrieval.contracts import (
     RetrievalSource,
     TraceLink,
 )
+from fastcode.utils import io as io
 from fastcode.utils.filesystem import ensure_dir
 
 _BM25_SHARD_STORAGE_VERSION = 1
@@ -1769,8 +1770,7 @@ class HybridRetriever:
                 shard_path = os.path.join(shard_dir, shard_file)
                 if not os.path.exists(shard_path):
                     continue
-                with open(shard_path, "rb") as handle:
-                    payload = pickle.load(handle)
+                payload = pickle.loads(io.read_bytes(shard_path))
                 entries = (
                     payload.get("entries", []) if isinstance(payload, dict) else []
                 )
@@ -1837,8 +1837,7 @@ class HybridRetriever:
                 if not isinstance(shard, dict) or not shard.get("shard_file"):
                     continue
                 shard_path = os.path.join(shard_dir, str(shard["shard_file"]))
-                with open(shard_path, "rb") as handle:
-                    payload = pickle.load(handle)
+                payload = pickle.loads(io.read_bytes(shard_path))
                 entries = (
                     payload.get("entries", []) if isinstance(payload, dict) else []
                 )
@@ -1863,8 +1862,7 @@ class HybridRetriever:
         bm25_path = self._legacy_bm25_path(name)
         if not os.path.exists(bm25_path):
             return []
-        with open(bm25_path, "rb") as handle:
-            payload = pickle.load(handle)
+        payload = pickle.loads(io.read_bytes(bm25_path))
         if not isinstance(payload, dict):
             return []
         return [
@@ -2031,8 +2029,7 @@ class HybridRetriever:
         bm25_path = self._legacy_bm25_path(name)
         if not os.path.exists(bm25_path):
             return None
-        with open(bm25_path, "rb") as handle:
-            payload = pickle.load(handle)
+        payload = pickle.loads(io.read_bytes(bm25_path))
         return cast(dict[str, Any], payload) if isinstance(payload, dict) else None
 
     def load_bm25_sources(
@@ -2787,7 +2784,7 @@ class HybridRetriever:
         if os.path.abspath(source_path) == os.path.abspath(target_path):
             return
         if os.path.exists(target_path):
-            os.remove(target_path)
+            io.remove_file(target_path)
         try:
             os.link(source_path, target_path)
         except OSError:
@@ -2798,8 +2795,7 @@ class HybridRetriever:
         if not os.path.exists(manifest_path):
             return None
         try:
-            with open(manifest_path, encoding="utf-8") as handle:
-                payload = json.load(handle)
+            payload = io.read_json(manifest_path)
         except (OSError, json.JSONDecodeError):
             return None
         return cast(dict[str, Any], payload) if isinstance(payload, dict) else None
@@ -2852,10 +2848,7 @@ class HybridRetriever:
                 and existing.get("digest") == digest
                 and os.path.exists(shard_path)
             ):
-                tmp_path = f"{shard_path}.tmp"
-                with open(tmp_path, "wb") as handle:
-                    handle.write(shard_bytes)
-                os.replace(tmp_path, shard_path)
+                io.atomic_write_bytes(shard_path, shard_bytes)
             manifest["shards"].append(
                 {
                     "path_key": path_key,
@@ -2876,18 +2869,16 @@ class HybridRetriever:
                     continue
                 stale_path = os.path.join(shard_dir, str(shard_file))
                 if os.path.exists(stale_path):
-                    os.remove(stale_path)
+                    io.remove_file(stale_path)
 
         manifest_path = self._bm25_manifest_path(name)
         self._bm25_populate_manifest_statistics(manifest)
-        tmp_manifest = f"{manifest_path}.tmp"
-        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+        with io.atomic_open_write(manifest_path, mode="w") as handle:
             json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp_manifest, manifest_path)
 
         legacy_bm25_path = self._legacy_bm25_path(name)
         if os.path.exists(legacy_bm25_path):
-            os.remove(legacy_bm25_path)
+            io.remove_file(legacy_bm25_path)
 
     def _load_bm25_sequences_by_path(
         self,
@@ -2907,8 +2898,7 @@ class HybridRetriever:
                 continue
             shard_path = os.path.join(shard_dir, str(shard["shard_file"]))
             try:
-                with open(shard_path, "rb") as handle:
-                    payload = pickle.load(handle)
+                payload = pickle.loads(io.read_bytes(shard_path))
             except Exception as exc:
                 self.logger.warning(
                     "Failed to read previous BM25 shard %s: %s",
@@ -3079,10 +3069,7 @@ class HybridRetriever:
             shard_file = self._bm25_shard_filename(path_key)
             shard_path = os.path.join(shard_dir, shard_file)
             active_files.add(shard_file)
-            tmp_path = f"{shard_path}.tmp"
-            with open(tmp_path, "wb") as handle:
-                handle.write(shard_bytes)
-            os.replace(tmp_path, shard_path)
+            io.atomic_write_bytes(shard_path, shard_bytes)
             manifest["shards"].append(
                 {
                     "path_key": path_key,
@@ -3102,14 +3089,12 @@ class HybridRetriever:
 
         manifest_path = self._bm25_manifest_path(name)
         self._bm25_populate_manifest_statistics(manifest)
-        tmp_manifest = f"{manifest_path}.tmp"
-        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+        with io.atomic_open_write(manifest_path, mode="w") as handle:
             json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp_manifest, manifest_path)
 
         legacy_bm25_path = self._legacy_bm25_path(name)
         if os.path.exists(legacy_bm25_path):
-            os.remove(legacy_bm25_path)
+            io.remove_file(legacy_bm25_path)
         return {"bm25_shards_reused": reused, "bm25_shards_written": written}
 
     def _write_bm25_bundle_delta(
@@ -3232,10 +3217,7 @@ class HybridRetriever:
             shard_file = self._bm25_shard_filename(path_key)
             shard_path = os.path.join(shard_dir, shard_file)
             active_files.add(shard_file)
-            tmp_path = f"{shard_path}.tmp"
-            with open(tmp_path, "wb") as handle:
-                handle.write(shard_bytes)
-            os.replace(tmp_path, shard_path)
+            io.atomic_write_bytes(shard_path, shard_bytes)
             manifest["shards"].append(
                 {
                     "path_key": path_key,
@@ -3259,14 +3241,12 @@ class HybridRetriever:
         cast(list[dict[str, Any]], manifest["shards"]).sort(key=_manifest_path_key)
         manifest_path = self._bm25_manifest_path(name)
         self._bm25_populate_manifest_statistics(manifest)
-        tmp_manifest = f"{manifest_path}.tmp"
-        with open(tmp_manifest, "w", encoding="utf-8") as handle:
+        with io.atomic_open_write(manifest_path, mode="w") as handle:
             json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp_manifest, manifest_path)
 
         legacy_bm25_path = self._legacy_bm25_path(name)
         if os.path.exists(legacy_bm25_path):
-            os.remove(legacy_bm25_path)
+            io.remove_file(legacy_bm25_path)
         return {
             "bm25_shards_reused": reused,
             "bm25_shards_written": written,
@@ -3284,8 +3264,7 @@ class HybridRetriever:
                     if not isinstance(shard, dict) or not shard.get("shard_file"):
                         continue
                     shard_path = os.path.join(shard_dir, str(shard["shard_file"]))
-                    with open(shard_path, "rb") as handle:
-                        payload = pickle.load(handle)
+                    payload = pickle.loads(io.read_bytes(shard_path))
                     entries = (
                         payload.get("entries", []) if isinstance(payload, dict) else []
                     )
@@ -3321,8 +3300,7 @@ class HybridRetriever:
         bm25_path = self._legacy_bm25_path(name)
         if not os.path.exists(bm25_path):
             return None
-        with open(bm25_path, "rb") as handle:
-            payload = pickle.load(handle)
+        payload = pickle.loads(io.read_bytes(bm25_path))
         return cast(dict[str, Any], payload) if isinstance(payload, dict) else None
 
     def _initialize_agents(self, repo_root: str) -> bool:

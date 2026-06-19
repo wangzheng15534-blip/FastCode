@@ -50,7 +50,9 @@ from fastcode.infrastructure.execution.ports import (
     ScipIndexerRuntime,
     SemanticHelperRuntime,
 )
-from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
+from fastcode.infrastructure.execution.helper_operations import (
+    SemanticHelperOperations,
+)
 from fastcode.ir.element import (
     CodeElement,
     CodeElementMeta,
@@ -90,6 +92,7 @@ from fastcode.utils.materialization import (
     reset_materialization_counters,
     set_materialization_counters,
 )
+from fastcode.app.indexing.runtime_contracts import DocumentGraphRuntime
 
 from .incremental import (
     FileChangeSet,
@@ -1321,7 +1324,8 @@ class IndexPipeline:
         registry = getattr(self, "semantic_resolver_registry", None)
         if registry is None:
             registry = build_default_semantic_resolver_registry(
-                semantic_helper_runtime=getattr(self, "semantic_helper_runtime", None)
+                semantic_helper_runtime=getattr(self, "semantic_helper_runtime", None),
+                helper_ops_factory=lambda runtime: SemanticHelperOperations(runtime),
             )
 
         # Collect pending capabilities from unresolved relations so we can

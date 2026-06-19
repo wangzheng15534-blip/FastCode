@@ -25,11 +25,11 @@ if TYPE_CHECKING:
     from fastcode.app.query.selection.retriever import HybridRetriever
     from fastcode.app.store.facade import StoreFacade
     from fastcode.app.store.vectors.vector import VectorStore
-    from fastcode.infrastructure.graph_runtime.contracts import DocumentGraphRuntime
     from fastcode.runtime_support.runtime_state import RuntimeState
     from fastcode.scip.global_builder import GlobalIndexBuilder
     from fastcode.scip.module_resolver import ModuleResolver
     from fastcode.scip.symbol_resolver import SymbolResolver
+    from fastcode.app.indexing.runtime_contracts import DocumentGraphRuntime
 
 
 class IndexingFacade:

@@ -19,6 +19,7 @@ from fastcode.app.indexing.file_inventory import (
     FileInventory,
     build_file_inventory,
 )
+from fastcode.utils import io as io
 from fastcode.utils.archive import safe_extract_zip
 from fastcode.utils.filesystem import ensure_dir, get_repo_name_from_url
 
@@ -199,7 +200,7 @@ class RepositoryLoader:
                 copy_function=copy_function,
             )
             try:
-                os.rename(temp_path, cache_path)
+                io.atomic_replace(temp_path, cache_path)
             except FileExistsError:
                 shutil.rmtree(temp_path)
         except Exception:
@@ -467,13 +468,13 @@ class RepositoryLoader:
 
             # If ZIP contains a single root directory, flatten it so repository
             # always lives directly under repo workspace root/<repo_name>.
-            contents = os.listdir(extract_path)
+            contents = io.list_dir(extract_path)
             if len(contents) == 1 and os.path.isdir(
                 os.path.join(extract_path, contents[0])
             ):
                 self.logger.info(f"Detected single root directory: {contents[0]}")
                 root_dir = os.path.join(extract_path, contents[0])
-                for name in os.listdir(root_dir):
+                for name in io.list_dir(root_dir):
                     shutil.move(
                         os.path.join(root_dir, name), os.path.join(extract_path, name)
                     )
@@ -515,12 +516,11 @@ class RepositoryLoader:
 
         patterns = []
         try:
-            with open(gitignore_path, encoding="utf-8") as f:
-                for raw_line in f:
-                    line = raw_line.strip()
-                    # Skip empty lines and comments
-                    if line and not line.startswith("#"):
-                        patterns.append(line)
+            for raw_line in io.read_text(gitignore_path).splitlines():
+                line = raw_line.strip()
+                # Skip empty lines and comments
+                if line and not line.startswith("#"):
+                    patterns.append(line)
             self.logger.info(f"Loaded {len(patterns)} patterns from .gitignore")
         except Exception as e:
             self.logger.warning(f"Failed to read .gitignore: {e}")
@@ -595,13 +595,11 @@ class RepositoryLoader:
             File content or None if error
         """
         try:
-            with open(file_path, encoding="utf-8") as f:
-                return f.read()
+            return io.read_text(file_path)
         except UnicodeDecodeError:
             # Try with different encoding
             try:
-                with open(file_path, encoding="latin-1") as f:
-                    return f.read()
+                return io.read_bytes(file_path).decode("latin-1")
             except Exception as e:
                 self.logger.error(f"Failed to read {file_path}: {e}")
                 return None

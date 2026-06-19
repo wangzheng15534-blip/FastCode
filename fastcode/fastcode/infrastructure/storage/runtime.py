@@ -11,8 +11,6 @@ import sqlite3
 from collections.abc import Iterator
 from typing import Any
 
-from fastcode.infrastructure.storage.contracts import StoreDatabaseRuntime
-
 logger = logging.getLogger(__name__)
 
 try:
@@ -37,7 +35,7 @@ def pgvector_adapter_available() -> bool:
     return register_vector is not None
 
 
-class DBRuntime(StoreDatabaseRuntime):
+class DBRuntime:
     def __init__(
         self,
         *,

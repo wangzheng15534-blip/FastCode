@@ -10,9 +10,12 @@ resolvers as internal fallbacks.  The registry provides:
 
 from __future__ import annotations
 
+from typing import Any, Callable
+
 from fastcode.ir.element import CodeElement
 from fastcode.ir.types import IRSnapshot
 from fastcode.semantic.resolution import SemanticResolver
+from fastcode.semantic.resolvers.engine.helper_contract import SemanticHelperOps
 from fastcode.semantic.resolvers.engine.language_graph import (
     CSharpSemanticResolver,
     FortranSemanticResolver,
@@ -100,11 +103,17 @@ class SemanticResolverRegistry:
 
 def build_default_semantic_resolver_registry(
     semantic_helper_runtime: object | None = None,
+    *,
+    helper_ops_factory: Callable[[Any | None], SemanticHelperOps] | None = None,
 ) -> SemanticResolverRegistry:
     """Build the default resolver registry.
 
     Each compiler-backed resolver wraps its graph-backed fallback so that
     when external tools are missing, structural evidence is still emitted.
+
+    ``helper_ops_factory`` is the composition-root-supplied constructor for the
+    effect_tool ``SemanticHelperOps`` adapter; it is injected into every
+    helper-backed resolver so this meaning_core module never imports effect_tool.
     """
     registry = SemanticResolverRegistry(
         [
@@ -129,6 +138,11 @@ def build_default_semantic_resolver_registry(
             JuliaCompilerResolver(fallback=JuliaSemanticResolver()),
         ]
     )
+    if helper_ops_factory is not None:
+        for resolver in registry.all():
+            inject_ops = getattr(resolver, "set_helper_ops", None)
+            if callable(inject_ops):
+                inject_ops(helper_ops_factory(semantic_helper_runtime))
     if semantic_helper_runtime is not None:
         for resolver in registry.all():
             resolver.set_tool_runtime(semantic_helper_runtime)

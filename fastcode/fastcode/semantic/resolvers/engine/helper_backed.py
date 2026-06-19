@@ -31,9 +31,11 @@ from fastcode.semantic.resolution import (
     ToolDiagnostic,
 )
 from fastcode.semantic.resolvers.engine.graph_backed import GraphBackedSemanticResolver
-from fastcode.semantic.resolvers.engine.helper_operations import (
-    SemanticHelperOperations,
+from fastcode.semantic.resolvers.engine.helper_contract import (
+    SemanticHelperInvocation,
+    SemanticHelperOps,
     SemanticHelperSpec,
+    get_default_helper_ops_factory,
 )
 from fastcode.semantic.resolvers.engine.resolver_support import (
     _hash_id,
@@ -51,6 +53,33 @@ def _unit_simple_name(unit: IRCodeUnit) -> str:
     return name.strip()
 
 
+def _diagnostic_from_raw(raw: dict[str, Any]) -> ToolDiagnostic:
+    """Wrap a raw effect_tool diagnostic dict into a meaning_core ToolDiagnostic."""
+    return ToolDiagnostic(
+        language=str(raw.get("language") or ""),
+        tool=str(raw.get("tool") or ""),
+        code=str(raw.get("code") or ""),
+        message=str(raw.get("message") or ""),
+    )
+
+
+def _invocation_from_raw(result: Any) -> SemanticHelperInvocation:
+    """Map the effect_tool raw helper result into the meaning_core invocation.
+
+    The effect_tool returns a ``HelperRunResult`` whose diagnostics are raw
+    dicts; meaning_core owns ``ToolDiagnostic`` and ``SemanticHelperInvocation``.
+    """
+    return SemanticHelperInvocation(
+        payload=getattr(result, "payload", {}) or {},
+        stats=getattr(result, "stats", {}) or {},
+        warnings=getattr(result, "warnings", []) or [],
+        diagnostics=[
+            _diagnostic_from_raw(item)
+            for item in (getattr(result, "raw_diagnostics", []) or [])
+        ],
+    )
+
+
 class HelperBackedSemanticResolver(SemanticResolver):
     """Shared base class for helper-backed semantic resolvers."""
 
@@ -63,12 +92,37 @@ class HelperBackedSemanticResolver(SemanticResolver):
 
     def __init__(self, fallback: GraphBackedSemanticResolver | None = None) -> None:
         self._fallback = fallback
-        self._helper_ops = SemanticHelperOperations()
+        # Dependency inversion: the concrete SemanticHelperOperations
+        # (effect_tool) is injected at the composition root via the registered
+        # default factory (or explicitly via set_helper_ops). This layer holds
+        # only the pure Protocol surface and never imports effect_tool.
+        factory = get_default_helper_ops_factory()
+        self._helper_ops: SemanticHelperOps | None = (
+            factory(None) if factory is not None else None
+        )
+
+    def set_helper_ops(self, helper_ops: SemanticHelperOps) -> None:
+        """Inject the effect_tool helper-operations adapter (composition root)."""
+        self._helper_ops = helper_ops
+
+    @property
+    def helper_ops(self) -> SemanticHelperOps:
+        if self._helper_ops is None:
+            factory = get_default_helper_ops_factory()
+            if factory is not None:
+                self._helper_ops = factory(None)
+            else:
+                msg = "semantic helper operations adapter is not configured"
+                raise RuntimeError(msg)
+        return self._helper_ops
 
     def set_helper_runtime(self, helper_runtime: Any | None) -> None:
         """Inject the shell-side runtime used for helper execution."""
         self.set_tool_runtime(helper_runtime)
-        self._helper_ops.set_runtime(helper_runtime)
+        if self._helper_ops is not None:
+            runtime_setter = getattr(self._helper_ops, "set_runtime", None)
+            if callable(runtime_setter):
+                runtime_setter(helper_runtime)
         if self._fallback is not None:
             fallback_setter = getattr(self._fallback, "set_tool_runtime", None)
             if callable(fallback_setter):
@@ -89,17 +143,17 @@ class HelperBackedSemanticResolver(SemanticResolver):
         )
 
     def _target_files(self, target_paths: set[str], *, repo_root: str) -> list[str]:
-        return self._helper_ops.target_files(
+        return self.helper_ops.target_files(
             target_paths,
             repo_root=repo_root,
             spec=self._helper_spec(),
         )
 
     def _helper_path(self) -> Path:
-        return self._helper_ops.helper_path(self._helper_spec())
+        return self.helper_ops.helper_path(self._helper_spec())
 
     def _helper_command(self, helper_files: list[str]) -> list[str]:
-        return self._helper_ops.helper_command(self._helper_spec(), helper_files)
+        return self.helper_ops.helper_command(self._helper_spec(), helper_files)
 
     def _run_semantic_helper(
         self,
@@ -108,11 +162,12 @@ class HelperBackedSemanticResolver(SemanticResolver):
         *,
         repo_root: str,
     ) -> dict[str, Any]:
-        invocation = self._helper_ops.run_helper(
+        result = self.helper_ops.run_helper(
             self._helper_spec(),
             helper_files,
             repo_root=repo_root,
         )
+        invocation = _invocation_from_raw(result)
         patch.stats.update(invocation.stats)
         patch.warnings.extend(invocation.warnings)
         patch.diagnostics.extend(invocation.diagnostics)
@@ -127,7 +182,7 @@ class HelperBackedSemanticResolver(SemanticResolver):
         graph_context: SemanticGraphContext | None,
     ) -> ResolutionPatch:
         snapshot_metadata = cast(dict[str, Any], snapshot.metadata or {})
-        repo_root = self._helper_ops.resolve_repo_root(
+        repo_root = self.helper_ops.resolve_repo_root(
             cast(str | None, snapshot_metadata.get("repo_root"))
         )
         if self._has_tools():
@@ -179,10 +234,11 @@ class HelperBackedSemanticResolver(SemanticResolver):
         )
 
     def _has_tools(self) -> bool:
-        return self._helper_ops.has_tools(self._helper_spec())
+        return self.helper_ops.has_tools(self._helper_spec())
 
     def _missing_tool_diagnostics(self) -> list[ToolDiagnostic]:
-        return self._helper_ops.missing_tool_diagnostics(self._helper_spec())
+        raw = self.helper_ops.missing_tool_diagnostics(self._helper_spec())
+        return [_diagnostic_from_raw(item) for item in raw]
 
     def _resolve_via_helper(
         self,
@@ -214,7 +270,7 @@ class HelperBackedSemanticResolver(SemanticResolver):
         if not helper_files:
             return patch
 
-        cache_entry = self._helper_ops.cache_entry(
+        cache_entry = self.helper_ops.cache_entry(
             spec,
             helper_files,
             repo_root=repo_root,
@@ -226,7 +282,7 @@ class HelperBackedSemanticResolver(SemanticResolver):
                 "helper_cache_target_files": len(helper_files),
             }
         )
-        payload = self._helper_ops.load_cache(cache_entry)
+        payload = self.helper_ops.load_cache(cache_entry)
         if payload is not None:
             patch.stats["helper_cache_hit"] = True
             patch.stats["helper_cache_miss"] = False
@@ -248,7 +304,7 @@ class HelperBackedSemanticResolver(SemanticResolver):
                 graph_context=graph_context,
             )
         if patch.stats.get("helper_cache_hit") is not True:
-            self._helper_ops.save_cache(cache_entry, payload)
+            self.helper_ops.save_cache(cache_entry, payload)
         self._apply_semantic_facts(snapshot=snapshot, patch=patch, payload=payload)
         patch.metadata_updates["semantic_resolver_runs"][0]["stats"] = patch.stats
         return patch

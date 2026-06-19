@@ -1,10 +1,26 @@
-"""Private operations for helper-backed semantic resolvers."""
+"""Filesystem/tool/runtime operations for semantic helper execution.
+
+This is an effect_tool module: it owns concrete external-mechanism adapters
+(subprocess invocation, Go-binary compilation, filesystem JSON cache, file
+identity hashing). It was relocated out of the meaning_core ``semantic``
+package so the semantic layer stays pure (no io/serde_json/subprocess).
+
+Dependency inversion: this module must NOT import meaning_core. It defines its
+own local value types (``SemanticHelperSpec``, ``SemanticHelperCacheEntry``,
+``HelperRunResult``) and operates on the spec via plain attribute access. The
+pure ``SemanticHelperOps`` Protocol and the ``SemanticHelperInvocation``/
+``ToolDiagnostic`` mapping live in meaning_core
+(``fastcode.semantic.resolvers.engine.helper_contract``); this class satisfies
+that Protocol structurally without importing it. meaning_core wraps the raw
+``HelperRunResult`` into ``SemanticHelperInvocation`` + ``ToolDiagnostic``.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
 import os
+import posixpath
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -12,11 +28,6 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
-from fastcode.semantic.resolution import ToolDiagnostic
-from fastcode.semantic.resolvers.engine.resolver_support import (
-    _normalize_path,
-    validate_helper_paths,
-)
 from fastcode.utils.filesystem import (
     compute_file_sha256,
     file_content_identity,
@@ -40,13 +51,58 @@ def _empty_warnings() -> list[str]:
     return []
 
 
-def _empty_diagnostics() -> list[ToolDiagnostic]:
+def _empty_raw_diagnostics() -> list[dict[str, str]]:
     return []
+
+
+def _normalize_path(path: str) -> str:
+    # Local pure copy of fastcode.semantic.resolvers.engine.resolver_support's
+    # _normalize_path. Duplicated here to avoid an effect_tool -> meaning_core
+    # import edge; both copies are deterministic string ops.
+    normalized = path.replace("\\", "/")
+    normalized = normalized.removeprefix("./")
+    return posixpath.normpath(normalized)
+
+
+def validate_helper_paths(
+    paths: list[str], repo_root: str
+) -> tuple[list[str], list[str]]:
+    """Validate helper file paths are regular files within repo root.
+
+    Returns (safe_paths, rejected_paths). Rejects symlinks, missing files,
+    and files outside the repo root. This performs filesystem I/O and so
+    belongs in effect_tool.
+    """
+    repo = Path(repo_root).resolve()
+    safe: list[str] = []
+    rejected: list[str] = []
+    for p in paths:
+        original = Path(p)
+        resolved = original.resolve()
+        if original.is_symlink():
+            rejected.append(p)
+            continue
+        if not resolved.is_file():
+            rejected.append(p)
+            continue
+        try:
+            resolved.relative_to(repo)
+        except ValueError:
+            rejected.append(p)
+            continue
+        safe.append(p)
+    return safe, rejected
 
 
 @dataclass(frozen=True)
 class SemanticHelperSpec:
-    """Execution/cache identity for one helper-backed resolver."""
+    """Execution/cache identity for one helper-backed resolver.
+
+    Local effect_tool copy structurally compatible with the meaning_core
+    ``fastcode.semantic.resolvers.engine.helper_contract.SemanticHelperSpec``
+    (same fields). meaning_core constructs the spec and passes it in; this
+    module reads attributes off it without importing the meaning_core type.
+    """
 
     cache_version: str
     language: str
@@ -62,7 +118,7 @@ class SemanticHelperSpec:
 
 @dataclass(frozen=True)
 class SemanticHelperCacheEntry:
-    """Concrete cache entry for a helper invocation identity."""
+    """Concrete cache entry for a helper invocation identity (effect_tool)."""
 
     key: str
     path: str
@@ -70,13 +126,18 @@ class SemanticHelperCacheEntry:
 
 
 @dataclass(frozen=True)
-class SemanticHelperInvocation:
-    """Result of invoking or decoding a helper command."""
+class HelperRunResult:
+    """Raw effect_tool result of invoking a helper command.
+
+    ``raw_diagnostics`` are plain dicts with the keys
+    ``{language, tool, code, message}``; the meaning_core resolver wraps each
+    into a ``ToolDiagnostic``.
+    """
 
     payload: dict[str, Any] = field(default_factory=_empty_payload)
     stats: dict[str, Any] = field(default_factory=_empty_stats)
     warnings: list[str] = field(default_factory=_empty_warnings)
-    diagnostics: list[ToolDiagnostic] = field(default_factory=_empty_diagnostics)
+    raw_diagnostics: list[dict[str, str]] = field(default_factory=_empty_raw_diagnostics)
 
 
 class SemanticHelperOperations:
@@ -103,17 +164,17 @@ class SemanticHelperOperations:
 
     def missing_tool_diagnostics(
         self, spec: SemanticHelperSpec
-    ) -> list[ToolDiagnostic]:
+    ) -> list[dict[str, str]]:
         return [
-            ToolDiagnostic(
-                language=spec.language,
-                tool=tool,
-                code="required_tool_missing",
-                message=(
+            {
+                "language": spec.language,
+                "tool": tool,
+                "code": "required_tool_missing",
+                "message": (
                     f"'{tool}' not found in PATH; {spec.language} resolution is "
                     "structural-only"
                 ),
-            )
+            }
             for tool in spec.required_tools
             if self.find_tool(tool) is None
         ]
@@ -141,7 +202,17 @@ class SemanticHelperOperations:
 
     @staticmethod
     def helper_path(spec: SemanticHelperSpec) -> Path:
-        return Path(__file__).resolve().parents[1] / "helpers" / spec.helper_filename
+        # This module lives at fastcode/fastcode/infrastructure/execution/; the
+        # helper scripts live under the semantic package two parents up
+        # (fastcode/fastcode/semantic/resolvers/helpers/). Resolving from
+        # __file__ keeps the path stable regardless of the process CWD.
+        return (
+            Path(__file__).resolve().parents[2]
+            / "semantic"
+            / "resolvers"
+            / "helpers"
+            / spec.helper_filename
+        )
 
     def helper_command(
         self, spec: SemanticHelperSpec, helper_files: list[str]
@@ -321,7 +392,7 @@ class SemanticHelperOperations:
         helper_files: list[str],
         *,
         repo_root: str,
-    ) -> SemanticHelperInvocation:
+    ) -> HelperRunResult:
         command = self.helper_command(spec, helper_files)
         stats: dict[str, Any] = {"helper_command": command}
         try:
@@ -331,16 +402,16 @@ class SemanticHelperOperations:
                 cwd=repo_root,
             )
         except (TimeoutError, FileNotFoundError, OSError, RuntimeError) as exc:
-            return SemanticHelperInvocation(
+            return HelperRunResult(
                 stats=stats,
                 warnings=[f"{spec.source_name}_helper_failed: {exc}"],
-                diagnostics=[
-                    ToolDiagnostic(
-                        language=spec.language,
-                        tool=spec.helper_filename,
-                        code="tool_invocation_failed",
-                        message=str(exc),
-                    )
+                raw_diagnostics=[
+                    {
+                        "language": spec.language,
+                        "tool": spec.helper_filename,
+                        "code": "tool_invocation_failed",
+                        "message": str(exc),
+                    }
                 ],
             )
 
@@ -348,39 +419,39 @@ class SemanticHelperOperations:
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
             warnings = [f"{spec.source_name}_helper_error: {stderr}"] if stderr else []
-            return SemanticHelperInvocation(
+            return HelperRunResult(
                 stats=stats,
                 warnings=warnings,
-                diagnostics=[
-                    ToolDiagnostic(
-                        language=spec.language,
-                        tool=spec.helper_filename,
-                        code="helper_nonzero_exit",
-                        message=stderr
+                raw_diagnostics=[
+                    {
+                        "language": spec.language,
+                        "tool": spec.helper_filename,
+                        "code": "helper_nonzero_exit",
+                        "message": stderr
                         or f"helper exited with code {result.returncode}",
-                    )
+                    }
                 ],
             )
 
         if not result.stdout.strip():
-            return SemanticHelperInvocation(stats=stats)
+            return HelperRunResult(stats=stats)
 
         try:
-            return SemanticHelperInvocation(
+            return HelperRunResult(
                 payload=json.loads(result.stdout),
                 stats=stats,
             )
         except json.JSONDecodeError as exc:
-            return SemanticHelperInvocation(
+            return HelperRunResult(
                 stats=stats,
                 warnings=[f"{spec.source_name}_helper_invalid_json: {exc}"],
-                diagnostics=[
-                    ToolDiagnostic(
-                        language=spec.language,
-                        tool=spec.helper_filename,
-                        code="invalid_helper_json",
-                        message=str(exc),
-                    )
+                raw_diagnostics=[
+                    {
+                        "language": spec.language,
+                        "tool": spec.helper_filename,
+                        "code": "invalid_helper_json",
+                        "message": str(exc),
+                    }
                 ],
             )
 

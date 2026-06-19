@@ -26,8 +26,15 @@ from fastcode.semantic.resolution import ResolutionPatch
 from fastcode.semantic.resolvers.engine.helper_backed import (
     HelperBackedSemanticResolver,
 )
-from fastcode.semantic.resolvers.engine.helper_operations import (
+from fastcode.infrastructure.execution.helper_operations import (
+    SemanticHelperOperations,
+    SemanticHelperSpec as EffectSpec,
+    validate_helper_paths,
+)
+from fastcode.semantic.resolvers.engine.helper_contract import (
     SemanticHelperInvocation,
+    SemanticHelperSpec as ContractSpec,
+    set_default_helper_ops_factory,
 )
 from fastcode.semantic.resolvers.engine.patching import (
     _source_preference,
@@ -40,7 +47,6 @@ from fastcode.semantic.resolvers.engine.registry import (
 from fastcode.semantic.resolvers.engine.resolver_support import (
     _hash_id,
     _normalize_path,
-    validate_helper_paths,
 )
 from fastcode.semantic.resolvers.languages.c_family import (
     CppSemanticResolver,
@@ -67,6 +73,11 @@ from fastcode.utils.materialization import (
     BOUNDARY_SEMANTIC_PATCH_PRESERVED_OBJECTS,
     collect_materialization_counters,
 )
+
+# Dependency inversion: register the concrete effect_tool helper-ops factory so
+# resolvers constructed directly in these tests get a working default adapter.
+set_default_helper_ops_factory(lambda runtime: SemanticHelperOperations(runtime))
+
 
 
 class _SemanticHelperRuntime:
@@ -2926,6 +2937,22 @@ class TestSharedUtils:
         safe, rejected = validate_helper_paths([str(f)], str(repo))
         assert len(safe) == 1
         assert len(rejected) == 0
+
+
+# ---------------------------------------------------------------------------
+# Drift guard: the effect_tool SemanticHelperSpec is a local structural copy
+# of the meaning_core contract Spec (FCIS forbids effect_tool -> meaning_core
+# import). This test fails loudly if the two copies diverge in fields.
+# ---------------------------------------------------------------------------
+
+
+def test_helper_spec_effect_and_contract_shapes_match() -> None:
+    from dataclasses import fields
+
+    contract_fields = [(f.name, str(f.type)) for f in fields(ContractSpec)]
+    effect_fields = [(f.name, str(f.type)) for f in fields(EffectSpec)]
+    assert contract_fields == effect_fields
+
 
 
 # ---------------------------------------------------------------------------

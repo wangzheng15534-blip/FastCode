@@ -1,4 +1,4 @@
-"""Client entrypoint for the FastCode HTTP API server."""
+"""Server entrypoint for the FastCode HTTP API server (default axis)."""
 
 from __future__ import annotations
 

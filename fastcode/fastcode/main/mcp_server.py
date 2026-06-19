@@ -1,4 +1,4 @@
-"""Client entrypoint for the FastCode MCP server."""
+"""Server entrypoint for the FastCode MCP server (default axis)."""
 
 from __future__ import annotations
 

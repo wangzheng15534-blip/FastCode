@@ -11,21 +11,51 @@
         "utils"
       ],
       "sources": [
-        {"path": "fastcode/fastcode/utils/__init__.py"},
-        {"path": "fastcode/fastcode/utils/archive.py"},
-        {"path": "fastcode/fastcode/utils/atoms/__init__.py"},
-        {"path": "fastcode/fastcode/utils/atoms/byte_count.py"},
-        {"path": "fastcode/fastcode/utils/atoms/non_empty_string.py"},
-        {"path": "fastcode/fastcode/utils/atoms/positive_int.py"},
-        {"path": "fastcode/fastcode/utils/clock.py"},
-        {"path": "fastcode/fastcode/utils/filesystem.py"},
-        {"path": "fastcode/fastcode/utils/hashing.py"},
-        {"path": "fastcode/fastcode/utils/ids.py"},
-        {"path": "fastcode/fastcode/utils/json.py"},
-        {"path": "fastcode/fastcode/utils/materialization.py"},
-        {"path": "fastcode/fastcode/utils/path_utils.py"},
-        {"path": "fastcode/fastcode/utils/paths.py"},
-        {"path": "fastcode/fastcode/utils/text.py"}
+        {
+          "path": "fastcode/fastcode/utils/__init__.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/archive.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/atoms/__init__.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/atoms/byte_count.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/atoms/non_empty_string.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/atoms/positive_int.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/clock.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/filesystem.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/hashing.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/ids.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/json.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/materialization.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/path_utils.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/paths.py"
+        },
+        {
+          "path": "fastcode/fastcode/utils/text.py"
+        }
       ]
     },
     {
@@ -425,6 +455,22 @@
       ],
       "names": [
         "mcp"
+      ]
+    },
+    {
+      "path": "nanobot",
+      "roles": [
+        "entry_frame"
+      ],
+      "entry_type": [
+        "server",
+        "sdk"
+      ],
+      "route_axes": [
+        "nanobot"
+      ],
+      "names": [
+        "nanobot"
       ]
     }
   ]

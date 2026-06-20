@@ -93,3 +93,9 @@ association_agent.py
 accurate_agent.py
 # api.py
 */testcases/*
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
